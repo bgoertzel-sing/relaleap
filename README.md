@@ -59,3 +59,6 @@ For a brittle command-line/browser automation bridge, see:
 docs/colab_bridge.md
 tools/colab_playwright_runner.py
 ```
+
+Use a modern Python environment for that bridge. The old conda `base` Python
+3.7 environment cannot install current Playwright wheels.

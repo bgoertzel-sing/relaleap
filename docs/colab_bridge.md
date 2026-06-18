@@ -20,10 +20,21 @@ Runtime -> Change runtime type -> GPU
 
 ## Browser Automation Hack
 
+Do not use an old conda `base` environment for this. The bridge needs a modern
+Python, and the RelaLeap package itself declares Python 3.10 or newer.
+
+Create a small throwaway environment:
+
+```bash
+conda create -n relaleap-colab python=3.11 -y
+conda activate relaleap-colab
+python -m pip install --upgrade pip
+```
+
 Install Playwright locally:
 
 ```bash
-python -m pip install playwright
+python -m pip install -e '.[colab-bridge]'
 python -m playwright install chromium
 ```
 
@@ -57,4 +68,3 @@ results/runs/colab_smoke/metrics.csv
 results/runs/colab_smoke/notes.md
 results/runs/colab_smoke/summary.json
 ```
-
