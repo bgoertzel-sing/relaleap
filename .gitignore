@@ -4,6 +4,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
+.venv-conda/
+.conda-pkgs/
 venv/
 build/
 dist/
@@ -11,4 +13,3 @@ dist/
 results/
 *.log
 .DS_Store
-
