@@ -62,3 +62,9 @@ tools/colab_playwright_runner.py
 
 Use a modern Python environment for that bridge. The old conda `base` Python
 3.7 environment cannot install current Playwright wheels.
+
+One-command setup:
+
+```bash
+bash tools/setup_colab_bridge.sh
+```

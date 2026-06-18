@@ -23,18 +23,19 @@ Runtime -> Change runtime type -> GPU
 Do not use an old conda `base` environment for this. The bridge needs a modern
 Python, and the RelaLeap package itself declares Python 3.10 or newer.
 
-Create a small throwaway environment:
+Fast path:
 
 ```bash
-conda create -n relaleap-colab python=3.11 -y
-conda activate relaleap-colab
-python -m pip install --upgrade pip
+bash tools/setup_colab_bridge.sh
 ```
 
-Install Playwright locally:
+Manual path:
 
 ```bash
-python -m pip install -e '.[colab-bridge]'
+CONDA_PKGS_DIRS=$PWD/.conda-pkgs conda create -p $PWD/.venv-conda python=3.11 -y
+conda activate $PWD/.venv-conda
+python -m pip install --upgrade pip
+python -m pip install -e '.[colab-bridge]' --no-build-isolation
 python -m playwright install chromium
 ```
 
