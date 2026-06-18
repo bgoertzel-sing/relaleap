@@ -21,8 +21,10 @@ notebook = [
   "jupyter",
   "matplotlib",
 ]
+colab-bridge = [
+  "playwright",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
-

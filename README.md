@@ -45,3 +45,17 @@ python -m relaleap.experiments.run --config configs/char_smoke.yaml
 
 Colab should be treated as a temporary GPU runner, not the source of truth. The GitHub repo, config files, and run artifacts are the source of truth.
 
+## Temporary Colab Bridge
+
+The first GitHub-backed Colab notebook is:
+
+```text
+https://colab.research.google.com/github/bgoertzel-sing/relaleap/blob/main/notebooks/relaleap_colab_smoke.ipynb
+```
+
+For a brittle command-line/browser automation bridge, see:
+
+```text
+docs/colab_bridge.md
+tools/colab_playwright_runner.py
+```
