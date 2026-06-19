@@ -88,7 +88,10 @@ for the comparison and child runs, then reports the verdict, Phase 0 invariant
 status, artifact invariant status, accepted HEP alpha, and whether the completed
 summary still matches the checked-in local baseline. Add
 `--require-baseline-comparison` when the run was expected to write
-`baseline_comparison.json` during execution.
+`baseline_comparison.json` during execution. The checker fails closed when a
+completed comparison summary is missing the artifact-invariant verdict fields,
+which catches older artifact-unaware summaries before they are treated as valid
+Colab/GPU evidence.
 
 The current tiny HEP alpha sweep is also command-driven:
 

@@ -159,6 +159,30 @@ class CheckArtifactsTest(unittest.TestCase):
                 report["failures"],
             )
 
+    def test_missing_artifact_invariant_verdict_fails_artifact_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            comparison_dir = Path(tmpdir) / "comparison"
+            _write_comparison_tree(comparison_dir)
+            summary_path = comparison_dir / "summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            del summary["verdict"]["artifact_invariants_passed"]
+            summary_path.write_text(
+                json.dumps(summary, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            report = check_comparison_artifacts(comparison_dir)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertIn(
+                {
+                    "field": "comparison.verdict.artifact_invariants_passed",
+                    "expected": True,
+                    "actual": None,
+                },
+                report["failures"],
+            )
+
 
 def _write_comparison_tree(
     comparison_dir: Path,

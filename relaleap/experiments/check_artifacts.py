@@ -114,7 +114,7 @@ def check_comparison_artifacts(
                     "actual": phase0_passed,
                 }
             )
-        if artifact_invariants_passed is False:
+        if artifact_invariants_passed is not True:
             failures.append(
                 {
                     "field": "comparison.verdict.artifact_invariants_passed",
