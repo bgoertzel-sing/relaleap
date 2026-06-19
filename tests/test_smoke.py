@@ -46,6 +46,13 @@ class Phase0SmokeTest(unittest.TestCase):
         self.assertTrue(result.invariants["residual_parameters_updated"])
         self.assertAlmostEqual(result.base_loss, result.zero_init_loss)
         self.assertAlmostEqual(result.initial_loss, result.zero_init_loss)
+        self.assertEqual(result.training_steps, CONFIG["run"]["max_steps"])
+        self.assertEqual(len(result.to_metric_rows()), CONFIG["run"]["max_steps"] + 1)
+        self.assertEqual(result.to_metric_rows()[0]["phase"], "initial")
+        self.assertTrue(
+            all(row["phase"] == "residual_update" for row in result.to_metric_rows()[1:])
+        )
+        self.assertEqual(result.to_metric_rows()[-1]["residual_loss"], result.post_step_loss)
 
     def test_runner_writes_required_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -96,13 +103,15 @@ class Phase0SmokeTest(unittest.TestCase):
             self.assertTrue(saved["phase0"]["invariants"]["zero_init_identity"])
             self.assertIn("base_loss", saved["phase0"])
             self.assertIn("post_step_loss", saved["phase0"])
+            self.assertEqual(saved["phase0"]["training_steps"], 2)
 
             with (tmp_path / "out" / "metrics.csv").open(newline="") as handle:
                 metric_rows = list(csv.DictReader(handle))
             self.assertEqual(
                 [row["phase"] for row in metric_rows],
-                ["initial", "post_residual_step"],
+                ["initial", "residual_update", "residual_update"],
             )
+            self.assertEqual([int(row["step"]) for row in metric_rows], [0, 1, 2])
             self.assertNotIn("smoke_loss", metric_rows[0])
             self.assertIn("base_loss", metric_rows[0])
             self.assertIn("residual_loss", metric_rows[0])

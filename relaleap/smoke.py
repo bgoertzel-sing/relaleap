@@ -32,6 +32,8 @@ class Phase0Result:
     zero_init_loss: float
     initial_loss: float
     post_step_loss: float
+    training_steps: int
+    metric_rows: list[dict[str, float | int | str]]
     residual_parameter_delta: float
     max_zero_init_logit_delta: float
     max_hep_alpha0_logit_delta: float
@@ -46,6 +48,7 @@ class Phase0Result:
             "zero_init_loss": self.zero_init_loss,
             "initial_loss": self.initial_loss,
             "post_step_loss": self.post_step_loss,
+            "training_steps": self.training_steps,
             "residual_parameter_delta": self.residual_parameter_delta,
             "max_zero_init_logit_delta": self.max_zero_init_logit_delta,
             "max_hep_alpha0_logit_delta": self.max_hep_alpha0_logit_delta,
@@ -55,28 +58,7 @@ class Phase0Result:
     def to_metric_rows(self) -> list[dict[str, float | int | str]]:
         """Return the real Phase 0 loss stream written to metrics.csv."""
 
-        return [
-            {
-                "step": 0,
-                "phase": "initial",
-                "base_loss": self.base_loss,
-                "residual_loss": self.initial_loss,
-                "zero_init_loss": self.zero_init_loss,
-                "residual_parameter_delta": 0.0,
-                "max_zero_init_logit_delta": self.max_zero_init_logit_delta,
-                "max_hep_alpha0_logit_delta": self.max_hep_alpha0_logit_delta,
-            },
-            {
-                "step": 1,
-                "phase": "post_residual_step",
-                "base_loss": self.base_loss,
-                "residual_loss": self.post_step_loss,
-                "zero_init_loss": self.zero_init_loss,
-                "residual_parameter_delta": self.residual_parameter_delta,
-                "max_zero_init_logit_delta": self.max_zero_init_logit_delta,
-                "max_hep_alpha0_logit_delta": self.max_hep_alpha0_logit_delta,
-            },
-        ]
+        return self.metric_rows
 
 
 def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
@@ -101,6 +83,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     inference_cfg = config.get("inference", {})
 
     seed = int(run_cfg.get("seed", 1))
+    max_steps = int(run_cfg.get("max_steps", 10))
+    learning_rate = float(run_cfg.get("learning_rate", 1e-2))
     seq_len = int(data_cfg.get("seq_len", 32))
     hidden_dim = int(base_cfg.get("hidden_dim", 32))
     layers = int(base_cfg.get("layers", 2))
@@ -112,6 +96,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
 
     if pc_steps < 1:
         raise ValueError("inference.pc_steps must be at least 1")
+    if max_steps < 1:
+        raise ValueError("run.max_steps must be at least 1 for Phase 0 smoke")
     if hep_alpha != 0.0:
         raise NotImplementedError("Phase 0 smoke only implements hep_alpha == 0.0")
 
@@ -159,22 +145,46 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         parameter.requires_grad_(False)
 
     residual.train()
-    optimizer = torch.optim.AdamW(residual.parameters(), lr=1e-2)
-    logits = base(inputs, residual_adapter=residual)
-    initial_loss_tensor = F.cross_entropy(
-        logits[:, :-1, :].reshape(-1, vocab_size),
-        targets[:, :-1].reshape(-1),
-    )
-    optimizer.zero_grad(set_to_none=True)
-    initial_loss_tensor.backward()
     before_residual = _clone_state_dict(residual)
-    optimizer.step()
-
-    with torch.no_grad():
-        post_step_logits = base(inputs, residual_adapter=residual)
-        post_step_loss_tensor = F.cross_entropy(
-            post_step_logits[:, :-1, :].reshape(-1, vocab_size),
-            targets[:, :-1].reshape(-1),
+    optimizer = torch.optim.AdamW(residual.parameters(), lr=learning_rate)
+    initial_loss_tensor = _residual_loss(base, residual, inputs, targets, vocab_size)
+    metric_rows: list[dict[str, float | int | str]] = [
+        _metric_row(
+            step=0,
+            phase="initial",
+            base_loss=float(base_loss_tensor.detach().item()),
+            residual_loss=float(initial_loss_tensor.detach().item()),
+            zero_init_loss=float(zero_init_loss_tensor.detach().item()),
+            residual_parameter_delta=0.0,
+            max_zero_init_logit_delta=max_zero_delta,
+            max_hep_alpha0_logit_delta=max_hep_delta,
+        )
+    ]
+    post_step_loss_tensor = initial_loss_tensor
+    for step in range(1, max_steps + 1):
+        optimizer.zero_grad(set_to_none=True)
+        loss = _residual_loss(base, residual, inputs, targets, vocab_size)
+        loss.backward()
+        optimizer.step()
+        with torch.no_grad():
+            post_step_loss_tensor = _residual_loss(
+                base,
+                residual,
+                inputs,
+                targets,
+                vocab_size,
+            )
+        metric_rows.append(
+            _metric_row(
+                step=step,
+                phase="residual_update",
+                base_loss=float(base_loss_tensor.detach().item()),
+                residual_loss=float(post_step_loss_tensor.detach().item()),
+                zero_init_loss=float(zero_init_loss_tensor.detach().item()),
+                residual_parameter_delta=_state_dict_delta(before_residual, residual),
+                max_zero_init_logit_delta=max_zero_delta,
+                max_hep_alpha0_logit_delta=max_hep_delta,
+            )
         )
 
     invariants = {
@@ -192,6 +202,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         zero_init_loss=float(zero_init_loss_tensor.detach().item()),
         initial_loss=float(initial_loss_tensor.detach().item()),
         post_step_loss=float(post_step_loss_tensor.detach().item()),
+        training_steps=max_steps,
+        metric_rows=metric_rows,
         residual_parameter_delta=_state_dict_delta(before_residual, residual),
         max_zero_init_logit_delta=max_zero_delta,
         max_hep_alpha0_logit_delta=max_hep_delta,
@@ -307,6 +319,45 @@ def forward_with_hep_alpha(
     if hep_alpha != 0.0:
         raise NotImplementedError("HEP alpha > 0 is not implemented in Phase 0 smoke")
     return base(input_ids, residual_adapter=residual)
+
+
+def _residual_loss(
+    base: Any,
+    residual: Any,
+    inputs: Any,
+    targets: Any,
+    vocab_size: int,
+) -> Any:
+    import torch.nn.functional as F
+
+    logits = base(inputs, residual_adapter=residual)
+    return F.cross_entropy(
+        logits[:, :-1, :].reshape(-1, vocab_size),
+        targets[:, :-1].reshape(-1),
+    )
+
+
+def _metric_row(
+    *,
+    step: int,
+    phase: str,
+    base_loss: float,
+    residual_loss: float,
+    zero_init_loss: float,
+    residual_parameter_delta: float,
+    max_zero_init_logit_delta: float,
+    max_hep_alpha0_logit_delta: float,
+) -> dict[str, float | int | str]:
+    return {
+        "step": step,
+        "phase": phase,
+        "base_loss": base_loss,
+        "residual_loss": residual_loss,
+        "zero_init_loss": zero_init_loss,
+        "residual_parameter_delta": residual_parameter_delta,
+        "max_zero_init_logit_delta": max_zero_init_logit_delta,
+        "max_hep_alpha0_logit_delta": max_hep_alpha0_logit_delta,
+    }
 
 
 def _build_char_batch(seq_len: int, batch_size: int) -> tuple[Any, Any, int]:
