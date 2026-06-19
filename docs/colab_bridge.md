@@ -39,7 +39,46 @@ python -m pip install -e '.[colab-bridge]' --no-build-isolation
 python -m playwright install chromium
 ```
 
-Then open Colab and log in once:
+### Preferred real-Chrome route
+
+Google may block login from Playwright's bundled testing browser. The more
+usable route is to launch ordinary Chrome once with remote debugging enabled,
+log into Google/Colab there, and let the helper attach to that logged-in
+session.
+
+Launch Chrome:
+
+```bash
+open -na "Google Chrome" --args \
+  --remote-debugging-port=9222 \
+  --user-data-dir=/Users/bengoertzel/.codex-relaleap-chrome
+```
+
+Then run the notebook through that Chrome session:
+
+```bash
+./.venv-conda/bin/python tools/colab_playwright_runner.py \
+  --cdp-url http://127.0.0.1:9222 \
+  --run-all \
+  --run-method shortcut \
+  --wait-completion \
+  --debug-snapshot
+```
+
+The helper clicks the current Colab "Run anyway" trust modal when it appears,
+waits for `RelaLeap Colab Phase 0 comparison completed.`, and saves visible
+notebook evidence to:
+
+```text
+results/colab_bridge_evidence/latest_colab_output.txt
+```
+
+If the keyboard shortcut stops working after a Colab UI change, try
+`--run-method both`.
+
+### Bundled-browser fallback
+
+Open Colab and log in once:
 
 ```bash
 python tools/colab_playwright_runner.py --manual-login

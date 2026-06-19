@@ -9,7 +9,7 @@ Usage:
   python tools/colab_playwright_runner.py --manual-login
   python tools/colab_playwright_runner.py --run-all
   python tools/colab_playwright_runner.py --browser-channel chrome --manual-login
-  python tools/colab_playwright_runner.py --cdp-url http://127.0.0.1:9222 --run-all
+  python tools/colab_playwright_runner.py --cdp-url http://127.0.0.1:9222 --run-all --wait-completion
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ COLAB_NOTEBOOK_URL = (
     "https://colab.research.google.com/github/"
     "bgoertzel-sing/relaleap/blob/main/notebooks/relaleap_colab_smoke.ipynb"
 )
+COMPLETION_TEXT = "RelaLeap Colab Phase 0 comparison completed."
 
 
 async def _click_first(page, labels: list[str], timeout_ms: int = 5_000) -> bool:
@@ -51,6 +52,33 @@ async def _write_debug_snapshot(page, label: str) -> None:
         base.with_suffix(".html").write_text(await page.content())
     except Exception as exc:
         print(f"Could not write HTML snapshot: {type(exc).__name__}: {exc}")
+
+
+async def _write_evidence(page, evidence_out: Path) -> None:
+    evidence_out.parent.mkdir(parents=True, exist_ok=True)
+    body_text = await page.locator("body").inner_text(timeout=10_000)
+    evidence_out.write_text(body_text)
+    print(f"wrote Colab evidence: {evidence_out}")
+
+
+async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path) -> None:
+    timeout_ms = int(timeout_minutes * 60_000)
+    print(f"waiting up to {timeout_minutes:g} minute(s) for Colab completion text")
+    try:
+        await page.get_by_text(COMPLETION_TEXT, exact=False).wait_for(timeout=timeout_ms)
+    except Exception as exc:
+        await _write_evidence(page, evidence_out)
+        raise TimeoutError(
+            f"Timed out waiting for Colab completion text: {COMPLETION_TEXT!r}"
+        ) from exc
+
+    await _write_evidence(page, evidence_out)
+    text = evidence_out.read_text()
+    if '"status": "pass"' not in text and "'status': 'pass'" not in text:
+        raise RuntimeError("Colab completed, but no passing baseline status was visible.")
+    if "Accepted HEP alpha" not in text:
+        raise RuntimeError("Colab completed, but accepted HEP alpha was not visible.")
+    print("Colab completion detected and evidence passed visible-output checks.")
 
 
 async def _trigger_run_all(page, method: str) -> None:
@@ -101,6 +129,9 @@ async def _operate_page(
     run_all: bool,
     run_method: str,
     debug_snapshot: bool,
+    wait_completion: bool,
+    completion_timeout_minutes: float,
+    evidence_out: Path,
 ) -> None:
     await page.goto(COLAB_NOTEBOOK_URL, wait_until="domcontentloaded")
     print(f"opened: {COLAB_NOTEBOOK_URL}")
@@ -125,7 +156,14 @@ async def _operate_page(
             await _write_debug_snapshot(page, "after_run_all")
 
         print("Run-all was requested. Watch the browser for completion/errors.")
-        print("This helper does not yet reliably detect Colab completion.")
+        if wait_completion:
+            await _wait_for_completion(
+                page,
+                timeout_minutes=completion_timeout_minutes,
+                evidence_out=evidence_out,
+            )
+        else:
+            print("Completion detection is disabled; pass --wait-completion to enable it.")
 
 
 async def automate(
@@ -137,6 +175,10 @@ async def automate(
     cdp_url: str | None,
     run_method: str,
     debug_snapshot: bool,
+    wait_completion: bool,
+    completion_timeout_minutes: float,
+    evidence_out: Path,
+    pause_before_close: bool,
 ) -> None:
     try:
         from playwright.async_api import async_playwright
@@ -156,9 +198,15 @@ async def automate(
                 run_all=run_all,
                 run_method=run_method,
                 debug_snapshot=debug_snapshot,
+                wait_completion=wait_completion,
+                completion_timeout_minutes=completion_timeout_minutes,
+                evidence_out=evidence_out,
             )
-            print("Leaving connected Chrome open. Press Enter to detach automation.")
-            input()
+            if pause_before_close:
+                print("Leaving connected Chrome open. Press Enter to detach automation.")
+                input()
+            else:
+                print("Detaching automation from connected Chrome.")
             await browser.close()
             return
 
@@ -176,9 +224,12 @@ async def automate(
             run_all=run_all,
             run_method=run_method,
             debug_snapshot=debug_snapshot,
+            wait_completion=wait_completion,
+            completion_timeout_minutes=completion_timeout_minutes,
+            evidence_out=evidence_out,
         )
 
-        if headed:
+        if headed and pause_before_close:
             print("Leaving browser open. Press Enter to close this automation context.")
             input()
         await context.close()
@@ -199,6 +250,27 @@ def main() -> None:
         "--debug-snapshot",
         action="store_true",
         help="Write a screenshot and HTML snapshot after requesting Run all.",
+    )
+    parser.add_argument(
+        "--wait-completion",
+        action="store_true",
+        help="Wait for the final RelaLeap Colab completion text and fail if it is not observed.",
+    )
+    parser.add_argument(
+        "--completion-timeout-minutes",
+        type=float,
+        default=45.0,
+        help="Maximum minutes to wait for Colab completion text.",
+    )
+    parser.add_argument(
+        "--evidence-out",
+        default="results/colab_bridge_evidence/latest_colab_output.txt",
+        help="Path to save visible Colab page text after completion or timeout.",
+    )
+    parser.add_argument(
+        "--pause-before-close",
+        action="store_true",
+        help="Pause for Enter before detaching/closing. Intended for manual debugging only.",
     )
     parser.add_argument(
         "--browser-channel",
@@ -231,6 +303,10 @@ def main() -> None:
                 cdp_url=args.cdp_url,
                 run_method=args.run_method,
                 debug_snapshot=args.debug_snapshot,
+                wait_completion=args.wait_completion,
+                completion_timeout_minutes=args.completion_timeout_minutes,
+                evidence_out=Path(args.evidence_out),
+                pause_before_close=args.pause_before_close,
             )
         )
     except KeyboardInterrupt:
