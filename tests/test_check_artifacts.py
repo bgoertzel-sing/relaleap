@@ -10,6 +10,35 @@ from relaleap.experiments.check_artifacts import check_comparison_artifacts
 
 
 class CheckArtifactsTest(unittest.TestCase):
+    def test_missing_comparison_summary_fails_without_crashing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            comparison_dir = Path(tmpdir) / "comparison"
+            comparison_dir.mkdir()
+
+            report = check_comparison_artifacts(
+                comparison_dir,
+                baseline_reference=Path(tmpdir) / "baseline.json",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertIn(
+                {
+                    "field": "comparison.summary.json",
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(comparison_dir / "summary.json"),
+                },
+                report["failures"],
+            )
+            self.assertIn(
+                {
+                    "field": "comparison.verdict.status",
+                    "expected": "pass",
+                    "actual": None,
+                },
+                report["failures"],
+            )
+
     def test_complete_comparison_tree_passes_with_baseline_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             comparison_dir = Path(tmpdir) / "comparison"
@@ -178,6 +207,30 @@ class CheckArtifactsTest(unittest.TestCase):
                 {
                     "field": "comparison.verdict.artifact_invariants_passed",
                     "expected": True,
+                    "actual": None,
+                },
+                report["failures"],
+            )
+
+    def test_non_object_comparison_verdict_fails_without_crashing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            comparison_dir = Path(tmpdir) / "comparison"
+            _write_comparison_tree(comparison_dir)
+            summary_path = comparison_dir / "summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary["verdict"] = "pass"
+            summary_path.write_text(
+                json.dumps(summary, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            report = check_comparison_artifacts(comparison_dir)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertIn(
+                {
+                    "field": "comparison.verdict.status",
+                    "expected": "pass",
                     "actual": None,
                 },
                 report["failures"],

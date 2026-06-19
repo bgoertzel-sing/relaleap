@@ -65,6 +65,8 @@ def check_comparison_artifacts(
         )
 
     verdict = summary.get("verdict") if isinstance(summary, dict) else {}
+    if not isinstance(verdict, dict):
+        verdict = {}
     phase0_passed = (
         verdict.get("invariants_passed") if isinstance(verdict, dict) else None
     )

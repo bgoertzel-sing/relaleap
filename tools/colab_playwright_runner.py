@@ -26,6 +26,11 @@ COLAB_NOTEBOOK_URL = (
     "bgoertzel-sing/relaleap/blob/main/notebooks/relaleap_colab_smoke.ipynb"
 )
 COMPLETION_TEXT = "RelaLeap Colab Phase 0 comparison completed."
+OUTPUT_SELECTORS = (
+    "colab-static-output-renderer",
+    ".output",
+    ".stream.output_text",
+)
 
 
 async def _click_first(page, labels: list[str], timeout_ms: int = 5_000) -> bool:
@@ -57,9 +62,63 @@ async def _write_debug_snapshot(page, label: str) -> None:
 
 async def _write_evidence(page, evidence_out: Path) -> None:
     evidence_out.parent.mkdir(parents=True, exist_ok=True)
+    output_text = await _rendered_output_text(page)
     body_text = await page.locator("body").inner_text(timeout=10_000)
-    evidence_out.write_text(body_text)
+    evidence_out.write_text(
+        "\n".join(
+            [
+                "# Rendered Colab output",
+                output_text.strip(),
+                "",
+                "# Full page text",
+                body_text.strip(),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     print(f"wrote Colab evidence: {evidence_out}")
+
+
+async def _rendered_output_text(page) -> str:
+    chunks: list[str] = []
+    for selector in OUTPUT_SELECTORS:
+        locator = page.locator(selector)
+        try:
+            count = await locator.count()
+        except Exception:
+            continue
+        for index in range(count):
+            try:
+                text = await locator.nth(index).inner_text(timeout=2_000)
+            except Exception:
+                continue
+            text = text.strip()
+            if text and text not in chunks:
+                chunks.append(text)
+    return "\n\n".join(chunks)
+
+
+async def _wait_for_rendered_output_text(page, text: str, timeout_ms: int) -> None:
+    selectors = ", ".join(OUTPUT_SELECTORS)
+    await page.locator(selectors).filter(has_text=text).first.wait_for(
+        timeout=timeout_ms
+    )
+
+
+def _validate_evidence_text(text: str) -> None:
+    required = [
+        'cuda_available: True',
+        '"status": "pass"',
+        "Accepted HEP alpha:",
+        COMPLETION_TEXT,
+    ]
+    missing = [marker for marker in required if marker not in text]
+    if missing:
+        raise RuntimeError(
+            "Colab completed, but evidence is missing required rendered output "
+            f"marker(s): {', '.join(missing)}"
+        )
 
 
 async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path) -> None:
@@ -68,7 +127,7 @@ async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path)
     print(f"waiting up to {timeout_minutes:g} minute(s) for Colab completion text")
     while True:
         try:
-            await page.get_by_text(COMPLETION_TEXT, exact=False).wait_for(timeout=3_000)
+            await _wait_for_rendered_output_text(page, COMPLETION_TEXT, timeout_ms=3_000)
             break
         except Exception as exc:
             elapsed = asyncio.get_running_loop().time() - started
@@ -81,10 +140,7 @@ async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path)
 
     await _write_evidence(page, evidence_out)
     text = evidence_out.read_text()
-    if '"status": "pass"' not in text and "'status': 'pass'" not in text:
-        raise RuntimeError("Colab completed, but no passing baseline status was visible.")
-    if "Accepted HEP alpha" not in text:
-        raise RuntimeError("Colab completed, but accepted HEP alpha was not visible.")
+    _validate_evidence_text(text)
     print("Colab completion detected and evidence passed visible-output checks.")
 
 
