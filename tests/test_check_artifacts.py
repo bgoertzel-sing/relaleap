@@ -234,6 +234,30 @@ class CheckArtifactsTest(unittest.TestCase):
                 report["failures"],
             )
 
+    def test_mismatched_child_run_experiment_id_fails_artifact_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            comparison_dir = Path(tmpdir) / "comparison"
+            _write_comparison_tree(comparison_dir)
+            summary_path = comparison_dir / "runs" / "char_smoke" / "summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            summary["experiment_id"] = "char_smoke_pc"
+            summary_path.write_text(
+                json.dumps(summary, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            report = check_comparison_artifacts(comparison_dir)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertIn(
+                {
+                    "field": "run.char_smoke.summary.experiment_id",
+                    "expected": "char_smoke",
+                    "actual": "char_smoke_pc",
+                },
+                report["failures"],
+            )
+
 
 def _write_comparison_tree(
     comparison_dir: Path,

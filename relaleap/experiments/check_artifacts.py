@@ -214,6 +214,14 @@ def _run_summary_failures(
     experiment_id: Any,
 ) -> list[dict[str, Any]]:
     failures = []
+    if summary.get("experiment_id") != experiment_id:
+        failures.append(
+            {
+                "field": f"run.{experiment_id}.summary.experiment_id",
+                "expected": experiment_id,
+                "actual": summary.get("experiment_id"),
+            }
+        )
     if summary.get("status") != "ok":
         failures.append(
             {
