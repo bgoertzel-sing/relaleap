@@ -54,6 +54,15 @@ Phase 0 invariant pass/fail status, the best HEP alpha by loss, and an HEP
 alpha acceptance policy. By default, accepted nonzero HEP alphas must improve
 loss over alpha 0 while keeping ordinary-logit delta at or below `0.1`; tune
 that gate with `--hep-max-logit-delta` and `--hep-min-loss-improvement`.
+To refresh the checked-in compact Phase 0 baseline after an intentional
+methodology change, run:
+
+```bash
+python -m relaleap.experiments.compare --baseline-out baselines/phase0_char_smoke_comparison.json
+```
+
+The current baseline records all 12 Phase 0 invariants passing and an accepted
+HEP alpha of `0.25` under the default logit-delta policy.
 
 The current tiny HEP alpha sweep is also command-driven:
 

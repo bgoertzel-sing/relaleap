@@ -9,9 +9,11 @@ from unittest.mock import patch
 
 from relaleap.experiments.compare import (
     DEFAULT_CONFIGS,
+    _comparison_baseline,
     _comparison_entry,
     _comparison_verdict,
     run_comparison,
+    write_comparison_baseline,
 )
 
 
@@ -184,6 +186,63 @@ class ComparisonReportTest(unittest.TestCase):
             ],
         )
 
+    def test_comparison_baseline_keeps_stable_phase0_fields(self) -> None:
+        comparison = {
+            "status": "ok",
+            "verdict": _comparison_verdict(
+                [
+                    {
+                        "experiment_id": "char_smoke_hep",
+                        "invariants": {"zero_init_identity": True},
+                        "hep_alpha_sweep": [
+                            {
+                                "alpha": 0.0,
+                                "loss": 3.5,
+                                "max_logit_delta_from_ordinary": 0.0,
+                            },
+                            {
+                                "alpha": 0.25,
+                                "loss": 3.4,
+                                "max_logit_delta_from_ordinary": 0.05,
+                            },
+                        ],
+                    }
+                ],
+                "ok",
+            ),
+            "runs": [
+                {
+                    "experiment_id": "char_smoke_hep",
+                    "config_path": "configs/char_smoke_hep.yaml",
+                    "residual_objective": "supervised_ce",
+                    "status": "ok",
+                    "training_steps": 10,
+                    "invariants": {"zero_init_identity": True},
+                    "final_residual_loss": 3.4,
+                }
+            ],
+        }
+
+        baseline = _comparison_baseline(comparison)
+
+        self.assertEqual(baseline["schema_version"], 1)
+        self.assertEqual(baseline["comparison_status"], "ok")
+        self.assertEqual(baseline["verdict_status"], "pass")
+        self.assertEqual(baseline["phase0_invariants"]["count"], 1)
+        self.assertEqual(baseline["hep"]["best_alpha_by_loss"]["alpha"], 0.25)
+        self.assertEqual(
+            baseline["hep"]["acceptance"]["accepted_alpha"]["alpha"],
+            0.25,
+        )
+        self.assertEqual(
+            baseline["hep"]["acceptance"]["accepted_alpha"][
+                "loss_improvement_from_alpha0"
+            ],
+            0.10000000000000009,
+        )
+        self.assertNotIn("runtime_seconds", baseline)
+        self.assertNotIn("out_dir", baseline)
+
     def test_run_comparison_writes_top_level_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -295,6 +354,42 @@ class ComparisonReportTest(unittest.TestCase):
             self.assertIn("alpha 0.0", notes)
             self.assertIn("Best HEP alpha by loss", notes)
             self.assertIn("Accepted HEP alpha", notes)
+
+            baseline = write_comparison_baseline(
+                tmp_path / "baseline" / "phase0.json",
+                comparison,
+            )
+            self.assertTrue((tmp_path / "baseline" / "phase0.json").is_file())
+            self.assertEqual(baseline["comparison_status"], "ok")
+            self.assertEqual(baseline["phase0_invariants"]["count"], 2)
+            self.assertEqual(
+                baseline["hep"]["acceptance"]["status"],
+                "no_nonzero_hep_candidates",
+            )
+
+    def test_checked_in_phase0_baseline_records_accepted_hep_alpha(self) -> None:
+        baseline_path = Path("baselines/phase0_char_smoke_comparison.json")
+        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(baseline["schema_version"], 1)
+        self.assertEqual(baseline["comparison_status"], "ok")
+        self.assertEqual(baseline["verdict_status"], "pass")
+        self.assertEqual(
+            baseline["config_paths"],
+            [
+                "configs/char_smoke.yaml",
+                "configs/char_smoke_pc.yaml",
+                "configs/char_smoke_hep.yaml",
+            ],
+        )
+        self.assertTrue(baseline["phase0_invariants"]["passed"])
+        self.assertEqual(baseline["phase0_invariants"]["count"], 12)
+        self.assertEqual(baseline["hep"]["best_alpha_by_loss"]["alpha"], 1.0)
+        self.assertEqual(
+            baseline["hep"]["acceptance"]["accepted_alpha"]["alpha"],
+            0.25,
+        )
+        self.assertEqual(baseline["hep"]["acceptance"]["rejected_count"], 2)
 
 
 if __name__ == "__main__":

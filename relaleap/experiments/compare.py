@@ -19,6 +19,7 @@ DEFAULT_CONFIGS = (
 )
 DEFAULT_HEP_MAX_LOGIT_DELTA = 0.1
 DEFAULT_HEP_MIN_LOSS_IMPROVEMENT = 0.0
+BASELINE_SCHEMA_VERSION = 1
 
 
 def run_comparison(
@@ -77,6 +78,89 @@ def run_comparison(
     )
     _write_notes(out_dir / "notes.md", comparison)
     return comparison
+
+
+def write_comparison_baseline(path: Path, comparison: dict[str, Any]) -> dict[str, Any]:
+    """Write a compact, stable baseline extracted from a comparison artifact."""
+
+    baseline = _comparison_baseline(comparison)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(baseline, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return baseline
+
+
+def _comparison_baseline(comparison: dict[str, Any]) -> dict[str, Any]:
+    verdict = comparison["verdict"]
+    acceptance = verdict["hep_alpha_acceptance"]
+    return {
+        "schema_version": BASELINE_SCHEMA_VERSION,
+        "comparison_status": comparison["status"],
+        "verdict_status": verdict["status"],
+        "config_paths": [entry["config_path"] for entry in comparison["runs"]],
+        "runs": [
+            {
+                "experiment_id": entry["experiment_id"],
+                "config_path": entry["config_path"],
+                "residual_objective": entry["residual_objective"],
+                "status": entry["status"],
+                "training_steps": entry["training_steps"],
+                "invariant_count": len(entry.get("invariants") or {}),
+                "final_residual_loss": entry["final_residual_loss"],
+            }
+            for entry in comparison["runs"]
+        ],
+        "phase0_invariants": {
+            "passed": verdict["invariants_passed"],
+            "count": verdict["invariant_count"],
+            "failed": verdict["failed_invariants"],
+        },
+        "hep": {
+            "best_alpha_by_loss": _baseline_hep_alpha(
+                verdict["best_hep_alpha_by_loss"]
+            ),
+            "acceptance": {
+                "status": acceptance["status"],
+                "max_logit_delta_from_ordinary": acceptance[
+                    "max_logit_delta_from_ordinary"
+                ],
+                "min_loss_improvement_from_alpha0": acceptance[
+                    "min_loss_improvement_from_alpha0"
+                ],
+                "baseline_alpha0": _baseline_hep_alpha(
+                    acceptance["baseline_alpha0"]
+                ),
+                "accepted_alpha": _baseline_hep_alpha(
+                    acceptance["accepted_alpha"],
+                    include_improvement=True,
+                ),
+                "candidate_count": acceptance["candidate_count"],
+                "rejected_count": acceptance["rejected_count"],
+            },
+        },
+    }
+
+
+def _baseline_hep_alpha(
+    entry: dict[str, Any] | None,
+    *,
+    include_improvement: bool = False,
+) -> dict[str, Any] | None:
+    if entry is None:
+        return None
+    baseline = {
+        "experiment_id": entry["experiment_id"],
+        "alpha": entry["alpha"],
+        "loss": entry["loss"],
+        "max_logit_delta_from_ordinary": entry["max_logit_delta_from_ordinary"],
+    }
+    if include_improvement:
+        baseline["loss_improvement_from_alpha0"] = entry[
+            "loss_improvement_from_alpha0"
+        ]
+    return baseline
 
 
 def _read_metrics(path: Path) -> list[dict[str, str]]:
@@ -487,6 +571,11 @@ def main() -> None:
         type=float,
         help="Minimum loss improvement over alpha 0 required for accepting HEP alpha.",
     )
+    parser.add_argument(
+        "--baseline-out",
+        type=Path,
+        help="Optional path for a compact, stable Phase 0 comparison baseline JSON.",
+    )
     args = parser.parse_args()
     config_paths = args.configs or list(DEFAULT_CONFIGS)
     comparison = run_comparison(
@@ -495,6 +584,8 @@ def main() -> None:
         hep_max_logit_delta=args.hep_max_logit_delta,
         hep_min_loss_improvement=args.hep_min_loss_improvement,
     )
+    if args.baseline_out:
+        write_comparison_baseline(args.baseline_out, comparison)
     print(json.dumps(comparison, indent=2, sort_keys=True))
     if comparison["status"] != "ok":
         raise SystemExit(1)
