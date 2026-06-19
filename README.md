@@ -160,6 +160,21 @@ python -m relaleap.experiments.check_artifacts \
 The comparison summary and notes include per-run `pinned_support`,
 `support_stress`, `support_instability`, and HEP sweep support diagnostics.
 
+After a completed local or Colab support-stress comparison, write the
+command-driven pinned-support decision report without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --comparison-dir results/comparisons/colab_support_stress_pinned_vs_repicked \
+  --artifact-check results/comparisons/colab_support_stress_pinned_vs_repicked/artifact_check_local.json \
+  --out results/reports/pinned_support_decision
+```
+
+The report writes `decision_report.json` and `decision_report.md`. Under the
+current default policy, pinned support should remain opt-in unless the evidence
+artifacts pass and a pinned nonzero HEP alpha improves loss over alpha 0 while
+staying within the ordinary-logit delta budget of `0.1`.
+
 Colab should be treated as a temporary GPU runner, not the source of truth. The GitHub repo, config files, and run artifacts are the source of truth.
 
 ## Temporary Colab Bridge

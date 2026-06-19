@@ -1,0 +1,185 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from relaleap.experiments.decision_report import (
+    INSUFFICIENT_EVIDENCE,
+    KEEP_OPT_IN,
+    PROMOTE,
+    write_pinned_support_decision_report,
+)
+
+
+class PinnedSupportDecisionReportTest(unittest.TestCase):
+    def test_support_stress_evidence_keeps_pinned_support_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "comparison"
+            _write_comparison(
+                comparison_dir,
+                pinned_nonzero_loss=4.5,
+                pinned_nonzero_delta=0.5,
+            )
+
+            report = write_pinned_support_decision_report(
+                comparison_dir,
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["decision"], KEEP_OPT_IN)
+            self.assertFalse(report["promote_to_default_phase0_baseline"])
+            self.assertEqual(report["evidence"]["artifact_check_status"], "pass")
+            self.assertGreater(report["evidence"]["max_support_change_fraction"], 0.0)
+            self.assertGreater(
+                report["evidence"]["max_pinned_vs_repicked_logit_delta"],
+                0.0,
+            )
+            self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
+            self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
+
+    def test_improving_pinned_alpha_promotes_to_default_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "comparison"
+            _write_comparison(
+                comparison_dir,
+                pinned_nonzero_loss=3.9,
+                pinned_nonzero_delta=0.05,
+            )
+
+            report = write_pinned_support_decision_report(
+                comparison_dir,
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["decision"], PROMOTE)
+            self.assertTrue(report["promote_to_default_phase0_baseline"])
+
+    def test_failed_artifact_check_blocks_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "comparison"
+            _write_comparison(
+                comparison_dir,
+                pinned_nonzero_loss=3.9,
+                pinned_nonzero_delta=0.05,
+            )
+            artifact_check_path = tmp_path / "artifact_check.json"
+            artifact_check_path.write_text(
+                json.dumps({"status": "fail"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_pinned_support_decision_report(
+                comparison_dir,
+                tmp_path / "report",
+                artifact_check_path=artifact_check_path,
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(report["promote_to_default_phase0_baseline"])
+
+
+def _write_comparison(
+    comparison_dir: Path,
+    *,
+    pinned_nonzero_loss: float,
+    pinned_nonzero_delta: float,
+) -> None:
+    comparison_dir.mkdir(parents=True)
+    summary = {
+        "status": "ok",
+        "verdict": {
+            "status": "pass",
+            "invariants_passed": True,
+            "invariant_count": 8,
+            "failed_invariants": [],
+            "artifact_invariants_passed": True,
+            "artifact_invariant_count": 6,
+            "failed_artifact_invariants": [],
+            "hep_alpha_acceptance": {"status": "accepted"},
+        },
+        "runs": [
+            _run_entry("repicked", pinned=False, nonzero_loss=4.0, nonzero_delta=0.0),
+            _run_entry(
+                "pinned",
+                pinned=True,
+                nonzero_loss=pinned_nonzero_loss,
+                nonzero_delta=pinned_nonzero_delta,
+            ),
+        ],
+    }
+    (comparison_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (comparison_dir / "metrics.csv").write_text("step,status\n0,ok\n", encoding="utf-8")
+    (comparison_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
+    for run_id in ("repicked", "pinned"):
+        run_dir = comparison_dir / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "summary.json").write_text(
+            json.dumps(
+                {
+                    "experiment_id": run_id,
+                    "status": "ok",
+                    "artifact_invariants": {
+                        "summary_json": True,
+                        "metrics_csv": True,
+                        "notes_md": True,
+                    },
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (run_dir / "metrics.csv").write_text("step,status\n0,ok\n", encoding="utf-8")
+        (run_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
+
+
+def _run_entry(
+    experiment_id: str,
+    *,
+    pinned: bool,
+    nonzero_loss: float,
+    nonzero_delta: float,
+) -> dict[str, object]:
+    return {
+        "experiment_id": experiment_id,
+        "config_path": f"configs/{experiment_id}.yaml",
+        "status": "ok",
+        "pinned_support": pinned,
+        "support_stress": True,
+        "support_instability": {
+            "support_change_fraction": 0.5,
+            "pinned_vs_repicked_logit_delta": 1.0,
+        },
+        "hep_alpha_sweep": [
+            {
+                "alpha": 0.0,
+                "loss": 4.0,
+                "max_logit_delta_from_ordinary": 0.0,
+                "support_change_fraction": 0.5,
+                "pinned_vs_repicked_logit_delta": 0.0,
+            },
+            {
+                "alpha": 0.25,
+                "loss": nonzero_loss,
+                "max_logit_delta_from_ordinary": nonzero_delta,
+                "support_change_fraction": 0.5,
+                "pinned_vs_repicked_logit_delta": 1.0,
+            },
+        ],
+    }
+
+
+if __name__ == "__main__":
+    unittest.main()
