@@ -43,6 +43,12 @@ Every experiment should be runnable as a plain Python command so it can run loca
 python -m relaleap.experiments.run --config configs/char_smoke.yaml
 ```
 
+The current supervised-vs-PC char smoke comparison is also command-driven:
+
+```bash
+python -m relaleap.experiments.compare
+```
+
 Colab should be treated as a temporary GPU runner, not the source of truth. The GitHub repo, config files, and run artifacts are the source of truth.
 
 ## Temporary Colab Bridge
