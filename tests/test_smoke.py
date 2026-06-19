@@ -10,6 +10,7 @@ from pathlib import Path
 from relaleap.experiments.run import run
 from relaleap.smoke import (
     ResidualColumns,
+    forward_with_hep_alpha,
     _hep_support_instability,
     run_phase0_smoke,
 )
@@ -233,6 +234,93 @@ class Phase0SmokeTest(unittest.TestCase):
         self.assertEqual(diagnostic["support_change_fraction"], 1.0)
         self.assertGreater(diagnostic["pinned_vs_repicked_logit_delta"], 0.0)
 
+    def test_hep_update_clip_bounds_settling_divergence(self) -> None:
+        try:
+            import torch
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+        except ModuleNotFoundError as exc:
+            if exc.name == "torch":
+                self.skipTest(str(exc))
+            raise
+
+        class IdentityBase:
+            def encode(self, inputs):
+                return inputs
+
+            def decode(self, hidden):
+                return hidden
+
+        residual = ResidualColumns(
+            hidden_dim=2,
+            num_columns=3,
+            atoms_per_column=1,
+            top_k=1,
+        )
+        with torch.no_grad():
+            residual.column_scores.weight.copy_(
+                torch.tensor(
+                    [
+                        [2.0, 0.0],
+                        [0.0, 2.0],
+                        [0.0, 0.0],
+                    ]
+                )
+            )
+            residual.atom_values.copy_(
+                torch.tensor(
+                    [
+                        [[-2.0, 5.0]],
+                        [[0.0, 10.0]],
+                        [[1.0, 1.0]],
+                    ]
+                )
+            )
+
+        inputs = torch.tensor([[[1.0, 0.0]]])
+        unclipped = _hep_support_instability(
+            IdentityBase(),
+            residual,
+            inputs,
+            pc_steps=2,
+            hep_alpha=1.0,
+        )
+        clipped = _hep_support_instability(
+            IdentityBase(),
+            residual,
+            inputs,
+            pc_steps=2,
+            hep_alpha=1.0,
+            hep_update_clip_norm=1.0,
+        )
+        unclipped_logits = forward_with_hep_alpha(
+            IdentityBase(),
+            residual,
+            inputs,
+            pc_steps=2,
+            hep_alpha=1.0,
+        )
+        clipped_logits = forward_with_hep_alpha(
+            IdentityBase(),
+            residual,
+            inputs,
+            pc_steps=2,
+            hep_alpha=1.0,
+            hep_update_clip_norm=1.0,
+        )
+
+        self.assertEqual(clipped["hep_update_clip_norm"], 1.0)
+        self.assertLess(
+            clipped["pinned_vs_repicked_logit_delta"],
+            unclipped["pinned_vs_repicked_logit_delta"],
+        )
+        self.assertLess(
+            float((clipped_logits - unclipped_logits).abs().max().item()),
+            10.0,
+        )
+
     def test_pinned_support_config_is_reported(self) -> None:
         pinned_config = copy.deepcopy(CONFIG)
         pinned_config["run"]["max_steps"] = 1
@@ -289,6 +377,33 @@ class Phase0SmokeTest(unittest.TestCase):
         ][0]
         self.assertGreater(alpha1["support_change_fraction"], 0.0)
         self.assertGreater(alpha1["pinned_vs_repicked_logit_delta"], 0.0)
+
+    def test_hep_update_clip_config_is_reported(self) -> None:
+        clipped_config = copy.deepcopy(CONFIG)
+        clipped_config["run"]["max_steps"] = 1
+        clipped_config["run"]["experiment_id"] = "test_hep_update_clip"
+        clipped_config["model"]["columns"]["support_stress"] = True
+        clipped_config["inference"] = {
+            "pc_steps": 2,
+            "hep_alpha": 0.0,
+            "hep_alpha_sweep": "0.0,1.0",
+            "hep_update_clip_norm": 0.01,
+        }
+
+        try:
+            result = run_phase0_smoke(clipped_config)
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        self.assertEqual(result.hep_update_clip_norm, 0.01)
+        self.assertEqual(result.to_summary()["hep_update_clip_norm"], 0.01)
+        self.assertEqual(result.support_instability["hep_update_clip_norm"], 0.01)
+        alpha1 = [
+            entry for entry in result.hep_alpha_sweep if entry["alpha"] == 1.0
+        ][0]
+        self.assertLessEqual(alpha1["max_logit_delta_from_ordinary"], 0.1)
 
     def test_runner_writes_required_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

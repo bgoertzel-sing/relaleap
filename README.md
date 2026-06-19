@@ -145,6 +145,20 @@ This is diagnostic-only evidence. It should be used to inspect whether pinned
 support and repicked settling diverge before promoting pinned-support behavior
 into the default comparison baseline.
 
+A separate opt-in clipped HEP support-stress config bounds each settling update
+by per-token hidden-state norm. This probes whether an HEP mechanism can keep
+nonzero settling inside the ordinary-logit delta budget without changing the
+checked Phase 0 baseline or promoting pinned support:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep_support_stress.yaml \
+  --config configs/char_smoke_hep_support_stress_clipped.yaml \
+  --out results/comparisons/support_stress_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/support_stress_clipped_hep
+```
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 

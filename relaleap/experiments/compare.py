@@ -364,6 +364,7 @@ def _comparison_entry(
         "zero_init_loss": phase0.get("zero_init_loss"),
         "pinned_support": phase0.get("pinned_support", False),
         "support_stress": phase0.get("support_stress", False),
+        "hep_update_clip_norm": phase0.get("hep_update_clip_norm"),
         "support_instability": phase0.get("support_instability") or {},
         "hep_alpha_sweep": phase0.get("hep_alpha_sweep") or [],
         "invariants": phase0.get("invariants") or {},
@@ -563,6 +564,7 @@ def _combined_rows(
                 "residual_objective": entry["residual_objective"],
                 "pinned_support": entry["pinned_support"],
                 "support_stress": entry["support_stress"],
+                "hep_update_clip_norm": entry.get("hep_update_clip_norm"),
                 "step": row.get("step", ""),
                 "phase": row.get("phase", ""),
                 "base_loss": row.get("base_loss", ""),
@@ -621,6 +623,7 @@ def _write_metrics(path: Path, rows: list[dict[str, Any]]) -> None:
         "residual_objective",
         "pinned_support",
         "support_stress",
+        "hep_update_clip_norm",
         "step",
         "phase",
         "base_loss",
@@ -664,16 +667,16 @@ def _write_notes(path: Path, comparison: dict[str, Any]) -> None:
         "",
         (
             "| Experiment | Objective | Pinned | Stress | Status | Initial loss | "
-            "Final loss | Delta | Ratio | Support change | Pinned-vs-repicked |"
+            "Final loss | Delta | Ratio | HEP clip | Support change | Pinned-vs-repicked |"
         ),
-        "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for entry in comparison["runs"]:
         support_instability = entry.get("support_instability") or {}
         row_template = (
             "| {experiment_id} | {objective} | {pinned} | {stress} | {status} | "
-            "{initial} | {final} | {delta} | {ratio} | {support_change} | "
-            "{pinned_vs_repicked} |"
+            "{initial} | {final} | {delta} | {ratio} | {hep_clip} | "
+            "{support_change} | {pinned_vs_repicked} |"
         )
         lines.append(
             row_template.format(
@@ -686,6 +689,7 @@ def _write_notes(path: Path, comparison: dict[str, Any]) -> None:
                 final=_format_note_metric(entry["final_residual_loss"]),
                 delta=_format_note_metric(entry["residual_loss_delta"]),
                 ratio=_format_note_metric(entry["residual_loss_ratio"]),
+                hep_clip=_format_note_metric(entry.get("hep_update_clip_norm")),
                 support_change=_format_note_metric(
                     support_instability.get("support_change_fraction")
                 ),

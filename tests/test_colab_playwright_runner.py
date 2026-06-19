@@ -28,6 +28,9 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "Pinned HEP status: ok",
                     "Support-stress comparison status: ok",
                     "Support-stress artifact check: pass",
+                    "Clipped support-stress comparison status: ok",
+                    "Clipped support-stress artifact check: pass",
+                    "char_smoke_hep_support_stress_clipped",
                     "char_smoke_pinned_hep_support_stress",
                     COMPLETION_TEXT,
                 ]

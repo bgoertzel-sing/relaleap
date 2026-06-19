@@ -41,6 +41,7 @@ class Phase0Result:
     pinned_support: bool
     support_stress: bool
     support_instability: dict[str, float | int | bool]
+    hep_update_clip_norm: float | None
     hep_alpha_sweep: list[dict[str, float]]
     invariants: dict[str, bool]
 
@@ -61,6 +62,7 @@ class Phase0Result:
             "pinned_support": self.pinned_support,
             "support_stress": self.support_stress,
             "support_instability": self.support_instability,
+            "hep_update_clip_norm": self.hep_update_clip_norm,
             "hep_alpha_sweep": self.hep_alpha_sweep,
             "invariants": self.invariants,
         }
@@ -112,10 +114,15 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     support_stress = bool(column_cfg.get("support_stress", False))
     pc_steps = int(inference_cfg.get("pc_steps", 1))
     hep_alpha = float(inference_cfg.get("hep_alpha", 0.0))
+    hep_update_clip_norm = _parse_optional_float(
+        inference_cfg.get("hep_update_clip_norm")
+    )
     hep_alpha_sweep = _parse_hep_alpha_sweep(inference_cfg, fallback_alpha=hep_alpha)
 
     if pc_steps < 1:
         raise ValueError("inference.pc_steps must be at least 1")
+    if hep_update_clip_norm is not None and hep_update_clip_norm <= 0.0:
+        raise ValueError("inference.hep_update_clip_norm must be positive when set")
     if max_steps < 1:
         raise ValueError("run.max_steps must be at least 1 for Phase 0 smoke")
     for alpha in hep_alpha_sweep:
@@ -153,6 +160,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             pc_steps=pc_steps,
             hep_alpha=0.0,
             pinned_support=pinned_support,
+            hep_update_clip_norm=hep_update_clip_norm,
         )
         base_loss_tensor = F.cross_entropy(
             base_logits[:, :-1, :].reshape(-1, vocab_size),
@@ -229,6 +237,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 pc_steps=pc_steps,
                 hep_alpha=0.0,
                 pinned_support=pinned_support,
+                hep_update_clip_norm=hep_update_clip_norm,
             )
         metric_rows.append(
             _metric_row(
@@ -267,6 +276,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 pc_steps=pc_steps,
                 hep_alpha=0.0,
                 pinned_support=pinned_support,
+                hep_update_clip_norm=hep_update_clip_norm,
             )
         metric_rows.append(
             _metric_row(
@@ -293,6 +303,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         inputs,
         pc_steps=pc_steps,
         hep_alpha=1.0,
+        hep_update_clip_norm=hep_update_clip_norm,
     )
     hep_sweep_rows = _evaluate_hep_alpha_sweep(
         base,
@@ -303,6 +314,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         pc_steps=pc_steps,
         alphas=hep_alpha_sweep,
         pinned_support=pinned_support,
+        hep_update_clip_norm=hep_update_clip_norm,
     )
     for sweep_row in hep_sweep_rows:
         if sweep_row["alpha"] == 0.0:
@@ -354,6 +366,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         pinned_support=pinned_support,
         support_stress=support_stress,
         support_instability=support_instability,
+        hep_update_clip_norm=hep_update_clip_norm,
         hep_alpha_sweep=hep_sweep_rows,
         invariants=invariants,
     )
@@ -504,6 +517,7 @@ def forward_with_hep_alpha(
     pc_steps: int,
     hep_alpha: float,
     pinned_support: bool = False,
+    hep_update_clip_norm: float | None = None,
 ) -> Any:
     """Run ordinary residual inference plus bounded HEP-style settling.
 
@@ -517,6 +531,8 @@ def forward_with_hep_alpha(
         raise ValueError("pc_steps must be at least 1")
     if hep_alpha < 0.0 or hep_alpha > 1.0:
         raise ValueError("hep_alpha must be between 0.0 and 1.0")
+    if hep_update_clip_norm is not None and hep_update_clip_norm <= 0.0:
+        raise ValueError("hep_update_clip_norm must be positive when set")
 
     hidden = base.encode(input_ids)
     support_indices = None
@@ -526,8 +542,19 @@ def forward_with_hep_alpha(
         settled = residual(hidden)
     for _ in range(1, pc_steps):
         proposed = residual(settled, support_indices=support_indices)
-        settled = settled + hep_alpha * (proposed - settled)
+        update = _clip_update(proposed - settled, hep_update_clip_norm)
+        settled = settled + hep_alpha * update
     return base.decode(settled)
+
+
+def _clip_update(update: Any, max_norm: float | None) -> Any:
+    if max_norm is None:
+        return update
+    import torch
+
+    norm = update.norm(dim=-1, keepdim=True)
+    scale = torch.clamp(max_norm / norm.clamp_min(1e-12), max=1.0)
+    return update * scale
 
 
 def _residual_loss(
@@ -576,6 +603,12 @@ def _parse_hep_alpha_sweep(
     raise ValueError("inference.hep_alpha_sweep must be a list or comma-separated string")
 
 
+def _parse_optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
 def _evaluate_hep_alpha_sweep(
     base: Any,
     residual: Any,
@@ -586,6 +619,7 @@ def _evaluate_hep_alpha_sweep(
     pc_steps: int,
     alphas: list[float],
     pinned_support: bool,
+    hep_update_clip_norm: float | None,
 ) -> list[dict[str, float]]:
     import torch.nn.functional as F
 
@@ -599,6 +633,7 @@ def _evaluate_hep_alpha_sweep(
                 inputs,
                 pc_steps=pc_steps,
                 hep_alpha=alpha,
+                hep_update_clip_norm=hep_update_clip_norm,
             )
             hep_logits = forward_with_hep_alpha(
                 base,
@@ -607,6 +642,7 @@ def _evaluate_hep_alpha_sweep(
                 pc_steps=pc_steps,
                 hep_alpha=alpha,
                 pinned_support=pinned_support,
+                hep_update_clip_norm=hep_update_clip_norm,
             )
             loss = F.cross_entropy(
                 hep_logits[:, :-1, :].reshape(-1, vocab_size),
@@ -640,6 +676,7 @@ def _hep_support_instability(
     *,
     pc_steps: int,
     hep_alpha: float,
+    hep_update_clip_norm: float | None = None,
 ) -> dict[str, float | int | bool]:
     """Measure ordinary support repicking during HEP settling.
 
@@ -652,6 +689,8 @@ def _hep_support_instability(
         raise ValueError("pc_steps must be at least 1")
     if hep_alpha < 0.0 or hep_alpha > 1.0:
         raise ValueError("hep_alpha must be between 0.0 and 1.0")
+    if hep_update_clip_norm is not None and hep_update_clip_norm <= 0.0:
+        raise ValueError("hep_update_clip_norm must be positive when set")
 
     with _torch_no_grad():
         hidden = base.encode(inputs)
@@ -669,12 +708,16 @@ def _hep_support_instability(
                 return_support=True,
             )
             pinned_proposed = residual(pinned_settled, support_indices=initial_support)
-            repicked_settled = repicked_settled + hep_alpha * (
-                repicked_proposed - repicked_settled
+            repicked_update = _clip_update(
+                repicked_proposed - repicked_settled,
+                hep_update_clip_norm,
             )
-            pinned_settled = pinned_settled + hep_alpha * (
-                pinned_proposed - pinned_settled
+            pinned_update = _clip_update(
+                pinned_proposed - pinned_settled,
+                hep_update_clip_norm,
             )
+            repicked_settled = repicked_settled + hep_alpha * repicked_update
+            pinned_settled = pinned_settled + hep_alpha * pinned_update
 
             changed = (repicked_support != initial_support).any(dim=-1)
             support_transition_count += int(changed.sum().item())
@@ -687,6 +730,7 @@ def _hep_support_instability(
         return {
             "pc_steps": pc_steps,
             "hep_alpha": float(hep_alpha),
+            "hep_update_clip_norm": hep_update_clip_norm,
             "support_positions": total_positions,
             "support_changed_positions": changed_position_count,
             "support_change_fraction": (
@@ -708,6 +752,7 @@ def _max_hep_delta_from_ordinary(
     pc_steps: int,
     hep_alpha: float,
     pinned_support: bool,
+    hep_update_clip_norm: float | None,
 ) -> float:
     with _torch_no_grad():
         ordinary_logits = base(inputs, residual_adapter=residual)
@@ -718,6 +763,7 @@ def _max_hep_delta_from_ordinary(
             pc_steps=pc_steps,
             hep_alpha=hep_alpha,
             pinned_support=pinned_support,
+            hep_update_clip_norm=hep_update_clip_norm,
         )
     return float((ordinary_logits - hep_logits).abs().max().item())
 
