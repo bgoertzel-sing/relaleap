@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+import base64
+import io
+from pathlib import Path
+import tempfile
 import unittest
+import zipfile
 
-from tools.colab_playwright_runner import COMPLETION_TEXT, _validate_evidence_text
+from tools.colab_playwright_runner import (
+    ARTIFACT_BUNDLE_BEGIN,
+    ARTIFACT_BUNDLE_END,
+    COMPLETION_TEXT,
+    _extract_colab_artifact_bundle,
+    _validate_evidence_text,
+)
 
 
 class ColabPlaywrightRunnerTest(unittest.TestCase):
@@ -29,6 +40,48 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     ]
                 )
             )
+
+    def test_extract_colab_artifact_bundle_writes_safe_paths(self) -> None:
+        bundle = _zip_base64(
+            {
+                "results/comparisons/colab_phase0/summary.json": "{}\n",
+                "results/comparisons/colab_phase0/notes.md": "# Notes\n",
+            }
+        )
+        evidence = "\n".join(
+            [
+                ARTIFACT_BUNDLE_BEGIN,
+                bundle[:20],
+                bundle[20:],
+                ARTIFACT_BUNDLE_END,
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            extracted = _extract_colab_artifact_bundle(evidence, Path(tmpdir))
+
+            self.assertEqual(len(extracted), 2)
+            self.assertEqual(
+                (Path(tmpdir) / "results/comparisons/colab_phase0/summary.json")
+                .read_text(encoding="utf-8"),
+                "{}\n",
+            )
+
+    def test_extract_colab_artifact_bundle_rejects_unsafe_paths(self) -> None:
+        bundle = _zip_base64({"../outside.txt": "bad\n"})
+        evidence = "\n".join([ARTIFACT_BUNDLE_BEGIN, bundle, ARTIFACT_BUNDLE_END])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(RuntimeError, "Unsafe Colab artifact path"):
+                _extract_colab_artifact_bundle(evidence, Path(tmpdir))
+
+
+def _zip_base64(files: dict[str, str]) -> str:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
 if __name__ == "__main__":

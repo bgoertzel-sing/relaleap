@@ -16,9 +16,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 from datetime import datetime, timezone
+import io
 import sys
 from pathlib import Path
+import zipfile
 
 
 COLAB_NOTEBOOK_URL = (
@@ -26,6 +29,8 @@ COLAB_NOTEBOOK_URL = (
     "bgoertzel-sing/relaleap/blob/main/notebooks/relaleap_colab_smoke.ipynb"
 )
 COMPLETION_TEXT = "RelaLeap Colab Phase 0 comparison completed."
+ARTIFACT_BUNDLE_BEGIN = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_BEGIN"
+ARTIFACT_BUNDLE_END = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_END"
 OUTPUT_SELECTORS = (
     "colab-static-output-renderer",
     ".output",
@@ -121,6 +126,39 @@ def _validate_evidence_text(text: str) -> None:
         )
 
 
+def _extract_colab_artifact_bundle(
+    text: str,
+    destination_root: Path = Path("."),
+) -> list[Path]:
+    begin = text.find(ARTIFACT_BUNDLE_BEGIN)
+    end = text.find(ARTIFACT_BUNDLE_END)
+    if begin < 0 or end < 0 or end <= begin:
+        return []
+
+    encoded = text[begin + len(ARTIFACT_BUNDLE_BEGIN) : end]
+    encoded = "".join(encoded.split())
+    if not encoded:
+        raise RuntimeError("Colab artifact bundle marker was present but empty.")
+
+    root = destination_root.resolve()
+    extracted: list[Path] = []
+    with zipfile.ZipFile(io.BytesIO(base64.b64decode(encoded))) as archive:
+        for member in archive.infolist():
+            member_path = Path(member.filename)
+            if member_path.is_absolute() or ".." in member_path.parts:
+                raise RuntimeError(f"Unsafe Colab artifact path: {member.filename}")
+            target = (root / member_path).resolve()
+            if root not in [target, *target.parents]:
+                raise RuntimeError(f"Colab artifact escapes destination: {member.filename}")
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.read(member))
+            extracted.append(target)
+    return extracted
+
+
 async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path) -> None:
     timeout_seconds = timeout_minutes * 60
     started = asyncio.get_running_loop().time()
@@ -141,6 +179,11 @@ async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path)
     await _write_evidence(page, evidence_out)
     text = evidence_out.read_text()
     _validate_evidence_text(text)
+    extracted = _extract_colab_artifact_bundle(text)
+    if extracted:
+        print(f"extracted {len(extracted)} Colab artifact file(s) from rendered bundle.")
+    else:
+        print("No rendered Colab artifact bundle found to extract.")
     print("Colab completion detected and evidence passed visible-output checks.")
 
 

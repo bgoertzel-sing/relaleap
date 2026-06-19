@@ -74,6 +74,11 @@ evidence to:
 results/colab_bridge_evidence/latest_colab_output.txt
 ```
 
+The notebook also emits a rendered base64 zip bundle for
+`results/comparisons/colab_phase0`. When that bundle is present in the rendered
+output, the helper extracts it under the local repo root so the normal
+after-the-fact checker can inspect the Colab artifact tree locally.
+
 If the keyboard shortcut stops working after a Colab UI change, try
 `--run-method both`.
 
