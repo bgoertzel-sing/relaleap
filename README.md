@@ -74,7 +74,9 @@ python -m relaleap.experiments.compare --out results/comparisons/colab_phase0 --
 
 This writes `baseline_comparison.json` under the comparison output directory
 and exits nonzero if the accepted HEP alpha, Phase 0 invariant result, artifact
-contract, or config set diverges from the checked-in baseline.
+contract, or config set diverges from the checked-in baseline. The comparison
+verdict fails closed when a child run summary does not report passing
+`summary_json`, `metrics_csv`, and `notes_md` artifact invariants.
 
 To inspect a completed local or Colab comparison artifact tree without rerunning
 experiments, run:

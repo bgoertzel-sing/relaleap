@@ -19,6 +19,14 @@ from relaleap.experiments.compare import (
 )
 
 
+def _passing_artifact_invariants() -> dict[str, bool]:
+    return {
+        "summary_json": True,
+        "metrics_csv": True,
+        "notes_md": True,
+    }
+
+
 class ComparisonReportTest(unittest.TestCase):
     def test_comparison_entry_summarizes_loss_trajectory(self) -> None:
         summary = {
@@ -32,6 +40,7 @@ class ComparisonReportTest(unittest.TestCase):
                 "zero_init_loss": 3.0,
                 "invariants": {"zero_init_identity": True},
             },
+            "artifact_invariants": _passing_artifact_invariants(),
         }
         rows = [
             {"step": "0", "residual_loss": "3.00000000"},
@@ -65,6 +74,7 @@ class ComparisonReportTest(unittest.TestCase):
                 {
                     "experiment_id": "char_smoke",
                     "invariants": {"zero_init_identity": True},
+                    "artifact_invariants": _passing_artifact_invariants(),
                     "hep_alpha_sweep": [],
                 },
                 {
@@ -73,6 +83,7 @@ class ComparisonReportTest(unittest.TestCase):
                         "zero_init_identity": True,
                         "hep_alpha_0_equivalence": True,
                     },
+                    "artifact_invariants": _passing_artifact_invariants(),
                     "hep_alpha_sweep": [
                         {
                             "alpha": 0.0,
@@ -124,6 +135,7 @@ class ComparisonReportTest(unittest.TestCase):
                         "zero_init_identity": True,
                         "hep_alpha_0_equivalence": True,
                     },
+                    "artifact_invariants": _passing_artifact_invariants(),
                     "hep_alpha_sweep": [
                         {
                             "alpha": 0.0,
@@ -170,6 +182,7 @@ class ComparisonReportTest(unittest.TestCase):
                         "zero_init_identity": True,
                         "frozen_base_unchanged": False,
                     },
+                    "artifact_invariants": _passing_artifact_invariants(),
                     "hep_alpha_sweep": [],
                 }
             ],
@@ -185,6 +198,31 @@ class ComparisonReportTest(unittest.TestCase):
                     "experiment_id": "char_smoke",
                     "invariant": "frozen_base_unchanged",
                 }
+            ],
+        )
+
+    def test_comparison_verdict_fails_when_artifact_invariants_missing(self) -> None:
+        verdict = _comparison_verdict(
+            [
+                {
+                    "experiment_id": "char_smoke",
+                    "invariants": {"zero_init_identity": True},
+                    "hep_alpha_sweep": [],
+                }
+            ],
+            "ok",
+        )
+
+        self.assertEqual(verdict["status"], "fail")
+        self.assertTrue(verdict["invariants_passed"])
+        self.assertFalse(verdict["artifact_invariants_passed"])
+        self.assertEqual(verdict["artifact_invariant_count"], 3)
+        self.assertEqual(
+            verdict["failed_artifact_invariants"],
+            [
+                {"experiment_id": "char_smoke", "artifact": "summary_json"},
+                {"experiment_id": "char_smoke", "artifact": "metrics_csv"},
+                {"experiment_id": "char_smoke", "artifact": "notes_md"},
             ],
         )
 
@@ -227,6 +265,7 @@ class ComparisonReportTest(unittest.TestCase):
                     {
                         "experiment_id": "char_smoke_hep",
                         "invariants": {"zero_init_identity": True},
+                        "artifact_invariants": _passing_artifact_invariants(),
                         "hep_alpha_sweep": [
                             {
                                 "alpha": 0.0,
@@ -251,6 +290,7 @@ class ComparisonReportTest(unittest.TestCase):
                     "status": "ok",
                     "training_steps": 10,
                     "invariants": {"zero_init_identity": True},
+                    "artifact_invariants": _passing_artifact_invariants(),
                     "final_residual_loss": 3.4,
                 }
             ],
@@ -263,7 +303,7 @@ class ComparisonReportTest(unittest.TestCase):
         self.assertEqual(baseline["verdict_status"], "pass")
         self.assertEqual(baseline["phase0_invariants"]["count"], 1)
         self.assertTrue(baseline["artifact_invariants"]["passed"])
-        self.assertEqual(baseline["artifact_invariants"]["count"], 0)
+        self.assertEqual(baseline["artifact_invariants"]["count"], 3)
         self.assertEqual(baseline["artifact_invariants"]["failed"], [])
         self.assertEqual(baseline["hep"]["best_alpha_by_loss"]["alpha"], 0.25)
         self.assertEqual(
@@ -337,6 +377,7 @@ class ComparisonReportTest(unittest.TestCase):
                     "experiment_id": experiment_id,
                     "status": "ok",
                     "error": None,
+                    "artifact_invariants": _passing_artifact_invariants(),
                     "phase0": {
                         "residual_objective": objective,
                         "training_steps": 1,
@@ -372,7 +413,7 @@ class ComparisonReportTest(unittest.TestCase):
             self.assertEqual(saved["runs"][0]["residual_loss_delta"], -0.25)
             self.assertEqual(saved["verdict"]["status"], "pass")
             self.assertTrue(saved["verdict"]["artifact_invariants_passed"])
-            self.assertEqual(saved["verdict"]["artifact_invariant_count"], 0)
+            self.assertEqual(saved["verdict"]["artifact_invariant_count"], 6)
             self.assertEqual(saved["verdict"]["best_hep_alpha_by_loss"]["alpha"], 0.0)
             self.assertEqual(
                 saved["verdict"]["hep_alpha_acceptance"]["status"],
@@ -400,7 +441,7 @@ class ComparisonReportTest(unittest.TestCase):
             self.assertTrue((tmp_path / "baseline" / "phase0.json").is_file())
             self.assertEqual(baseline["comparison_status"], "ok")
             self.assertEqual(baseline["phase0_invariants"]["count"], 2)
-            self.assertEqual(baseline["artifact_invariants"]["count"], 0)
+            self.assertEqual(baseline["artifact_invariants"]["count"], 6)
             self.assertEqual(
                 baseline["hep"]["acceptance"]["status"],
                 "no_nonzero_hep_candidates",
@@ -440,6 +481,7 @@ class ComparisonReportTest(unittest.TestCase):
                     {
                         "experiment_id": "char_smoke_hep",
                         "invariants": {"zero_init_identity": True},
+                        "artifact_invariants": _passing_artifact_invariants(),
                         "hep_alpha_sweep": [
                             {
                                 "alpha": 0.0,
@@ -464,6 +506,7 @@ class ComparisonReportTest(unittest.TestCase):
                     "status": "ok",
                     "training_steps": 10,
                     "invariants": {"zero_init_identity": True},
+                    "artifact_invariants": _passing_artifact_invariants(),
                     "final_residual_loss": 3.4,
                 }
             ],
@@ -493,6 +536,7 @@ class ComparisonReportTest(unittest.TestCase):
                     {
                         "experiment_id": "char_smoke_hep",
                         "invariants": {"zero_init_identity": True},
+                        "artifact_invariants": _passing_artifact_invariants(),
                         "hep_alpha_sweep": [
                             {
                                 "alpha": 0.0,
@@ -512,6 +556,7 @@ class ComparisonReportTest(unittest.TestCase):
                     "status": "ok",
                     "training_steps": 10,
                     "invariants": {"zero_init_identity": True},
+                    "artifact_invariants": _passing_artifact_invariants(),
                     "final_residual_loss": 3.5,
                 }
             ],
@@ -543,6 +588,7 @@ class ComparisonReportTest(unittest.TestCase):
                     {
                         "experiment_id": "char_smoke_hep",
                         "invariants": {"zero_init_identity": True},
+                        "artifact_invariants": _passing_artifact_invariants(),
                         "hep_alpha_sweep": [
                             {
                                 "alpha": 0.0,
@@ -567,6 +613,7 @@ class ComparisonReportTest(unittest.TestCase):
                     "status": "ok",
                     "training_steps": 10,
                     "invariants": {"zero_init_identity": True},
+                    "artifact_invariants": _passing_artifact_invariants(),
                     "final_residual_loss": 3.4,
                 }
             ],

@@ -20,6 +20,7 @@ DEFAULT_CONFIGS = (
 DEFAULT_HEP_MAX_LOGIT_DELTA = 0.1
 DEFAULT_HEP_MIN_LOSS_IMPROVEMENT = 0.0
 BASELINE_SCHEMA_VERSION = 2
+REQUIRED_ARTIFACT_INVARIANTS = ("summary_json", "metrics_csv", "notes_md")
 
 
 def run_comparison(
@@ -355,10 +356,13 @@ def _comparison_verdict(
                         "invariant": name,
                     }
                 )
-        artifact_invariants = entry.get("artifact_invariants") or {}
-        artifact_invariant_count += len(artifact_invariants)
-        for name, value in sorted(artifact_invariants.items()):
-            if not value:
+        artifact_invariants = entry.get("artifact_invariants")
+        artifact_invariant_count += len(REQUIRED_ARTIFACT_INVARIANTS)
+        for name in REQUIRED_ARTIFACT_INVARIANTS:
+            if (
+                not isinstance(artifact_invariants, dict)
+                or artifact_invariants.get(name) is not True
+            ):
                 failed_artifact_invariants.append(
                     {
                         "experiment_id": entry["experiment_id"],
@@ -373,7 +377,9 @@ def _comparison_verdict(
         min_loss_improvement=hep_min_loss_improvement,
     )
     invariants_passed = bool(invariant_count) and not failed_invariants
-    artifact_invariants_passed = not failed_artifact_invariants
+    artifact_invariants_passed = (
+        bool(artifact_invariant_count) and not failed_artifact_invariants
+    )
     verdict_status = (
         "pass"
         if status == "ok" and invariants_passed and artifact_invariants_passed
