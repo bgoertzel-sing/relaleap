@@ -113,6 +113,22 @@ leaving the default Phase 0 comparison baseline unchanged:
 python -m relaleap.experiments.run --config configs/char_smoke_pinned_hep.yaml --out results/runs/char_smoke_pinned_hep
 ```
 
+To compare pinned-support HEP against the ordinary HEP smoke path without
+changing the checked Phase 0 baseline, run:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep.yaml \
+  --config configs/char_smoke_pinned_hep.yaml \
+  --out results/comparisons/pinned_vs_ordinary_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/pinned_vs_ordinary_hep
+```
+
+The current smoke evidence shows identical ordinary and pinned HEP alpha sweeps,
+so pinned support remains an opt-in artifact-only smoke path rather than a
+separate checked baseline.
+
 Colab should be treated as a temporary GPU runner, not the source of truth. The GitHub repo, config files, and run artifacts are the source of truth.
 
 ## Temporary Colab Bridge
