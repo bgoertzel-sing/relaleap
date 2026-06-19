@@ -38,6 +38,7 @@ class Phase0Result:
     residual_parameter_delta: float
     max_zero_init_logit_delta: float
     max_hep_alpha0_logit_delta: float
+    pinned_support: bool
     hep_alpha_sweep: list[dict[str, float]]
     invariants: dict[str, bool]
 
@@ -55,6 +56,7 @@ class Phase0Result:
             "residual_parameter_delta": self.residual_parameter_delta,
             "max_zero_init_logit_delta": self.max_zero_init_logit_delta,
             "max_hep_alpha0_logit_delta": self.max_hep_alpha0_logit_delta,
+            "pinned_support": self.pinned_support,
             "hep_alpha_sweep": self.hep_alpha_sweep,
             "invariants": self.invariants,
         }
@@ -102,6 +104,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     num_columns = int(column_cfg.get("num_columns", 8))
     atoms_per_column = int(column_cfg.get("atoms_per_column", 4))
     top_k = int(column_cfg.get("top_k", 1))
+    pinned_support = bool(column_cfg.get("pinned_support", False))
     pc_steps = int(inference_cfg.get("pc_steps", 1))
     hep_alpha = float(inference_cfg.get("hep_alpha", 0.0))
     hep_alpha_sweep = _parse_hep_alpha_sweep(inference_cfg, fallback_alpha=hep_alpha)
@@ -144,6 +147,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             inputs,
             pc_steps=pc_steps,
             hep_alpha=0.0,
+            pinned_support=pinned_support,
         )
         base_loss_tensor = F.cross_entropy(
             base_logits[:, :-1, :].reshape(-1, vocab_size),
@@ -217,6 +221,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 inputs,
                 pc_steps=pc_steps,
                 hep_alpha=0.0,
+                pinned_support=pinned_support,
             )
         metric_rows.append(
             _metric_row(
@@ -243,6 +248,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         vocab_size,
         pc_steps=pc_steps,
         alphas=hep_alpha_sweep,
+        pinned_support=pinned_support,
     )
     for sweep_row in hep_sweep_rows:
         if sweep_row["alpha"] == 0.0:
@@ -287,6 +293,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         residual_parameter_delta=_state_dict_delta(before_residual, residual),
         max_zero_init_logit_delta=max_zero_delta,
         max_hep_alpha0_logit_delta=max_hep_alpha0_delta,
+        pinned_support=pinned_support,
         hep_alpha_sweep=hep_sweep_rows,
         invariants=invariants,
     )
@@ -374,9 +381,18 @@ class ResidualColumns:
                 )
                 nn.init.zeros_(self.column_scores.weight)
 
-            def forward(self, hidden: Any) -> Any:
+            def forward(
+                self,
+                hidden: Any,
+                support_indices: Any | None = None,
+                return_support: bool = False,
+            ) -> Any:
                 scores = self.column_scores(hidden)
-                top_values, top_indices = scores.topk(self.top_k, dim=-1)
+                if support_indices is None:
+                    top_values, top_indices = scores.topk(self.top_k, dim=-1)
+                else:
+                    top_indices = support_indices
+                    top_values = scores.gather(dim=-1, index=top_indices)
                 column_weights = F.softmax(top_values, dim=-1)
                 atom_weights = F.softmax(self.atom_logits, dim=-1)
                 column_values = torch.einsum(
@@ -386,7 +402,10 @@ class ResidualColumns:
                 )
                 selected_values = column_values[top_indices]
                 residual = torch.einsum("bsk,bskh->bsh", column_weights, selected_values)
-                return hidden + residual
+                output = hidden + residual
+                if return_support:
+                    return output, top_indices.detach()
+                return output
 
         return _ResidualColumns(*args, **kwargs)
 
@@ -398,6 +417,7 @@ def forward_with_hep_alpha(
     *,
     pc_steps: int,
     hep_alpha: float,
+    pinned_support: bool = False,
 ) -> Any:
     """Run ordinary residual inference plus bounded HEP-style settling.
 
@@ -413,9 +433,13 @@ def forward_with_hep_alpha(
         raise ValueError("hep_alpha must be between 0.0 and 1.0")
 
     hidden = base.encode(input_ids)
-    settled = residual(hidden)
+    support_indices = None
+    if pinned_support:
+        settled, support_indices = residual(hidden, return_support=True)
+    else:
+        settled = residual(hidden)
     for _ in range(1, pc_steps):
-        proposed = residual(settled)
+        proposed = residual(settled, support_indices=support_indices)
         settled = settled + hep_alpha * (proposed - settled)
     return base.decode(settled)
 
@@ -475,6 +499,7 @@ def _evaluate_hep_alpha_sweep(
     *,
     pc_steps: int,
     alphas: list[float],
+    pinned_support: bool,
 ) -> list[dict[str, float]]:
     import torch.nn.functional as F
 
@@ -488,6 +513,7 @@ def _evaluate_hep_alpha_sweep(
                 inputs,
                 pc_steps=pc_steps,
                 hep_alpha=alpha,
+                pinned_support=pinned_support,
             )
             loss = F.cross_entropy(
                 hep_logits[:, :-1, :].reshape(-1, vocab_size),
@@ -512,6 +538,7 @@ def _max_hep_delta_from_ordinary(
     *,
     pc_steps: int,
     hep_alpha: float,
+    pinned_support: bool,
 ) -> float:
     with _torch_no_grad():
         ordinary_logits = base(inputs, residual_adapter=residual)
@@ -521,6 +548,7 @@ def _max_hep_delta_from_ordinary(
             inputs,
             pc_steps=pc_steps,
             hep_alpha=hep_alpha,
+            pinned_support=pinned_support,
         )
     return float((ordinary_logits - hep_logits).abs().max().item())
 

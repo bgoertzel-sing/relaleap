@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from relaleap.experiments.run import run
-from relaleap.smoke import run_phase0_smoke
+from relaleap.smoke import ResidualColumns, run_phase0_smoke
 
 
 CONFIG = {
@@ -122,6 +122,74 @@ class Phase0SmokeTest(unittest.TestCase):
         self.assertTrue(
             all(row["hep_loss"] != "" for row in sweep_rows)
         )
+
+    def test_residual_columns_can_pin_selected_support(self) -> None:
+        try:
+            import torch
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+        except ModuleNotFoundError as exc:
+            if exc.name == "torch":
+                self.skipTest(str(exc))
+            raise
+
+        residual = ResidualColumns(
+            hidden_dim=2,
+            num_columns=3,
+            atoms_per_column=1,
+            top_k=1,
+        )
+        with torch.no_grad():
+            residual.column_scores.weight.copy_(
+                torch.tensor(
+                    [
+                        [2.0, 0.0],
+                        [0.0, 2.0],
+                        [0.0, 0.0],
+                    ]
+                )
+            )
+            residual.atom_values.copy_(
+                torch.tensor(
+                    [
+                        [[-2.0, 5.0]],
+                        [[0.0, 10.0]],
+                        [[1.0, 1.0]],
+                    ]
+                )
+            )
+
+        hidden = torch.tensor([[[1.0, 0.0]]])
+        settled, support = residual(hidden, return_support=True)
+        repicked = residual(settled)
+        pinned = residual(settled, support_indices=support)
+
+        self.assertEqual(support.tolist(), [[[0]]])
+        self.assertNotEqual(repicked.tolist(), pinned.tolist())
+        self.assertEqual(pinned.tolist(), [[[-3.0, 10.0]]])
+
+    def test_pinned_support_config_is_reported(self) -> None:
+        pinned_config = copy.deepcopy(CONFIG)
+        pinned_config["run"]["max_steps"] = 1
+        pinned_config["model"]["columns"]["pinned_support"] = True
+        pinned_config["inference"] = {
+            "pc_steps": 2,
+            "hep_alpha": 0.0,
+            "hep_alpha_sweep": "0.0,0.5",
+        }
+
+        try:
+            result = run_phase0_smoke(pinned_config)
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        self.assertTrue(result.pinned_support)
+        self.assertTrue(result.to_summary()["pinned_support"])
+        self.assertTrue(result.invariants["hep_alpha_0_equivalence"])
 
     def test_runner_writes_required_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

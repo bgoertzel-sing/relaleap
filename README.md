@@ -105,6 +105,14 @@ The current tiny HEP alpha sweep is also command-driven:
 python -m relaleap.experiments.run --config configs/char_smoke_hep.yaml --out results/runs/char_smoke_hep
 ```
 
+Pinned-support HEP settling has a separate opt-in smoke config. It reuses the
+ordinary-pass top-k residual-column support during later settling updates, while
+leaving the default Phase 0 comparison baseline unchanged:
+
+```bash
+python -m relaleap.experiments.run --config configs/char_smoke_pinned_hep.yaml --out results/runs/char_smoke_pinned_hep
+```
+
 Colab should be treated as a temporary GPU runner, not the source of truth. The GitHub repo, config files, and run artifacts are the source of truth.
 
 ## Temporary Colab Bridge
