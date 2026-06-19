@@ -41,6 +41,7 @@ def run_comparison(config_paths: list[Path], out_dir: Path) -> dict[str, Any]:
         combined_rows.extend(_combined_rows(entry, metric_rows))
 
     status = "ok" if all(entry["status"] == "ok" for entry in entries) else "failed"
+    verdict = _comparison_verdict(entries, status)
     comparison = {
         "status": status,
         "out_dir": str(out_dir),
@@ -49,6 +50,7 @@ def run_comparison(config_paths: list[Path], out_dir: Path) -> dict[str, Any]:
             "Residual objectives may use different loss scales; compare each "
             "trajectory against its own initial loss."
         ),
+        "verdict": verdict,
         "runs": entries,
     }
     _write_metrics(out_dir / "metrics.csv", combined_rows)
@@ -95,6 +97,58 @@ def _comparison_entry(
         "hep_alpha_sweep": phase0.get("hep_alpha_sweep") or [],
         "invariants": phase0.get("invariants") or {},
     }
+
+
+def _comparison_verdict(
+    entries: list[dict[str, Any]],
+    status: str,
+) -> dict[str, Any]:
+    failed_invariants = []
+    invariant_count = 0
+    for entry in entries:
+        invariants = entry.get("invariants") or {}
+        invariant_count += len(invariants)
+        for name, value in sorted(invariants.items()):
+            if not value:
+                failed_invariants.append(
+                    {
+                        "experiment_id": entry["experiment_id"],
+                        "invariant": name,
+                    }
+                )
+
+    best_hep = _best_hep_alpha(entries)
+    invariants_passed = bool(invariant_count) and not failed_invariants
+    verdict_status = "pass" if status == "ok" and invariants_passed else "fail"
+    return {
+        "status": verdict_status,
+        "invariants_passed": invariants_passed,
+        "invariant_count": invariant_count,
+        "failed_invariants": failed_invariants,
+        "best_hep_alpha_by_loss": best_hep,
+    }
+
+
+def _best_hep_alpha(entries: list[dict[str, Any]]) -> dict[str, Any] | None:
+    candidates = []
+    for entry in entries:
+        for sweep_entry in entry.get("hep_alpha_sweep") or []:
+            loss = sweep_entry.get("loss")
+            if loss is None:
+                continue
+            candidates.append(
+                {
+                    "experiment_id": entry["experiment_id"],
+                    "alpha": float(sweep_entry["alpha"]),
+                    "loss": float(loss),
+                    "max_logit_delta_from_ordinary": float(
+                        sweep_entry["max_logit_delta_from_ordinary"]
+                    ),
+                }
+            )
+    if not candidates:
+        return None
+    return min(candidates, key=lambda candidate: candidate["loss"])
 
 
 def _combined_rows(
@@ -181,12 +235,18 @@ def _write_metrics(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def _write_notes(path: Path, comparison: dict[str, Any]) -> None:
+    verdict = comparison["verdict"]
     lines = [
         "# Char Smoke Objective Comparison",
         "",
         "Command-driven comparison of Phase 0 char-smoke residual objectives.",
         "",
         f"- Status: `{comparison['status']}`",
+        f"- Verdict: `{verdict['status']}`",
+        (
+            f"- Phase 0 invariants: `{verdict['invariant_count']}` checked, "
+            f"passed `{verdict['invariants_passed']}`"
+        ),
         f"- Loss scale note: {comparison['loss_scale_note']}",
         "",
         "## Runs",
@@ -229,6 +289,28 @@ def _write_notes(path: Path, comparison: dict[str, Any]) -> None:
                 for sweep_entry in entry["hep_alpha_sweep"]
             )
             lines.append(f"- `{entry['experiment_id']}`: {sweep}")
+    if verdict["failed_invariants"]:
+        lines.extend(["", "## Failed Invariants", ""])
+        for failed in verdict["failed_invariants"]:
+            lines.append(
+                f"- `{failed['experiment_id']}`: `{failed['invariant']}`"
+            )
+    if verdict["best_hep_alpha_by_loss"]:
+        best = verdict["best_hep_alpha_by_loss"]
+        lines.extend(
+            [
+                "",
+                "## Verdict",
+                "",
+                (
+                    "- Best HEP alpha by loss: "
+                    f"`{best['alpha']}` in `{best['experiment_id']}` "
+                    f"with loss `{_format_note_metric(best['loss'])}` "
+                    "and ordinary-logit delta "
+                    f"`{_format_note_metric(best['max_logit_delta_from_ordinary'])}`"
+                ),
+            ]
+        )
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 

@@ -49,6 +49,9 @@ The current supervised/PC/HEP char smoke comparison is also command-driven:
 python -m relaleap.experiments.compare
 ```
 
+The comparison `summary.json` includes a compact verdict with aggregate
+Phase 0 invariant pass/fail status and the best HEP alpha by loss.
+
 The current tiny HEP alpha sweep is also command-driven:
 
 ```bash

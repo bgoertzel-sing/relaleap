@@ -10,6 +10,7 @@ from unittest.mock import patch
 from relaleap.experiments.compare import (
     DEFAULT_CONFIGS,
     _comparison_entry,
+    _comparison_verdict,
     run_comparison,
 )
 
@@ -52,6 +53,78 @@ class ComparisonReportTest(unittest.TestCase):
         self.assertEqual(
             [config.name for config in DEFAULT_CONFIGS],
             ["char_smoke.yaml", "char_smoke_pc.yaml", "char_smoke_hep.yaml"],
+        )
+
+    def test_comparison_verdict_summarizes_invariants_and_best_hep(self) -> None:
+        verdict = _comparison_verdict(
+            [
+                {
+                    "experiment_id": "char_smoke",
+                    "invariants": {"zero_init_identity": True},
+                    "hep_alpha_sweep": [],
+                },
+                {
+                    "experiment_id": "char_smoke_hep",
+                    "invariants": {
+                        "zero_init_identity": True,
+                        "hep_alpha_0_equivalence": True,
+                    },
+                    "hep_alpha_sweep": [
+                        {
+                            "alpha": 0.0,
+                            "loss": 3.5,
+                            "max_logit_delta_from_ordinary": 0.0,
+                        },
+                        {
+                            "alpha": 0.5,
+                            "loss": 3.25,
+                            "max_logit_delta_from_ordinary": 0.01,
+                        },
+                    ],
+                },
+            ],
+            "ok",
+        )
+
+        self.assertEqual(verdict["status"], "pass")
+        self.assertTrue(verdict["invariants_passed"])
+        self.assertEqual(verdict["invariant_count"], 3)
+        self.assertEqual(verdict["failed_invariants"], [])
+        self.assertEqual(
+            verdict["best_hep_alpha_by_loss"],
+            {
+                "experiment_id": "char_smoke_hep",
+                "alpha": 0.5,
+                "loss": 3.25,
+                "max_logit_delta_from_ordinary": 0.01,
+            },
+        )
+
+    def test_comparison_verdict_reports_failed_invariants(self) -> None:
+        verdict = _comparison_verdict(
+            [
+                {
+                    "experiment_id": "char_smoke",
+                    "invariants": {
+                        "zero_init_identity": True,
+                        "frozen_base_unchanged": False,
+                    },
+                    "hep_alpha_sweep": [],
+                }
+            ],
+            "ok",
+        )
+
+        self.assertEqual(verdict["status"], "fail")
+        self.assertFalse(verdict["invariants_passed"])
+        self.assertEqual(
+            verdict["failed_invariants"],
+            [
+                {
+                    "experiment_id": "char_smoke",
+                    "invariant": "frozen_base_unchanged",
+                }
+            ],
         )
 
     def test_run_comparison_writes_top_level_artifacts(self) -> None:
@@ -145,6 +218,8 @@ class ComparisonReportTest(unittest.TestCase):
             )
             self.assertEqual(len(saved["runs"]), 2)
             self.assertEqual(saved["runs"][0]["residual_loss_delta"], -0.25)
+            self.assertEqual(saved["verdict"]["status"], "pass")
+            self.assertEqual(saved["verdict"]["best_hep_alpha_by_loss"]["alpha"], 0.0)
 
             with (tmp_path / "comparison" / "metrics.csv").open(newline="") as handle:
                 rows = list(csv.DictReader(handle))
@@ -157,6 +232,7 @@ class ComparisonReportTest(unittest.TestCase):
             notes = (tmp_path / "comparison" / "notes.md").read_text(encoding="utf-8")
             self.assertIn("## HEP Alpha Sweeps", notes)
             self.assertIn("alpha 0.0", notes)
+            self.assertIn("Best HEP alpha by loss", notes)
 
 
 if __name__ == "__main__":
