@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
 from datetime import datetime, timezone
 import sys
 from pathlib import Path
@@ -62,15 +63,21 @@ async def _write_evidence(page, evidence_out: Path) -> None:
 
 
 async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path) -> None:
-    timeout_ms = int(timeout_minutes * 60_000)
+    timeout_seconds = timeout_minutes * 60
+    started = asyncio.get_running_loop().time()
     print(f"waiting up to {timeout_minutes:g} minute(s) for Colab completion text")
-    try:
-        await page.get_by_text(COMPLETION_TEXT, exact=False).wait_for(timeout=timeout_ms)
-    except Exception as exc:
-        await _write_evidence(page, evidence_out)
-        raise TimeoutError(
-            f"Timed out waiting for Colab completion text: {COMPLETION_TEXT!r}"
-        ) from exc
+    while True:
+        try:
+            await page.get_by_text(COMPLETION_TEXT, exact=False).wait_for(timeout=3_000)
+            break
+        except Exception as exc:
+            elapsed = asyncio.get_running_loop().time() - started
+            if elapsed >= timeout_seconds:
+                await _write_evidence(page, evidence_out)
+                raise TimeoutError(
+                    f"Timed out waiting for Colab completion text: {COMPLETION_TEXT!r}"
+                ) from exc
+            await _confirm_run_modals(page, max_rounds=1, timeout_ms=750)
 
     await _write_evidence(page, evidence_out)
     text = evidence_out.read_text()
@@ -96,7 +103,11 @@ async def _trigger_run_all(page, method: str) -> None:
             print("Could not trigger Run all via menus.")
 
 
-async def _confirm_run_modals(page) -> None:
+async def _confirm_run_modals(
+    page,
+    max_rounds: int = 12,
+    timeout_ms: int = 1_500,
+) -> bool:
     labels = [
         "Run anyway",
         "Run all",
@@ -106,21 +117,25 @@ async def _confirm_run_modals(page) -> None:
         "Ok",
         "Yes",
     ]
-    for _ in range(5):
+    any_clicked = False
+    for _ in range(max_rounds):
         clicked = False
         for label in labels:
             try:
                 button = page.get_by_role("button", name=label, exact=False).first
-                await button.click(timeout=1_500)
+                await button.click(timeout=timeout_ms)
                 print(f"confirmed modal button: {label}")
                 clicked = True
+                any_clicked = True
                 break
             except Exception:
                 pass
         if not clicked:
-            clicked = await _click_first(page, labels, timeout_ms=1_000)
+            clicked = await _click_first(page, labels, timeout_ms=timeout_ms)
+            any_clicked = any_clicked or clicked
         if not clicked:
             await page.wait_for_timeout(1_000)
+    return any_clicked
 
 
 async def _operate_page(
