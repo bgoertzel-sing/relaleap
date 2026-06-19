@@ -99,6 +99,63 @@ class ComparisonReportTest(unittest.TestCase):
                 "max_logit_delta_from_ordinary": 0.01,
             },
         )
+        self.assertEqual(verdict["hep_alpha_acceptance"]["status"], "accepted")
+        self.assertEqual(
+            verdict["hep_alpha_acceptance"]["accepted_alpha"]["alpha"],
+            0.5,
+        )
+        self.assertEqual(
+            verdict["hep_alpha_acceptance"]["accepted_alpha"][
+                "loss_improvement_from_alpha0"
+            ],
+            0.25,
+        )
+
+    def test_hep_acceptance_rejects_low_loss_alpha_over_delta_budget(self) -> None:
+        verdict = _comparison_verdict(
+            [
+                {
+                    "experiment_id": "char_smoke_hep",
+                    "invariants": {
+                        "zero_init_identity": True,
+                        "hep_alpha_0_equivalence": True,
+                    },
+                    "hep_alpha_sweep": [
+                        {
+                            "alpha": 0.0,
+                            "loss": 3.50,
+                            "max_logit_delta_from_ordinary": 0.0,
+                        },
+                        {
+                            "alpha": 0.25,
+                            "loss": 3.30,
+                            "max_logit_delta_from_ordinary": 0.05,
+                        },
+                        {
+                            "alpha": 0.5,
+                            "loss": 3.20,
+                            "max_logit_delta_from_ordinary": 0.20,
+                        },
+                    ],
+                },
+            ],
+            "ok",
+            hep_max_logit_delta=0.10,
+            hep_min_loss_improvement=0.0,
+        )
+
+        self.assertEqual(verdict["best_hep_alpha_by_loss"]["alpha"], 0.5)
+        self.assertEqual(verdict["hep_alpha_acceptance"]["status"], "accepted")
+        self.assertEqual(
+            verdict["hep_alpha_acceptance"]["accepted_alpha"]["alpha"],
+            0.25,
+        )
+        rejected = [
+            candidate
+            for candidate in verdict["hep_alpha_acceptance"]["candidates"]
+            if not candidate["accepted"]
+        ]
+        self.assertEqual([candidate["alpha"] for candidate in rejected], [0.5])
 
     def test_comparison_verdict_reports_failed_invariants(self) -> None:
         verdict = _comparison_verdict(
@@ -220,6 +277,10 @@ class ComparisonReportTest(unittest.TestCase):
             self.assertEqual(saved["runs"][0]["residual_loss_delta"], -0.25)
             self.assertEqual(saved["verdict"]["status"], "pass")
             self.assertEqual(saved["verdict"]["best_hep_alpha_by_loss"]["alpha"], 0.0)
+            self.assertEqual(
+                saved["verdict"]["hep_alpha_acceptance"]["status"],
+                "no_nonzero_hep_candidates",
+            )
 
             with (tmp_path / "comparison" / "metrics.csv").open(newline="") as handle:
                 rows = list(csv.DictReader(handle))
@@ -233,6 +294,7 @@ class ComparisonReportTest(unittest.TestCase):
             self.assertIn("## HEP Alpha Sweeps", notes)
             self.assertIn("alpha 0.0", notes)
             self.assertIn("Best HEP alpha by loss", notes)
+            self.assertIn("Accepted HEP alpha", notes)
 
 
 if __name__ == "__main__":

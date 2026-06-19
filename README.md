@@ -50,7 +50,10 @@ python -m relaleap.experiments.compare
 ```
 
 The comparison `summary.json` includes a compact verdict with aggregate
-Phase 0 invariant pass/fail status and the best HEP alpha by loss.
+Phase 0 invariant pass/fail status, the best HEP alpha by loss, and an HEP
+alpha acceptance policy. By default, accepted nonzero HEP alphas must improve
+loss over alpha 0 while keeping ordinary-logit delta at or below `0.1`; tune
+that gate with `--hep-max-logit-delta` and `--hep-min-loss-improvement`.
 
 The current tiny HEP alpha sweep is also command-driven:
 
