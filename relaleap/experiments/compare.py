@@ -362,6 +362,9 @@ def _comparison_entry(
         "residual_loss_ratio": loss_ratio,
         "base_loss": phase0.get("base_loss"),
         "zero_init_loss": phase0.get("zero_init_loss"),
+        "pinned_support": phase0.get("pinned_support", False),
+        "support_stress": phase0.get("support_stress", False),
+        "support_instability": phase0.get("support_instability") or {},
         "hep_alpha_sweep": phase0.get("hep_alpha_sweep") or [],
         "invariants": phase0.get("invariants") or {},
         "artifact_invariants": summary.get("artifact_invariants") or {},
@@ -558,6 +561,8 @@ def _combined_rows(
                 "config_path": entry["config_path"],
                 "run_dir": entry["run_dir"],
                 "residual_objective": entry["residual_objective"],
+                "pinned_support": entry["pinned_support"],
+                "support_stress": entry["support_stress"],
                 "step": row.get("step", ""),
                 "phase": row.get("phase", ""),
                 "base_loss": row.get("base_loss", ""),
@@ -614,6 +619,8 @@ def _write_metrics(path: Path, rows: list[dict[str, Any]]) -> None:
         "config_path",
         "run_dir",
         "residual_objective",
+        "pinned_support",
+        "support_stress",
         "step",
         "phase",
         "base_loss",
@@ -655,23 +662,36 @@ def _write_notes(path: Path, comparison: dict[str, Any]) -> None:
         "",
         "## Runs",
         "",
-        "| Experiment | Objective | Status | Initial loss | Final loss | Delta | Ratio |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: |",
+        (
+            "| Experiment | Objective | Pinned | Stress | Status | Initial loss | "
+            "Final loss | Delta | Ratio | Support change | Pinned-vs-repicked |"
+        ),
+        "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for entry in comparison["runs"]:
+        support_instability = entry.get("support_instability") or {}
         row_template = (
-            "| {experiment_id} | {objective} | {status} | {initial} | "
-            "{final} | {delta} | {ratio} |"
+            "| {experiment_id} | {objective} | {pinned} | {stress} | {status} | "
+            "{initial} | {final} | {delta} | {ratio} | {support_change} | "
+            "{pinned_vs_repicked} |"
         )
         lines.append(
             row_template.format(
                 experiment_id=entry["experiment_id"],
                 objective=entry["residual_objective"],
+                pinned=entry.get("pinned_support"),
+                stress=entry.get("support_stress"),
                 status=entry["status"],
                 initial=_format_note_metric(entry["initial_residual_loss"]),
                 final=_format_note_metric(entry["final_residual_loss"]),
                 delta=_format_note_metric(entry["residual_loss_delta"]),
                 ratio=_format_note_metric(entry["residual_loss_ratio"]),
+                support_change=_format_note_metric(
+                    support_instability.get("support_change_fraction")
+                ),
+                pinned_vs_repicked=_format_note_metric(
+                    support_instability.get("pinned_vs_repicked_logit_delta")
+                ),
             )
         )
     lines.extend(["", "## Artifacts", ""])

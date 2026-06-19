@@ -56,6 +56,9 @@ class ComparisonReportTest(unittest.TestCase):
         )
 
         self.assertEqual(entry["residual_objective"], "supervised_ce")
+        self.assertFalse(entry["pinned_support"])
+        self.assertFalse(entry["support_stress"])
+        self.assertEqual(entry["support_instability"], {})
         self.assertEqual(entry["initial_residual_loss"], 3.0)
         self.assertEqual(entry["final_residual_loss"], 2.25)
         self.assertEqual(entry["residual_loss_delta"], -0.75)
@@ -387,6 +390,12 @@ class ComparisonReportTest(unittest.TestCase):
                         "training_steps": 1,
                         "base_loss": 1.0,
                         "zero_init_loss": 1.0,
+                        "pinned_support": experiment_id == "b",
+                        "support_stress": experiment_id == "b",
+                        "support_instability": {
+                            "support_change_fraction": 0.25 if experiment_id == "b" else 0.0,
+                            "pinned_vs_repicked_logit_delta": 1.5 if experiment_id == "b" else 0.0,
+                        },
                         "hep_alpha_sweep": (
                             [
                                 {
@@ -415,6 +424,12 @@ class ComparisonReportTest(unittest.TestCase):
             )
             self.assertEqual(len(saved["runs"]), 2)
             self.assertEqual(saved["runs"][0]["residual_loss_delta"], -0.25)
+            self.assertTrue(saved["runs"][1]["pinned_support"])
+            self.assertTrue(saved["runs"][1]["support_stress"])
+            self.assertEqual(
+                saved["runs"][1]["support_instability"]["support_change_fraction"],
+                0.25,
+            )
             self.assertEqual(saved["verdict"]["status"], "pass")
             self.assertTrue(saved["verdict"]["artifact_invariants_passed"])
             self.assertEqual(saved["verdict"]["artifact_invariant_count"], 6)
@@ -431,10 +446,13 @@ class ComparisonReportTest(unittest.TestCase):
             self.assertIn("hep_alpha", rows[0])
             self.assertIn("hep_loss", rows[0])
             self.assertIn("max_hep_logit_delta_from_ordinary", rows[0])
+            self.assertIn("pinned_support", rows[0])
+            self.assertIn("support_stress", rows[0])
             self.assertEqual(rows[-1]["loss_delta_from_initial"], "-0.25000000")
             notes = (tmp_path / "comparison" / "notes.md").read_text(encoding="utf-8")
             self.assertIn("## HEP Alpha Sweeps", notes)
             self.assertIn("alpha 0.0", notes)
+            self.assertIn("Pinned-vs-repicked", notes)
             self.assertIn("Best HEP alpha by loss", notes)
             self.assertIn("Accepted HEP alpha", notes)
 

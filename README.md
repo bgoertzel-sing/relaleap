@@ -145,6 +145,21 @@ This is diagnostic-only evidence. It should be used to inspect whether pinned
 support and repicked settling diverge before promoting pinned-support behavior
 into the default comparison baseline.
 
+A paired pinned-support stress config uses the same support-stress preset while
+pinning settling updates to the ordinary-pass support:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep_support_stress.yaml \
+  --config configs/char_smoke_pinned_hep_support_stress.yaml \
+  --out results/comparisons/support_stress_pinned_vs_repicked
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/support_stress_pinned_vs_repicked
+```
+
+The comparison summary and notes include per-run `pinned_support`,
+`support_stress`, `support_instability`, and HEP sweep support diagnostics.
+
 Colab should be treated as a temporary GPU runner, not the source of truth. The GitHub repo, config files, and run artifacts are the source of truth.
 
 ## Temporary Colab Bridge
