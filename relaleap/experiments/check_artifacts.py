@@ -33,7 +33,7 @@ def check_comparison_artifacts(
         for entry in runs:
             if not isinstance(entry, dict):
                 continue
-            run_reports.append(_run_artifact_report(comparison_dir, entry))
+            run_reports.append(_run_artifact_report(comparison_dir, entry, checks))
     checks.extend(
         check
         for report in run_reports
@@ -89,6 +89,11 @@ def check_comparison_artifacts(
     )
 
     failures = _artifact_failures(checks)
+    failures.extend(
+        failure
+        for report in run_reports
+        for failure in report["summary_failures"]
+    )
     if isinstance(summary, dict):
         if summary.get("status") != "ok":
             failures.append(
@@ -179,17 +184,64 @@ def check_comparison_artifacts(
 def _run_artifact_report(
     comparison_dir: Path,
     entry: dict[str, Any],
+    checks: list[dict[str, Any]],
 ) -> dict[str, Any]:
     config_path = entry.get("config_path", "")
+    experiment_id = entry.get("experiment_id")
     run_dir = comparison_dir / "runs" / Path(str(config_path)).stem
+    summary_path = run_dir / "summary.json"
+    summary = _read_json(summary_path, checks, f"run.{experiment_id}.summary")
+    summary_failures = (
+        _run_summary_failures(summary, experiment_id) if summary_path.is_file() else []
+    )
     return {
-        "experiment_id": entry.get("experiment_id"),
+        "experiment_id": experiment_id,
         "run_dir": str(run_dir),
         "artifacts": [
-            _artifact_check(run_dir / name, f"run.{entry.get('experiment_id')}.{name}")
+            _artifact_check(run_dir / name, f"run.{experiment_id}.{name}")
             for name in REQUIRED_ARTIFACTS
         ],
+        "summary_status": summary.get("status") if isinstance(summary, dict) else None,
+        "artifact_invariants": (
+            summary.get("artifact_invariants") if isinstance(summary, dict) else None
+        ),
+        "summary_failures": summary_failures,
     }
+
+
+def _run_summary_failures(
+    summary: dict[str, Any],
+    experiment_id: Any,
+) -> list[dict[str, Any]]:
+    failures = []
+    if summary.get("status") != "ok":
+        failures.append(
+            {
+                "field": f"run.{experiment_id}.summary.status",
+                "expected": "ok",
+                "actual": summary.get("status"),
+            }
+        )
+    artifact_invariants = summary.get("artifact_invariants")
+    if not isinstance(artifact_invariants, dict):
+        failures.append(
+            {
+                "field": f"run.{experiment_id}.artifact_invariants",
+                "expected": "summary_json/metrics_csv/notes_md contract",
+                "actual": artifact_invariants,
+            }
+        )
+        return failures
+    for key in ("summary_json", "metrics_csv", "notes_md"):
+        if artifact_invariants.get(key) is not True:
+            failures.append(
+                {
+                    "field": f"run.{experiment_id}.artifact_invariants.{key}",
+                    "expected": True,
+                    "actual": artifact_invariants.get(key),
+                }
+            )
+    return failures
 
 
 def _artifact_check(path: Path, label: str) -> dict[str, Any]:

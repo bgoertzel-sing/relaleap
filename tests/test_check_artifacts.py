@@ -183,6 +183,57 @@ class CheckArtifactsTest(unittest.TestCase):
                 report["failures"],
             )
 
+    def test_missing_child_run_artifact_invariants_fail_artifact_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            comparison_dir = Path(tmpdir) / "comparison"
+            _write_comparison_tree(comparison_dir)
+            summary_path = comparison_dir / "runs" / "char_smoke" / "summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            del summary["artifact_invariants"]
+            summary_path.write_text(
+                json.dumps(summary, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            report = check_comparison_artifacts(comparison_dir)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertIn(
+                {
+                    "field": "run.char_smoke.artifact_invariants",
+                    "expected": "summary_json/metrics_csv/notes_md contract",
+                    "actual": None,
+                },
+                report["failures"],
+            )
+
+    def test_empty_child_run_summary_fails_artifact_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            comparison_dir = Path(tmpdir) / "comparison"
+            _write_comparison_tree(comparison_dir)
+            summary_path = comparison_dir / "runs" / "char_smoke" / "summary.json"
+            summary_path.write_text("{}\n", encoding="utf-8")
+
+            report = check_comparison_artifacts(comparison_dir)
+
+            self.assertEqual(report["status"], "fail")
+            self.assertIn(
+                {
+                    "field": "run.char_smoke.summary.status",
+                    "expected": "ok",
+                    "actual": None,
+                },
+                report["failures"],
+            )
+            self.assertIn(
+                {
+                    "field": "run.char_smoke.artifact_invariants",
+                    "expected": "summary_json/metrics_csv/notes_md contract",
+                    "actual": None,
+                },
+                report["failures"],
+            )
+
 
 def _write_comparison_tree(
     comparison_dir: Path,
@@ -247,6 +298,19 @@ def _write_comparison_tree(
                         },
                     },
                     {
+                        "experiment_id": "char_smoke_pc",
+                        "config_path": "configs/char_smoke_pc.yaml",
+                        "residual_objective": "pc_logit_mse",
+                        "status": "ok",
+                        "training_steps": 10,
+                        "final_residual_loss": 0.03,
+                        "invariants": {
+                            "frozen_base_unchanged": True,
+                            "required_artifacts_written": True,
+                            "zero_init_identity": True,
+                        },
+                    },
+                    {
                         "experiment_id": "char_smoke_hep",
                         "config_path": "configs/char_smoke_hep.yaml",
                         "residual_objective": "supervised_ce",
@@ -285,10 +349,27 @@ def _write_comparison_tree(
         + "\n",
         encoding="utf-8",
     )
-    for stem in ["char_smoke", "char_smoke_hep"]:
+    for stem in ["char_smoke", "char_smoke_pc", "char_smoke_hep"]:
         run_dir = comparison_dir / "runs" / stem
         run_dir.mkdir(parents=True)
-        (run_dir / "summary.json").write_text("{}\n", encoding="utf-8")
+        (run_dir / "summary.json").write_text(
+            json.dumps(
+                {
+                    "experiment_id": stem,
+                    "status": "ok",
+                    "error": None,
+                    "artifact_invariants": {
+                        "summary_json": True,
+                        "metrics_csv": True,
+                        "notes_md": True,
+                    },
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         (run_dir / "metrics.csv").write_text("step,status\n0,ok\n", encoding="utf-8")
         (run_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
     if include_baseline:

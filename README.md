@@ -90,8 +90,9 @@ summary still matches the checked-in local baseline. Add
 `--require-baseline-comparison` when the run was expected to write
 `baseline_comparison.json` during execution. The checker fails closed when a
 completed comparison summary is missing the artifact-invariant verdict fields,
-which catches older artifact-unaware summaries before they are treated as valid
-Colab/GPU evidence.
+or when a child run `summary.json` omits or fails its own artifact-invariant
+contract, which catches older artifact-unaware summaries before they are treated
+as valid Colab/GPU evidence.
 
 The current tiny HEP alpha sweep is also command-driven:
 
