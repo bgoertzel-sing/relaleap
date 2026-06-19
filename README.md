@@ -74,6 +74,17 @@ This writes `baseline_comparison.json` under the comparison output directory
 and exits nonzero if the accepted HEP alpha, Phase 0 invariant result, or config
 set diverges from the checked-in baseline.
 
+To inspect a completed local or Colab comparison artifact tree without rerunning
+experiments, run:
+
+```bash
+python -m relaleap.experiments.check_artifacts --comparison-dir results/comparisons/colab_phase0 --require-baseline-comparison
+```
+
+This checks the required `summary.json`, `metrics.csv`, and `notes.md` artifacts
+for the comparison and child runs, then reports the verdict, Phase 0 invariant
+status, accepted HEP alpha, and baseline comparison status.
+
 The current tiny HEP alpha sweep is also command-driven:
 
 ```bash
