@@ -1,9 +1,4 @@
-"""Minimal config-driven experiment runner.
-
-This is a placeholder harness for the first Colab/local smoke path. It verifies
-that the repo can be cloned, installed, run from a YAML config, and write the
-standard run artifacts before the real LCR/HEP experiments are implemented.
-"""
+"""Minimal config-driven experiment runner."""
 
 from __future__ import annotations
 
@@ -15,6 +10,8 @@ import random
 import time
 from pathlib import Path
 from typing import Any
+
+from relaleap.smoke import run_phase0_smoke
 
 
 def _load_torch_info() -> dict[str, Any]:
@@ -109,35 +106,42 @@ def run(config_path: Path, out_dir: Path) -> dict[str, Any]:
 
     torch_info = _load_torch_info()
     start = time.time()
-    rows = []
-    loss = 1.0
-    for step in range(max_steps + 1):
-        loss = 0.92 * loss + 0.01 * random.random()
-        rows.append(
-            {
-                "step": step,
-                "seed": seed,
-                "experiment_id": experiment_id,
-                "smoke_loss": f"{loss:.8f}",
-                "device": torch_info["device"],
-            }
-        )
+    rows = _build_placeholder_rows(
+        max_steps=max_steps,
+        seed=seed,
+        experiment_id=experiment_id,
+        device=torch_info["device"],
+    )
 
-    metrics_path = out_dir / "metrics.csv"
-    with metrics_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
+    phase0: dict[str, Any] | None = None
+    status = "ok"
+    error: str | None = None
+    try:
+        phase0_result = run_phase0_smoke(config)
+        phase0 = phase0_result.to_summary()
+        if not all(phase0_result.invariants.values()):
+            status = "failed"
+            error = "Phase 0 invariant failure"
+    except Exception as exc:
+        status = "failed"
+        error = f"{type(exc).__name__}: {exc}"
 
+    for row in rows:
+        row["status"] = status
+
+    _write_metrics(out_dir / "metrics.csv", rows)
+    final_smoke_loss = float(rows[-1]["smoke_loss"])
     summary = {
         "experiment_id": experiment_id,
         "seed": seed,
         "config_path": str(config_path),
         "out_dir": str(out_dir),
-        "status": "ok",
-        "final_smoke_loss": float(rows[-1]["smoke_loss"]),
+        "status": status,
+        "error": error,
+        "final_smoke_loss": final_smoke_loss,
         "runtime_seconds": round(time.time() - start, 4),
         "platform": platform.platform(),
+        "phase0": phase0,
         **torch_info,
     }
     (out_dir / "summary.json").write_text(
@@ -148,23 +152,88 @@ def run(config_path: Path, out_dir: Path) -> dict[str, Any]:
         config_path.read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    (out_dir / "notes.md").write_text(
+    _write_notes(out_dir / "notes.md", experiment_id, summary)
+
+    required = config.get("outputs", {})
+    artifact_invariants = {
+        "summary_json": not required.get("require_summary_json", True)
+        or (out_dir / "summary.json").is_file(),
+        "metrics_csv": not required.get("require_metrics_csv", True)
+        or (out_dir / "metrics.csv").is_file(),
+        "notes_md": not required.get("require_notes_md", True)
+        or (out_dir / "notes.md").is_file(),
+    }
+    summary["artifact_invariants"] = artifact_invariants
+    if not all(artifact_invariants.values()):
+        summary["status"] = "failed"
+        summary["error"] = summary["error"] or "Required artifact missing"
+    (out_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return summary
+
+
+def _build_placeholder_rows(
+    *,
+    max_steps: int,
+    seed: int,
+    experiment_id: str,
+    device: str,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    loss = 1.0
+    for step in range(max_steps + 1):
+        loss = 0.92 * loss + 0.01 * random.random()
+        rows.append(
+            {
+                "step": step,
+                "seed": seed,
+                "experiment_id": experiment_id,
+                "smoke_loss": f"{loss:.8f}",
+                "device": device,
+            }
+        )
+    return rows
+
+
+def _write_metrics(path: Path, rows: list[dict[str, Any]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _write_notes(path: Path, experiment_id: str, summary: dict[str, Any]) -> None:
+    phase0 = summary.get("phase0") or {}
+    invariants = phase0.get("invariants") or {}
+    invariant_lines = [
+        f"- {name}: `{value}`" for name, value in sorted(invariants.items())
+    ]
+    if not invariant_lines:
+        invariant_lines = ["- Phase 0 invariants: `not run`"]
+
+    path.write_text(
         "\n".join(
             [
                 f"# {experiment_id}",
                 "",
-                "This is the initial RelaLeap smoke run.",
+                "RelaLeap char-level Phase 0 smoke run.",
                 "",
                 f"- Status: `{summary['status']}`",
+                f"- Error: `{summary['error'] or 'none'}`",
                 f"- Device: `{summary['device']}`",
                 f"- CUDA available: `{summary['cuda_available']}`",
                 f"- Final smoke loss: `{summary['final_smoke_loss']}`",
+                "",
+                "## Invariants",
+                "",
+                *invariant_lines,
                 "",
             ]
         ),
         encoding="utf-8",
     )
-    return summary
 
 
 def main() -> None:
@@ -174,6 +243,8 @@ def main() -> None:
     args = parser.parse_args()
     summary = run(args.config, args.out)
     print(json.dumps(summary, indent=2, sort_keys=True))
+    if summary["status"] != "ok":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

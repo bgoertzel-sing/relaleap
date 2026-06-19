@@ -6,6 +6,7 @@ __pycache__/
 .venv/
 .venv-conda/
 .conda-pkgs/
+.colab-browser-profile/
 venv/
 build/
 dist/

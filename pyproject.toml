@@ -5,7 +5,7 @@ description = "Residual layer learning prototypes for columnar PC/CC adaptation 
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "numpy",
+  "numpy<2",
   "pandas",
   "pydantic",
   "pyyaml",
