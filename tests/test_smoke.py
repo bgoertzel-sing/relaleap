@@ -256,6 +256,40 @@ class Phase0SmokeTest(unittest.TestCase):
         self.assertIn("support_instability", result.to_summary())
         self.assertTrue(result.invariants["hep_alpha_0_equivalence"])
 
+    def test_support_stress_config_records_nonzero_repicking(self) -> None:
+        stress_config = copy.deepcopy(CONFIG)
+        stress_config["run"]["max_steps"] = 1
+        stress_config["run"]["experiment_id"] = "test_support_stress"
+        stress_config["model"]["columns"]["support_stress"] = True
+        stress_config["inference"] = {
+            "pc_steps": 2,
+            "hep_alpha": 0.0,
+            "hep_alpha_sweep": "0.0,1.0",
+        }
+
+        try:
+            result = run_phase0_smoke(stress_config)
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        self.assertTrue(result.support_stress)
+        self.assertTrue(result.invariants["zero_init_identity"])
+        self.assertTrue(result.invariants["frozen_base_unchanged"])
+        self.assertTrue(result.invariants["hep_alpha_0_equivalence"])
+        self.assertGreater(result.support_instability["support_change_fraction"], 0.0)
+        self.assertGreater(
+            result.support_instability["pinned_vs_repicked_logit_delta"],
+            0.0,
+        )
+        self.assertIn("support_stress", [row["phase"] for row in result.to_metric_rows()])
+        alpha1 = [
+            entry for entry in result.hep_alpha_sweep if entry["alpha"] == 1.0
+        ][0]
+        self.assertGreater(alpha1["support_change_fraction"], 0.0)
+        self.assertGreater(alpha1["pinned_vs_repicked_logit_delta"], 0.0)
+
     def test_runner_writes_required_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)

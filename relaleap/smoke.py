@@ -39,6 +39,7 @@ class Phase0Result:
     max_zero_init_logit_delta: float
     max_hep_alpha0_logit_delta: float
     pinned_support: bool
+    support_stress: bool
     support_instability: dict[str, float | int | bool]
     hep_alpha_sweep: list[dict[str, float]]
     invariants: dict[str, bool]
@@ -58,6 +59,7 @@ class Phase0Result:
             "max_zero_init_logit_delta": self.max_zero_init_logit_delta,
             "max_hep_alpha0_logit_delta": self.max_hep_alpha0_logit_delta,
             "pinned_support": self.pinned_support,
+            "support_stress": self.support_stress,
             "support_instability": self.support_instability,
             "hep_alpha_sweep": self.hep_alpha_sweep,
             "invariants": self.invariants,
@@ -107,6 +109,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     atoms_per_column = int(column_cfg.get("atoms_per_column", 4))
     top_k = int(column_cfg.get("top_k", 1))
     pinned_support = bool(column_cfg.get("pinned_support", False))
+    support_stress = bool(column_cfg.get("support_stress", False))
     pc_steps = int(inference_cfg.get("pc_steps", 1))
     hep_alpha = float(inference_cfg.get("hep_alpha", 0.0))
     hep_alpha_sweep = _parse_hep_alpha_sweep(inference_cfg, fallback_alpha=hep_alpha)
@@ -246,6 +249,44 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             )
         )
 
+    if support_stress:
+        _apply_hep_support_stress(base, residual, inputs)
+        with torch.no_grad():
+            post_step_loss_tensor = _residual_loss(
+                base,
+                residual,
+                inputs,
+                targets,
+                vocab_size,
+                objective=residual_objective,
+            )
+            max_hep_alpha0_delta = _max_hep_delta_from_ordinary(
+                base,
+                residual,
+                inputs,
+                pc_steps=pc_steps,
+                hep_alpha=0.0,
+                pinned_support=pinned_support,
+            )
+        metric_rows.append(
+            _metric_row(
+                step=max_steps,
+                phase="support_stress",
+                residual_objective=residual_objective,
+                base_loss=float(base_loss_tensor.detach().item()),
+                residual_loss=float(post_step_loss_tensor.detach().item()),
+                zero_init_loss=float(zero_init_loss_tensor.detach().item()),
+                residual_parameter_delta=_state_dict_delta(before_residual, residual),
+                max_zero_init_logit_delta=max_zero_delta,
+                max_hep_alpha0_logit_delta=max_hep_alpha0_delta,
+                hep_alpha="",
+                hep_loss="",
+                max_hep_logit_delta_from_ordinary="",
+                hep_support_change_fraction="",
+                hep_pinned_vs_repicked_logit_delta="",
+            )
+        )
+
     support_instability = _hep_support_instability(
         base,
         residual,
@@ -311,6 +352,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         max_zero_init_logit_delta=max_zero_delta,
         max_hep_alpha0_logit_delta=max_hep_alpha0_delta,
         pinned_support=pinned_support,
+        support_stress=support_stress,
         support_instability=support_instability,
         hep_alpha_sweep=hep_sweep_rows,
         invariants=invariants,
@@ -426,6 +468,32 @@ class ResidualColumns:
                 return output
 
         return _ResidualColumns(*args, **kwargs)
+
+
+def _apply_hep_support_stress(base: Any, residual: Any, inputs: Any) -> None:
+    """Install a deterministic opt-in residual preset that repicks support."""
+
+    import torch
+
+    if residual.top_k != 1:
+        raise ValueError("model.columns.support_stress requires top_k: 1")
+    if residual.column_scores.out_features < 2:
+        raise ValueError("model.columns.support_stress requires at least 2 columns")
+
+    with torch.no_grad():
+        hidden = base.encode(inputs)
+        direction = hidden.reshape(-1, hidden.shape[-1])[0].detach().clone()
+        norm = float(direction.norm().item())
+        if norm <= 1e-12:
+            direction.zero_()
+            direction[0] = 1.0
+
+        residual.column_scores.weight.zero_()
+        residual.column_scores.weight[0].copy_(direction)
+        residual.column_scores.weight[1].copy_(-direction)
+        residual.atom_logits.zero_()
+        residual.atom_values.zero_()
+        residual.atom_values[0].copy_(-2.5 * direction)
 
 
 def forward_with_hep_alpha(

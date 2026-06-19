@@ -325,6 +325,7 @@ def _write_notes(path: Path, experiment_id: str, summary: dict[str, Any]) -> Non
                 f"- Final smoke loss: `{summary['final_smoke_loss']}`",
                 f"- Residual objective: `{phase0.get('residual_objective', 'not run')}`",
                 f"- Pinned support: `{phase0.get('pinned_support', 'not run')}`",
+                f"- Support stress: `{phase0.get('support_stress', 'not run')}`",
                 f"- Base loss: `{phase0.get('base_loss', 'not run')}`",
                 f"- Residual training steps: `{phase0.get('training_steps', 'not run')}`",
                 f"- Residual final loss: `{phase0.get('post_step_loss', 'not run')}`",

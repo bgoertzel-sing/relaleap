@@ -131,6 +131,20 @@ for every alpha. That means this smoke case does not yet exercise support
 repicking during settling, so pinned support remains an opt-in artifact-only
 smoke path rather than a separate checked baseline.
 
+An additional opt-in stress config intentionally reshapes the trained residual
+columns after the ordinary smoke update so the support-instability diagnostic
+sees nonzero repicking without changing the checked Phase 0 baseline:
+
+```bash
+python -m relaleap.experiments.run \
+  --config configs/char_smoke_hep_support_stress.yaml \
+  --out results/runs/char_smoke_hep_support_stress
+```
+
+This is diagnostic-only evidence. It should be used to inspect whether pinned
+support and repicked settling diverge before promoting pinned-support behavior
+into the default comparison baseline.
+
 Colab should be treated as a temporary GPU runner, not the source of truth. The GitHub repo, config files, and run artifacts are the source of truth.
 
 ## Temporary Colab Bridge
