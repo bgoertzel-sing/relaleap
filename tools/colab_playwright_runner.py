@@ -8,11 +8,14 @@ to need occasional selector fixes when Colab changes.
 Usage:
   python tools/colab_playwright_runner.py --manual-login
   python tools/colab_playwright_runner.py --run-all
+  python tools/colab_playwright_runner.py --browser-channel chrome --manual-login
+  python tools/colab_playwright_runner.py --cdp-url http://127.0.0.1:9222 --run-all
 """
 
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
@@ -35,7 +38,106 @@ async def _click_first(page, labels: list[str], timeout_ms: int = 5_000) -> bool
     return False
 
 
-async def automate(manual_login: bool, run_all: bool, headed: bool) -> None:
+async def _write_debug_snapshot(page, label: str) -> None:
+    out_dir = Path("results/colab_bridge_debug")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    base = out_dir / f"{stamp}_{label}"
+    try:
+        await page.screenshot(path=str(base.with_suffix(".png")), full_page=True)
+    except Exception as exc:
+        print(f"Could not write screenshot: {type(exc).__name__}: {exc}")
+    try:
+        base.with_suffix(".html").write_text(await page.content())
+    except Exception as exc:
+        print(f"Could not write HTML snapshot: {type(exc).__name__}: {exc}")
+
+
+async def _trigger_run_all(page, method: str) -> None:
+    if method in {"shortcut", "both"}:
+        print("triggering run all with keyboard shortcut: Meta+F9")
+        await page.keyboard.press("Meta+F9")
+        await page.wait_for_timeout(2_000)
+
+    if method in {"menu", "both"}:
+        ran = await _click_first(page, ["Runtime"])
+        if ran:
+            await page.wait_for_timeout(1_000)
+            ran = await _click_first(page, ["Run all", "Run all cells"])
+        if not ran:
+            print("Could not trigger Run all via menus.")
+
+
+async def _confirm_run_modals(page) -> None:
+    labels = [
+        "Run anyway",
+        "Run all",
+        "Run all cells",
+        "Continue",
+        "OK",
+        "Ok",
+        "Yes",
+    ]
+    for _ in range(5):
+        clicked = False
+        for label in labels:
+            try:
+                button = page.get_by_role("button", name=label, exact=False).first
+                await button.click(timeout=1_500)
+                print(f"confirmed modal button: {label}")
+                clicked = True
+                break
+            except Exception:
+                pass
+        if not clicked:
+            clicked = await _click_first(page, labels, timeout_ms=1_000)
+        if not clicked:
+            await page.wait_for_timeout(1_000)
+
+
+async def _operate_page(
+    page,
+    manual_login: bool,
+    run_all: bool,
+    run_method: str,
+    debug_snapshot: bool,
+) -> None:
+    await page.goto(COLAB_NOTEBOOK_URL, wait_until="domcontentloaded")
+    print(f"opened: {COLAB_NOTEBOOK_URL}")
+
+    if manual_login:
+        print()
+        print("A browser window is open. Log into Google/Colab there if needed.")
+        print("When the notebook is visible, return here and press Enter.")
+        input()
+
+    if run_all:
+        connected = await _click_first(page, ["Connect", "Reconnect"])
+        if not connected:
+            print("Could not find a Connect button; it may already be connected.")
+
+        await page.wait_for_timeout(8_000)
+        await _trigger_run_all(page, method=run_method)
+        await page.wait_for_timeout(3_000)
+        await _confirm_run_modals(page)
+        await page.wait_for_timeout(5_000)
+        if debug_snapshot:
+            await _write_debug_snapshot(page, "after_run_all")
+
+        print("Run-all was requested. Watch the browser for completion/errors.")
+        print("This helper does not yet reliably detect Colab completion.")
+
+
+async def automate(
+    manual_login: bool,
+    run_all: bool,
+    headed: bool,
+    browser_channel: str | None,
+    profile_dir: Path,
+    cdp_url: str | None,
+    run_method: str,
+    debug_snapshot: bool,
+) -> None:
     try:
         from playwright.async_api import async_playwright
     except Exception:
@@ -43,43 +145,38 @@ async def automate(manual_login: bool, run_all: bool, headed: bool) -> None:
         print("Then, if needed: python -m playwright install chromium")
         raise
 
-    profile_dir = Path(".colab-browser-profile").resolve()
     async with async_playwright() as p:
+        if cdp_url:
+            browser = await p.chromium.connect_over_cdp(cdp_url)
+            context = browser.contexts[0] if browser.contexts else await browser.new_context()
+            page = context.pages[0] if context.pages else await context.new_page()
+            await _operate_page(
+                page,
+                manual_login=manual_login,
+                run_all=run_all,
+                run_method=run_method,
+                debug_snapshot=debug_snapshot,
+            )
+            print("Leaving connected Chrome open. Press Enter to detach automation.")
+            input()
+            await browser.close()
+            return
+
         browser_type = p.chromium
         context = await browser_type.launch_persistent_context(
             user_data_dir=str(profile_dir),
             headless=not headed,
+            channel=browser_channel,
             viewport={"width": 1440, "height": 1000},
         )
         page = context.pages[0] if context.pages else await context.new_page()
-        await page.goto(COLAB_NOTEBOOK_URL, wait_until="domcontentloaded")
-        print(f"opened: {COLAB_NOTEBOOK_URL}")
-
-        if manual_login:
-            print()
-            print("A browser window is open. Log into Google/Colab there if needed.")
-            print("When the notebook is visible, return here and press Enter.")
-            input()
-
-        if run_all:
-            connected = await _click_first(page, ["Connect", "Reconnect"])
-            if not connected:
-                print("Could not find a Connect button; it may already be connected.")
-
-            await page.wait_for_timeout(8_000)
-            ran = await _click_first(page, ["Runtime"])
-            if ran:
-                await page.wait_for_timeout(1_000)
-                ran = await _click_first(page, ["Run all", "Run all cells"])
-            if not ran:
-                print("Could not trigger Run all via menus; trying keyboard shortcut.")
-                await page.keyboard.press("Meta+F9")
-
-            await page.wait_for_timeout(3_000)
-            await _click_first(page, ["Run anyway", "Run all", "Yes"])
-
-            print("Run-all was requested. Watch the browser for completion/errors.")
-            print("This helper does not yet reliably detect Colab completion.")
+        await _operate_page(
+            page,
+            manual_login=manual_login,
+            run_all=run_all,
+            run_method=run_method,
+            debug_snapshot=debug_snapshot,
+        )
 
         if headed:
             print("Leaving browser open. Press Enter to close this automation context.")
@@ -92,6 +189,33 @@ def main() -> None:
     parser.add_argument("--manual-login", action="store_true")
     parser.add_argument("--run-all", action="store_true")
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument(
+        "--run-method",
+        choices=["shortcut", "menu", "both"],
+        default="shortcut",
+        help="How to trigger Colab Run all. Keyboard shortcut is most reliable on current Colab.",
+    )
+    parser.add_argument(
+        "--debug-snapshot",
+        action="store_true",
+        help="Write a screenshot and HTML snapshot after requesting Run all.",
+    )
+    parser.add_argument(
+        "--browser-channel",
+        choices=["chrome", "chrome-beta", "chrome-dev", "msedge"],
+        default=None,
+        help="Use an installed browser channel instead of bundled Chromium.",
+    )
+    parser.add_argument(
+        "--profile-dir",
+        default=".colab-browser-profile",
+        help="Persistent browser profile directory for launched browser mode.",
+    )
+    parser.add_argument(
+        "--cdp-url",
+        default=None,
+        help="Connect to an already-running Chrome via remote debugging, e.g. http://127.0.0.1:9222.",
+    )
     args = parser.parse_args()
 
     import asyncio
@@ -102,6 +226,11 @@ def main() -> None:
                 manual_login=args.manual_login,
                 run_all=args.run_all,
                 headed=not args.headless,
+                browser_channel=args.browser_channel,
+                profile_dir=Path(args.profile_dir).resolve(),
+                cdp_url=args.cdp_url,
+                run_method=args.run_method,
+                debug_snapshot=args.debug_snapshot,
             )
         )
     except KeyboardInterrupt:
