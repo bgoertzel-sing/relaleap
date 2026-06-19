@@ -26,6 +26,9 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "Accepted HEP alpha: {'alpha': 0.25}",
                     '"pinned_support": true',
                     "Pinned HEP status: ok",
+                    "Support-stress comparison status: ok",
+                    "Support-stress artifact check: pass",
+                    "char_smoke_pinned_hep_support_stress",
                     COMPLETION_TEXT,
                 ]
             )

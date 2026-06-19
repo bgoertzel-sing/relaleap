@@ -118,6 +118,9 @@ def _validate_evidence_text(text: str) -> None:
         "Accepted HEP alpha:",
         '"pinned_support": true',
         "Pinned HEP status: ok",
+        "Support-stress comparison status: ok",
+        "Support-stress artifact check: pass",
+        "char_smoke_pinned_hep_support_stress",
         COMPLETION_TEXT,
     ]
     missing = [marker for marker in required if marker not in text]

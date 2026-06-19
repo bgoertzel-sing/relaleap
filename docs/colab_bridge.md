@@ -75,10 +75,13 @@ results/colab_bridge_evidence/latest_colab_output.txt
 ```
 
 The notebook also emits a rendered base64 zip bundle for
-`results/comparisons/colab_phase0` and the pinned-support smoke run under
-`results/runs/colab_char_smoke_pinned_hep`. When that bundle is present in the
-rendered output, the helper extracts it under the local repo root so the normal
-after-the-fact checker can inspect the Colab artifact tree locally.
+`results/comparisons/colab_phase0`, the pinned-support smoke run under
+`results/runs/colab_char_smoke_pinned_hep`, and the paired support-stress
+comparison under
+`results/comparisons/colab_support_stress_pinned_vs_repicked`. When that bundle
+is present in the rendered output, the helper extracts it under the local repo
+root so the normal after-the-fact checker can inspect the Colab artifact tree
+locally.
 
 If the keyboard shortcut stops working after a Colab UI change, try
 `--run-method both`.
@@ -114,6 +117,19 @@ command-driven artifact check:
 python -m relaleap.experiments.run --config configs/char_smoke_pinned_hep.yaml --out results/runs/colab_char_smoke_pinned_hep
 ```
 
+The notebook also runs the support-instability diagnostic comparison selected
+by the current automation status:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep_support_stress.yaml \
+  --config configs/char_smoke_pinned_hep_support_stress.yaml \
+  --out results/comparisons/colab_support_stress_pinned_vs_repicked
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_support_stress_pinned_vs_repicked \
+  --out results/comparisons/colab_support_stress_pinned_vs_repicked/artifact_check.json
+```
+
 Expected artifacts:
 
 ```text
@@ -127,6 +143,12 @@ results/comparisons/colab_phase0/runs/char_smoke_hep/summary.json
 results/runs/colab_char_smoke_pinned_hep/summary.json
 results/runs/colab_char_smoke_pinned_hep/metrics.csv
 results/runs/colab_char_smoke_pinned_hep/notes.md
+results/comparisons/colab_support_stress_pinned_vs_repicked/summary.json
+results/comparisons/colab_support_stress_pinned_vs_repicked/metrics.csv
+results/comparisons/colab_support_stress_pinned_vs_repicked/notes.md
+results/comparisons/colab_support_stress_pinned_vs_repicked/artifact_check.json
+results/comparisons/colab_support_stress_pinned_vs_repicked/runs/char_smoke_hep_support_stress/summary.json
+results/comparisons/colab_support_stress_pinned_vs_repicked/runs/char_smoke_pinned_hep_support_stress/summary.json
 ```
 
 The checked-in schema v3 local baseline currently accepts HEP alpha `0.25`. The
