@@ -106,8 +106,16 @@ def main() -> None:
         )
     except KeyboardInterrupt:
         sys.exit(130)
+    except Exception as exc:
+        message = str(exc).splitlines()[0]
+        print("Colab bridge failed before completion.")
+        print(f"{type(exc).__name__}: {message}")
+        print(
+            "Open the notebook manually and run all cells if browser "
+            "automation is blocked by auth, session, quota, UI, or sandbox state."
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
-

@@ -12,6 +12,7 @@ from relaleap.experiments.compare import (
     _comparison_baseline,
     _comparison_entry,
     _comparison_verdict,
+    compare_to_baseline,
     run_comparison,
     write_comparison_baseline,
 )
@@ -390,6 +391,121 @@ class ComparisonReportTest(unittest.TestCase):
             0.25,
         )
         self.assertEqual(baseline["hep"]["acceptance"]["rejected_count"], 2)
+
+    def test_compare_to_baseline_reports_acceptance_match(self) -> None:
+        comparison = {
+            "status": "ok",
+            "verdict": _comparison_verdict(
+                [
+                    {
+                        "experiment_id": "char_smoke_hep",
+                        "invariants": {"zero_init_identity": True},
+                        "hep_alpha_sweep": [
+                            {
+                                "alpha": 0.0,
+                                "loss": 3.5,
+                                "max_logit_delta_from_ordinary": 0.0,
+                            },
+                            {
+                                "alpha": 0.25,
+                                "loss": 3.4,
+                                "max_logit_delta_from_ordinary": 0.05,
+                            },
+                        ],
+                    }
+                ],
+                "ok",
+            ),
+            "runs": [
+                {
+                    "experiment_id": "char_smoke_hep",
+                    "config_path": "configs/char_smoke_hep.yaml",
+                    "residual_objective": "supervised_ce",
+                    "status": "ok",
+                    "training_steps": 10,
+                    "invariants": {"zero_init_identity": True},
+                    "final_residual_loss": 3.4,
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            baseline_path = tmp_path / "baseline.json"
+            out_path = tmp_path / "baseline_comparison.json"
+            write_comparison_baseline(baseline_path, comparison)
+
+            result = compare_to_baseline(comparison, baseline_path, out_path)
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(result["mismatches"], [])
+            self.assertEqual(
+                result["candidate"]["accepted_hep_alpha"]["alpha"],
+                0.25,
+            )
+            self.assertTrue(out_path.is_file())
+
+    def test_compare_to_baseline_flags_accepted_alpha_drift(self) -> None:
+        comparison = {
+            "status": "ok",
+            "verdict": _comparison_verdict(
+                [
+                    {
+                        "experiment_id": "char_smoke_hep",
+                        "invariants": {"zero_init_identity": True},
+                        "hep_alpha_sweep": [
+                            {
+                                "alpha": 0.0,
+                                "loss": 3.5,
+                                "max_logit_delta_from_ordinary": 0.0,
+                            },
+                            {
+                                "alpha": 0.25,
+                                "loss": 3.4,
+                                "max_logit_delta_from_ordinary": 0.05,
+                            },
+                        ],
+                    }
+                ],
+                "ok",
+            ),
+            "runs": [
+                {
+                    "experiment_id": "char_smoke_hep",
+                    "config_path": "configs/char_smoke_hep.yaml",
+                    "residual_objective": "supervised_ce",
+                    "status": "ok",
+                    "training_steps": 10,
+                    "invariants": {"zero_init_identity": True},
+                    "final_residual_loss": 3.4,
+                }
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            baseline_path = tmp_path / "baseline.json"
+            out_path = tmp_path / "baseline_comparison.json"
+            reference = write_comparison_baseline(baseline_path, comparison)
+            reference["hep"]["acceptance"]["accepted_alpha"]["alpha"] = 0.5
+            baseline_path.write_text(
+                json.dumps(reference, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            result = compare_to_baseline(comparison, baseline_path, out_path)
+
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(
+                result["mismatches"],
+                [
+                    {
+                        "field": "hep.acceptance.accepted_alpha.alpha",
+                        "reference": 0.5,
+                        "candidate": 0.25,
+                    }
+                ],
+            )
 
 
 if __name__ == "__main__":

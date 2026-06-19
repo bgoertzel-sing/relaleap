@@ -92,6 +92,31 @@ def write_comparison_baseline(path: Path, comparison: dict[str, Any]) -> dict[st
     return baseline
 
 
+def compare_to_baseline(
+    comparison: dict[str, Any],
+    baseline_path: Path,
+    out_path: Path,
+) -> dict[str, Any]:
+    """Compare current stable Phase 0 fields against a saved baseline."""
+
+    reference = json.loads(baseline_path.read_text(encoding="utf-8"))
+    candidate = _comparison_baseline(comparison)
+    mismatches = _baseline_mismatches(reference, candidate)
+    result = {
+        "status": "pass" if not mismatches else "fail",
+        "baseline_path": str(baseline_path),
+        "mismatches": mismatches,
+        "reference": _baseline_comparison_fields(reference),
+        "candidate": _baseline_comparison_fields(candidate),
+    }
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return result
+
+
 def _comparison_baseline(comparison: dict[str, Any]) -> dict[str, Any]:
     verdict = comparison["verdict"]
     acceptance = verdict["hep_alpha_acceptance"]
@@ -141,6 +166,66 @@ def _comparison_baseline(comparison: dict[str, Any]) -> dict[str, Any]:
             },
         },
     }
+
+
+def _baseline_mismatches(
+    reference: dict[str, Any],
+    candidate: dict[str, Any],
+) -> list[dict[str, Any]]:
+    checks = [
+        ("comparison_status", reference["comparison_status"], candidate["comparison_status"]),
+        ("verdict_status", reference["verdict_status"], candidate["verdict_status"]),
+        ("config_paths", reference["config_paths"], candidate["config_paths"]),
+        (
+            "phase0_invariants.passed",
+            reference["phase0_invariants"]["passed"],
+            candidate["phase0_invariants"]["passed"],
+        ),
+        (
+            "phase0_invariants.count",
+            reference["phase0_invariants"]["count"],
+            candidate["phase0_invariants"]["count"],
+        ),
+        (
+            "phase0_invariants.failed",
+            reference["phase0_invariants"]["failed"],
+            candidate["phase0_invariants"]["failed"],
+        ),
+        (
+            "hep.acceptance.status",
+            reference["hep"]["acceptance"]["status"],
+            candidate["hep"]["acceptance"]["status"],
+        ),
+        (
+            "hep.acceptance.accepted_alpha.alpha",
+            _accepted_alpha_value(reference),
+            _accepted_alpha_value(candidate),
+        ),
+    ]
+    return [
+        {"field": field, "reference": expected, "candidate": actual}
+        for field, expected, actual in checks
+        if expected != actual
+    ]
+
+
+def _baseline_comparison_fields(baseline: dict[str, Any]) -> dict[str, Any]:
+    acceptance = baseline["hep"]["acceptance"]
+    return {
+        "comparison_status": baseline["comparison_status"],
+        "verdict_status": baseline["verdict_status"],
+        "config_paths": baseline["config_paths"],
+        "phase0_invariants": baseline["phase0_invariants"],
+        "accepted_hep_alpha": acceptance["accepted_alpha"],
+        "accepted_status": acceptance["status"],
+    }
+
+
+def _accepted_alpha_value(baseline: dict[str, Any]) -> float | None:
+    accepted = baseline["hep"]["acceptance"]["accepted_alpha"]
+    if accepted is None:
+        return None
+    return accepted["alpha"]
 
 
 def _baseline_hep_alpha(
@@ -576,6 +661,14 @@ def main() -> None:
         type=Path,
         help="Optional path for a compact, stable Phase 0 comparison baseline JSON.",
     )
+    parser.add_argument(
+        "--baseline-reference",
+        type=Path,
+        help=(
+            "Optional checked-in baseline to compare against. Writes "
+            "baseline_comparison.json in --out and exits nonzero on mismatch."
+        ),
+    )
     args = parser.parse_args()
     config_paths = args.configs or list(DEFAULT_CONFIGS)
     comparison = run_comparison(
@@ -586,8 +679,17 @@ def main() -> None:
     )
     if args.baseline_out:
         write_comparison_baseline(args.baseline_out, comparison)
+    baseline_comparison = None
+    if args.baseline_reference:
+        baseline_comparison = compare_to_baseline(
+            comparison,
+            args.baseline_reference,
+            args.out / "baseline_comparison.json",
+        )
     print(json.dumps(comparison, indent=2, sort_keys=True))
     if comparison["status"] != "ok":
+        raise SystemExit(1)
+    if baseline_comparison and baseline_comparison["status"] != "pass":
         raise SystemExit(1)
 
 

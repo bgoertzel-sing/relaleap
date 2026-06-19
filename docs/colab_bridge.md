@@ -1,6 +1,6 @@
 # Colab Bridge
 
-This is a temporary Colab execution bridge for RelaLeap GPU smoke tests.
+This is a temporary Colab execution bridge for RelaLeap GPU Phase 0 smoke tests.
 
 Colab is not the source of truth. The GitHub repo, config files, and run artifacts are the source of truth. The notebook should only clone/pull the repo, install it, run a config-driven command, and show/save the artifacts.
 
@@ -55,17 +55,25 @@ This is brittle by design. It may fail when Google changes the Colab UI, require
 
 ## Expected Artifacts
 
-The smoke notebook runs:
+The smoke notebook runs the same command-driven comparison used locally:
 
 ```bash
-python -m relaleap.experiments.run --config configs/char_smoke.yaml --out results/runs/colab_smoke
+python -m relaleap.experiments.compare --out results/comparisons/colab_phase0 --baseline-reference baselines/phase0_char_smoke_comparison.json
 ```
 
 Expected artifacts:
 
 ```text
-results/runs/colab_smoke/config.yaml
-results/runs/colab_smoke/metrics.csv
-results/runs/colab_smoke/notes.md
-results/runs/colab_smoke/summary.json
+results/comparisons/colab_phase0/baseline_comparison.json
+results/comparisons/colab_phase0/metrics.csv
+results/comparisons/colab_phase0/notes.md
+results/comparisons/colab_phase0/summary.json
+results/comparisons/colab_phase0/runs/char_smoke/summary.json
+results/comparisons/colab_phase0/runs/char_smoke_pc/summary.json
+results/comparisons/colab_phase0/runs/char_smoke_hep/summary.json
 ```
+
+The checked-in local baseline currently accepts HEP alpha `0.25`. The
+`--baseline-reference` gate writes `baseline_comparison.json` and exits nonzero
+if the Colab/GPU run changes the accepted HEP alpha, loses Phase 0 invariants,
+or changes the comparison config set.

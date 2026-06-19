@@ -64,6 +64,16 @@ python -m relaleap.experiments.compare --baseline-out baselines/phase0_char_smok
 The current baseline records all 12 Phase 0 invariants passing and an accepted
 HEP alpha of `0.25` under the default logit-delta policy.
 
+To compare a fresh local or Colab/GPU run against that baseline, run:
+
+```bash
+python -m relaleap.experiments.compare --out results/comparisons/colab_phase0 --baseline-reference baselines/phase0_char_smoke_comparison.json
+```
+
+This writes `baseline_comparison.json` under the comparison output directory
+and exits nonzero if the accepted HEP alpha, Phase 0 invariant result, or config
+set diverges from the checked-in baseline.
+
 The current tiny HEP alpha sweep is also command-driven:
 
 ```bash
