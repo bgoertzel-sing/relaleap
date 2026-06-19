@@ -24,6 +24,8 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "cuda_available: True",
                     '"status": "pass"',
                     "Accepted HEP alpha: {'alpha': 0.25}",
+                    '"pinned_support": true',
+                    "Pinned HEP status: ok",
                     COMPLETION_TEXT,
                 ]
             )
@@ -36,6 +38,7 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     [
                         "assert baseline_comparison['status'] == 'pass'",
                         "print('Accepted HEP alpha:', accepted)",
+                        "print('Pinned HEP status:', pinned_summary['status'])",
                         f"print('{COMPLETION_TEXT}')",
                     ]
                 )

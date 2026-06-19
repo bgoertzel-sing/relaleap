@@ -75,8 +75,9 @@ results/colab_bridge_evidence/latest_colab_output.txt
 ```
 
 The notebook also emits a rendered base64 zip bundle for
-`results/comparisons/colab_phase0`. When that bundle is present in the rendered
-output, the helper extracts it under the local repo root so the normal
+`results/comparisons/colab_phase0` and the pinned-support smoke run under
+`results/runs/colab_char_smoke_pinned_hep`. When that bundle is present in the
+rendered output, the helper extracts it under the local repo root so the normal
 after-the-fact checker can inspect the Colab artifact tree locally.
 
 If the keyboard shortcut stops working after a Colab UI change, try
@@ -106,6 +107,13 @@ The smoke notebook runs the same command-driven comparison used locally:
 python -m relaleap.experiments.compare --out results/comparisons/colab_phase0 --baseline-reference baselines/phase0_char_smoke_comparison.json
 ```
 
+It also runs the opt-in pinned-support HEP smoke config as a separate
+command-driven artifact check:
+
+```bash
+python -m relaleap.experiments.run --config configs/char_smoke_pinned_hep.yaml --out results/runs/colab_char_smoke_pinned_hep
+```
+
 Expected artifacts:
 
 ```text
@@ -116,6 +124,9 @@ results/comparisons/colab_phase0/summary.json
 results/comparisons/colab_phase0/runs/char_smoke/summary.json
 results/comparisons/colab_phase0/runs/char_smoke_pc/summary.json
 results/comparisons/colab_phase0/runs/char_smoke_hep/summary.json
+results/runs/colab_char_smoke_pinned_hep/summary.json
+results/runs/colab_char_smoke_pinned_hep/metrics.csv
+results/runs/colab_char_smoke_pinned_hep/notes.md
 ```
 
 The checked-in schema v3 local baseline currently accepts HEP alpha `0.25`. The

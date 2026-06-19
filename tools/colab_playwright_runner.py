@@ -116,6 +116,8 @@ def _validate_evidence_text(text: str) -> None:
         'cuda_available: True',
         '"status": "pass"',
         "Accepted HEP alpha:",
+        '"pinned_support": true',
+        "Pinned HEP status: ok",
         COMPLETION_TEXT,
     ]
     missing = [marker for marker in required if marker not in text]
