@@ -43,7 +43,7 @@ Every experiment should be runnable as a plain Python command so it can run loca
 python -m relaleap.experiments.run --config configs/char_smoke.yaml
 ```
 
-The current supervised-vs-PC char smoke comparison is also command-driven:
+The current supervised/PC/HEP char smoke comparison is also command-driven:
 
 ```bash
 python -m relaleap.experiments.compare

@@ -15,6 +15,7 @@ from relaleap.experiments.run import run
 DEFAULT_CONFIGS = (
     Path("configs/char_smoke.yaml"),
     Path("configs/char_smoke_pc.yaml"),
+    Path("configs/char_smoke_hep.yaml"),
 )
 
 
@@ -91,6 +92,7 @@ def _comparison_entry(
         "residual_loss_ratio": loss_ratio,
         "base_loss": phase0.get("base_loss"),
         "zero_init_loss": phase0.get("zero_init_loss"),
+        "hep_alpha_sweep": phase0.get("hep_alpha_sweep") or [],
         "invariants": phase0.get("invariants") or {},
     }
 
@@ -117,6 +119,11 @@ def _combined_rows(
                 "base_loss": row.get("base_loss", ""),
                 "residual_loss": row.get("residual_loss", ""),
                 "loss_delta_from_initial": _format_optional(loss_delta),
+                "hep_alpha": row.get("hep_alpha", ""),
+                "hep_loss": row.get("hep_loss", ""),
+                "max_hep_logit_delta_from_ordinary": row.get(
+                    "max_hep_logit_delta_from_ordinary", ""
+                ),
                 "status": row.get("status", entry["status"]),
             }
         )
@@ -162,6 +169,9 @@ def _write_metrics(path: Path, rows: list[dict[str, Any]]) -> None:
         "base_loss",
         "residual_loss",
         "loss_delta_from_initial",
+        "hep_alpha",
+        "hep_loss",
+        "max_hep_logit_delta_from_ordinary",
         "status",
     ]
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -203,6 +213,22 @@ def _write_notes(path: Path, comparison: dict[str, Any]) -> None:
     lines.extend(["", "## Artifacts", ""])
     for entry in comparison["runs"]:
         lines.append(f"- `{entry['experiment_id']}`: `{entry['run_dir']}`")
+    hep_entries = [
+        entry for entry in comparison["runs"] if entry.get("hep_alpha_sweep")
+    ]
+    if hep_entries:
+        lines.extend(["", "## HEP Alpha Sweeps", ""])
+        for entry in hep_entries:
+            sweep = ", ".join(
+                (
+                    f"alpha {sweep_entry['alpha']}: "
+                    f"loss {_format_note_metric(sweep_entry['loss'])}, "
+                    "delta "
+                    f"{_format_note_metric(sweep_entry['max_logit_delta_from_ordinary'])}"
+                )
+                for sweep_entry in entry["hep_alpha_sweep"]
+            )
+            lines.append(f"- `{entry['experiment_id']}`: {sweep}")
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
 
