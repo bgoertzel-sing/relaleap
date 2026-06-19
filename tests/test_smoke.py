@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import csv
 import json
 import tempfile
@@ -47,12 +48,47 @@ class Phase0SmokeTest(unittest.TestCase):
         self.assertAlmostEqual(result.base_loss, result.zero_init_loss)
         self.assertAlmostEqual(result.initial_loss, result.zero_init_loss)
         self.assertEqual(result.training_steps, CONFIG["run"]["max_steps"])
+        self.assertEqual(result.residual_objective, "supervised_ce")
         self.assertEqual(len(result.to_metric_rows()), CONFIG["run"]["max_steps"] + 1)
         self.assertEqual(result.to_metric_rows()[0]["phase"], "initial")
+        self.assertTrue(
+            all(
+                row["residual_objective"] == "supervised_ce"
+                for row in result.to_metric_rows()
+            )
+        )
         self.assertTrue(
             all(row["phase"] == "residual_update" for row in result.to_metric_rows()[1:])
         )
         self.assertEqual(result.to_metric_rows()[-1]["residual_loss"], result.post_step_loss)
+
+    def test_pc_logit_mse_objective_toggle(self) -> None:
+        pc_config = copy.deepcopy(CONFIG)
+        pc_config["training"] = {"residual_objective": "pc_logit_mse"}
+
+        try:
+            result = run_phase0_smoke(pc_config)
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        self.assertEqual(result.residual_objective, "pc_logit_mse")
+        self.assertTrue(all(result.invariants.values()))
+        self.assertEqual(result.to_metric_rows()[0]["phase"], "initial")
+        self.assertTrue(
+            all(
+                row["phase"] == "pc_residual_update"
+                for row in result.to_metric_rows()[1:]
+            )
+        )
+        self.assertTrue(
+            all(
+                row["residual_objective"] == "pc_logit_mse"
+                for row in result.to_metric_rows()
+            )
+        )
+        self.assertGreater(result.residual_parameter_delta, 0.0)
 
     def test_runner_writes_required_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -68,6 +104,8 @@ class Phase0SmokeTest(unittest.TestCase):
                         "data:",
                         "  dataset: tiny_shakespeare_char",
                         "  seq_len: 32",
+                        "training:",
+                        "  residual_objective: supervised_ce",
                         "model:",
                         "  base:",
                         "    layers: 2",
@@ -103,6 +141,7 @@ class Phase0SmokeTest(unittest.TestCase):
             self.assertTrue(saved["phase0"]["invariants"]["zero_init_identity"])
             self.assertIn("base_loss", saved["phase0"])
             self.assertIn("post_step_loss", saved["phase0"])
+            self.assertEqual(saved["phase0"]["residual_objective"], "supervised_ce")
             self.assertEqual(saved["phase0"]["training_steps"], 2)
 
             with (tmp_path / "out" / "metrics.csv").open(newline="") as handle:
@@ -115,6 +154,8 @@ class Phase0SmokeTest(unittest.TestCase):
             self.assertNotIn("smoke_loss", metric_rows[0])
             self.assertIn("base_loss", metric_rows[0])
             self.assertIn("residual_loss", metric_rows[0])
+            self.assertIn("residual_objective", metric_rows[0])
+            self.assertEqual(metric_rows[0]["residual_objective"], "supervised_ce")
             self.assertEqual(
                 float(metric_rows[-1]["residual_loss"]),
                 saved["final_smoke_loss"],

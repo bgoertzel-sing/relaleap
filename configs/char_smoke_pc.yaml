@@ -1,5 +1,5 @@
 run:
-  experiment_id: char_smoke
+  experiment_id: char_smoke_pc
   seed: 1
   max_steps: 10
 
@@ -8,7 +8,7 @@ data:
   seq_len: 32
 
 training:
-  residual_objective: supervised_ce
+  residual_objective: pc_logit_mse
 
 model:
   base:

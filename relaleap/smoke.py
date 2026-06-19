@@ -25,6 +25,7 @@ Resolved. resolved.
 class Phase0Result:
     """Structured result returned by the Phase 0 smoke routine."""
 
+    residual_objective: str
     vocab_size: int
     seq_len: int
     batch_size: int
@@ -41,6 +42,7 @@ class Phase0Result:
 
     def to_summary(self) -> dict[str, Any]:
         return {
+            "residual_objective": self.residual_objective,
             "vocab_size": self.vocab_size,
             "seq_len": self.seq_len,
             "batch_size": self.batch_size,
@@ -81,10 +83,17 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     base_cfg = model_cfg.get("base", {})
     column_cfg = model_cfg.get("columns", {})
     inference_cfg = config.get("inference", {})
+    training_cfg = config.get("training", {})
 
     seed = int(run_cfg.get("seed", 1))
     max_steps = int(run_cfg.get("max_steps", 10))
     learning_rate = float(run_cfg.get("learning_rate", 1e-2))
+    residual_objective = str(
+        training_cfg.get(
+            "residual_objective",
+            run_cfg.get("residual_objective", "supervised_ce"),
+        )
+    )
     seq_len = int(data_cfg.get("seq_len", 32))
     hidden_dim = int(base_cfg.get("hidden_dim", 32))
     layers = int(base_cfg.get("layers", 2))
@@ -100,6 +109,10 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         raise ValueError("run.max_steps must be at least 1 for Phase 0 smoke")
     if hep_alpha != 0.0:
         raise NotImplementedError("Phase 0 smoke only implements hep_alpha == 0.0")
+    if residual_objective not in {"supervised_ce", "pc_logit_mse"}:
+        raise ValueError(
+            "training.residual_objective must be one of: supervised_ce, pc_logit_mse"
+        )
 
     torch.manual_seed(seed)
     inputs, targets, vocab_size = _build_char_batch(seq_len=seq_len, batch_size=4)
@@ -147,11 +160,19 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     residual.train()
     before_residual = _clone_state_dict(residual)
     optimizer = torch.optim.AdamW(residual.parameters(), lr=learning_rate)
-    initial_loss_tensor = _residual_loss(base, residual, inputs, targets, vocab_size)
+    initial_loss_tensor = _residual_loss(
+        base,
+        residual,
+        inputs,
+        targets,
+        vocab_size,
+        objective=residual_objective,
+    )
     metric_rows: list[dict[str, float | int | str]] = [
         _metric_row(
             step=0,
             phase="initial",
+            residual_objective=residual_objective,
             base_loss=float(base_loss_tensor.detach().item()),
             residual_loss=float(initial_loss_tensor.detach().item()),
             zero_init_loss=float(zero_init_loss_tensor.detach().item()),
@@ -163,7 +184,14 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     post_step_loss_tensor = initial_loss_tensor
     for step in range(1, max_steps + 1):
         optimizer.zero_grad(set_to_none=True)
-        loss = _residual_loss(base, residual, inputs, targets, vocab_size)
+        loss = _residual_loss(
+            base,
+            residual,
+            inputs,
+            targets,
+            vocab_size,
+            objective=residual_objective,
+        )
         loss.backward()
         optimizer.step()
         with torch.no_grad():
@@ -173,11 +201,13 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 inputs,
                 targets,
                 vocab_size,
+                objective=residual_objective,
             )
         metric_rows.append(
             _metric_row(
                 step=step,
-                phase="residual_update",
+                phase=_residual_update_phase(residual_objective),
+                residual_objective=residual_objective,
                 base_loss=float(base_loss_tensor.detach().item()),
                 residual_loss=float(post_step_loss_tensor.detach().item()),
                 zero_init_loss=float(zero_init_loss_tensor.detach().item()),
@@ -195,6 +225,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     }
 
     return Phase0Result(
+        residual_objective=residual_objective,
         vocab_size=vocab_size,
         seq_len=seq_len,
         batch_size=int(inputs.shape[0]),
@@ -327,20 +358,41 @@ def _residual_loss(
     inputs: Any,
     targets: Any,
     vocab_size: int,
+    *,
+    objective: str,
 ) -> Any:
+    import torch
     import torch.nn.functional as F
 
     logits = base(inputs, residual_adapter=residual)
-    return F.cross_entropy(
-        logits[:, :-1, :].reshape(-1, vocab_size),
-        targets[:, :-1].reshape(-1),
-    )
+    prediction_logits = logits[:, :-1, :]
+    prediction_targets = targets[:, :-1]
+    if objective == "supervised_ce":
+        return F.cross_entropy(
+            prediction_logits.reshape(-1, vocab_size),
+            prediction_targets.reshape(-1),
+        )
+    if objective == "pc_logit_mse":
+        target_distribution = F.one_hot(
+            prediction_targets,
+            num_classes=vocab_size,
+        ).to(dtype=prediction_logits.dtype)
+        prediction_distribution = torch.softmax(prediction_logits, dim=-1)
+        return F.mse_loss(prediction_distribution, target_distribution)
+    raise ValueError(f"Unsupported residual objective: {objective}")
+
+
+def _residual_update_phase(objective: str) -> str:
+    if objective == "pc_logit_mse":
+        return "pc_residual_update"
+    return "residual_update"
 
 
 def _metric_row(
     *,
     step: int,
     phase: str,
+    residual_objective: str,
     base_loss: float,
     residual_loss: float,
     zero_init_loss: float,
@@ -351,6 +403,7 @@ def _metric_row(
     return {
         "step": step,
         "phase": phase,
+        "residual_objective": residual_objective,
         "base_loss": base_loss,
         "residual_loss": residual_loss,
         "zero_init_loss": zero_init_loss,
