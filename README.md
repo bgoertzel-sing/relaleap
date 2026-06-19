@@ -50,10 +50,11 @@ python -m relaleap.experiments.compare
 ```
 
 The comparison `summary.json` includes a compact verdict with aggregate
-Phase 0 invariant pass/fail status, the best HEP alpha by loss, and an HEP
-alpha acceptance policy. By default, accepted nonzero HEP alphas must improve
-loss over alpha 0 while keeping ordinary-logit delta at or below `0.1`; tune
-that gate with `--hep-max-logit-delta` and `--hep-min-loss-improvement`.
+Phase 0 invariant pass/fail status, required artifact pass/fail status, the
+best HEP alpha by loss, and an HEP alpha acceptance policy. By default,
+accepted nonzero HEP alphas must improve loss over alpha 0 while keeping
+ordinary-logit delta at or below `0.1`; tune that gate with
+`--hep-max-logit-delta` and `--hep-min-loss-improvement`.
 To refresh the checked-in compact Phase 0 baseline after an intentional
 methodology change, run:
 
@@ -61,8 +62,9 @@ methodology change, run:
 python -m relaleap.experiments.compare --baseline-out baselines/phase0_char_smoke_comparison.json
 ```
 
-The current baseline records all 12 Phase 0 invariants passing and an accepted
-HEP alpha of `0.25` under the default logit-delta policy.
+The current baseline records all 12 Phase 0 model invariants and all 9 child-run
+artifact invariants passing, with an accepted HEP alpha of `0.25` under the
+default logit-delta policy.
 
 To compare a fresh local or Colab/GPU run against that baseline, run:
 
@@ -71,8 +73,8 @@ python -m relaleap.experiments.compare --out results/comparisons/colab_phase0 --
 ```
 
 This writes `baseline_comparison.json` under the comparison output directory
-and exits nonzero if the accepted HEP alpha, Phase 0 invariant result, or config
-set diverges from the checked-in baseline.
+and exits nonzero if the accepted HEP alpha, Phase 0 invariant result, artifact
+contract, or config set diverges from the checked-in baseline.
 
 To inspect a completed local or Colab comparison artifact tree without rerunning
 experiments, run:
@@ -83,9 +85,10 @@ python -m relaleap.experiments.check_artifacts --comparison-dir results/comparis
 
 This checks the required `summary.json`, `metrics.csv`, and `notes.md` artifacts
 for the comparison and child runs, then reports the verdict, Phase 0 invariant
-status, accepted HEP alpha, and whether the completed summary still matches the
-checked-in local baseline. Add `--require-baseline-comparison` when the run was
-expected to write `baseline_comparison.json` during execution.
+status, artifact invariant status, accepted HEP alpha, and whether the completed
+summary still matches the checked-in local baseline. Add
+`--require-baseline-comparison` when the run was expected to write
+`baseline_comparison.json` during execution.
 
 The current tiny HEP alpha sweep is also command-driven:
 

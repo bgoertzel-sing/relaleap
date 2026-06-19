@@ -12,6 +12,7 @@ from relaleap.experiments.compare import (
     _comparison_baseline,
     _comparison_entry,
     _comparison_verdict,
+    compare_comparison_to_baseline,
     compare_to_baseline,
     run_comparison,
     write_comparison_baseline,
@@ -187,6 +188,37 @@ class ComparisonReportTest(unittest.TestCase):
             ],
         )
 
+    def test_comparison_verdict_reports_failed_artifact_invariants(self) -> None:
+        verdict = _comparison_verdict(
+            [
+                {
+                    "experiment_id": "char_smoke",
+                    "invariants": {"zero_init_identity": True},
+                    "artifact_invariants": {
+                        "summary_json": True,
+                        "metrics_csv": False,
+                        "notes_md": True,
+                    },
+                    "hep_alpha_sweep": [],
+                }
+            ],
+            "ok",
+        )
+
+        self.assertEqual(verdict["status"], "fail")
+        self.assertTrue(verdict["invariants_passed"])
+        self.assertFalse(verdict["artifact_invariants_passed"])
+        self.assertEqual(verdict["artifact_invariant_count"], 3)
+        self.assertEqual(
+            verdict["failed_artifact_invariants"],
+            [
+                {
+                    "experiment_id": "char_smoke",
+                    "artifact": "metrics_csv",
+                }
+            ],
+        )
+
     def test_comparison_baseline_keeps_stable_phase0_fields(self) -> None:
         comparison = {
             "status": "ok",
@@ -226,10 +258,13 @@ class ComparisonReportTest(unittest.TestCase):
 
         baseline = _comparison_baseline(comparison)
 
-        self.assertEqual(baseline["schema_version"], 1)
+        self.assertEqual(baseline["schema_version"], 2)
         self.assertEqual(baseline["comparison_status"], "ok")
         self.assertEqual(baseline["verdict_status"], "pass")
         self.assertEqual(baseline["phase0_invariants"]["count"], 1)
+        self.assertTrue(baseline["artifact_invariants"]["passed"])
+        self.assertEqual(baseline["artifact_invariants"]["count"], 0)
+        self.assertEqual(baseline["artifact_invariants"]["failed"], [])
         self.assertEqual(baseline["hep"]["best_alpha_by_loss"]["alpha"], 0.25)
         self.assertEqual(
             baseline["hep"]["acceptance"]["accepted_alpha"]["alpha"],
@@ -336,6 +371,8 @@ class ComparisonReportTest(unittest.TestCase):
             self.assertEqual(len(saved["runs"]), 2)
             self.assertEqual(saved["runs"][0]["residual_loss_delta"], -0.25)
             self.assertEqual(saved["verdict"]["status"], "pass")
+            self.assertTrue(saved["verdict"]["artifact_invariants_passed"])
+            self.assertEqual(saved["verdict"]["artifact_invariant_count"], 0)
             self.assertEqual(saved["verdict"]["best_hep_alpha_by_loss"]["alpha"], 0.0)
             self.assertEqual(
                 saved["verdict"]["hep_alpha_acceptance"]["status"],
@@ -363,6 +400,7 @@ class ComparisonReportTest(unittest.TestCase):
             self.assertTrue((tmp_path / "baseline" / "phase0.json").is_file())
             self.assertEqual(baseline["comparison_status"], "ok")
             self.assertEqual(baseline["phase0_invariants"]["count"], 2)
+            self.assertEqual(baseline["artifact_invariants"]["count"], 0)
             self.assertEqual(
                 baseline["hep"]["acceptance"]["status"],
                 "no_nonzero_hep_candidates",
@@ -372,7 +410,7 @@ class ComparisonReportTest(unittest.TestCase):
         baseline_path = Path("baselines/phase0_char_smoke_comparison.json")
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(baseline["schema_version"], 1)
+        self.assertEqual(baseline["schema_version"], 2)
         self.assertEqual(baseline["comparison_status"], "ok")
         self.assertEqual(baseline["verdict_status"], "pass")
         self.assertEqual(
@@ -385,6 +423,8 @@ class ComparisonReportTest(unittest.TestCase):
         )
         self.assertTrue(baseline["phase0_invariants"]["passed"])
         self.assertEqual(baseline["phase0_invariants"]["count"], 12)
+        self.assertTrue(baseline["artifact_invariants"]["passed"])
+        self.assertEqual(baseline["artifact_invariants"]["count"], 9)
         self.assertEqual(baseline["hep"]["best_alpha_by_loss"]["alpha"], 1.0)
         self.assertEqual(
             baseline["hep"]["acceptance"]["accepted_alpha"]["alpha"],
@@ -444,6 +484,56 @@ class ComparisonReportTest(unittest.TestCase):
                 0.25,
             )
             self.assertTrue(out_path.is_file())
+
+    def test_compare_to_baseline_reports_schema_version_mismatch(self) -> None:
+        comparison = {
+            "status": "ok",
+            "verdict": _comparison_verdict(
+                [
+                    {
+                        "experiment_id": "char_smoke_hep",
+                        "invariants": {"zero_init_identity": True},
+                        "hep_alpha_sweep": [
+                            {
+                                "alpha": 0.0,
+                                "loss": 3.5,
+                                "max_logit_delta_from_ordinary": 0.0,
+                            },
+                        ],
+                    }
+                ],
+                "ok",
+            ),
+            "runs": [
+                {
+                    "experiment_id": "char_smoke_hep",
+                    "config_path": "configs/char_smoke_hep.yaml",
+                    "residual_objective": "supervised_ce",
+                    "status": "ok",
+                    "training_steps": 10,
+                    "invariants": {"zero_init_identity": True},
+                    "final_residual_loss": 3.5,
+                }
+            ],
+        }
+        reference = _comparison_baseline(comparison)
+        reference["schema_version"] = 1
+        reference.pop("artifact_invariants")
+
+        result = compare_comparison_to_baseline(comparison, reference)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(
+            result["mismatches"],
+            [
+                {
+                    "field": "schema_version",
+                    "reference": 1,
+                    "candidate": 2,
+                }
+            ],
+        )
+        self.assertIsNone(result["reference"]["artifact_invariants"])
 
     def test_compare_to_baseline_flags_accepted_alpha_drift(self) -> None:
         comparison = {

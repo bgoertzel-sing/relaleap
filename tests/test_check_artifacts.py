@@ -24,6 +24,8 @@ class CheckArtifactsTest(unittest.TestCase):
             self.assertEqual(report["summary_status"], "ok")
             self.assertEqual(report["verdict_status"], "pass")
             self.assertEqual(report["phase0_invariants"]["count"], 12)
+            self.assertEqual(report["artifact_invariants"]["count"], 9)
+            self.assertTrue(report["artifact_invariants"]["passed"])
             self.assertEqual(
                 report["hep_alpha_acceptance"]["accepted_alpha"]["alpha"],
                 0.25,
@@ -176,6 +178,9 @@ def _write_comparison_tree(
                     "invariants_passed": True,
                     "invariant_count": 12,
                     "failed_invariants": [],
+                    "artifact_invariants_passed": True,
+                    "artifact_invariant_count": 9,
+                    "failed_artifact_invariants": [],
                     "best_hep_alpha_by_loss": {
                         "alpha": 1.0,
                         "experiment_id": "char_smoke_hep",

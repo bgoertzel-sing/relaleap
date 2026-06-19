@@ -76,7 +76,7 @@ results/comparisons/colab_phase0/runs/char_smoke_hep/summary.json
 The checked-in local baseline currently accepts HEP alpha `0.25`. The
 `--baseline-reference` gate writes `baseline_comparison.json` and exits nonzero
 if the Colab/GPU run changes the accepted HEP alpha, loses Phase 0 invariants,
-or changes the comparison config set.
+loses required artifact invariants, or changes the comparison config set.
 
 After a manual Colab run, inspect the artifact directory without rerunning the
 experiments:
@@ -86,7 +86,8 @@ python -m relaleap.experiments.check_artifacts --comparison-dir results/comparis
 ```
 
 The checker fails if required comparison or per-run artifacts are missing, if
-the comparison verdict is not `pass`, or if the completed comparison summary
-drifts from the checked-in Phase 0 baseline. Add
+the comparison verdict is not `pass`, if the completed summary reports failed
+artifact invariants, or if the completed comparison summary drifts from the
+checked-in Phase 0 baseline. Add
 `--require-baseline-comparison` when the run was expected to write
 `baseline_comparison.json` during execution.

@@ -19,7 +19,7 @@ DEFAULT_CONFIGS = (
 )
 DEFAULT_HEP_MAX_LOGIT_DELTA = 0.1
 DEFAULT_HEP_MIN_LOSS_IMPROVEMENT = 0.0
-BASELINE_SCHEMA_VERSION = 1
+BASELINE_SCHEMA_VERSION = 2
 
 
 def run_comparison(
@@ -159,6 +159,11 @@ def _comparison_baseline(comparison: dict[str, Any]) -> dict[str, Any]:
             "count": verdict["invariant_count"],
             "failed": verdict["failed_invariants"],
         },
+        "artifact_invariants": {
+            "passed": verdict["artifact_invariants_passed"],
+            "count": verdict["artifact_invariant_count"],
+            "failed": verdict["failed_artifact_invariants"],
+        },
         "hep": {
             "best_alpha_by_loss": _baseline_hep_alpha(
                 verdict["best_hep_alpha_by_loss"]
@@ -189,6 +194,14 @@ def _baseline_mismatches(
     reference: dict[str, Any],
     candidate: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    if reference.get("schema_version") != candidate.get("schema_version"):
+        return [
+            {
+                "field": "schema_version",
+                "reference": reference.get("schema_version"),
+                "candidate": candidate.get("schema_version"),
+            }
+        ]
     checks = [
         ("comparison_status", reference["comparison_status"], candidate["comparison_status"]),
         ("verdict_status", reference["verdict_status"], candidate["verdict_status"]),
@@ -207,6 +220,21 @@ def _baseline_mismatches(
             "phase0_invariants.failed",
             reference["phase0_invariants"]["failed"],
             candidate["phase0_invariants"]["failed"],
+        ),
+        (
+            "artifact_invariants.passed",
+            reference["artifact_invariants"]["passed"],
+            candidate["artifact_invariants"]["passed"],
+        ),
+        (
+            "artifact_invariants.count",
+            reference["artifact_invariants"]["count"],
+            candidate["artifact_invariants"]["count"],
+        ),
+        (
+            "artifact_invariants.failed",
+            reference["artifact_invariants"]["failed"],
+            candidate["artifact_invariants"]["failed"],
         ),
         (
             "hep.acceptance.status",
@@ -229,10 +257,12 @@ def _baseline_mismatches(
 def _baseline_comparison_fields(baseline: dict[str, Any]) -> dict[str, Any]:
     acceptance = baseline["hep"]["acceptance"]
     return {
+        "schema_version": baseline.get("schema_version"),
         "comparison_status": baseline["comparison_status"],
         "verdict_status": baseline["verdict_status"],
         "config_paths": baseline["config_paths"],
         "phase0_invariants": baseline["phase0_invariants"],
+        "artifact_invariants": baseline.get("artifact_invariants"),
         "accepted_hep_alpha": acceptance["accepted_alpha"],
         "accepted_status": acceptance["status"],
     }
@@ -299,6 +329,7 @@ def _comparison_entry(
         "zero_init_loss": phase0.get("zero_init_loss"),
         "hep_alpha_sweep": phase0.get("hep_alpha_sweep") or [],
         "invariants": phase0.get("invariants") or {},
+        "artifact_invariants": summary.get("artifact_invariants") or {},
     }
 
 
@@ -311,6 +342,8 @@ def _comparison_verdict(
 ) -> dict[str, Any]:
     failed_invariants = []
     invariant_count = 0
+    failed_artifact_invariants = []
+    artifact_invariant_count = 0
     for entry in entries:
         invariants = entry.get("invariants") or {}
         invariant_count += len(invariants)
@@ -322,6 +355,16 @@ def _comparison_verdict(
                         "invariant": name,
                     }
                 )
+        artifact_invariants = entry.get("artifact_invariants") or {}
+        artifact_invariant_count += len(artifact_invariants)
+        for name, value in sorted(artifact_invariants.items()):
+            if not value:
+                failed_artifact_invariants.append(
+                    {
+                        "experiment_id": entry["experiment_id"],
+                        "artifact": name,
+                    }
+                )
 
     best_hep = _best_hep_alpha(entries)
     hep_acceptance = _hep_alpha_acceptance(
@@ -330,12 +373,20 @@ def _comparison_verdict(
         min_loss_improvement=hep_min_loss_improvement,
     )
     invariants_passed = bool(invariant_count) and not failed_invariants
-    verdict_status = "pass" if status == "ok" and invariants_passed else "fail"
+    artifact_invariants_passed = not failed_artifact_invariants
+    verdict_status = (
+        "pass"
+        if status == "ok" and invariants_passed and artifact_invariants_passed
+        else "fail"
+    )
     return {
         "status": verdict_status,
         "invariants_passed": invariants_passed,
         "invariant_count": invariant_count,
         "failed_invariants": failed_invariants,
+        "artifact_invariants_passed": artifact_invariants_passed,
+        "artifact_invariant_count": artifact_invariant_count,
+        "failed_artifact_invariants": failed_artifact_invariants,
         "best_hep_alpha_by_loss": best_hep,
         "hep_alpha_acceptance": hep_acceptance,
     }
@@ -547,6 +598,10 @@ def _write_notes(path: Path, comparison: dict[str, Any]) -> None:
             f"- Phase 0 invariants: `{verdict['invariant_count']}` checked, "
             f"passed `{verdict['invariants_passed']}`"
         ),
+        (
+            f"- Artifact invariants: `{verdict['artifact_invariant_count']}` checked, "
+            f"passed `{verdict['artifact_invariants_passed']}`"
+        ),
         f"- HEP alpha acceptance: `{hep_acceptance['status']}`",
         f"- Loss scale note: {comparison['loss_scale_note']}",
         "",
@@ -595,6 +650,12 @@ def _write_notes(path: Path, comparison: dict[str, Any]) -> None:
         for failed in verdict["failed_invariants"]:
             lines.append(
                 f"- `{failed['experiment_id']}`: `{failed['invariant']}`"
+            )
+    if verdict["failed_artifact_invariants"]:
+        lines.extend(["", "## Failed Artifact Invariants", ""])
+        for failed in verdict["failed_artifact_invariants"]:
+            lines.append(
+                f"- `{failed['experiment_id']}`: `{failed['artifact']}`"
             )
     if verdict["best_hep_alpha_by_loss"]:
         best = verdict["best_hep_alpha_by_loss"]

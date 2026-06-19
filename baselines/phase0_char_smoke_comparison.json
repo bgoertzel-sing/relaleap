@@ -1,4 +1,9 @@
 {
+  "artifact_invariants": {
+    "count": 9,
+    "failed": [],
+    "passed": true
+  },
   "comparison_status": "ok",
   "config_paths": [
     "configs/char_smoke.yaml",
@@ -67,6 +72,6 @@
       "training_steps": 10
     }
   ],
-  "schema_version": 1,
+  "schema_version": 2,
   "verdict_status": "pass"
 }

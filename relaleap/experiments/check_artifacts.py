@@ -71,6 +71,16 @@ def check_comparison_artifacts(
     phase0_failed = (
         verdict.get("failed_invariants", []) if isinstance(verdict, dict) else []
     )
+    artifact_invariants_passed = (
+        verdict.get("artifact_invariants_passed")
+        if isinstance(verdict, dict)
+        else None
+    )
+    artifact_invariants_failed = (
+        verdict.get("failed_artifact_invariants", [])
+        if isinstance(verdict, dict)
+        else []
+    )
     acceptance = (
         verdict.get("hep_alpha_acceptance", {}) if isinstance(verdict, dict) else {}
     )
@@ -104,6 +114,14 @@ def check_comparison_artifacts(
                     "actual": phase0_passed,
                 }
             )
+        if artifact_invariants_passed is False:
+            failures.append(
+                {
+                    "field": "comparison.verdict.artifact_invariants_passed",
+                    "expected": True,
+                    "actual": artifact_invariants_passed,
+                }
+            )
     if isinstance(baseline, dict) and baseline.get("status") != "pass":
         failures.append(
             {
@@ -124,6 +142,19 @@ def check_comparison_artifacts(
             "passed": phase0_passed,
             "count": verdict.get("invariant_count") if isinstance(verdict, dict) else None,
             "failed_count": len(phase0_failed) if isinstance(phase0_failed, list) else None,
+        },
+        "artifact_invariants": {
+            "passed": artifact_invariants_passed,
+            "count": (
+                verdict.get("artifact_invariant_count")
+                if isinstance(verdict, dict)
+                else None
+            ),
+            "failed_count": (
+                len(artifact_invariants_failed)
+                if isinstance(artifact_invariants_failed, list)
+                else None
+            ),
         },
         "hep_alpha_acceptance": {
             "status": acceptance.get("status") if isinstance(acceptance, dict) else None,
