@@ -90,6 +90,39 @@ class Phase0SmokeTest(unittest.TestCase):
         )
         self.assertGreater(result.residual_parameter_delta, 0.0)
 
+    def test_hep_alpha_sweep_records_nonzero_alpha_rows(self) -> None:
+        hep_config = copy.deepcopy(CONFIG)
+        hep_config["run"]["max_steps"] = 1
+        hep_config["inference"] = {
+            "pc_steps": 2,
+            "hep_alpha": 0.0,
+            "hep_alpha_sweep": "0.0,0.5,1.0",
+        }
+
+        try:
+            result = run_phase0_smoke(hep_config)
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        self.assertTrue(result.invariants["hep_alpha_0_equivalence"])
+        self.assertEqual(
+            [entry["alpha"] for entry in result.hep_alpha_sweep],
+            [0.0, 0.5, 1.0],
+        )
+        self.assertLessEqual(
+            result.hep_alpha_sweep[0]["max_logit_delta_from_ordinary"],
+            1e-6,
+        )
+        sweep_rows = [
+            row for row in result.to_metric_rows() if row["phase"] == "hep_sweep"
+        ]
+        self.assertEqual([row["hep_alpha"] for row in sweep_rows], [0.0, 0.5, 1.0])
+        self.assertTrue(
+            all(row["hep_loss"] != "" for row in sweep_rows)
+        )
+
     def test_runner_writes_required_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
@@ -155,6 +188,8 @@ class Phase0SmokeTest(unittest.TestCase):
             self.assertIn("base_loss", metric_rows[0])
             self.assertIn("residual_loss", metric_rows[0])
             self.assertIn("residual_objective", metric_rows[0])
+            self.assertIn("hep_alpha", metric_rows[0])
+            self.assertIn("hep_loss", metric_rows[0])
             self.assertEqual(metric_rows[0]["residual_objective"], "supervised_ce")
             self.assertEqual(
                 float(metric_rows[-1]["residual_loss"]),

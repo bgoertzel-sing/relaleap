@@ -212,6 +212,11 @@ def _build_phase0_rows(
                 "max_hep_alpha0_logit_delta": _format_metric(
                     source["max_hep_alpha0_logit_delta"]
                 ),
+                "hep_alpha": _format_optional_metric(source.get("hep_alpha")),
+                "hep_loss": _format_optional_metric(source.get("hep_loss")),
+                "max_hep_logit_delta_from_ordinary": _format_optional_metric(
+                    source.get("max_hep_logit_delta_from_ordinary")
+                ),
                 "device": device,
                 "error": "",
             }
@@ -240,6 +245,9 @@ def _build_failed_rows(
             "residual_parameter_delta": "",
             "max_zero_init_logit_delta": "",
             "max_hep_alpha0_logit_delta": "",
+            "hep_alpha": "",
+            "hep_loss": "",
+            "max_hep_logit_delta_from_ordinary": "",
             "device": device,
             "error": error,
             "max_steps": max_steps,
@@ -249,6 +257,12 @@ def _build_failed_rows(
 
 def _format_metric(value: Any) -> str:
     return f"{float(value):.8f}"
+
+
+def _format_optional_metric(value: Any) -> str:
+    if value in {"", None}:
+        return ""
+    return _format_metric(value)
 
 
 def _final_loss(rows: list[dict[str, Any]]) -> float | None:
@@ -269,11 +283,21 @@ def _write_metrics(path: Path, rows: list[dict[str, Any]]) -> None:
 def _write_notes(path: Path, experiment_id: str, summary: dict[str, Any]) -> None:
     phase0 = summary.get("phase0") or {}
     invariants = phase0.get("invariants") or {}
+    hep_sweep = phase0.get("hep_alpha_sweep") or []
     invariant_lines = [
         f"- {name}: `{value}`" for name, value in sorted(invariants.items())
     ]
     if not invariant_lines:
         invariant_lines = ["- Phase 0 invariants: `not run`"]
+    hep_lines = [
+        (
+            f"- alpha `{entry['alpha']}`: loss `{entry['loss']}`, "
+            f"max ordinary-logit delta `{entry['max_logit_delta_from_ordinary']}`"
+        )
+        for entry in hep_sweep
+    ]
+    if not hep_lines:
+        hep_lines = ["- HEP alpha sweep: `not configured`"]
 
     path.write_text(
         "\n".join(
@@ -295,6 +319,10 @@ def _write_notes(path: Path, experiment_id: str, summary: dict[str, Any]) -> Non
                 "## Invariants",
                 "",
                 *invariant_lines,
+                "",
+                "## HEP Alpha Sweep",
+                "",
+                *hep_lines,
                 "",
             ]
         ),

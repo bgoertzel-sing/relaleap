@@ -38,6 +38,7 @@ class Phase0Result:
     residual_parameter_delta: float
     max_zero_init_logit_delta: float
     max_hep_alpha0_logit_delta: float
+    hep_alpha_sweep: list[dict[str, float]]
     invariants: dict[str, bool]
 
     def to_summary(self) -> dict[str, Any]:
@@ -54,6 +55,7 @@ class Phase0Result:
             "residual_parameter_delta": self.residual_parameter_delta,
             "max_zero_init_logit_delta": self.max_zero_init_logit_delta,
             "max_hep_alpha0_logit_delta": self.max_hep_alpha0_logit_delta,
+            "hep_alpha_sweep": self.hep_alpha_sweep,
             "invariants": self.invariants,
         }
 
@@ -102,13 +104,15 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     top_k = int(column_cfg.get("top_k", 1))
     pc_steps = int(inference_cfg.get("pc_steps", 1))
     hep_alpha = float(inference_cfg.get("hep_alpha", 0.0))
+    hep_alpha_sweep = _parse_hep_alpha_sweep(inference_cfg, fallback_alpha=hep_alpha)
 
     if pc_steps < 1:
         raise ValueError("inference.pc_steps must be at least 1")
     if max_steps < 1:
         raise ValueError("run.max_steps must be at least 1 for Phase 0 smoke")
-    if hep_alpha != 0.0:
-        raise NotImplementedError("Phase 0 smoke only implements hep_alpha == 0.0")
+    for alpha in hep_alpha_sweep:
+        if alpha < 0.0 or alpha > 1.0:
+            raise ValueError("HEP alpha values must be between 0.0 and 1.0")
     if residual_objective not in {"supervised_ce", "pc_logit_mse"}:
         raise ValueError(
             "training.residual_objective must be one of: supervised_ce, pc_logit_mse"
@@ -151,7 +155,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         )
 
     max_zero_delta = float((base_logits - zero_init_logits).abs().max().item())
-    max_hep_delta = float((zero_init_logits - hep_logits).abs().max().item())
+    initial_hep_alpha0_delta = float((zero_init_logits - hep_logits).abs().max().item())
 
     base_snapshot = _clone_state_dict(base)
     for parameter in base.parameters():
@@ -178,10 +182,14 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             zero_init_loss=float(zero_init_loss_tensor.detach().item()),
             residual_parameter_delta=0.0,
             max_zero_init_logit_delta=max_zero_delta,
-            max_hep_alpha0_logit_delta=max_hep_delta,
+            max_hep_alpha0_logit_delta=initial_hep_alpha0_delta,
+            hep_alpha="",
+            hep_loss="",
+            max_hep_logit_delta_from_ordinary="",
         )
     ]
     post_step_loss_tensor = initial_loss_tensor
+    max_hep_alpha0_delta = initial_hep_alpha0_delta
     for step in range(1, max_steps + 1):
         optimizer.zero_grad(set_to_none=True)
         loss = _residual_loss(
@@ -203,6 +211,13 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 vocab_size,
                 objective=residual_objective,
             )
+            max_hep_alpha0_delta = _max_hep_delta_from_ordinary(
+                base,
+                residual,
+                inputs,
+                pc_steps=pc_steps,
+                hep_alpha=0.0,
+            )
         metric_rows.append(
             _metric_row(
                 step=step,
@@ -213,14 +228,48 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 zero_init_loss=float(zero_init_loss_tensor.detach().item()),
                 residual_parameter_delta=_state_dict_delta(before_residual, residual),
                 max_zero_init_logit_delta=max_zero_delta,
-                max_hep_alpha0_logit_delta=max_hep_delta,
+                max_hep_alpha0_logit_delta=max_hep_alpha0_delta,
+                hep_alpha="",
+                hep_loss="",
+                max_hep_logit_delta_from_ordinary="",
+            )
+        )
+
+    hep_sweep_rows = _evaluate_hep_alpha_sweep(
+        base,
+        residual,
+        inputs,
+        targets,
+        vocab_size,
+        pc_steps=pc_steps,
+        alphas=hep_alpha_sweep,
+    )
+    for sweep_row in hep_sweep_rows:
+        if sweep_row["alpha"] == 0.0:
+            max_hep_alpha0_delta = sweep_row["max_logit_delta_from_ordinary"]
+        metric_rows.append(
+            _metric_row(
+                step=max_steps,
+                phase="hep_sweep",
+                residual_objective=residual_objective,
+                base_loss=float(base_loss_tensor.detach().item()),
+                residual_loss=float(post_step_loss_tensor.detach().item()),
+                zero_init_loss=float(zero_init_loss_tensor.detach().item()),
+                residual_parameter_delta=_state_dict_delta(before_residual, residual),
+                max_zero_init_logit_delta=max_zero_delta,
+                max_hep_alpha0_logit_delta=max_hep_alpha0_delta,
+                hep_alpha=sweep_row["alpha"],
+                hep_loss=sweep_row["loss"],
+                max_hep_logit_delta_from_ordinary=sweep_row[
+                    "max_logit_delta_from_ordinary"
+                ],
             )
         )
 
     invariants = {
         "zero_init_identity": max_zero_delta <= 1e-6,
         "frozen_base_unchanged": _state_dict_equal(base_snapshot, base),
-        "hep_alpha_0_equivalence": max_hep_delta <= 1e-6,
+        "hep_alpha_0_equivalence": max_hep_alpha0_delta <= 1e-6,
         "residual_parameters_updated": _state_dict_delta(before_residual, residual) > 0.0,
     }
 
@@ -237,7 +286,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         metric_rows=metric_rows,
         residual_parameter_delta=_state_dict_delta(before_residual, residual),
         max_zero_init_logit_delta=max_zero_delta,
-        max_hep_alpha0_logit_delta=max_hep_delta,
+        max_hep_alpha0_logit_delta=max_hep_alpha0_delta,
+        hep_alpha_sweep=hep_sweep_rows,
         invariants=invariants,
     )
 
@@ -273,14 +323,20 @@ class TinyCharTransformer:
                 self.norm = nn.LayerNorm(hidden_dim)
                 self.lm_head = nn.Linear(hidden_dim, vocab_size, bias=False)
 
-            def forward(self, input_ids: Any, residual_adapter: Any | None = None) -> Any:
+            def encode(self, input_ids: Any) -> Any:
                 seq_len = int(input_ids.shape[1])
                 hidden = self.token_embedding(input_ids) + self.position_embedding[:seq_len]
                 hidden = self.encoder(hidden)
-                hidden = self.norm(hidden)
+                return self.norm(hidden)
+
+            def decode(self, hidden: Any) -> Any:
+                return self.lm_head(hidden)
+
+            def forward(self, input_ids: Any, residual_adapter: Any | None = None) -> Any:
+                hidden = self.encode(input_ids)
                 if residual_adapter is not None:
                     hidden = residual_adapter(hidden)
-                return self.lm_head(hidden)
+                return self.decode(hidden)
 
         return _TinyCharTransformer(*args, **kwargs)
 
@@ -343,13 +399,25 @@ def forward_with_hep_alpha(
     pc_steps: int,
     hep_alpha: float,
 ) -> Any:
-    """HEP inference shim used to pin alpha-0 equivalence."""
+    """Run ordinary residual inference plus bounded HEP-style settling.
+
+    Alpha 0 is defined as ordinary residual inference. Nonzero alpha applies
+    extra residual-settling updates after the ordinary residual pass, which is
+    enough for Phase 0 smoke tests to exercise the HEP command path without
+    turning notebooks into the implementation source of truth.
+    """
 
     if pc_steps < 1:
         raise ValueError("pc_steps must be at least 1")
-    if hep_alpha != 0.0:
-        raise NotImplementedError("HEP alpha > 0 is not implemented in Phase 0 smoke")
-    return base(input_ids, residual_adapter=residual)
+    if hep_alpha < 0.0 or hep_alpha > 1.0:
+        raise ValueError("hep_alpha must be between 0.0 and 1.0")
+
+    hidden = base.encode(input_ids)
+    settled = residual(hidden)
+    for _ in range(1, pc_steps):
+        proposed = residual(settled)
+        settled = settled + hep_alpha * (proposed - settled)
+    return base.decode(settled)
 
 
 def _residual_loss(
@@ -382,6 +450,87 @@ def _residual_loss(
     raise ValueError(f"Unsupported residual objective: {objective}")
 
 
+def _parse_hep_alpha_sweep(
+    inference_cfg: dict[str, Any],
+    *,
+    fallback_alpha: float,
+) -> list[float]:
+    configured = inference_cfg.get("hep_alpha_sweep")
+    if configured is None:
+        return [] if fallback_alpha == 0.0 else [fallback_alpha]
+    if isinstance(configured, str):
+        values = [part.strip() for part in configured.split(",") if part.strip()]
+        return [float(value) for value in values]
+    if isinstance(configured, (list, tuple)):
+        return [float(value) for value in configured]
+    raise ValueError("inference.hep_alpha_sweep must be a list or comma-separated string")
+
+
+def _evaluate_hep_alpha_sweep(
+    base: Any,
+    residual: Any,
+    inputs: Any,
+    targets: Any,
+    vocab_size: int,
+    *,
+    pc_steps: int,
+    alphas: list[float],
+) -> list[dict[str, float]]:
+    import torch.nn.functional as F
+
+    rows = []
+    with _torch_no_grad():
+        ordinary_logits = base(inputs, residual_adapter=residual)
+        for alpha in alphas:
+            hep_logits = forward_with_hep_alpha(
+                base,
+                residual,
+                inputs,
+                pc_steps=pc_steps,
+                hep_alpha=alpha,
+            )
+            loss = F.cross_entropy(
+                hep_logits[:, :-1, :].reshape(-1, vocab_size),
+                targets[:, :-1].reshape(-1),
+            )
+            rows.append(
+                {
+                    "alpha": float(alpha),
+                    "loss": float(loss.detach().item()),
+                    "max_logit_delta_from_ordinary": float(
+                        (ordinary_logits - hep_logits).abs().max().item()
+                    ),
+                }
+            )
+    return rows
+
+
+def _max_hep_delta_from_ordinary(
+    base: Any,
+    residual: Any,
+    inputs: Any,
+    *,
+    pc_steps: int,
+    hep_alpha: float,
+) -> float:
+    with _torch_no_grad():
+        ordinary_logits = base(inputs, residual_adapter=residual)
+        hep_logits = forward_with_hep_alpha(
+            base,
+            residual,
+            inputs,
+            pc_steps=pc_steps,
+            hep_alpha=hep_alpha,
+        )
+    return float((ordinary_logits - hep_logits).abs().max().item())
+
+
+def _torch_no_grad() -> Any:
+    import torch
+
+    return torch.no_grad()
+
+
 def _residual_update_phase(objective: str) -> str:
     if objective == "pc_logit_mse":
         return "pc_residual_update"
@@ -399,6 +548,9 @@ def _metric_row(
     residual_parameter_delta: float,
     max_zero_init_logit_delta: float,
     max_hep_alpha0_logit_delta: float,
+    hep_alpha: float | str,
+    hep_loss: float | str,
+    max_hep_logit_delta_from_ordinary: float | str,
 ) -> dict[str, float | int | str]:
     return {
         "step": step,
@@ -410,6 +562,9 @@ def _metric_row(
         "residual_parameter_delta": residual_parameter_delta,
         "max_zero_init_logit_delta": max_zero_init_logit_delta,
         "max_hep_alpha0_logit_delta": max_hep_alpha0_logit_delta,
+        "hep_alpha": hep_alpha,
+        "hep_loss": hep_loss,
+        "max_hep_logit_delta_from_ordinary": max_hep_logit_delta_from_ordinary,
     }
 
 

@@ -49,6 +49,12 @@ The current supervised-vs-PC char smoke comparison is also command-driven:
 python -m relaleap.experiments.compare
 ```
 
+The current tiny HEP alpha sweep is also command-driven:
+
+```bash
+python -m relaleap.experiments.run --config configs/char_smoke_hep.yaml --out results/runs/char_smoke_hep
+```
+
 Colab should be treated as a temporary GPU runner, not the source of truth. The GitHub repo, config files, and run artifacts are the source of truth.
 
 ## Temporary Colab Bridge
