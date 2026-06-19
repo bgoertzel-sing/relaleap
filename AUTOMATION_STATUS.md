@@ -8,8 +8,8 @@ Phase 0 infrastructure: command-driven experiment harness, char-level smoke inva
 
 ## Latest Run
 
-- Status: ok, 2026-06-19 Colab trust-modal hardening after Ben's CLI run
-- Changed: updated `tools/colab_playwright_runner.py` so `--wait-completion` keeps watching for Colab run-confirmation modals and clicks `Run anyway`/related buttons during the whole completion wait, rather than only once immediately after `Run all`.
-- Verified: Ben reported the real-Chrome CDP Colab run completed after manually clicking `Run Anyway`; `.venv-conda/bin/python -m py_compile tools/colab_playwright_runner.py` and `git diff --check` passed after the bridge hardening.
-- Blockers: live Colab/GPU execution still needs to be launched from a shell/context that can reach `http://127.0.0.1:9222`; the Codex automation sandbox itself cannot probe that localhost CDP port. Colab auth, quota, disconnects, or new runtime popups can still require intervention.
-- Next step: rerun the real-Chrome CDP Colab bridge from CLI with `--wait-completion --debug-snapshot` and confirm it now clicks `Run Anyway` unattended.
+- Status: ok, 2026-06-19 verified real-Chrome CLI Colab/GPU bridge
+- Changed: hardened `tools/colab_playwright_runner.py` so `--wait-completion` keeps watching for Colab run-confirmation modals and clicks `Run anyway`/related buttons during the whole completion wait, rather than only once immediately after `Run all`.
+- Verified: Ben reran the real-Chrome CDP Colab bridge from CLI and reported successful completion with accepted HEP alpha `0.25`, loss improvement `0.011214256286621094`, and `RelaLeap Colab Phase 0 comparison completed.` `.venv-conda/bin/python -m py_compile tools/colab_playwright_runner.py` and `git diff --check` passed after the bridge hardening.
+- Blockers: no current RelaLeap research blocker for CLI-launched Colab/GPU execution when Chrome is running with `--remote-debugging-port=9222`, logged into Google/Colab, and a GPU runtime is available. The Codex automation sandbox itself still cannot probe that localhost CDP port, so live GPU bridge launches should continue from the CLI/shell context for now.
+- Next step: inspect or preserve the Colab evidence/artifact outputs from the successful CLI run, then continue Phase 0 experiments with the real-Chrome CLI bridge as the GPU path.
