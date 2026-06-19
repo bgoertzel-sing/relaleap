@@ -66,8 +66,9 @@ Then run the notebook through that Chrome session:
 ```
 
 The helper clicks the current Colab "Run anyway" trust modal when it appears,
-waits for `RelaLeap Colab Phase 0 comparison completed.`, and saves visible
-notebook evidence to:
+keeps watching for common resume/reconnect prompts while it waits, waits for
+`RelaLeap Colab Phase 0 comparison completed.`, and saves visible notebook
+evidence to:
 
 ```text
 results/colab_bridge_evidence/latest_colab_output.txt
