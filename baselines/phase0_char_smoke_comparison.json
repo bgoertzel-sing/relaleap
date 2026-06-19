@@ -45,6 +45,11 @@
   },
   "runs": [
     {
+      "artifact_invariants": {
+        "count": 3,
+        "failed": [],
+        "passed": true
+      },
       "config_path": "configs/char_smoke.yaml",
       "experiment_id": "char_smoke",
       "final_residual_loss": 3.56317067,
@@ -54,6 +59,11 @@
       "training_steps": 10
     },
     {
+      "artifact_invariants": {
+        "count": 3,
+        "failed": [],
+        "passed": true
+      },
       "config_path": "configs/char_smoke_pc.yaml",
       "experiment_id": "char_smoke_pc",
       "final_residual_loss": 0.02869168,
@@ -63,6 +73,11 @@
       "training_steps": 10
     },
     {
+      "artifact_invariants": {
+        "count": 3,
+        "failed": [],
+        "passed": true
+      },
       "config_path": "configs/char_smoke_hep.yaml",
       "experiment_id": "char_smoke_hep",
       "final_residual_loss": 3.56317067,
@@ -72,6 +87,6 @@
       "training_steps": 10
     }
   ],
-  "schema_version": 2,
+  "schema_version": 3,
   "verdict_status": "pass"
 }

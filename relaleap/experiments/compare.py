@@ -19,7 +19,7 @@ DEFAULT_CONFIGS = (
 )
 DEFAULT_HEP_MAX_LOGIT_DELTA = 0.1
 DEFAULT_HEP_MIN_LOSS_IMPROVEMENT = 0.0
-BASELINE_SCHEMA_VERSION = 2
+BASELINE_SCHEMA_VERSION = 3
 REQUIRED_ARTIFACT_INVARIANTS = ("summary_json", "metrics_csv", "notes_md")
 
 
@@ -151,6 +151,7 @@ def _comparison_baseline(comparison: dict[str, Any]) -> dict[str, Any]:
                 "status": entry["status"],
                 "training_steps": entry["training_steps"],
                 "invariant_count": len(entry.get("invariants") or {}),
+                "artifact_invariants": _baseline_run_artifact_invariants(entry),
                 "final_residual_loss": entry["final_residual_loss"],
             }
             for entry in comparison["runs"]
@@ -238,6 +239,11 @@ def _baseline_mismatches(
             candidate["artifact_invariants"]["failed"],
         ),
         (
+            "runs.artifact_invariants",
+            _run_artifact_baseline_fields(reference),
+            _run_artifact_baseline_fields(candidate),
+        ),
+        (
             "hep.acceptance.status",
             reference["hep"]["acceptance"]["status"],
             candidate["hep"]["acceptance"]["status"],
@@ -264,6 +270,7 @@ def _baseline_comparison_fields(baseline: dict[str, Any]) -> dict[str, Any]:
         "config_paths": baseline["config_paths"],
         "phase0_invariants": baseline["phase0_invariants"],
         "artifact_invariants": baseline.get("artifact_invariants"),
+        "run_artifact_invariants": _run_artifact_baseline_fields(baseline),
         "accepted_hep_alpha": acceptance["accepted_alpha"],
         "accepted_status": acceptance["status"],
     }
@@ -294,6 +301,33 @@ def _baseline_hep_alpha(
             "loss_improvement_from_alpha0"
         ]
     return baseline
+
+
+def _baseline_run_artifact_invariants(entry: dict[str, Any]) -> dict[str, Any]:
+    artifact_invariants = entry.get("artifact_invariants")
+    failed = []
+    for name in REQUIRED_ARTIFACT_INVARIANTS:
+        if (
+            not isinstance(artifact_invariants, dict)
+            or artifact_invariants.get(name) is not True
+        ):
+            failed.append(name)
+    return {
+        "count": len(REQUIRED_ARTIFACT_INVARIANTS),
+        "failed": failed,
+        "passed": not failed,
+    }
+
+
+def _run_artifact_baseline_fields(baseline: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "experiment_id": entry["experiment_id"],
+            "config_path": entry["config_path"],
+            "artifact_invariants": entry.get("artifact_invariants"),
+        }
+        for entry in baseline["runs"]
+    ]
 
 
 def _read_metrics(path: Path) -> list[dict[str, str]]:

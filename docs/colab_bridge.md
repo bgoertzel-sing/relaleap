@@ -112,11 +112,11 @@ results/comparisons/colab_phase0/runs/char_smoke_pc/summary.json
 results/comparisons/colab_phase0/runs/char_smoke_hep/summary.json
 ```
 
-The checked-in local baseline currently accepts HEP alpha `0.25`. The
+The checked-in schema v3 local baseline currently accepts HEP alpha `0.25`. The
 `--baseline-reference` gate writes `baseline_comparison.json` and exits nonzero
 if the Colab/GPU run changes the accepted HEP alpha, loses Phase 0 invariants,
-loses required artifact invariants, omits the child-run artifact-invariant
-contract, or changes the comparison config set.
+loses required aggregate or per-run artifact invariants, omits the child-run
+artifact-invariant contract, or changes the comparison config set.
 
 After a manual Colab run, inspect the artifact directory without rerunning the
 experiments:

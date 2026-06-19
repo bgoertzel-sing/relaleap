@@ -62,9 +62,10 @@ methodology change, run:
 python -m relaleap.experiments.compare --baseline-out baselines/phase0_char_smoke_comparison.json
 ```
 
-The current baseline records all 12 Phase 0 model invariants and all 9 child-run
-artifact invariants passing, with an accepted HEP alpha of `0.25` under the
-default logit-delta policy.
+The current schema v3 baseline records all 12 Phase 0 model invariants and all
+9 child-run artifact invariants passing, pins each child run's artifact
+contract status, and accepts HEP alpha `0.25` under the default logit-delta
+policy.
 
 To compare a fresh local or Colab/GPU run against that baseline, run:
 
@@ -73,10 +74,11 @@ python -m relaleap.experiments.compare --out results/comparisons/colab_phase0 --
 ```
 
 This writes `baseline_comparison.json` under the comparison output directory
-and exits nonzero if the accepted HEP alpha, Phase 0 invariant result, artifact
-contract, or config set diverges from the checked-in baseline. The comparison
-verdict fails closed when a child run summary does not report passing
-`summary_json`, `metrics_csv`, and `notes_md` artifact invariants.
+and exits nonzero if the accepted HEP alpha, Phase 0 invariant result, aggregate
+or per-run artifact contract, or config set diverges from the checked-in
+baseline. The comparison verdict fails closed when a child run summary does not
+report passing `summary_json`, `metrics_csv`, and `notes_md` artifact
+invariants.
 
 To inspect a completed local or Colab comparison artifact tree without rerunning
 experiments, run:

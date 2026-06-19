@@ -298,13 +298,17 @@ class ComparisonReportTest(unittest.TestCase):
 
         baseline = _comparison_baseline(comparison)
 
-        self.assertEqual(baseline["schema_version"], 2)
+        self.assertEqual(baseline["schema_version"], 3)
         self.assertEqual(baseline["comparison_status"], "ok")
         self.assertEqual(baseline["verdict_status"], "pass")
         self.assertEqual(baseline["phase0_invariants"]["count"], 1)
         self.assertTrue(baseline["artifact_invariants"]["passed"])
         self.assertEqual(baseline["artifact_invariants"]["count"], 3)
         self.assertEqual(baseline["artifact_invariants"]["failed"], [])
+        self.assertEqual(
+            baseline["runs"][0]["artifact_invariants"],
+            {"count": 3, "failed": [], "passed": True},
+        )
         self.assertEqual(baseline["hep"]["best_alpha_by_loss"]["alpha"], 0.25)
         self.assertEqual(
             baseline["hep"]["acceptance"]["accepted_alpha"]["alpha"],
@@ -451,7 +455,7 @@ class ComparisonReportTest(unittest.TestCase):
         baseline_path = Path("baselines/phase0_char_smoke_comparison.json")
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(baseline["schema_version"], 2)
+        self.assertEqual(baseline["schema_version"], 3)
         self.assertEqual(baseline["comparison_status"], "ok")
         self.assertEqual(baseline["verdict_status"], "pass")
         self.assertEqual(
@@ -472,6 +476,17 @@ class ComparisonReportTest(unittest.TestCase):
             0.25,
         )
         self.assertEqual(baseline["hep"]["acceptance"]["rejected_count"], 2)
+        self.assertEqual(
+            [
+                entry["artifact_invariants"]
+                for entry in baseline["runs"]
+            ],
+            [
+                {"count": 3, "failed": [], "passed": True},
+                {"count": 3, "failed": [], "passed": True},
+                {"count": 3, "failed": [], "passed": True},
+            ],
+        )
 
     def test_compare_to_baseline_reports_acceptance_match(self) -> None:
         comparison = {
@@ -574,7 +589,7 @@ class ComparisonReportTest(unittest.TestCase):
                 {
                     "field": "schema_version",
                     "reference": 1,
-                    "candidate": 2,
+                    "candidate": 3,
                 }
             ],
         )
@@ -643,6 +658,115 @@ class ComparisonReportTest(unittest.TestCase):
                     }
                 ],
             )
+
+    def test_compare_to_baseline_flags_per_run_artifact_contract_drift(self) -> None:
+        comparison = {
+            "status": "ok",
+            "verdict": _comparison_verdict(
+                [
+                    {
+                        "experiment_id": "char_smoke",
+                        "invariants": {"zero_init_identity": True},
+                        "artifact_invariants": _passing_artifact_invariants(),
+                        "hep_alpha_sweep": [],
+                    },
+                    {
+                        "experiment_id": "char_smoke_hep",
+                        "invariants": {"zero_init_identity": True},
+                        "artifact_invariants": _passing_artifact_invariants(),
+                        "hep_alpha_sweep": [
+                            {
+                                "alpha": 0.0,
+                                "loss": 3.5,
+                                "max_logit_delta_from_ordinary": 0.0,
+                            },
+                        ],
+                    },
+                ],
+                "ok",
+            ),
+            "runs": [
+                {
+                    "experiment_id": "char_smoke",
+                    "config_path": "configs/char_smoke.yaml",
+                    "residual_objective": "supervised_ce",
+                    "status": "ok",
+                    "training_steps": 10,
+                    "invariants": {"zero_init_identity": True},
+                    "artifact_invariants": _passing_artifact_invariants(),
+                    "final_residual_loss": 3.5,
+                },
+                {
+                    "experiment_id": "char_smoke_hep",
+                    "config_path": "configs/char_smoke_hep.yaml",
+                    "residual_objective": "supervised_ce",
+                    "status": "ok",
+                    "training_steps": 10,
+                    "invariants": {"zero_init_identity": True},
+                    "artifact_invariants": _passing_artifact_invariants(),
+                    "final_residual_loss": 3.5,
+                },
+            ],
+        }
+        reference = _comparison_baseline(comparison)
+        candidate = json.loads(json.dumps(comparison))
+        del candidate["runs"][1]["artifact_invariants"]
+
+        result = compare_comparison_to_baseline(candidate, reference)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(
+            result["mismatches"],
+            [
+                {
+                    "field": "runs.artifact_invariants",
+                    "reference": [
+                        {
+                            "experiment_id": "char_smoke",
+                            "config_path": "configs/char_smoke.yaml",
+                            "artifact_invariants": {
+                                "count": 3,
+                                "failed": [],
+                                "passed": True,
+                            },
+                        },
+                        {
+                            "experiment_id": "char_smoke_hep",
+                            "config_path": "configs/char_smoke_hep.yaml",
+                            "artifact_invariants": {
+                                "count": 3,
+                                "failed": [],
+                                "passed": True,
+                            },
+                        },
+                    ],
+                    "candidate": [
+                        {
+                            "experiment_id": "char_smoke",
+                            "config_path": "configs/char_smoke.yaml",
+                            "artifact_invariants": {
+                                "count": 3,
+                                "failed": [],
+                                "passed": True,
+                            },
+                        },
+                        {
+                            "experiment_id": "char_smoke_hep",
+                            "config_path": "configs/char_smoke_hep.yaml",
+                            "artifact_invariants": {
+                                "count": 3,
+                                "failed": [
+                                    "summary_json",
+                                    "metrics_csv",
+                                    "notes_md",
+                                ],
+                                "passed": False,
+                            },
+                        },
+                    ],
+                }
+            ],
+        )
 
 
 if __name__ == "__main__":
