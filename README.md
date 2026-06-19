@@ -126,8 +126,10 @@ python -m relaleap.experiments.check_artifacts \
 ```
 
 The current smoke evidence shows identical ordinary and pinned HEP alpha sweeps,
-so pinned support remains an opt-in artifact-only smoke path rather than a
-separate checked baseline.
+with `support_change_fraction` and `pinned_vs_repicked_logit_delta` both `0.0`
+for every alpha. That means this smoke case does not yet exercise support
+repicking during settling, so pinned support remains an opt-in artifact-only
+smoke path rather than a separate checked baseline.
 
 Colab should be treated as a temporary GPU runner, not the source of truth. The GitHub repo, config files, and run artifacts are the source of truth.
 

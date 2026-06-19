@@ -8,7 +8,11 @@ import unittest
 from pathlib import Path
 
 from relaleap.experiments.run import run
-from relaleap.smoke import ResidualColumns, run_phase0_smoke
+from relaleap.smoke import (
+    ResidualColumns,
+    _hep_support_instability,
+    run_phase0_smoke,
+)
 
 
 CONFIG = {
@@ -170,6 +174,65 @@ class Phase0SmokeTest(unittest.TestCase):
         self.assertNotEqual(repicked.tolist(), pinned.tolist())
         self.assertEqual(pinned.tolist(), [[[-3.0, 10.0]]])
 
+    def test_support_instability_detects_repicked_settling(self) -> None:
+        try:
+            import torch
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+        except ModuleNotFoundError as exc:
+            if exc.name == "torch":
+                self.skipTest(str(exc))
+            raise
+
+        class IdentityBase:
+            def encode(self, inputs):
+                return inputs
+
+            def decode(self, hidden):
+                return hidden
+
+        residual = ResidualColumns(
+            hidden_dim=2,
+            num_columns=3,
+            atoms_per_column=1,
+            top_k=1,
+        )
+        with torch.no_grad():
+            residual.column_scores.weight.copy_(
+                torch.tensor(
+                    [
+                        [2.0, 0.0],
+                        [0.0, 2.0],
+                        [0.0, 0.0],
+                    ]
+                )
+            )
+            residual.atom_values.copy_(
+                torch.tensor(
+                    [
+                        [[-2.0, 5.0]],
+                        [[0.0, 10.0]],
+                        [[1.0, 1.0]],
+                    ]
+                )
+            )
+
+        diagnostic = _hep_support_instability(
+            IdentityBase(),
+            residual,
+            torch.tensor([[[1.0, 0.0]]]),
+            pc_steps=2,
+            hep_alpha=1.0,
+        )
+
+        self.assertTrue(diagnostic["support_changed"])
+        self.assertEqual(diagnostic["support_changed_positions"], 1)
+        self.assertEqual(diagnostic["support_transition_count"], 1)
+        self.assertEqual(diagnostic["support_change_fraction"], 1.0)
+        self.assertGreater(diagnostic["pinned_vs_repicked_logit_delta"], 0.0)
+
     def test_pinned_support_config_is_reported(self) -> None:
         pinned_config = copy.deepcopy(CONFIG)
         pinned_config["run"]["max_steps"] = 1
@@ -189,6 +252,8 @@ class Phase0SmokeTest(unittest.TestCase):
 
         self.assertTrue(result.pinned_support)
         self.assertTrue(result.to_summary()["pinned_support"])
+        self.assertIn("support_change_fraction", result.support_instability)
+        self.assertIn("support_instability", result.to_summary())
         self.assertTrue(result.invariants["hep_alpha_0_equivalence"])
 
     def test_runner_writes_required_artifacts(self) -> None:
@@ -258,6 +323,8 @@ class Phase0SmokeTest(unittest.TestCase):
             self.assertIn("residual_objective", metric_rows[0])
             self.assertIn("hep_alpha", metric_rows[0])
             self.assertIn("hep_loss", metric_rows[0])
+            self.assertIn("hep_support_change_fraction", metric_rows[0])
+            self.assertIn("hep_pinned_vs_repicked_logit_delta", metric_rows[0])
             self.assertEqual(metric_rows[0]["residual_objective"], "supervised_ce")
             self.assertEqual(
                 float(metric_rows[-1]["residual_loss"]),

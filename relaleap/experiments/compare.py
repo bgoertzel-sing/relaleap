@@ -568,6 +568,12 @@ def _combined_rows(
                 "max_hep_logit_delta_from_ordinary": row.get(
                     "max_hep_logit_delta_from_ordinary", ""
                 ),
+                "hep_support_change_fraction": row.get(
+                    "hep_support_change_fraction", ""
+                ),
+                "hep_pinned_vs_repicked_logit_delta": row.get(
+                    "hep_pinned_vs_repicked_logit_delta", ""
+                ),
                 "status": row.get("status", entry["status"]),
             }
         )
@@ -616,6 +622,8 @@ def _write_metrics(path: Path, rows: list[dict[str, Any]]) -> None:
         "hep_alpha",
         "hep_loss",
         "max_hep_logit_delta_from_ordinary",
+        "hep_support_change_fraction",
+        "hep_pinned_vs_repicked_logit_delta",
         "status",
     ]
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -680,7 +688,11 @@ def _write_notes(path: Path, comparison: dict[str, Any]) -> None:
                     f"alpha {sweep_entry['alpha']}: "
                     f"loss {_format_note_metric(sweep_entry['loss'])}, "
                     "delta "
-                    f"{_format_note_metric(sweep_entry['max_logit_delta_from_ordinary'])}"
+                    f"{_format_note_metric(sweep_entry['max_logit_delta_from_ordinary'])}, "
+                    "support-change "
+                    f"{_format_note_metric(sweep_entry.get('support_change_fraction', 0.0))}, "
+                    "pinned-vs-repicked "
+                    f"{_format_note_metric(sweep_entry.get('pinned_vs_repicked_logit_delta', 0.0))}"
                 )
                 for sweep_entry in entry["hep_alpha_sweep"]
             )

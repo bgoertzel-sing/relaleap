@@ -217,6 +217,12 @@ def _build_phase0_rows(
                 "max_hep_logit_delta_from_ordinary": _format_optional_metric(
                     source.get("max_hep_logit_delta_from_ordinary")
                 ),
+                "hep_support_change_fraction": _format_optional_metric(
+                    source.get("hep_support_change_fraction")
+                ),
+                "hep_pinned_vs_repicked_logit_delta": _format_optional_metric(
+                    source.get("hep_pinned_vs_repicked_logit_delta")
+                ),
                 "device": device,
                 "error": "",
             }
@@ -248,6 +254,8 @@ def _build_failed_rows(
             "hep_alpha": "",
             "hep_loss": "",
             "max_hep_logit_delta_from_ordinary": "",
+            "hep_support_change_fraction": "",
+            "hep_pinned_vs_repicked_logit_delta": "",
             "device": device,
             "error": error,
             "max_steps": max_steps,
@@ -292,7 +300,11 @@ def _write_notes(path: Path, experiment_id: str, summary: dict[str, Any]) -> Non
     hep_lines = [
         (
             f"- alpha `{entry['alpha']}`: loss `{entry['loss']}`, "
-            f"max ordinary-logit delta `{entry['max_logit_delta_from_ordinary']}`"
+            f"max ordinary-logit delta `{entry['max_logit_delta_from_ordinary']}`, "
+            "support-change fraction "
+            f"`{entry.get('support_change_fraction', 'not measured')}`, "
+            "pinned-vs-repicked delta "
+            f"`{entry.get('pinned_vs_repicked_logit_delta', 'not measured')}`"
         )
         for entry in hep_sweep
     ]

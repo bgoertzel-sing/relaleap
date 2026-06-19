@@ -39,6 +39,7 @@ class Phase0Result:
     max_zero_init_logit_delta: float
     max_hep_alpha0_logit_delta: float
     pinned_support: bool
+    support_instability: dict[str, float | int | bool]
     hep_alpha_sweep: list[dict[str, float]]
     invariants: dict[str, bool]
 
@@ -57,6 +58,7 @@ class Phase0Result:
             "max_zero_init_logit_delta": self.max_zero_init_logit_delta,
             "max_hep_alpha0_logit_delta": self.max_hep_alpha0_logit_delta,
             "pinned_support": self.pinned_support,
+            "support_instability": self.support_instability,
             "hep_alpha_sweep": self.hep_alpha_sweep,
             "invariants": self.invariants,
         }
@@ -190,6 +192,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             hep_alpha="",
             hep_loss="",
             max_hep_logit_delta_from_ordinary="",
+            hep_support_change_fraction="",
+            hep_pinned_vs_repicked_logit_delta="",
         )
     ]
     post_step_loss_tensor = initial_loss_tensor
@@ -237,9 +241,18 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 hep_alpha="",
                 hep_loss="",
                 max_hep_logit_delta_from_ordinary="",
+                hep_support_change_fraction="",
+                hep_pinned_vs_repicked_logit_delta="",
             )
         )
 
+    support_instability = _hep_support_instability(
+        base,
+        residual,
+        inputs,
+        pc_steps=pc_steps,
+        hep_alpha=1.0,
+    )
     hep_sweep_rows = _evaluate_hep_alpha_sweep(
         base,
         residual,
@@ -269,6 +282,10 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 max_hep_logit_delta_from_ordinary=sweep_row[
                     "max_logit_delta_from_ordinary"
                 ],
+                hep_support_change_fraction=sweep_row["support_change_fraction"],
+                hep_pinned_vs_repicked_logit_delta=sweep_row[
+                    "pinned_vs_repicked_logit_delta"
+                ],
             )
         )
 
@@ -294,6 +311,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         max_zero_init_logit_delta=max_zero_delta,
         max_hep_alpha0_logit_delta=max_hep_alpha0_delta,
         pinned_support=pinned_support,
+        support_instability=support_instability,
         hep_alpha_sweep=hep_sweep_rows,
         invariants=invariants,
     )
@@ -507,6 +525,13 @@ def _evaluate_hep_alpha_sweep(
     with _torch_no_grad():
         ordinary_logits = base(inputs, residual_adapter=residual)
         for alpha in alphas:
+            support_instability = _hep_support_instability(
+                base,
+                residual,
+                inputs,
+                pc_steps=pc_steps,
+                hep_alpha=alpha,
+            )
             hep_logits = forward_with_hep_alpha(
                 base,
                 residual,
@@ -526,9 +551,85 @@ def _evaluate_hep_alpha_sweep(
                     "max_logit_delta_from_ordinary": float(
                         (ordinary_logits - hep_logits).abs().max().item()
                     ),
+                    "support_change_fraction": float(
+                        support_instability["support_change_fraction"]
+                    ),
+                    "support_transition_count": float(
+                        support_instability["support_transition_count"]
+                    ),
+                    "pinned_vs_repicked_logit_delta": float(
+                        support_instability["pinned_vs_repicked_logit_delta"]
+                    ),
                 }
             )
     return rows
+
+
+def _hep_support_instability(
+    base: Any,
+    residual: Any,
+    inputs: Any,
+    *,
+    pc_steps: int,
+    hep_alpha: float,
+) -> dict[str, float | int | bool]:
+    """Measure ordinary support repicking during HEP settling.
+
+    The diagnostic always evaluates both ordinary repicked settling and pinned
+    settling, independent of the run's configured inference mode. That gives
+    ordinary and pinned smoke runs directly comparable support evidence.
+    """
+
+    if pc_steps < 1:
+        raise ValueError("pc_steps must be at least 1")
+    if hep_alpha < 0.0 or hep_alpha > 1.0:
+        raise ValueError("hep_alpha must be between 0.0 and 1.0")
+
+    with _torch_no_grad():
+        hidden = base.encode(inputs)
+        repicked_settled, initial_support = residual(hidden, return_support=True)
+        pinned_settled = repicked_settled
+        support_transition_count = 0
+        changed_positions = initial_support.new_zeros(
+            initial_support.shape[:-1],
+            dtype=initial_support.dtype,
+        )
+
+        for _ in range(1, pc_steps):
+            repicked_proposed, repicked_support = residual(
+                repicked_settled,
+                return_support=True,
+            )
+            pinned_proposed = residual(pinned_settled, support_indices=initial_support)
+            repicked_settled = repicked_settled + hep_alpha * (
+                repicked_proposed - repicked_settled
+            )
+            pinned_settled = pinned_settled + hep_alpha * (
+                pinned_proposed - pinned_settled
+            )
+
+            changed = (repicked_support != initial_support).any(dim=-1)
+            support_transition_count += int(changed.sum().item())
+            changed_positions = changed_positions | changed.to(changed_positions.dtype)
+
+        total_positions = int(changed_positions.numel())
+        changed_position_count = int(changed_positions.sum().item())
+        repicked_logits = base.decode(repicked_settled)
+        pinned_logits = base.decode(pinned_settled)
+        return {
+            "pc_steps": pc_steps,
+            "hep_alpha": float(hep_alpha),
+            "support_positions": total_positions,
+            "support_changed_positions": changed_position_count,
+            "support_change_fraction": (
+                changed_position_count / total_positions if total_positions else 0.0
+            ),
+            "support_transition_count": support_transition_count,
+            "pinned_vs_repicked_logit_delta": float(
+                (pinned_logits - repicked_logits).abs().max().item()
+            ),
+            "support_changed": changed_position_count > 0,
+        }
 
 
 def _max_hep_delta_from_ordinary(
@@ -579,6 +680,8 @@ def _metric_row(
     hep_alpha: float | str,
     hep_loss: float | str,
     max_hep_logit_delta_from_ordinary: float | str,
+    hep_support_change_fraction: float | str,
+    hep_pinned_vs_repicked_logit_delta: float | str,
 ) -> dict[str, float | int | str]:
     return {
         "step": step,
@@ -593,6 +696,8 @@ def _metric_row(
         "hep_alpha": hep_alpha,
         "hep_loss": hep_loss,
         "max_hep_logit_delta_from_ordinary": max_hep_logit_delta_from_ordinary,
+        "hep_support_change_fraction": hep_support_change_fraction,
+        "hep_pinned_vs_repicked_logit_delta": hep_pinned_vs_repicked_logit_delta,
     }
 
 
