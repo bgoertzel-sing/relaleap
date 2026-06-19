@@ -78,12 +78,14 @@ To inspect a completed local or Colab comparison artifact tree without rerunning
 experiments, run:
 
 ```bash
-python -m relaleap.experiments.check_artifacts --comparison-dir results/comparisons/colab_phase0 --require-baseline-comparison
+python -m relaleap.experiments.check_artifacts --comparison-dir results/comparisons/colab_phase0 --baseline-reference baselines/phase0_char_smoke_comparison.json
 ```
 
 This checks the required `summary.json`, `metrics.csv`, and `notes.md` artifacts
 for the comparison and child runs, then reports the verdict, Phase 0 invariant
-status, accepted HEP alpha, and baseline comparison status.
+status, accepted HEP alpha, and whether the completed summary still matches the
+checked-in local baseline. Add `--require-baseline-comparison` when the run was
+expected to write `baseline_comparison.json` during execution.
 
 The current tiny HEP alpha sweep is also command-driven:
 

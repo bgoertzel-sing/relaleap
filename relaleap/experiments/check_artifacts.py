@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from relaleap.experiments.compare import compare_comparison_to_baseline
+
 
 REQUIRED_ARTIFACTS = ("summary.json", "metrics.csv", "notes.md")
 
@@ -15,6 +17,7 @@ def check_comparison_artifacts(
     comparison_dir: Path,
     *,
     require_baseline_comparison: bool = False,
+    baseline_reference: Path | None = None,
     out_path: Path | None = None,
 ) -> dict[str, Any]:
     """Check a comparison artifact tree and return a compact pass/fail report."""
@@ -52,6 +55,14 @@ def check_comparison_artifacts(
         )
     elif require_baseline_comparison:
         checks.append(baseline_check)
+
+    baseline_reference_comparison = None
+    if baseline_reference is not None:
+        baseline_reference_comparison = _baseline_reference_comparison(
+            summary,
+            baseline_reference,
+            checks,
+        )
 
     verdict = summary.get("verdict") if isinstance(summary, dict) else {}
     phase0_passed = (
@@ -101,6 +112,7 @@ def check_comparison_artifacts(
                 "actual": baseline.get("status"),
             }
         )
+    failures.extend(_baseline_reference_failures(baseline_reference_comparison))
 
     report = {
         "status": "pass" if not failures else "fail",
@@ -118,6 +130,9 @@ def check_comparison_artifacts(
             "accepted_alpha": accepted_alpha,
         },
         "baseline_comparison": _baseline_summary(baseline),
+        "baseline_reference_comparison": _baseline_reference_summary(
+            baseline_reference_comparison
+        ),
         "runs": run_reports,
         "failures": failures,
     }
@@ -227,6 +242,98 @@ def _baseline_summary(baseline: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _baseline_reference_comparison(
+    summary: dict[str, Any],
+    baseline_reference: Path,
+    checks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    baseline_check = _artifact_check(baseline_reference, "baseline_reference")
+    checks.append(baseline_check)
+    if not baseline_check["exists"]:
+        return {
+            "status": "fail",
+            "baseline_path": str(baseline_reference),
+            "mismatches": [
+                {
+                    "field": "baseline_reference",
+                    "reference": "file exists",
+                    "candidate": "missing",
+                }
+            ],
+        }
+
+    reference = _read_json(baseline_reference, checks, "baseline_reference")
+    if not reference:
+        return {
+            "status": "fail",
+            "baseline_path": str(baseline_reference),
+            "mismatches": [
+                {
+                    "field": "baseline_reference",
+                    "reference": "valid baseline JSON object",
+                    "candidate": "invalid",
+                }
+            ],
+        }
+    try:
+        return compare_comparison_to_baseline(
+            summary,
+            reference,
+            baseline_path=baseline_reference,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        return {
+            "status": "fail",
+            "baseline_path": str(baseline_reference),
+            "mismatches": [
+                {
+                    "field": "baseline_reference.schema",
+                    "reference": "compatible Phase 0 comparison baseline",
+                    "candidate": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+        }
+
+
+def _baseline_reference_failures(
+    baseline_reference_comparison: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not baseline_reference_comparison:
+        return []
+    if baseline_reference_comparison.get("status") == "pass":
+        return []
+    failures = []
+    for mismatch in baseline_reference_comparison.get("mismatches", []):
+        if mismatch.get("field") == "baseline_reference":
+            continue
+        failures.append(
+            {
+                "field": f"baseline_reference.{mismatch.get('field')}",
+                "expected": mismatch.get("reference"),
+                "actual": mismatch.get("candidate"),
+            }
+        )
+    return failures
+
+
+def _baseline_reference_summary(
+    baseline_reference_comparison: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not baseline_reference_comparison:
+        return {
+            "present": False,
+            "status": None,
+            "mismatch_count": None,
+        }
+    mismatches = baseline_reference_comparison.get("mismatches", [])
+    return {
+        "present": True,
+        "status": baseline_reference_comparison.get("status"),
+        "baseline_path": baseline_reference_comparison.get("baseline_path"),
+        "mismatch_count": len(mismatches) if isinstance(mismatches, list) else None,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Inspect an existing RelaLeap comparison artifact directory."
@@ -243,6 +350,14 @@ def main() -> None:
         help="Fail if baseline_comparison.json is missing.",
     )
     parser.add_argument(
+        "--baseline-reference",
+        type=Path,
+        help=(
+            "Optional checked-in baseline to compare the existing summary.json "
+            "against without rerunning experiments."
+        ),
+    )
+    parser.add_argument(
         "--out",
         type=Path,
         help="Optional path to write the artifact check JSON report.",
@@ -251,6 +366,7 @@ def main() -> None:
     report = check_comparison_artifacts(
         args.comparison_dir,
         require_baseline_comparison=args.require_baseline_comparison,
+        baseline_reference=args.baseline_reference,
         out_path=args.out,
     )
     print(json.dumps(report, indent=2, sort_keys=True))

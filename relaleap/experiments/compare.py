@@ -100,20 +100,37 @@ def compare_to_baseline(
     """Compare current stable Phase 0 fields against a saved baseline."""
 
     reference = json.loads(baseline_path.read_text(encoding="utf-8"))
-    candidate = _comparison_baseline(comparison)
-    mismatches = _baseline_mismatches(reference, candidate)
-    result = {
-        "status": "pass" if not mismatches else "fail",
-        "baseline_path": str(baseline_path),
-        "mismatches": mismatches,
-        "reference": _baseline_comparison_fields(reference),
-        "candidate": _baseline_comparison_fields(candidate),
-    }
+    result = compare_comparison_to_baseline(
+        comparison,
+        reference,
+        baseline_path=baseline_path,
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    return result
+
+
+def compare_comparison_to_baseline(
+    comparison: dict[str, Any],
+    reference: dict[str, Any],
+    *,
+    baseline_path: Path | None = None,
+) -> dict[str, Any]:
+    """Compare a comparison summary against an already-loaded baseline."""
+
+    candidate = _comparison_baseline(comparison)
+    mismatches = _baseline_mismatches(reference, candidate)
+    result = {
+        "status": "pass" if not mismatches else "fail",
+        "mismatches": mismatches,
+        "reference": _baseline_comparison_fields(reference),
+        "candidate": _baseline_comparison_fields(candidate),
+    }
+    if baseline_path is not None:
+        result["baseline_path"] = str(baseline_path)
     return result
 
 

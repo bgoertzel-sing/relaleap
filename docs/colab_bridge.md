@@ -82,9 +82,11 @@ After a manual Colab run, inspect the artifact directory without rerunning the
 experiments:
 
 ```bash
-python -m relaleap.experiments.check_artifacts --comparison-dir results/comparisons/colab_phase0 --require-baseline-comparison
+python -m relaleap.experiments.check_artifacts --comparison-dir results/comparisons/colab_phase0 --baseline-reference baselines/phase0_char_smoke_comparison.json
 ```
 
 The checker fails if required comparison or per-run artifacts are missing, if
-the comparison verdict is not `pass`, or if `baseline_comparison.json` is absent
-or failed.
+the comparison verdict is not `pass`, or if the completed comparison summary
+drifts from the checked-in Phase 0 baseline. Add
+`--require-baseline-comparison` when the run was expected to write
+`baseline_comparison.json` during execution.
