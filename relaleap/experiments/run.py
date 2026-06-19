@@ -6,7 +6,6 @@ import argparse
 import csv
 import json
 import platform
-import random
 import time
 from pathlib import Path
 from typing import Any
@@ -101,36 +100,44 @@ def run(config_path: Path, out_dir: Path) -> dict[str, Any]:
     max_steps = int(run_cfg.get("max_steps", 10))
     experiment_id = str(run_cfg.get("experiment_id", "smoke"))
 
-    random.seed(seed)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     torch_info = _load_torch_info()
     start = time.time()
-    rows = _build_placeholder_rows(
-        max_steps=max_steps,
-        seed=seed,
-        experiment_id=experiment_id,
-        device=torch_info["device"],
-    )
 
     phase0: dict[str, Any] | None = None
+    rows: list[dict[str, Any]]
     status = "ok"
     error: str | None = None
     try:
         phase0_result = run_phase0_smoke(config)
         phase0 = phase0_result.to_summary()
+        rows = _build_phase0_rows(
+            phase0_result.to_metric_rows(),
+            max_steps=max_steps,
+            seed=seed,
+            experiment_id=experiment_id,
+            device=torch_info["device"],
+        )
         if not all(phase0_result.invariants.values()):
             status = "failed"
             error = "Phase 0 invariant failure"
     except Exception as exc:
         status = "failed"
         error = f"{type(exc).__name__}: {exc}"
+        rows = _build_failed_rows(
+            max_steps=max_steps,
+            seed=seed,
+            experiment_id=experiment_id,
+            device=torch_info["device"],
+            error=error,
+        )
 
     for row in rows:
         row["status"] = status
 
     _write_metrics(out_dir / "metrics.csv", rows)
-    final_smoke_loss = float(rows[-1]["smoke_loss"])
+    final_smoke_loss = _final_loss(rows)
     summary = {
         "experiment_id": experiment_id,
         "seed": seed,
@@ -174,7 +181,8 @@ def run(config_path: Path, out_dir: Path) -> dict[str, Any]:
     return summary
 
 
-def _build_placeholder_rows(
+def _build_phase0_rows(
+    metric_rows: list[dict[str, Any]],
     *,
     max_steps: int,
     seed: int,
@@ -182,19 +190,71 @@ def _build_placeholder_rows(
     device: str,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    loss = 1.0
-    for step in range(max_steps + 1):
-        loss = 0.92 * loss + 0.01 * random.random()
+    for source in metric_rows:
+        if int(source["step"]) > max_steps:
+            continue
         rows.append(
             {
-                "step": step,
+                "step": source["step"],
                 "seed": seed,
                 "experiment_id": experiment_id,
-                "smoke_loss": f"{loss:.8f}",
+                "phase": source["phase"],
+                "base_loss": _format_metric(source["base_loss"]),
+                "residual_loss": _format_metric(source["residual_loss"]),
+                "zero_init_loss": _format_metric(source["zero_init_loss"]),
+                "residual_parameter_delta": _format_metric(
+                    source["residual_parameter_delta"]
+                ),
+                "max_zero_init_logit_delta": _format_metric(
+                    source["max_zero_init_logit_delta"]
+                ),
+                "max_hep_alpha0_logit_delta": _format_metric(
+                    source["max_hep_alpha0_logit_delta"]
+                ),
                 "device": device,
+                "error": "",
             }
         )
     return rows
+
+
+def _build_failed_rows(
+    *,
+    max_steps: int,
+    seed: int,
+    experiment_id: str,
+    device: str,
+    error: str,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "step": 0,
+            "seed": seed,
+            "experiment_id": experiment_id,
+            "phase": "failed",
+            "base_loss": "",
+            "residual_loss": "",
+            "zero_init_loss": "",
+            "residual_parameter_delta": "",
+            "max_zero_init_logit_delta": "",
+            "max_hep_alpha0_logit_delta": "",
+            "device": device,
+            "error": error,
+            "max_steps": max_steps,
+        }
+    ]
+
+
+def _format_metric(value: Any) -> str:
+    return f"{float(value):.8f}"
+
+
+def _final_loss(rows: list[dict[str, Any]]) -> float | None:
+    for row in reversed(rows):
+        value = row.get("residual_loss")
+        if value not in {"", None}:
+            return float(value)
+    return None
 
 
 def _write_metrics(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -225,6 +285,8 @@ def _write_notes(path: Path, experiment_id: str, summary: dict[str, Any]) -> Non
                 f"- Device: `{summary['device']}`",
                 f"- CUDA available: `{summary['cuda_available']}`",
                 f"- Final smoke loss: `{summary['final_smoke_loss']}`",
+                f"- Base loss: `{phase0.get('base_loss', 'not run')}`",
+                f"- Residual post-step loss: `{phase0.get('post_step_loss', 'not run')}`",
                 "",
                 "## Invariants",
                 "",

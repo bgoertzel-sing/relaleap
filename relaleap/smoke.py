@@ -28,6 +28,8 @@ class Phase0Result:
     vocab_size: int
     seq_len: int
     batch_size: int
+    base_loss: float
+    zero_init_loss: float
     initial_loss: float
     post_step_loss: float
     residual_parameter_delta: float
@@ -40,6 +42,8 @@ class Phase0Result:
             "vocab_size": self.vocab_size,
             "seq_len": self.seq_len,
             "batch_size": self.batch_size,
+            "base_loss": self.base_loss,
+            "zero_init_loss": self.zero_init_loss,
             "initial_loss": self.initial_loss,
             "post_step_loss": self.post_step_loss,
             "residual_parameter_delta": self.residual_parameter_delta,
@@ -47,6 +51,32 @@ class Phase0Result:
             "max_hep_alpha0_logit_delta": self.max_hep_alpha0_logit_delta,
             "invariants": self.invariants,
         }
+
+    def to_metric_rows(self) -> list[dict[str, float | int | str]]:
+        """Return the real Phase 0 loss stream written to metrics.csv."""
+
+        return [
+            {
+                "step": 0,
+                "phase": "initial",
+                "base_loss": self.base_loss,
+                "residual_loss": self.initial_loss,
+                "zero_init_loss": self.zero_init_loss,
+                "residual_parameter_delta": 0.0,
+                "max_zero_init_logit_delta": self.max_zero_init_logit_delta,
+                "max_hep_alpha0_logit_delta": self.max_hep_alpha0_logit_delta,
+            },
+            {
+                "step": 1,
+                "phase": "post_residual_step",
+                "base_loss": self.base_loss,
+                "residual_loss": self.post_step_loss,
+                "zero_init_loss": self.zero_init_loss,
+                "residual_parameter_delta": self.residual_parameter_delta,
+                "max_zero_init_logit_delta": self.max_zero_init_logit_delta,
+                "max_hep_alpha0_logit_delta": self.max_hep_alpha0_logit_delta,
+            },
+        ]
 
 
 def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
@@ -112,6 +142,14 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             pc_steps=pc_steps,
             hep_alpha=0.0,
         )
+        base_loss_tensor = F.cross_entropy(
+            base_logits[:, :-1, :].reshape(-1, vocab_size),
+            targets[:, :-1].reshape(-1),
+        )
+        zero_init_loss_tensor = F.cross_entropy(
+            zero_init_logits[:, :-1, :].reshape(-1, vocab_size),
+            targets[:, :-1].reshape(-1),
+        )
 
     max_zero_delta = float((base_logits - zero_init_logits).abs().max().item())
     max_hep_delta = float((zero_init_logits - hep_logits).abs().max().item())
@@ -150,6 +188,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         vocab_size=vocab_size,
         seq_len=seq_len,
         batch_size=int(inputs.shape[0]),
+        base_loss=float(base_loss_tensor.detach().item()),
+        zero_init_loss=float(zero_init_loss_tensor.detach().item()),
         initial_loss=float(initial_loss_tensor.detach().item()),
         post_step_loss=float(post_step_loss_tensor.detach().item()),
         residual_parameter_delta=_state_dict_delta(before_residual, residual),

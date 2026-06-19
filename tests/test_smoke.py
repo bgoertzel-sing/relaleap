@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import tempfile
 import unittest
@@ -43,6 +44,8 @@ class Phase0SmokeTest(unittest.TestCase):
         self.assertTrue(result.invariants["frozen_base_unchanged"])
         self.assertTrue(result.invariants["hep_alpha_0_equivalence"])
         self.assertTrue(result.invariants["residual_parameters_updated"])
+        self.assertAlmostEqual(result.base_loss, result.zero_init_loss)
+        self.assertAlmostEqual(result.initial_loss, result.zero_init_loss)
 
     def test_runner_writes_required_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -91,6 +94,22 @@ class Phase0SmokeTest(unittest.TestCase):
             saved = json.loads((tmp_path / "out" / "summary.json").read_text())
             self.assertTrue(saved["artifact_invariants"]["summary_json"])
             self.assertTrue(saved["phase0"]["invariants"]["zero_init_identity"])
+            self.assertIn("base_loss", saved["phase0"])
+            self.assertIn("post_step_loss", saved["phase0"])
+
+            with (tmp_path / "out" / "metrics.csv").open(newline="") as handle:
+                metric_rows = list(csv.DictReader(handle))
+            self.assertEqual(
+                [row["phase"] for row in metric_rows],
+                ["initial", "post_residual_step"],
+            )
+            self.assertNotIn("smoke_loss", metric_rows[0])
+            self.assertIn("base_loss", metric_rows[0])
+            self.assertIn("residual_loss", metric_rows[0])
+            self.assertEqual(
+                float(metric_rows[-1]["residual_loss"]),
+                saved["final_smoke_loss"],
+            )
 
 
 if __name__ == "__main__":
