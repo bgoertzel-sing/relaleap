@@ -412,6 +412,36 @@ This keeps the checked Phase 0 baseline unchanged while testing whether the
 temporal label-free signal survives a larger deterministic char validation
 setting before any default-promotion decision.
 
+The matching GitHub-backed Colab validation uses the same command-driven
+harness and writes the artifact tree under the Colab-prefixed validation path:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_support_stress_clipped.yaml \
+  --config configs/char_validation_hep_support_stress_entropy_clipped.yaml \
+  --config configs/char_validation_hep_support_stress_temporal_clipped.yaml \
+  --config configs/char_validation_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --out results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check.json
+```
+
+After a completed Colab run and local artifact extraction, inspect the
+extracted artifact tree and write the validation temporal decision report
+without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --out results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json
+python -m relaleap.experiments.decision_report \
+  --report temporal-clipped-hep \
+  --comparison-dir results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --artifact-check results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json \
+  --out results/reports/temporal_clipped_hep_validation_colab_decision
+```
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
