@@ -502,6 +502,22 @@ evidence, and an accepted nonzero temporal alpha inside the ordinary-logit and
 pinned-vs-repicked budgets. This report defines the gate only; it does not
 promote temporal clipped HEP by itself.
 
+The larger char-level promotion-gate comparison uses sequence length `128`,
+hidden dimension `96`, `24` residual columns, `4` HEP settling steps, and `50`
+training steps:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_larger_hep_support_stress_clipped.yaml \
+  --config configs/char_larger_hep_support_stress_entropy_clipped.yaml \
+  --config configs/char_larger_hep_support_stress_temporal_clipped.yaml \
+  --config configs/char_larger_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/larger_support_stress_temporal_vs_entropy_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/larger_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --out results/comparisons/larger_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json
+```
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
