@@ -11,6 +11,7 @@ from tools.colab_playwright_runner import (
     ARTIFACT_BUNDLE_BEGIN,
     ARTIFACT_BUNDLE_END,
     COMPLETION_TEXT,
+    _confirm_run_modals,
     _extract_colab_artifact_bundle,
     _validate_evidence_text,
 )
@@ -126,6 +127,54 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             with self.assertRaisesRegex(RuntimeError, "Unsafe Colab artifact path"):
                 _extract_colab_artifact_bundle(evidence, Path(tmpdir))
+
+
+class ConfirmRunModalsTest(unittest.IsolatedAsyncioTestCase):
+    async def test_completion_wait_can_skip_run_all_prompts(self) -> None:
+        page = _RecordingPage()
+
+        clicked = await _confirm_run_modals(
+            page,
+            max_rounds=1,
+            timeout_ms=1,
+            include_run_all=False,
+        )
+
+        self.assertFalse(clicked)
+        self.assertNotIn("Run anyway", page.role_labels)
+        self.assertNotIn("Run all", page.role_labels)
+        self.assertNotIn("Run all cells", page.role_labels)
+        self.assertNotIn("Run anyway", page.text_labels)
+        self.assertNotIn("Run all", page.text_labels)
+        self.assertNotIn("Run all cells", page.text_labels)
+        self.assertIn("Reconnect", page.role_labels)
+        self.assertIn("Reconnect", page.text_labels)
+
+
+class _RecordingPage:
+    def __init__(self) -> None:
+        self.role_labels: list[str] = []
+        self.text_labels: list[str] = []
+
+    def get_by_role(self, role: str, name: str, exact: bool = False) -> "_FailingTarget":
+        self.role_labels.append(name)
+        return _FailingTarget()
+
+    def get_by_text(self, label: str, exact: bool = False) -> "_FailingTarget":
+        self.text_labels.append(label)
+        return _FailingTarget()
+
+    async def wait_for_timeout(self, timeout_ms: int) -> None:
+        return None
+
+
+class _FailingTarget:
+    @property
+    def first(self) -> "_FailingTarget":
+        return self
+
+    async def click(self, timeout: int) -> None:
+        raise RuntimeError("not visible")
 
 
 def _zip_base64(files: dict[str, str]) -> str:

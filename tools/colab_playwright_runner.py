@@ -225,7 +225,12 @@ async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path)
                 raise TimeoutError(
                     f"Timed out waiting for Colab completion text: {COMPLETION_TEXT!r}"
                 ) from exc
-            await _confirm_run_modals(page, max_rounds=1, timeout_ms=750)
+            await _confirm_run_modals(
+                page,
+                max_rounds=1,
+                timeout_ms=750,
+                include_run_all=False,
+            )
 
     await _write_evidence(page, evidence_out)
     text = evidence_out.read_text()
@@ -257,11 +262,14 @@ async def _confirm_run_modals(
     page,
     max_rounds: int = 12,
     timeout_ms: int = 1_500,
+    include_run_all: bool = True,
 ) -> bool:
-    labels = [
+    run_all_labels = [
         "Run anyway",
         "Run all",
         "Run all cells",
+    ]
+    runtime_labels = [
         "Resume",
         "Reconnect",
         "Connect",
@@ -273,6 +281,7 @@ async def _confirm_run_modals(
         "Ok",
         "Yes",
     ]
+    labels = [*run_all_labels, *runtime_labels] if include_run_all else runtime_labels
     any_clicked = False
     for _ in range(max_rounds):
         clicked = False
