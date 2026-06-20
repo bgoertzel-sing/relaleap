@@ -876,7 +876,7 @@ def write_temporal_clipped_hep_promotion_gate_report(
             )
         ),
         "next_step": (
-            "add the larger-char promotion-gate configs and run their local comparison"
+            "add the non-char tokenized promotion-gate configs and run their local comparison"
             if status == "pass"
             else "repair or regenerate the cross-scale temporal aggregate report"
         ),

@@ -316,7 +316,7 @@ def _write_notes(path: Path, experiment_id: str, summary: dict[str, Any]) -> Non
             [
                 f"# {experiment_id}",
                 "",
-                "RelaLeap char-level Phase 0 smoke run.",
+                "RelaLeap Phase 0 smoke run.",
                 "",
                 f"- Status: `{summary['status']}`",
                 f"- Error: `{summary['error'] or 'none'}`",

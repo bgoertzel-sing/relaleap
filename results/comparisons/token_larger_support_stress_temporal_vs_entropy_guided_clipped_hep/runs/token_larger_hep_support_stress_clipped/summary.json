@@ -1,0 +1,90 @@
+{
+  "artifact_invariants": {
+    "metrics_csv": true,
+    "notes_md": true,
+    "summary_json": true
+  },
+  "config_path": "configs/token_larger_hep_support_stress_clipped.yaml",
+  "cuda_available": false,
+  "device": "cpu",
+  "error": null,
+  "experiment_id": "token_larger_hep_support_stress_clipped",
+  "final_smoke_loss": 4.53275919,
+  "out_dir": "results/comparisons/token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/token_larger_hep_support_stress_clipped",
+  "phase0": {
+    "base_loss": 4.163630962371826,
+    "batch_size": 4,
+    "dataset": "tiny_shakespeare_word",
+    "hep_alpha_sweep": [
+      {
+        "alpha": 0.0,
+        "loss": 4.532759189605713,
+        "max_logit_delta_from_ordinary": 0.0,
+        "pinned_vs_repicked_logit_delta": 0.0,
+        "support_change_fraction": 0.60546875,
+        "support_transition_count": 465.0
+      },
+      {
+        "alpha": 0.25,
+        "loss": 4.532759189605713,
+        "max_logit_delta_from_ordinary": 0.0,
+        "pinned_vs_repicked_logit_delta": 0.0009942054748535156,
+        "support_change_fraction": 0.60546875,
+        "support_transition_count": 465.0
+      },
+      {
+        "alpha": 0.5,
+        "loss": 4.532759189605713,
+        "max_logit_delta_from_ordinary": 0.0,
+        "pinned_vs_repicked_logit_delta": 0.0019865036010742188,
+        "support_change_fraction": 0.60546875,
+        "support_transition_count": 465.0
+      },
+      {
+        "alpha": 1.0,
+        "loss": 4.532759189605713,
+        "max_logit_delta_from_ordinary": 0.0,
+        "pinned_vs_repicked_logit_delta": 0.003972291946411133,
+        "support_change_fraction": 0.60546875,
+        "support_transition_count": 465.0
+      }
+    ],
+    "hep_settling_objective": "residual_adapter",
+    "hep_update_clip_norm": 0.01,
+    "initial_loss": 4.163630962371826,
+    "invariants": {
+      "frozen_base_unchanged": true,
+      "hep_alpha_0_equivalence": true,
+      "residual_parameters_updated": true,
+      "zero_init_identity": true
+    },
+    "max_hep_alpha0_logit_delta": 0.0,
+    "max_zero_init_logit_delta": 0.0,
+    "pinned_support": false,
+    "post_step_loss": 4.532759189605713,
+    "residual_objective": "supervised_ce",
+    "residual_parameter_delta": 948.1388549804688,
+    "seq_len": 64,
+    "support_instability": {
+      "hep_alpha": 1.0,
+      "hep_update_clip_norm": 0.01,
+      "pc_steps": 4,
+      "pinned_vs_repicked_logit_delta": 0.003972291946411133,
+      "support_change_fraction": 0.60546875,
+      "support_changed": true,
+      "support_changed_positions": 155,
+      "support_positions": 256,
+      "support_transition_count": 465
+    },
+    "support_stress": true,
+    "training_steps": 50,
+    "vocab_size": 56,
+    "zero_init_loss": 4.163630962371826
+  },
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "runtime_seconds": 1.113,
+  "seed": 1,
+  "status": "ok",
+  "torch_available": true,
+  "torch_version": "2.2.2"
+}

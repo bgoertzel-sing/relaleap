@@ -498,6 +498,33 @@ class Phase0SmokeTest(unittest.TestCase):
         ][0]
         self.assertLessEqual(alpha1["max_logit_delta_from_ordinary"], 0.1)
 
+    def test_word_tokenized_dataset_runs_same_artifact_contract(self) -> None:
+        token_config = copy.deepcopy(CONFIG)
+        token_config["run"]["max_steps"] = 1
+        token_config["run"]["experiment_id"] = "test_word_tokenized"
+        token_config["data"] = {
+            "dataset": "tiny_shakespeare_word",
+            "seq_len": 16,
+        }
+
+        try:
+            result = run_phase0_smoke(token_config)
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        self.assertEqual(result.dataset, "tiny_shakespeare_word")
+        self.assertEqual(result.seq_len, 16)
+        self.assertGreater(result.vocab_size, 10)
+        self.assertTrue(result.invariants["zero_init_identity"])
+        self.assertTrue(result.invariants["frozen_base_unchanged"])
+        self.assertTrue(result.invariants["hep_alpha_0_equivalence"])
+        self.assertEqual(
+            result.to_summary()["dataset"],
+            "tiny_shakespeare_word",
+        )
+
     def test_runner_writes_required_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)

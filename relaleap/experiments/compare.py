@@ -652,9 +652,9 @@ def _write_notes(path: Path, comparison: dict[str, Any]) -> None:
     verdict = comparison["verdict"]
     hep_acceptance = verdict["hep_alpha_acceptance"]
     lines = [
-        "# Char Smoke Objective Comparison",
+        "# RelaLeap Objective Comparison",
         "",
-        "Command-driven comparison of Phase 0 char-smoke residual objectives.",
+        "Command-driven comparison of Phase 0 residual objectives.",
         "",
         f"- Status: `{comparison['status']}`",
         f"- Verdict: `{verdict['status']}`",

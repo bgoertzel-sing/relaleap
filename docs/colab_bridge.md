@@ -306,6 +306,22 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check.json
 ```
 
+The non-char tokenized promotion-gate label-free temporal check uses
+deterministic word-token IDs with sequence length `64`, hidden dimension `96`,
+`24` residual columns, `4` HEP settling steps, and `50` training steps:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/token_larger_hep_support_stress_clipped.yaml \
+  --config configs/token_larger_hep_support_stress_entropy_clipped.yaml \
+  --config configs/token_larger_hep_support_stress_temporal_clipped.yaml \
+  --config configs/token_larger_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --out results/comparisons/colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check.json
+```
+
 After extracting the completed temporal comparison artifact bundle locally,
 write the label-free candidate decision report without rerunning Colab:
 

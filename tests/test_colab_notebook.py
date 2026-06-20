@@ -26,6 +26,10 @@ class ColabNotebookTest(unittest.TestCase):
             "configs/char_larger_hep_support_stress_clipped.yaml",
             checkout_cell,
         )
+        self.assertIn(
+            "configs/token_larger_hep_support_stress_clipped.yaml",
+            checkout_cell,
+        )
 
 
 if __name__ == "__main__":

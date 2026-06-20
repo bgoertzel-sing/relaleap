@@ -518,6 +518,28 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/larger_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json
 ```
 
+The non-char tokenized promotion-gate comparison uses deterministic word-token
+IDs rather than character IDs while keeping the same command-driven HEP
+candidate structure. It uses sequence length `64`, hidden dimension `96`, `24`
+residual columns, `4` HEP settling steps, and `50` training steps:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/token_larger_hep_support_stress_clipped.yaml \
+  --config configs/token_larger_hep_support_stress_entropy_clipped.yaml \
+  --config configs/token_larger_hep_support_stress_temporal_clipped.yaml \
+  --config configs/token_larger_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --out results/comparisons/token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json
+python -m relaleap.experiments.decision_report \
+  --report temporal-clipped-hep \
+  --comparison-dir results/comparisons/token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --artifact-check results/comparisons/token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json \
+  --out results/reports/temporal_clipped_hep_token_larger_local_decision
+```
+
 The matching GitHub-backed Colab larger-char promotion-gate check writes the
 same artifact-backed comparison under the Colab-prefixed path:
 

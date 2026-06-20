@@ -1,4 +1,4 @@
-"""Phase 0 char-level smoke machinery for RelaLeap."""
+"""Phase 0 smoke machinery for RelaLeap."""
 
 from __future__ import annotations
 
@@ -20,12 +20,22 @@ All:
 Resolved. resolved.
 """.strip()
 
+TINY_TOKENIZED_EXCERPT = """
+the residual learner observes tokens across a compact language stream .
+temporal consistency compares each prediction with the following position .
+entropy settling is label free but may chase overconfident local choices .
+guided settling uses labels and remains an oracle for diagnostics only .
+support stress changes sparse column choices during repeated settling .
+the promotion gate asks for evidence beyond character level smoke runs .
+""".strip()
+
 
 @dataclass(frozen=True)
 class Phase0Result:
     """Structured result returned by the Phase 0 smoke routine."""
 
     residual_objective: str
+    dataset: str
     vocab_size: int
     seq_len: int
     batch_size: int
@@ -49,6 +59,7 @@ class Phase0Result:
     def to_summary(self) -> dict[str, Any]:
         return {
             "residual_objective": self.residual_objective,
+            "dataset": self.dataset,
             "vocab_size": self.vocab_size,
             "seq_len": self.seq_len,
             "batch_size": self.batch_size,
@@ -106,6 +117,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             run_cfg.get("residual_objective", "supervised_ce"),
         )
     )
+    dataset = str(data_cfg.get("dataset", "tiny_shakespeare_char"))
     seq_len = int(data_cfg.get("seq_len", 32))
     hidden_dim = int(base_cfg.get("hidden_dim", 32))
     layers = int(base_cfg.get("layers", 2))
@@ -150,7 +162,11 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         )
 
     torch.manual_seed(seed)
-    inputs, targets, vocab_size = _build_char_batch(seq_len=seq_len, batch_size=4)
+    inputs, targets, vocab_size = _build_batch(
+        dataset=dataset,
+        seq_len=seq_len,
+        batch_size=4,
+    )
     base = TinyCharTransformer(
         vocab_size=vocab_size,
         seq_len=seq_len,
@@ -377,6 +393,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
 
     return Phase0Result(
         residual_objective=residual_objective,
+        dataset=dataset,
         vocab_size=vocab_size,
         seq_len=seq_len,
         batch_size=int(inputs.shape[0]),
@@ -955,6 +972,16 @@ def _metric_row(
     }
 
 
+def _build_batch(dataset: str, seq_len: int, batch_size: int) -> tuple[Any, Any, int]:
+    if dataset == "tiny_shakespeare_char":
+        return _build_char_batch(seq_len=seq_len, batch_size=batch_size)
+    if dataset == "tiny_shakespeare_word":
+        return _build_word_batch(seq_len=seq_len, batch_size=batch_size)
+    raise ValueError(
+        "data.dataset must be one of: tiny_shakespeare_char, tiny_shakespeare_word"
+    )
+
+
 def _build_char_batch(seq_len: int, batch_size: int) -> tuple[Any, Any, int]:
     import torch
 
@@ -965,6 +992,33 @@ def _build_char_batch(seq_len: int, batch_size: int) -> tuple[Any, Any, int]:
     vocab = sorted(set(text))
     char_to_id = {char: index for index, char in enumerate(vocab)}
     encoded = torch.tensor([char_to_id[char] for char in text], dtype=torch.long)
+    starts = torch.linspace(
+        0,
+        len(encoded) - seq_len - 2,
+        steps=batch_size,
+        dtype=torch.long,
+    )
+    rows = []
+    targets = []
+    for start in starts.tolist():
+        rows.append(encoded[start : start + seq_len])
+        targets.append(encoded[start + 1 : start + seq_len + 1])
+    return torch.stack(rows), torch.stack(targets), len(vocab)
+
+
+def _build_word_batch(seq_len: int, batch_size: int) -> tuple[Any, Any, int]:
+    import re
+
+    import torch
+
+    if seq_len < 2:
+        raise ValueError("seq_len must be at least 2")
+
+    tokens = re.findall(r"[a-z]+|[.,]", TINY_TOKENIZED_EXCERPT.lower())
+    token_stream = tokens * max(8, (seq_len * batch_size * 2) // len(tokens) + 2)
+    vocab = sorted(set(token_stream))
+    token_to_id = {token: index for index, token in enumerate(vocab)}
+    encoded = torch.tensor([token_to_id[token] for token in token_stream], dtype=torch.long)
     starts = torch.linspace(
         0,
         len(encoded) - seq_len - 2,
