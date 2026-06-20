@@ -405,6 +405,37 @@ class Phase0SmokeTest(unittest.TestCase):
         ][0]
         self.assertLessEqual(alpha1["max_logit_delta_from_ordinary"], 0.1)
 
+    def test_supervised_gradient_hep_improves_clipped_support_stress_loss(self) -> None:
+        guided_config = copy.deepcopy(CONFIG)
+        guided_config["run"]["max_steps"] = 1
+        guided_config["run"]["experiment_id"] = "test_guided_clipped_hep"
+        guided_config["model"]["columns"]["support_stress"] = True
+        guided_config["inference"] = {
+            "pc_steps": 2,
+            "hep_alpha": 0.0,
+            "hep_alpha_sweep": "0.0,1.0",
+            "hep_update_clip_norm": 0.01,
+            "hep_settling_objective": "supervised_ce_gradient",
+        }
+
+        try:
+            result = run_phase0_smoke(guided_config)
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        self.assertEqual(result.hep_settling_objective, "supervised_ce_gradient")
+        self.assertTrue(result.invariants["hep_alpha_0_equivalence"])
+        alpha0 = [
+            entry for entry in result.hep_alpha_sweep if entry["alpha"] == 0.0
+        ][0]
+        alpha1 = [
+            entry for entry in result.hep_alpha_sweep if entry["alpha"] == 1.0
+        ][0]
+        self.assertLess(alpha1["loss"], alpha0["loss"])
+        self.assertLessEqual(alpha1["max_logit_delta_from_ordinary"], 0.1)
+
     def test_runner_writes_required_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)

@@ -144,6 +144,19 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_support_stress_clipped_hep/artifact_check.json
 ```
 
+After the guided clipped HEP probe is pushed to GitHub, run the same
+command-driven comparison in Colab or locally:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep_support_stress_clipped.yaml \
+  --config configs/char_smoke_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/colab_support_stress_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_support_stress_guided_clipped_hep \
+  --out results/comparisons/colab_support_stress_guided_clipped_hep/artifact_check.json
+```
+
 Expected artifacts:
 
 ```text
@@ -169,6 +182,12 @@ results/comparisons/colab_support_stress_clipped_hep/notes.md
 results/comparisons/colab_support_stress_clipped_hep/artifact_check.json
 results/comparisons/colab_support_stress_clipped_hep/runs/char_smoke_hep_support_stress/summary.json
 results/comparisons/colab_support_stress_clipped_hep/runs/char_smoke_hep_support_stress_clipped/summary.json
+results/comparisons/colab_support_stress_guided_clipped_hep/summary.json
+results/comparisons/colab_support_stress_guided_clipped_hep/metrics.csv
+results/comparisons/colab_support_stress_guided_clipped_hep/notes.md
+results/comparisons/colab_support_stress_guided_clipped_hep/artifact_check.json
+results/comparisons/colab_support_stress_guided_clipped_hep/runs/char_smoke_hep_support_stress_clipped/summary.json
+results/comparisons/colab_support_stress_guided_clipped_hep/runs/char_smoke_hep_support_stress_guided_clipped/summary.json
 ```
 
 The checked-in schema v3 local baseline currently accepts HEP alpha `0.25`. The

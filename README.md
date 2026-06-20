@@ -175,6 +175,23 @@ current default policy, clipped HEP should remain opt-in unless the evidence
 artifacts pass and a clipped nonzero HEP alpha both improves loss over alpha 0
 and stays within the ordinary-logit and pinned-vs-repicked delta budgets.
 
+An additional opt-in guided clipped HEP support-stress config uses a supervised
+cross-entropy hidden-state gradient step during settling. This is a diagnostic
+oracle probe, not a deployable inference path, and asks whether the clipped
+settling budget can support any loss-improving error step under support stress:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep_support_stress_clipped.yaml \
+  --config configs/char_smoke_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/support_stress_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/support_stress_guided_clipped_hep
+```
+
+The local smoke evidence accepts the guided clipped alpha `1.0`, improving loss
+over alpha 0 while staying within the default ordinary-logit delta budget.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 

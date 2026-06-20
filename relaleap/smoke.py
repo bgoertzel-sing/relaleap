@@ -42,6 +42,7 @@ class Phase0Result:
     support_stress: bool
     support_instability: dict[str, float | int | bool]
     hep_update_clip_norm: float | None
+    hep_settling_objective: str
     hep_alpha_sweep: list[dict[str, float]]
     invariants: dict[str, bool]
 
@@ -63,6 +64,7 @@ class Phase0Result:
             "support_stress": self.support_stress,
             "support_instability": self.support_instability,
             "hep_update_clip_norm": self.hep_update_clip_norm,
+            "hep_settling_objective": self.hep_settling_objective,
             "hep_alpha_sweep": self.hep_alpha_sweep,
             "invariants": self.invariants,
         }
@@ -117,6 +119,9 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     hep_update_clip_norm = _parse_optional_float(
         inference_cfg.get("hep_update_clip_norm")
     )
+    hep_settling_objective = str(
+        inference_cfg.get("hep_settling_objective", "residual_adapter")
+    )
     hep_alpha_sweep = _parse_hep_alpha_sweep(inference_cfg, fallback_alpha=hep_alpha)
 
     if pc_steps < 1:
@@ -131,6 +136,11 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     if residual_objective not in {"supervised_ce", "pc_logit_mse"}:
         raise ValueError(
             "training.residual_objective must be one of: supervised_ce, pc_logit_mse"
+        )
+    if hep_settling_objective not in {"residual_adapter", "supervised_ce_gradient"}:
+        raise ValueError(
+            "inference.hep_settling_objective must be one of: "
+            "residual_adapter, supervised_ce_gradient"
         )
 
     torch.manual_seed(seed)
@@ -161,6 +171,9 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             hep_alpha=0.0,
             pinned_support=pinned_support,
             hep_update_clip_norm=hep_update_clip_norm,
+            hep_settling_objective=hep_settling_objective,
+            targets=targets,
+            vocab_size=vocab_size,
         )
         base_loss_tensor = F.cross_entropy(
             base_logits[:, :-1, :].reshape(-1, vocab_size),
@@ -238,6 +251,9 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 hep_alpha=0.0,
                 pinned_support=pinned_support,
                 hep_update_clip_norm=hep_update_clip_norm,
+                hep_settling_objective=hep_settling_objective,
+                targets=targets,
+                vocab_size=vocab_size,
             )
         metric_rows.append(
             _metric_row(
@@ -277,6 +293,9 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 hep_alpha=0.0,
                 pinned_support=pinned_support,
                 hep_update_clip_norm=hep_update_clip_norm,
+                hep_settling_objective=hep_settling_objective,
+                targets=targets,
+                vocab_size=vocab_size,
             )
         metric_rows.append(
             _metric_row(
@@ -315,6 +334,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         alphas=hep_alpha_sweep,
         pinned_support=pinned_support,
         hep_update_clip_norm=hep_update_clip_norm,
+        hep_settling_objective=hep_settling_objective,
     )
     for sweep_row in hep_sweep_rows:
         if sweep_row["alpha"] == 0.0:
@@ -367,6 +387,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         support_stress=support_stress,
         support_instability=support_instability,
         hep_update_clip_norm=hep_update_clip_norm,
+        hep_settling_objective=hep_settling_objective,
         hep_alpha_sweep=hep_sweep_rows,
         invariants=invariants,
     )
@@ -518,6 +539,9 @@ def forward_with_hep_alpha(
     hep_alpha: float,
     pinned_support: bool = False,
     hep_update_clip_norm: float | None = None,
+    hep_settling_objective: str = "residual_adapter",
+    targets: Any | None = None,
+    vocab_size: int | None = None,
 ) -> Any:
     """Run ordinary residual inference plus bounded HEP-style settling.
 
@@ -533,6 +557,17 @@ def forward_with_hep_alpha(
         raise ValueError("hep_alpha must be between 0.0 and 1.0")
     if hep_update_clip_norm is not None and hep_update_clip_norm <= 0.0:
         raise ValueError("hep_update_clip_norm must be positive when set")
+    if hep_settling_objective not in {"residual_adapter", "supervised_ce_gradient"}:
+        raise ValueError(
+            "hep_settling_objective must be one of: "
+            "residual_adapter, supervised_ce_gradient"
+        )
+    if hep_settling_objective == "supervised_ce_gradient" and (
+        targets is None or vocab_size is None
+    ):
+        raise ValueError(
+            "supervised_ce_gradient HEP settling requires targets and vocab_size"
+        )
 
     hidden = base.encode(input_ids)
     support_indices = None
@@ -541,10 +576,41 @@ def forward_with_hep_alpha(
     else:
         settled = residual(hidden)
     for _ in range(1, pc_steps):
-        proposed = residual(settled, support_indices=support_indices)
-        update = _clip_update(proposed - settled, hep_update_clip_norm)
+        if hep_settling_objective == "supervised_ce_gradient":
+            update = _supervised_ce_hidden_update(
+                base,
+                settled,
+                targets,
+                vocab_size,
+                max_norm=hep_update_clip_norm,
+            )
+        else:
+            proposed = residual(settled, support_indices=support_indices)
+            update = _clip_update(proposed - settled, hep_update_clip_norm)
         settled = settled + hep_alpha * update
     return base.decode(settled)
+
+
+def _supervised_ce_hidden_update(
+    base: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    *,
+    max_norm: float | None,
+) -> Any:
+    import torch
+    import torch.nn.functional as F
+
+    with torch.enable_grad():
+        probe = hidden.detach().clone().requires_grad_(True)
+        logits = base.decode(probe)
+        loss = F.cross_entropy(
+            logits[:, :-1, :].reshape(-1, vocab_size),
+            targets[:, :-1].reshape(-1),
+        )
+        gradient = torch.autograd.grad(loss, probe)[0]
+    return _clip_update(-gradient.detach(), max_norm)
 
 
 def _clip_update(update: Any, max_norm: float | None) -> Any:
@@ -620,30 +686,35 @@ def _evaluate_hep_alpha_sweep(
     alphas: list[float],
     pinned_support: bool,
     hep_update_clip_norm: float | None,
+    hep_settling_objective: str,
 ) -> list[dict[str, float]]:
     import torch.nn.functional as F
 
     rows = []
     with _torch_no_grad():
         ordinary_logits = base(inputs, residual_adapter=residual)
-        for alpha in alphas:
-            support_instability = _hep_support_instability(
-                base,
-                residual,
-                inputs,
-                pc_steps=pc_steps,
-                hep_alpha=alpha,
-                hep_update_clip_norm=hep_update_clip_norm,
-            )
-            hep_logits = forward_with_hep_alpha(
-                base,
-                residual,
-                inputs,
-                pc_steps=pc_steps,
-                hep_alpha=alpha,
-                pinned_support=pinned_support,
-                hep_update_clip_norm=hep_update_clip_norm,
-            )
+    for alpha in alphas:
+        support_instability = _hep_support_instability(
+            base,
+            residual,
+            inputs,
+            pc_steps=pc_steps,
+            hep_alpha=alpha,
+            hep_update_clip_norm=hep_update_clip_norm,
+        )
+        hep_logits = forward_with_hep_alpha(
+            base,
+            residual,
+            inputs,
+            pc_steps=pc_steps,
+            hep_alpha=alpha,
+            pinned_support=pinned_support,
+            hep_update_clip_norm=hep_update_clip_norm,
+            hep_settling_objective=hep_settling_objective,
+            targets=targets,
+            vocab_size=vocab_size,
+        )
+        with _torch_no_grad():
             loss = F.cross_entropy(
                 hep_logits[:, :-1, :].reshape(-1, vocab_size),
                 targets[:, :-1].reshape(-1),
@@ -753,19 +824,26 @@ def _max_hep_delta_from_ordinary(
     hep_alpha: float,
     pinned_support: bool,
     hep_update_clip_norm: float | None,
+    hep_settling_objective: str,
+    targets: Any,
+    vocab_size: int,
 ) -> float:
     with _torch_no_grad():
         ordinary_logits = base(inputs, residual_adapter=residual)
-        hep_logits = forward_with_hep_alpha(
-            base,
-            residual,
-            inputs,
-            pc_steps=pc_steps,
-            hep_alpha=hep_alpha,
-            pinned_support=pinned_support,
-            hep_update_clip_norm=hep_update_clip_norm,
-        )
-    return float((ordinary_logits - hep_logits).abs().max().item())
+    hep_logits = forward_with_hep_alpha(
+        base,
+        residual,
+        inputs,
+        pc_steps=pc_steps,
+        hep_alpha=hep_alpha,
+        pinned_support=pinned_support,
+        hep_update_clip_norm=hep_update_clip_norm,
+        hep_settling_objective=hep_settling_objective,
+        targets=targets,
+        vocab_size=vocab_size,
+    )
+    with _torch_no_grad():
+        return float((ordinary_logits - hep_logits).abs().max().item())
 
 
 def _torch_no_grad() -> Any:
