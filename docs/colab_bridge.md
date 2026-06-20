@@ -86,7 +86,9 @@ HEP support-stress comparison under
 temporal-vs-entropy guided clipped support-stress comparison under
 `results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep`,
 and the broader seed-2 temporal comparison under
-`results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed2`.
+`results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed2`,
+and the broader seed-3 temporal comparison under
+`results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3`.
 When that bundle is present in the rendered output, the helper extracts it
 under the local repo root so the normal after-the-fact checker can inspect the
 Colab artifact tree locally.
@@ -218,6 +220,21 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed2/artifact_check.json
 ```
 
+The broader seed-3 label-free temporal check uses the same command-driven
+harness and artifact checker:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep_support_stress_clipped_seed3.yaml \
+  --config configs/char_smoke_hep_support_stress_entropy_clipped_seed3.yaml \
+  --config configs/char_smoke_hep_support_stress_temporal_clipped_seed3.yaml \
+  --config configs/char_smoke_hep_support_stress_guided_clipped_seed3.yaml \
+  --out results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3 \
+  --out results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3/artifact_check.json
+```
+
 After extracting the completed temporal comparison artifact bundle locally,
 write the label-free candidate decision report without rerunning Colab:
 
@@ -276,6 +293,14 @@ results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_
 results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed2/runs/char_smoke_hep_support_stress_entropy_clipped_seed2/summary.json
 results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed2/runs/char_smoke_hep_support_stress_temporal_clipped_seed2/summary.json
 results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed2/runs/char_smoke_hep_support_stress_guided_clipped_seed2/summary.json
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3/summary.json
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3/metrics.csv
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3/notes.md
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3/artifact_check.json
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3/runs/char_smoke_hep_support_stress_clipped_seed3/summary.json
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3/runs/char_smoke_hep_support_stress_entropy_clipped_seed3/summary.json
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3/runs/char_smoke_hep_support_stress_temporal_clipped_seed3/summary.json
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3/runs/char_smoke_hep_support_stress_guided_clipped_seed3/summary.json
 ```
 
 The checked-in schema v3 local baseline currently accepts HEP alpha `0.25`. The

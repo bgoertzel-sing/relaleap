@@ -302,6 +302,35 @@ This keeps temporal consistency selected only as the current label-free
 candidate while checking whether the seed-1 and seed-2 pattern survives another
 deterministic seed.
 
+The matching GitHub-backed Colab seed-3 validation uses the same command-driven
+harness and writes the artifact tree under the Colab-prefixed comparison path:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep_support_stress_clipped_seed3.yaml \
+  --config configs/char_smoke_hep_support_stress_entropy_clipped_seed3.yaml \
+  --config configs/char_smoke_hep_support_stress_temporal_clipped_seed3.yaml \
+  --config configs/char_smoke_hep_support_stress_guided_clipped_seed3.yaml \
+  --out results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3
+```
+
+After a completed Colab run and local artifact extraction, inspect the
+extracted artifact tree and write the seed-3 temporal decision report without
+rerunning experiments:
+
+```bash
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3 \
+  --out results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3/artifact_check_local.json
+python -m relaleap.experiments.decision_report \
+  --report temporal-clipped-hep \
+  --comparison-dir results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3 \
+  --artifact-check results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed3/artifact_check_local.json \
+  --out results/reports/temporal_clipped_hep_seed3_colab_decision
+```
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
