@@ -209,6 +209,24 @@ gradient oracle improves support-stress loss within the stability budgets, but
 it remains diagnostic-only and cannot be promoted until a deployable inference
 error signal is selected.
 
+An opt-in label-free clipped HEP support-stress config uses prediction-entropy
+hidden-state gradient descent during settling. This is deployable at inference
+time because it uses model logits rather than supervised labels:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep_support_stress_clipped.yaml \
+  --config configs/char_smoke_hep_support_stress_entropy_clipped.yaml \
+  --config configs/char_smoke_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/support_stress_entropy_vs_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/support_stress_entropy_vs_guided_clipped_hep
+```
+
+This keeps the checked Phase 0 baseline unchanged while comparing a deployable
+label-free signal with the unguided clipped baseline and the supervised guided
+oracle on the same support-stress path.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 

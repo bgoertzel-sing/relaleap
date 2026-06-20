@@ -169,6 +169,20 @@ python -m relaleap.experiments.decision_report \
   --out results/reports/guided_clipped_hep_decision
 ```
 
+The deployable label-free entropy-gradient clipped HEP probe can be run against
+the clipped baseline and guided oracle with the same command-driven harness:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep_support_stress_clipped.yaml \
+  --config configs/char_smoke_hep_support_stress_entropy_clipped.yaml \
+  --config configs/char_smoke_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/colab_support_stress_entropy_vs_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_support_stress_entropy_vs_guided_clipped_hep \
+  --out results/comparisons/colab_support_stress_entropy_vs_guided_clipped_hep/artifact_check.json
+```
+
 Expected artifacts:
 
 ```text

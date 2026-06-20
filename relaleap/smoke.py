@@ -137,10 +137,14 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         raise ValueError(
             "training.residual_objective must be one of: supervised_ce, pc_logit_mse"
         )
-    if hep_settling_objective not in {"residual_adapter", "supervised_ce_gradient"}:
+    if hep_settling_objective not in {
+        "residual_adapter",
+        "prediction_entropy_gradient",
+        "supervised_ce_gradient",
+    }:
         raise ValueError(
             "inference.hep_settling_objective must be one of: "
-            "residual_adapter, supervised_ce_gradient"
+            "residual_adapter, prediction_entropy_gradient, supervised_ce_gradient"
         )
 
     torch.manual_seed(seed)
@@ -557,10 +561,14 @@ def forward_with_hep_alpha(
         raise ValueError("hep_alpha must be between 0.0 and 1.0")
     if hep_update_clip_norm is not None and hep_update_clip_norm <= 0.0:
         raise ValueError("hep_update_clip_norm must be positive when set")
-    if hep_settling_objective not in {"residual_adapter", "supervised_ce_gradient"}:
+    if hep_settling_objective not in {
+        "residual_adapter",
+        "prediction_entropy_gradient",
+        "supervised_ce_gradient",
+    }:
         raise ValueError(
             "hep_settling_objective must be one of: "
-            "residual_adapter, supervised_ce_gradient"
+            "residual_adapter, prediction_entropy_gradient, supervised_ce_gradient"
         )
     if hep_settling_objective == "supervised_ce_gradient" and (
         targets is None or vocab_size is None
@@ -582,6 +590,12 @@ def forward_with_hep_alpha(
                 settled,
                 targets,
                 vocab_size,
+                max_norm=hep_update_clip_norm,
+            )
+        elif hep_settling_objective == "prediction_entropy_gradient":
+            update = _prediction_entropy_hidden_update(
+                base,
+                settled,
                 max_norm=hep_update_clip_norm,
             )
         else:
@@ -610,6 +624,24 @@ def _supervised_ce_hidden_update(
             targets[:, :-1].reshape(-1),
         )
         gradient = torch.autograd.grad(loss, probe)[0]
+    return _clip_update(-gradient.detach(), max_norm)
+
+
+def _prediction_entropy_hidden_update(
+    base: Any,
+    hidden: Any,
+    *,
+    max_norm: float | None,
+) -> Any:
+    import torch
+
+    with torch.enable_grad():
+        probe = hidden.detach().clone().requires_grad_(True)
+        logits = base.decode(probe)
+        log_probs = torch.log_softmax(logits, dim=-1)
+        probs = torch.softmax(logits, dim=-1)
+        entropy = -(probs * log_probs).sum(dim=-1).mean()
+        gradient = torch.autograd.grad(entropy, probe)[0]
     return _clip_update(-gradient.detach(), max_norm)
 
 
