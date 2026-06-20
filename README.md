@@ -331,6 +331,30 @@ python -m relaleap.experiments.decision_report \
   --out results/reports/temporal_clipped_hep_seed3_colab_decision
 ```
 
+The next broader local temporal clipped HEP support-stress comparison repeats
+the same candidate check at seed 4:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep_support_stress_clipped_seed4.yaml \
+  --config configs/char_smoke_hep_support_stress_entropy_clipped_seed4.yaml \
+  --config configs/char_smoke_hep_support_stress_temporal_clipped_seed4.yaml \
+  --config configs/char_smoke_hep_support_stress_guided_clipped_seed4.yaml \
+  --out results/comparisons/support_stress_temporal_vs_entropy_guided_clipped_hep_seed4
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/support_stress_temporal_vs_entropy_guided_clipped_hep_seed4 \
+  --out results/comparisons/support_stress_temporal_vs_entropy_guided_clipped_hep_seed4/artifact_check_local.json
+python -m relaleap.experiments.decision_report \
+  --report temporal-clipped-hep \
+  --comparison-dir results/comparisons/support_stress_temporal_vs_entropy_guided_clipped_hep_seed4 \
+  --artifact-check results/comparisons/support_stress_temporal_vs_entropy_guided_clipped_hep_seed4/artifact_check_local.json \
+  --out results/reports/temporal_clipped_hep_seed4_local_decision
+```
+
+The seed-4 local evidence again selects temporal consistency as the deployable
+label-free candidate while keeping default promotion blocked pending broader
+evidence.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
