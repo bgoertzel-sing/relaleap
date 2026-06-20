@@ -122,7 +122,10 @@ def _validate_evidence_text(text: str) -> None:
         "Support-stress artifact check: pass",
         "Clipped support-stress comparison status: ok",
         "Clipped support-stress artifact check: pass",
+        "Guided clipped support-stress comparison status: ok",
+        "Guided clipped support-stress artifact check: pass",
         "char_smoke_hep_support_stress_clipped",
+        "char_smoke_hep_support_stress_guided_clipped",
         "char_smoke_pinned_hep_support_stress",
         COMPLETION_TEXT,
     ]
