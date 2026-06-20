@@ -11,9 +11,11 @@ from relaleap.experiments.decision_report import (
     KEEP_OPT_IN,
     PROMOTE,
     PROMOTE_CLIPPED_HEP,
+    SELECT_TEMPORAL_CLIPPED_HEP,
     write_clipped_hep_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pinned_support_decision_report,
+    write_temporal_clipped_hep_decision_report,
 )
 
 
@@ -220,6 +222,68 @@ class GuidedClippedHepDecisionReportTest(unittest.TestCase):
             self.assertFalse(report["promote_to_default_support_stress_mitigation"])
 
 
+class TemporalClippedHepDecisionReportTest(unittest.TestCase):
+    def test_improving_temporal_alpha_selects_label_free_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "comparison"
+            _write_temporal_clipped_comparison(
+                comparison_dir,
+                temporal_nonzero_loss=3.99,
+                entropy_nonzero_loss=4.01,
+                guided_nonzero_loss=3.9,
+                temporal_nonzero_delta=0.01,
+                temporal_nonzero_pinned_vs_repicked=0.02,
+            )
+
+            report = write_temporal_clipped_hep_decision_report(
+                comparison_dir,
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["decision"], SELECT_TEMPORAL_CLIPPED_HEP)
+            self.assertTrue(report["selected_label_free_support_stress_candidate"])
+            self.assertFalse(report["promote_to_default_support_stress_mitigation"])
+            self.assertTrue(report["deployable_label_free_signal"])
+            self.assertEqual(report["evidence"]["artifact_check_status"], "pass")
+            self.assertEqual(report["evidence"]["temporal_run_count"], 1)
+            self.assertEqual(report["evidence"]["entropy_run_count"], 1)
+            self.assertEqual(report["evidence"]["guided_run_count"], 1)
+            self.assertEqual(report["evidence"]["clipped_baseline_run_count"], 1)
+            self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
+            self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
+
+    def test_failed_artifact_check_blocks_temporal_candidate_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "comparison"
+            _write_temporal_clipped_comparison(
+                comparison_dir,
+                temporal_nonzero_loss=3.99,
+                entropy_nonzero_loss=4.01,
+                guided_nonzero_loss=3.9,
+                temporal_nonzero_delta=0.01,
+                temporal_nonzero_pinned_vs_repicked=0.02,
+            )
+            artifact_check_path = tmp_path / "artifact_check.json"
+            artifact_check_path.write_text(
+                json.dumps({"status": "fail"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_temporal_clipped_hep_decision_report(
+                comparison_dir,
+                tmp_path / "report",
+                artifact_check_path=artifact_check_path,
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(report["selected_label_free_support_stress_candidate"])
+            self.assertFalse(report["promote_to_default_support_stress_mitigation"])
+
+
 def _write_comparison(
     comparison_dir: Path,
     *,
@@ -390,6 +454,89 @@ def _write_guided_clipped_comparison(
     (comparison_dir / "metrics.csv").write_text("step,status\n0,ok\n", encoding="utf-8")
     (comparison_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
     for run_id in ("clipped", "guided"):
+        run_dir = comparison_dir / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "summary.json").write_text(
+            json.dumps(
+                {
+                    "experiment_id": run_id,
+                    "status": "ok",
+                    "artifact_invariants": {
+                        "summary_json": True,
+                        "metrics_csv": True,
+                        "notes_md": True,
+                    },
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (run_dir / "metrics.csv").write_text("step,status\n0,ok\n", encoding="utf-8")
+        (run_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
+
+
+def _write_temporal_clipped_comparison(
+    comparison_dir: Path,
+    *,
+    temporal_nonzero_loss: float,
+    entropy_nonzero_loss: float,
+    guided_nonzero_loss: float,
+    temporal_nonzero_delta: float,
+    temporal_nonzero_pinned_vs_repicked: float,
+) -> None:
+    comparison_dir.mkdir(parents=True)
+    summary = {
+        "status": "ok",
+        "verdict": {
+            "status": "pass",
+            "invariants_passed": True,
+            "invariant_count": 16,
+            "failed_invariants": [],
+            "artifact_invariants_passed": True,
+            "artifact_invariant_count": 12,
+            "failed_artifact_invariants": [],
+            "hep_alpha_acceptance": {"status": "accepted"},
+        },
+        "runs": [
+            _guided_clipped_run_entry(
+                "clipped",
+                settling_objective="residual_adapter",
+                nonzero_loss=4.0,
+                nonzero_delta=0.0,
+                nonzero_pinned_vs_repicked=0.002,
+            ),
+            _guided_clipped_run_entry(
+                "entropy",
+                settling_objective="prediction_entropy_gradient",
+                nonzero_loss=entropy_nonzero_loss,
+                nonzero_delta=0.01,
+                nonzero_pinned_vs_repicked=0.002,
+            ),
+            _guided_clipped_run_entry(
+                "temporal",
+                settling_objective="temporal_consistency_gradient",
+                nonzero_loss=temporal_nonzero_loss,
+                nonzero_delta=temporal_nonzero_delta,
+                nonzero_pinned_vs_repicked=temporal_nonzero_pinned_vs_repicked,
+            ),
+            _guided_clipped_run_entry(
+                "guided",
+                settling_objective="supervised_ce_gradient",
+                nonzero_loss=guided_nonzero_loss,
+                nonzero_delta=0.01,
+                nonzero_pinned_vs_repicked=0.002,
+            ),
+        ],
+    }
+    (comparison_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (comparison_dir / "metrics.csv").write_text("step,status\n0,ok\n", encoding="utf-8")
+    (comparison_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
+    for run_id in ("clipped", "entropy", "temporal", "guided"):
         run_dir = comparison_dir / "runs" / run_id
         run_dir.mkdir(parents=True)
         (run_dir / "summary.json").write_text(

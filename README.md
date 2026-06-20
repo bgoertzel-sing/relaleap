@@ -247,6 +247,23 @@ python -m relaleap.experiments.check_artifacts \
 This keeps temporal consistency diagnostic-only until command-driven local and
 Colab evidence show a clipped nonzero temporal alpha improves support-stress
 loss within the ordinary-logit budget.
+After a completed local or Colab temporal comparison, write the command-driven
+temporal-clipped HEP decision report without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report temporal-clipped-hep \
+  --comparison-dir results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --artifact-check results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json \
+  --out results/reports/temporal_clipped_hep_decision
+```
+
+The report writes `decision_report.json` and `decision_report.md`. Under the
+current default policy, temporal clipped HEP is selected as the deployable
+label-free support-stress mitigation candidate only when a nonzero temporal
+alpha improves loss while staying inside the ordinary-logit and
+pinned-vs-repicked delta budgets; default promotion still requires broader
+evidence than the current smoke comparison.
 
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:

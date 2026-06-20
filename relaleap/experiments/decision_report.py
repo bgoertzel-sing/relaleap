@@ -22,11 +22,16 @@ DEFAULT_GUIDED_CLIPPED_COMPARISON_DIR = Path(
     "results/comparisons/colab_support_stress_guided_clipped_hep"
 )
 DEFAULT_GUIDED_CLIPPED_OUT_DIR = Path("results/reports/guided_clipped_hep_decision")
+DEFAULT_TEMPORAL_CLIPPED_COMPARISON_DIR = Path(
+    "results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep"
+)
+DEFAULT_TEMPORAL_CLIPPED_OUT_DIR = Path("results/reports/temporal_clipped_hep_decision")
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
 PROMOTE_CLIPPED_HEP = "promote_to_default_support_stress_mitigation"
 GUIDED_ORACLE_CONFIRMED = "guided_oracle_confirmed"
+SELECT_TEMPORAL_CLIPPED_HEP = "select_temporal_label_free_support_stress_candidate"
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
@@ -318,6 +323,116 @@ def write_guided_clipped_hep_decision_report(
     return report
 
 
+def write_temporal_clipped_hep_decision_report(
+    comparison_dir: Path = DEFAULT_TEMPORAL_CLIPPED_COMPARISON_DIR,
+    out_dir: Path = DEFAULT_TEMPORAL_CLIPPED_OUT_DIR,
+    *,
+    artifact_check_path: Path | None = None,
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+    max_pinned_vs_repicked_delta: float = DEFAULT_MAX_PINNED_VS_REPICKED_DELTA,
+) -> dict[str, Any]:
+    """Write a JSON and Markdown decision report for temporal clipped HEP."""
+
+    if max_logit_delta < 0.0:
+        raise ValueError("max_logit_delta must be non-negative")
+    if max_pinned_vs_repicked_delta < 0.0:
+        raise ValueError("max_pinned_vs_repicked_delta must be non-negative")
+
+    comparison = _read_json_object(comparison_dir / "summary.json")
+    artifact_check = (
+        _read_json_object(artifact_check_path)
+        if artifact_check_path is not None and artifact_check_path.is_file()
+        else check_comparison_artifacts(comparison_dir)
+    )
+    runs = comparison.get("runs") if isinstance(comparison.get("runs"), list) else []
+    temporal_runs = _runs_with_objective(runs, "temporal_consistency_gradient")
+    entropy_runs = _runs_with_objective(runs, "prediction_entropy_gradient")
+    guided_runs = _runs_with_objective(runs, "supervised_ce_gradient")
+    clipped_baseline_runs = [
+        run
+        for run in runs
+        if isinstance(run, dict)
+        and run.get("hep_update_clip_norm") is not None
+        and run.get("hep_settling_objective")
+        not in {
+            "prediction_entropy_gradient",
+            "temporal_consistency_gradient",
+            "supervised_ce_gradient",
+        }
+    ]
+    evidence = {
+        "comparison_dir": str(comparison_dir),
+        "artifact_check_status": artifact_check.get("status"),
+        "comparison_status": comparison.get("status"),
+        "verdict_status": (comparison.get("verdict") or {}).get("status")
+        if isinstance(comparison.get("verdict"), dict)
+        else None,
+        "temporal_run_count": len(temporal_runs),
+        "entropy_run_count": len(entropy_runs),
+        "guided_run_count": len(guided_runs),
+        "clipped_baseline_run_count": len(clipped_baseline_runs),
+        "support_stress_run_count": len(
+            [
+                run
+                for run in runs
+                if isinstance(run, dict) and run.get("support_stress") is True
+            ]
+        ),
+        "max_support_change_fraction": _max_nested_metric(
+            runs,
+            "support_instability",
+            "support_change_fraction",
+        ),
+        "max_temporal_pinned_vs_repicked_logit_delta": _max_alpha_metric(
+            temporal_runs,
+            "pinned_vs_repicked_logit_delta",
+        ),
+        "temporal_alpha_candidates": _alpha_candidates(temporal_runs),
+        "entropy_alpha_candidates": _alpha_candidates(entropy_runs),
+        "guided_alpha_candidates": _alpha_candidates(guided_runs),
+        "clipped_baseline_alpha_candidates": _alpha_candidates(clipped_baseline_runs),
+    }
+    decision = _temporal_clipped_decision(
+        evidence,
+        max_logit_delta=max_logit_delta,
+        max_pinned_vs_repicked_delta=max_pinned_vs_repicked_delta,
+    )
+    report = {
+        "status": "pass" if decision["decision"] != INSUFFICIENT_EVIDENCE else "fail",
+        "decision": decision["decision"],
+        "selected_label_free_support_stress_candidate": decision["selected"],
+        "promote_to_default_support_stress_mitigation": False,
+        "deployable_label_free_signal": True,
+        "policy": {
+            "max_logit_delta_from_ordinary": max_logit_delta,
+            "max_pinned_vs_repicked_logit_delta": max_pinned_vs_repicked_delta,
+            "requires_passing_artifact_check": True,
+            "requires_temporal_nonzero_alpha_loss_improvement": True,
+            "requires_temporal_nonzero_alpha_within_logit_delta_budget": True,
+            "requires_temporal_nonzero_alpha_within_pinned_vs_repicked_budget": True,
+            "requires_nonzero_support_repick_evidence": True,
+            "requires_entropy_and_guided_context_runs": True,
+            "allows_default_promotion": False,
+            "reason_default_promotion_is_blocked": (
+                "temporal_consistency_gradient is deployable, but this report only "
+                "selects the next label-free support-stress candidate; default "
+                "promotion requires broader evidence than the current smoke comparison"
+            ),
+        },
+        "evidence": evidence,
+        "rationale": decision["rationale"],
+        "next_step": decision["next_step"],
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_temporal_clipped_markdown(out_dir / "decision_report.md", report)
+    return report
+
+
 def _decision(evidence: dict[str, Any], *, max_logit_delta: float) -> dict[str, Any]:
     if (
         evidence["artifact_check_status"] != "pass"
@@ -506,6 +621,91 @@ def _guided_clipped_decision(
         ),
         "next_step": "keep guided clipped HEP as an opt-in oracle probe and inspect alternative error signals",
     }
+
+
+def _temporal_clipped_decision(
+    evidence: dict[str, Any],
+    *,
+    max_logit_delta: float,
+    max_pinned_vs_repicked_delta: float,
+) -> dict[str, Any]:
+    if (
+        evidence["artifact_check_status"] != "pass"
+        or evidence["comparison_status"] != "ok"
+        or evidence["verdict_status"] != "pass"
+        or evidence["temporal_run_count"] < 1
+        or evidence["entropy_run_count"] < 1
+        or evidence["guided_run_count"] < 1
+        or evidence["clipped_baseline_run_count"] < 1
+        or evidence["support_stress_run_count"] < 4
+    ):
+        return {
+            "decision": INSUFFICIENT_EVIDENCE,
+            "selected": False,
+            "rationale": (
+                "The comparison and artifact evidence must pass and include temporal, "
+                "entropy, guided oracle, and clipped baseline support-stress runs "
+                "before selecting a label-free mitigation candidate."
+            ),
+            "next_step": "repair or rerun the temporal-vs-entropy guided clipped comparison artifacts",
+        }
+
+    if not evidence["max_support_change_fraction"] or evidence[
+        "max_support_change_fraction"
+    ] <= 0.0:
+        return {
+            "decision": INSUFFICIENT_EVIDENCE,
+            "selected": False,
+            "rationale": (
+                "The temporal clipped comparison did not exercise support repicking, "
+                "so it cannot decide whether the label-free signal helped under support stress."
+            ),
+            "next_step": "rerun temporal clipped support-stress with nonzero support repicking",
+        }
+
+    accepted_temporal = [
+        candidate
+        for candidate in evidence["temporal_alpha_candidates"]
+        if candidate["alpha"] != 0.0
+        and candidate["loss_improvement_from_alpha0"] is not None
+        and candidate["loss_improvement_from_alpha0"] > 0.0
+        and candidate["max_logit_delta_from_ordinary"] <= max_logit_delta
+        and candidate["pinned_vs_repicked_logit_delta"] <= max_pinned_vs_repicked_delta
+    ]
+    if accepted_temporal:
+        return {
+            "decision": SELECT_TEMPORAL_CLIPPED_HEP,
+            "selected": True,
+            "rationale": (
+                "Temporal clipped HEP is deployable at inference time and produced "
+                "a nonzero alpha with support-stress loss improvement inside both "
+                "stability budgets, while entropy did not improve loss in the same "
+                "comparison and the guided oracle remains diagnostic-only."
+            ),
+            "next_step": "use temporal consistency as the selected label-free candidate for the next support-stress mitigation experiment",
+        }
+
+    return {
+        "decision": KEEP_OPT_IN,
+        "selected": False,
+        "rationale": (
+            "The temporal clipped support-stress evidence is valid, but no temporal "
+            "nonzero HEP alpha improves loss under the default stability policy."
+        ),
+        "next_step": "keep temporal clipped HEP diagnostic-only and inspect alternative label-free error signals",
+    }
+
+
+def _runs_with_objective(
+    runs: list[Any],
+    settling_objective: str,
+) -> list[dict[str, Any]]:
+    return [
+        run
+        for run in runs
+        if isinstance(run, dict)
+        and run.get("hep_settling_objective") == settling_objective
+    ]
 
 
 def _alpha_candidates(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -727,6 +927,57 @@ def _write_guided_clipped_markdown(path: Path, report: dict[str, Any]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_temporal_clipped_markdown(path: Path, report: dict[str, Any]) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Temporal Clipped HEP Decision Report",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        (
+            "- Selected label-free support-stress candidate: "
+            f"`{report['selected_label_free_support_stress_candidate']}`"
+        ),
+        (
+            "- Promote to default support-stress mitigation: "
+            f"`{report['promote_to_default_support_stress_mitigation']}`"
+        ),
+        f"- Deployable label-free signal: `{report['deployable_label_free_signal']}`",
+        f"- Artifact check: `{evidence['artifact_check_status']}`",
+        f"- Comparison verdict: `{evidence['verdict_status']}`",
+        (
+            "- Max support change fraction: "
+            f"`{_format_metric(evidence['max_support_change_fraction'])}`"
+        ),
+        (
+            "- Max temporal pinned-vs-repicked logit delta: "
+            f"`{_format_metric(evidence['max_temporal_pinned_vs_repicked_logit_delta'])}`"
+        ),
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Temporal Clipped HEP Candidates",
+        "",
+        "| Alpha | Loss | Improvement vs alpha 0 | Logit delta | Support change | Pinned-vs-repicked |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for candidate in evidence["temporal_alpha_candidates"]:
+        lines.append(
+            (
+                f"| {_format_metric(candidate['alpha'])} "
+                f"| {_format_metric(candidate['loss'])} "
+                f"| {_format_metric(candidate['loss_improvement_from_alpha0'])} "
+                f"| {_format_metric(candidate['max_logit_delta_from_ordinary'])} "
+                f"| {_format_metric(candidate['support_change_fraction'])} "
+                f"| {_format_metric(candidate['pinned_vs_repicked_logit_delta'])} |"
+            )
+        )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -739,7 +990,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--report",
-        choices=("pinned-support", "clipped-hep", "guided-clipped-hep"),
+        choices=(
+            "pinned-support",
+            "clipped-hep",
+            "guided-clipped-hep",
+            "temporal-clipped-hep",
+        ),
         default="pinned-support",
         help="Decision report to write.",
     )
@@ -783,6 +1039,14 @@ def main() -> None:
         report = write_guided_clipped_hep_decision_report(
             args.comparison_dir or DEFAULT_GUIDED_CLIPPED_COMPARISON_DIR,
             args.out or DEFAULT_GUIDED_CLIPPED_OUT_DIR,
+            artifact_check_path=args.artifact_check,
+            max_logit_delta=args.max_logit_delta,
+            max_pinned_vs_repicked_delta=args.max_pinned_vs_repicked_delta,
+        )
+    elif args.report == "temporal-clipped-hep":
+        report = write_temporal_clipped_hep_decision_report(
+            args.comparison_dir or DEFAULT_TEMPORAL_CLIPPED_COMPARISON_DIR,
+            args.out or DEFAULT_TEMPORAL_CLIPPED_OUT_DIR,
             artifact_check_path=args.artifact_check,
             max_logit_delta=args.max_logit_delta,
             max_pinned_vs_repicked_delta=args.max_pinned_vs_repicked_delta,
