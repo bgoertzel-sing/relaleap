@@ -1,0 +1,230 @@
+{
+  "artifact_invariants": {
+    "count": 12,
+    "failed_count": 0,
+    "passed": true
+  },
+  "artifacts": [
+    {
+      "exists": true,
+      "label": "comparison.summary.json",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "comparison.metrics.csv",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "comparison.notes.md",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_support_stress_clipped.summary.json",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_clipped/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_support_stress_clipped.metrics.csv",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_clipped/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_support_stress_clipped.notes.md",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_clipped/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_support_stress_entropy_clipped.summary.json",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_entropy_clipped/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_support_stress_entropy_clipped.metrics.csv",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_entropy_clipped/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_support_stress_entropy_clipped.notes.md",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_entropy_clipped/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_support_stress_temporal_clipped.summary.json",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_temporal_clipped/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_support_stress_temporal_clipped.metrics.csv",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_temporal_clipped/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_support_stress_temporal_clipped.notes.md",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_temporal_clipped/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_support_stress_guided_clipped.summary.json",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_guided_clipped/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_support_stress_guided_clipped.metrics.csv",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_guided_clipped/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_support_stress_guided_clipped.notes.md",
+      "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_guided_clipped/notes.md"
+    }
+  ],
+  "baseline_comparison": {
+    "mismatch_count": null,
+    "present": false,
+    "status": null
+  },
+  "baseline_reference_comparison": {
+    "mismatch_count": null,
+    "present": false,
+    "status": null
+  },
+  "comparison_dir": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep",
+  "failures": [],
+  "hep_alpha_acceptance": {
+    "accepted_alpha": {
+      "accepted": true,
+      "alpha": 1.0,
+      "alpha0_loss": 3.921032428741455,
+      "experiment_id": "char_larger_hep_support_stress_guided_clipped",
+      "loss": 3.919010877609253,
+      "loss_improvement_from_alpha0": 0.0020215511322021484,
+      "max_logit_delta_from_ordinary": 0.0024896860122680664
+    },
+    "status": "accepted"
+  },
+  "phase0_invariants": {
+    "count": 16,
+    "failed_count": 0,
+    "passed": true
+  },
+  "runs": [
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_support_stress_clipped.summary.json",
+          "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_clipped/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_support_stress_clipped.metrics.csv",
+          "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_clipped/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_support_stress_clipped.notes.md",
+          "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_clipped/notes.md"
+        }
+      ],
+      "experiment_id": "char_larger_hep_support_stress_clipped",
+      "run_dir": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_clipped",
+      "summary_failures": [],
+      "summary_status": "ok"
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_support_stress_entropy_clipped.summary.json",
+          "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_entropy_clipped/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_support_stress_entropy_clipped.metrics.csv",
+          "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_entropy_clipped/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_support_stress_entropy_clipped.notes.md",
+          "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_entropy_clipped/notes.md"
+        }
+      ],
+      "experiment_id": "char_larger_hep_support_stress_entropy_clipped",
+      "run_dir": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_entropy_clipped",
+      "summary_failures": [],
+      "summary_status": "ok"
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_support_stress_temporal_clipped.summary.json",
+          "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_temporal_clipped/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_support_stress_temporal_clipped.metrics.csv",
+          "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_temporal_clipped/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_support_stress_temporal_clipped.notes.md",
+          "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_temporal_clipped/notes.md"
+        }
+      ],
+      "experiment_id": "char_larger_hep_support_stress_temporal_clipped",
+      "run_dir": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_temporal_clipped",
+      "summary_failures": [],
+      "summary_status": "ok"
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_support_stress_guided_clipped.summary.json",
+          "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_guided_clipped/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_support_stress_guided_clipped.metrics.csv",
+          "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_guided_clipped/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_support_stress_guided_clipped.notes.md",
+          "path": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_guided_clipped/notes.md"
+        }
+      ],
+      "experiment_id": "char_larger_hep_support_stress_guided_clipped",
+      "run_dir": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_guided_clipped",
+      "summary_failures": [],
+      "summary_status": "ok"
+    }
+  ],
+  "status": "pass",
+  "summary_status": "ok",
+  "verdict_status": "pass"
+}
