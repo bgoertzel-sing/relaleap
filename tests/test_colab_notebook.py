@@ -31,6 +31,37 @@ class ColabNotebookTest(unittest.TestCase):
             checkout_cell,
         )
 
+    def test_run_cell_executes_token_larger_colab_path(self) -> None:
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+        run_cells = [
+            source
+            for source in sources
+            if "colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep"
+            in source
+        ]
+
+        self.assertEqual(len(run_cells), 2)
+        run_cell, evidence_cell = run_cells
+        self.assertIn(
+            "--config configs/token_larger_hep_support_stress_clipped.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/token_larger_hep_support_stress_entropy_clipped.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/token_larger_hep_support_stress_temporal_clipped.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/token_larger_hep_support_stress_guided_clipped.yaml",
+            run_cell,
+        )
+        self.assertIn("token_larger_hep_support_stress_temporal_clipped", evidence_cell)
+        self.assertIn("tiny_shakespeare_word", evidence_cell)
+
 
 if __name__ == "__main__":
     unittest.main()
