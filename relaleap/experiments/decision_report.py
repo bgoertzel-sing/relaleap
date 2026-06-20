@@ -18,10 +18,15 @@ DEFAULT_CLIPPED_COMPARISON_DIR = Path(
     "results/comparisons/colab_support_stress_clipped_hep"
 )
 DEFAULT_CLIPPED_OUT_DIR = Path("results/reports/clipped_hep_decision")
+DEFAULT_GUIDED_CLIPPED_COMPARISON_DIR = Path(
+    "results/comparisons/colab_support_stress_guided_clipped_hep"
+)
+DEFAULT_GUIDED_CLIPPED_OUT_DIR = Path("results/reports/guided_clipped_hep_decision")
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
 PROMOTE_CLIPPED_HEP = "promote_to_default_support_stress_mitigation"
+GUIDED_ORACLE_CONFIRMED = "guided_oracle_confirmed"
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
@@ -212,6 +217,107 @@ def write_clipped_hep_decision_report(
     return report
 
 
+def write_guided_clipped_hep_decision_report(
+    comparison_dir: Path = DEFAULT_GUIDED_CLIPPED_COMPARISON_DIR,
+    out_dir: Path = DEFAULT_GUIDED_CLIPPED_OUT_DIR,
+    *,
+    artifact_check_path: Path | None = None,
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+    max_pinned_vs_repicked_delta: float = DEFAULT_MAX_PINNED_VS_REPICKED_DELTA,
+) -> dict[str, Any]:
+    """Write a JSON and Markdown decision report for guided clipped HEP."""
+
+    if max_logit_delta < 0.0:
+        raise ValueError("max_logit_delta must be non-negative")
+    if max_pinned_vs_repicked_delta < 0.0:
+        raise ValueError("max_pinned_vs_repicked_delta must be non-negative")
+
+    comparison = _read_json_object(comparison_dir / "summary.json")
+    artifact_check = (
+        _read_json_object(artifact_check_path)
+        if artifact_check_path is not None and artifact_check_path.is_file()
+        else check_comparison_artifacts(comparison_dir)
+    )
+    runs = comparison.get("runs") if isinstance(comparison.get("runs"), list) else []
+    guided_runs = [
+        run
+        for run in runs
+        if isinstance(run, dict)
+        and run.get("hep_settling_objective") == "supervised_ce_gradient"
+    ]
+    clipped_baseline_runs = [
+        run
+        for run in runs
+        if isinstance(run, dict)
+        and run.get("hep_update_clip_norm") is not None
+        and run.get("hep_settling_objective") != "supervised_ce_gradient"
+    ]
+    evidence = {
+        "comparison_dir": str(comparison_dir),
+        "artifact_check_status": artifact_check.get("status"),
+        "comparison_status": comparison.get("status"),
+        "verdict_status": (comparison.get("verdict") or {}).get("status")
+        if isinstance(comparison.get("verdict"), dict)
+        else None,
+        "guided_run_count": len(guided_runs),
+        "clipped_baseline_run_count": len(clipped_baseline_runs),
+        "support_stress_run_count": len(
+            [
+                run
+                for run in runs
+                if isinstance(run, dict) and run.get("support_stress") is True
+            ]
+        ),
+        "max_support_change_fraction": _max_nested_metric(
+            runs,
+            "support_instability",
+            "support_change_fraction",
+        ),
+        "max_guided_pinned_vs_repicked_logit_delta": _max_alpha_metric(
+            guided_runs,
+            "pinned_vs_repicked_logit_delta",
+        ),
+        "guided_alpha_candidates": _alpha_candidates(guided_runs),
+        "clipped_baseline_alpha_candidates": _alpha_candidates(clipped_baseline_runs),
+    }
+    decision = _guided_clipped_decision(
+        evidence,
+        max_logit_delta=max_logit_delta,
+        max_pinned_vs_repicked_delta=max_pinned_vs_repicked_delta,
+    )
+    report = {
+        "status": "pass" if decision["decision"] != INSUFFICIENT_EVIDENCE else "fail",
+        "decision": decision["decision"],
+        "promote_to_default_support_stress_mitigation": False,
+        "diagnostic_oracle_only": True,
+        "policy": {
+            "max_logit_delta_from_ordinary": max_logit_delta,
+            "max_pinned_vs_repicked_logit_delta": max_pinned_vs_repicked_delta,
+            "requires_passing_artifact_check": True,
+            "requires_guided_nonzero_alpha_loss_improvement": True,
+            "requires_guided_nonzero_alpha_within_logit_delta_budget": True,
+            "requires_guided_nonzero_alpha_within_pinned_vs_repicked_budget": True,
+            "requires_nonzero_support_repick_evidence": True,
+            "allows_default_promotion": False,
+            "reason_default_promotion_is_blocked": (
+                "supervised_ce_gradient uses labels during settling and is an "
+                "oracle probe, not a deployable inference signal"
+            ),
+        },
+        "evidence": evidence,
+        "rationale": decision["rationale"],
+        "next_step": decision["next_step"],
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_guided_clipped_markdown(out_dir / "decision_report.md", report)
+    return report
+
+
 def _decision(evidence: dict[str, Any], *, max_logit_delta: float) -> dict[str, Any]:
     if (
         evidence["artifact_check_status"] != "pass"
@@ -329,6 +435,76 @@ def _clipped_decision(
             "alpha improves loss under the default policy."
         ),
         "next_step": "keep clipped HEP opt-in and test a mechanism that can improve loss under support stress",
+    }
+
+
+def _guided_clipped_decision(
+    evidence: dict[str, Any],
+    *,
+    max_logit_delta: float,
+    max_pinned_vs_repicked_delta: float,
+) -> dict[str, Any]:
+    if (
+        evidence["artifact_check_status"] != "pass"
+        or evidence["comparison_status"] != "ok"
+        or evidence["verdict_status"] != "pass"
+        or evidence["guided_run_count"] < 1
+        or evidence["clipped_baseline_run_count"] < 1
+        or evidence["support_stress_run_count"] < 2
+    ):
+        return {
+            "decision": INSUFFICIENT_EVIDENCE,
+            "promote": False,
+            "rationale": (
+                "The comparison and artifact evidence must pass and include both "
+                "guided clipped and unguided clipped support-stress runs before "
+                "recording the oracle decision."
+            ),
+            "next_step": "repair or rerun the guided clipped support-stress comparison artifacts",
+        }
+
+    if not evidence["max_support_change_fraction"] or evidence[
+        "max_support_change_fraction"
+    ] <= 0.0:
+        return {
+            "decision": INSUFFICIENT_EVIDENCE,
+            "promote": False,
+            "rationale": (
+                "The guided clipped comparison did not exercise support repicking, "
+                "so it cannot decide whether the oracle probe helped under support stress."
+            ),
+            "next_step": "rerun guided clipped support-stress with nonzero support repicking",
+        }
+
+    accepted_guided = [
+        candidate
+        for candidate in evidence["guided_alpha_candidates"]
+        if candidate["alpha"] != 0.0
+        and candidate["loss_improvement_from_alpha0"] is not None
+        and candidate["loss_improvement_from_alpha0"] > 0.0
+        and candidate["max_logit_delta_from_ordinary"] <= max_logit_delta
+        and candidate["pinned_vs_repicked_logit_delta"] <= max_pinned_vs_repicked_delta
+    ]
+    if accepted_guided:
+        return {
+            "decision": GUIDED_ORACLE_CONFIRMED,
+            "promote": False,
+            "rationale": (
+                "Guided clipped HEP produced a nonzero alpha with loss improvement "
+                "inside both stability budgets, but it uses supervised labels during "
+                "settling and therefore remains diagnostic-only."
+            ),
+            "next_step": "choose a deployable error signal to test against the guided clipped oracle",
+        }
+
+    return {
+        "decision": KEEP_OPT_IN,
+        "promote": False,
+        "rationale": (
+            "The guided clipped support-stress evidence is valid, but no guided "
+            "nonzero HEP alpha improves loss under the default stability policy."
+        ),
+        "next_step": "keep guided clipped HEP as an opt-in oracle probe and inspect alternative error signals",
     }
 
 
@@ -504,6 +680,53 @@ def _write_clipped_markdown(path: Path, report: dict[str, Any]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_guided_clipped_markdown(path: Path, report: dict[str, Any]) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Guided Clipped HEP Decision Report",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        (
+            "- Promote to default support-stress mitigation: "
+            f"`{report['promote_to_default_support_stress_mitigation']}`"
+        ),
+        f"- Diagnostic oracle only: `{report['diagnostic_oracle_only']}`",
+        f"- Artifact check: `{evidence['artifact_check_status']}`",
+        f"- Comparison verdict: `{evidence['verdict_status']}`",
+        (
+            "- Max support change fraction: "
+            f"`{_format_metric(evidence['max_support_change_fraction'])}`"
+        ),
+        (
+            "- Max guided pinned-vs-repicked logit delta: "
+            f"`{_format_metric(evidence['max_guided_pinned_vs_repicked_logit_delta'])}`"
+        ),
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Guided Clipped HEP Candidates",
+        "",
+        "| Alpha | Loss | Improvement vs alpha 0 | Logit delta | Support change | Pinned-vs-repicked |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for candidate in evidence["guided_alpha_candidates"]:
+        lines.append(
+            (
+                f"| {_format_metric(candidate['alpha'])} "
+                f"| {_format_metric(candidate['loss'])} "
+                f"| {_format_metric(candidate['loss_improvement_from_alpha0'])} "
+                f"| {_format_metric(candidate['max_logit_delta_from_ordinary'])} "
+                f"| {_format_metric(candidate['support_change_fraction'])} "
+                f"| {_format_metric(candidate['pinned_vs_repicked_logit_delta'])} |"
+            )
+        )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -516,7 +739,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--report",
-        choices=("pinned-support", "clipped-hep"),
+        choices=("pinned-support", "clipped-hep", "guided-clipped-hep"),
         default="pinned-support",
         help="Decision report to write.",
     )
@@ -552,6 +775,14 @@ def main() -> None:
         report = write_clipped_hep_decision_report(
             args.comparison_dir or DEFAULT_CLIPPED_COMPARISON_DIR,
             args.out or DEFAULT_CLIPPED_OUT_DIR,
+            artifact_check_path=args.artifact_check,
+            max_logit_delta=args.max_logit_delta,
+            max_pinned_vs_repicked_delta=args.max_pinned_vs_repicked_delta,
+        )
+    elif args.report == "guided-clipped-hep":
+        report = write_guided_clipped_hep_decision_report(
+            args.comparison_dir or DEFAULT_GUIDED_CLIPPED_COMPARISON_DIR,
+            args.out or DEFAULT_GUIDED_CLIPPED_OUT_DIR,
             artifact_check_path=args.artifact_check,
             max_logit_delta=args.max_logit_delta,
             max_pinned_vs_repicked_delta=args.max_pinned_vs_repicked_delta,

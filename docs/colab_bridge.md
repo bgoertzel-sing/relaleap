@@ -158,6 +158,17 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_support_stress_guided_clipped_hep/artifact_check.json
 ```
 
+After extracting a completed guided clipped artifact bundle locally, write the
+oracle decision report without rerunning Colab:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report guided-clipped-hep \
+  --comparison-dir results/comparisons/colab_support_stress_guided_clipped_hep \
+  --artifact-check results/comparisons/colab_support_stress_guided_clipped_hep/artifact_check_local.json \
+  --out results/reports/guided_clipped_hep_decision
+```
+
 Expected artifacts:
 
 ```text

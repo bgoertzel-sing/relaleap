@@ -191,6 +191,23 @@ python -m relaleap.experiments.check_artifacts \
 
 The local smoke evidence accepts the guided clipped alpha `1.0`, improving loss
 over alpha 0 while staying within the default ordinary-logit delta budget.
+After a completed local or Colab guided clipped comparison, write the
+command-driven guided-clipped oracle decision report without rerunning
+experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report guided-clipped-hep \
+  --comparison-dir results/comparisons/colab_support_stress_guided_clipped_hep \
+  --artifact-check results/comparisons/colab_support_stress_guided_clipped_hep/artifact_check_local.json \
+  --out results/reports/guided_clipped_hep_decision
+```
+
+The report writes `decision_report.json` and `decision_report.md`. Under the
+current default policy, guided clipped HEP can confirm that a supervised
+gradient oracle improves support-stress loss within the stability budgets, but
+it remains diagnostic-only and cannot be promoted until a deployable inference
+error signal is selected.
 
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
