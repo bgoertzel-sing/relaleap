@@ -227,6 +227,27 @@ This keeps the checked Phase 0 baseline unchanged while comparing a deployable
 label-free signal with the unguided clipped baseline and the supervised guided
 oracle on the same support-stress path.
 
+An additional opt-in label-free clipped HEP support-stress config uses temporal
+next-token consistency during settling. It distills each position's detached
+current prediction into the following position's prediction, so it can run
+without labels while probing a different deployable error signal than entropy
+minimization:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep_support_stress_clipped.yaml \
+  --config configs/char_smoke_hep_support_stress_entropy_clipped.yaml \
+  --config configs/char_smoke_hep_support_stress_temporal_clipped.yaml \
+  --config configs/char_smoke_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/support_stress_temporal_vs_entropy_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/support_stress_temporal_vs_entropy_guided_clipped_hep
+```
+
+This keeps temporal consistency diagnostic-only until command-driven local and
+Colab evidence show a clipped nonzero temporal alpha improves support-stress
+loss within the ordinary-logit budget.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 

@@ -140,11 +140,13 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     if hep_settling_objective not in {
         "residual_adapter",
         "prediction_entropy_gradient",
+        "temporal_consistency_gradient",
         "supervised_ce_gradient",
     }:
         raise ValueError(
             "inference.hep_settling_objective must be one of: "
-            "residual_adapter, prediction_entropy_gradient, supervised_ce_gradient"
+            "residual_adapter, prediction_entropy_gradient, "
+            "temporal_consistency_gradient, supervised_ce_gradient"
         )
 
     torch.manual_seed(seed)
@@ -564,11 +566,13 @@ def forward_with_hep_alpha(
     if hep_settling_objective not in {
         "residual_adapter",
         "prediction_entropy_gradient",
+        "temporal_consistency_gradient",
         "supervised_ce_gradient",
     }:
         raise ValueError(
             "hep_settling_objective must be one of: "
-            "residual_adapter, prediction_entropy_gradient, supervised_ce_gradient"
+            "residual_adapter, prediction_entropy_gradient, "
+            "temporal_consistency_gradient, supervised_ce_gradient"
         )
     if hep_settling_objective == "supervised_ce_gradient" and (
         targets is None or vocab_size is None
@@ -594,6 +598,12 @@ def forward_with_hep_alpha(
             )
         elif hep_settling_objective == "prediction_entropy_gradient":
             update = _prediction_entropy_hidden_update(
+                base,
+                settled,
+                max_norm=hep_update_clip_norm,
+            )
+        elif hep_settling_objective == "temporal_consistency_gradient":
+            update = _temporal_consistency_hidden_update(
                 base,
                 settled,
                 max_norm=hep_update_clip_norm,
@@ -642,6 +652,26 @@ def _prediction_entropy_hidden_update(
         probs = torch.softmax(logits, dim=-1)
         entropy = -(probs * log_probs).sum(dim=-1).mean()
         gradient = torch.autograd.grad(entropy, probe)[0]
+    return _clip_update(-gradient.detach(), max_norm)
+
+
+def _temporal_consistency_hidden_update(
+    base: Any,
+    hidden: Any,
+    *,
+    max_norm: float | None,
+) -> Any:
+    import torch
+
+    with torch.enable_grad():
+        probe = hidden.detach().clone().requires_grad_(True)
+        logits = base.decode(probe)
+        if logits.shape[1] < 2:
+            return torch.zeros_like(hidden)
+        teacher_probs = torch.softmax(logits[:, :-1, :].detach(), dim=-1)
+        student_log_probs = torch.log_softmax(logits[:, 1:, :], dim=-1)
+        consistency = -(teacher_probs * student_log_probs).sum(dim=-1).mean()
+        gradient = torch.autograd.grad(consistency, probe)[0]
     return _clip_update(-gradient.detach(), max_norm)
 
 

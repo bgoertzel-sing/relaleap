@@ -82,10 +82,12 @@ comparison under
 support-stress comparison under
 `results/comparisons/colab_support_stress_clipped_hep`, and the guided clipped
 HEP support-stress comparison under
-`results/comparisons/colab_support_stress_guided_clipped_hep`. When that bundle
-is present in the rendered output, the helper extracts it under the local repo
-root so the normal after-the-fact checker can inspect the Colab artifact tree
-locally.
+`results/comparisons/colab_support_stress_guided_clipped_hep`, and the
+temporal-vs-entropy guided clipped support-stress comparison under
+`results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep`.
+When that bundle is present in the rendered output, the helper extracts it
+under the local repo root so the normal after-the-fact checker can inspect the
+Colab artifact tree locally.
 
 If the keyboard shortcut stops working after a Colab UI change, try
 `--run-method both`.
@@ -183,6 +185,22 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_support_stress_entropy_vs_guided_clipped_hep/artifact_check.json
 ```
 
+The deployable label-free temporal-consistency clipped HEP probe can be run
+against the clipped baseline, entropy probe, and guided oracle with the same
+command-driven harness:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep_support_stress_clipped.yaml \
+  --config configs/char_smoke_hep_support_stress_entropy_clipped.yaml \
+  --config configs/char_smoke_hep_support_stress_temporal_clipped.yaml \
+  --config configs/char_smoke_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --out results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check.json
+```
+
 Expected artifacts:
 
 ```text
@@ -214,6 +232,14 @@ results/comparisons/colab_support_stress_guided_clipped_hep/notes.md
 results/comparisons/colab_support_stress_guided_clipped_hep/artifact_check.json
 results/comparisons/colab_support_stress_guided_clipped_hep/runs/char_smoke_hep_support_stress_clipped/summary.json
 results/comparisons/colab_support_stress_guided_clipped_hep/runs/char_smoke_hep_support_stress_guided_clipped/summary.json
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep/summary.json
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep/metrics.csv
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep/notes.md
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check.json
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_smoke_hep_support_stress_clipped/summary.json
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_smoke_hep_support_stress_entropy_clipped/summary.json
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_smoke_hep_support_stress_temporal_clipped/summary.json
+results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_smoke_hep_support_stress_guided_clipped/summary.json
 ```
 
 The checked-in schema v3 local baseline currently accepts HEP alpha `0.25`. The

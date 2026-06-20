@@ -467,6 +467,37 @@ class Phase0SmokeTest(unittest.TestCase):
         ][0]
         self.assertLessEqual(alpha1["max_logit_delta_from_ordinary"], 0.1)
 
+    def test_temporal_consistency_hep_is_label_free_and_reported(self) -> None:
+        temporal_config = copy.deepcopy(CONFIG)
+        temporal_config["run"]["max_steps"] = 1
+        temporal_config["run"]["experiment_id"] = "test_temporal_clipped_hep"
+        temporal_config["model"]["columns"]["support_stress"] = True
+        temporal_config["inference"] = {
+            "pc_steps": 2,
+            "hep_alpha": 0.0,
+            "hep_alpha_sweep": "0.0,1.0",
+            "hep_update_clip_norm": 0.01,
+            "hep_settling_objective": "temporal_consistency_gradient",
+        }
+
+        try:
+            result = run_phase0_smoke(temporal_config)
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        self.assertEqual(result.hep_settling_objective, "temporal_consistency_gradient")
+        self.assertEqual(
+            result.to_summary()["hep_settling_objective"],
+            "temporal_consistency_gradient",
+        )
+        self.assertTrue(result.invariants["hep_alpha_0_equivalence"])
+        alpha1 = [
+            entry for entry in result.hep_alpha_sweep if entry["alpha"] == 1.0
+        ][0]
+        self.assertLessEqual(alpha1["max_logit_delta_from_ordinary"], 0.1)
+
     def test_runner_writes_required_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
