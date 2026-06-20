@@ -39,6 +39,24 @@ DEFAULT_TEMPORAL_CLIPPED_AGGREGATE_REPORTS = (
 DEFAULT_TEMPORAL_CLIPPED_AGGREGATE_OUT_DIR = Path(
     "results/reports/temporal_clipped_hep_multiseed_aggregate"
 )
+DEFAULT_TEMPORAL_CLIPPED_CROSS_SCALE_AGGREGATE_REPORTS = (
+    *DEFAULT_TEMPORAL_CLIPPED_AGGREGATE_REPORTS,
+    Path(
+        "results/reports/temporal_clipped_hep_validation_local_decision/decision_report.json"
+    ),
+    Path(
+        "results/reports/temporal_clipped_hep_validation_colab_decision/decision_report.json"
+    ),
+    Path(
+        "results/reports/temporal_clipped_hep_extended_local_decision/decision_report.json"
+    ),
+    Path(
+        "results/reports/temporal_clipped_hep_extended_colab_decision/decision_report.json"
+    ),
+)
+DEFAULT_TEMPORAL_CLIPPED_CROSS_SCALE_AGGREGATE_OUT_DIR = Path(
+    "results/reports/temporal_clipped_hep_cross_scale_aggregate"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -47,6 +65,9 @@ GUIDED_ORACLE_CONFIRMED = "guided_oracle_confirmed"
 SELECT_TEMPORAL_CLIPPED_HEP = "select_temporal_label_free_support_stress_candidate"
 SELECT_TEMPORAL_CLIPPED_HEP_AGGREGATE = (
     "select_temporal_label_free_support_stress_candidate_across_seed_smoke_evidence"
+)
+SELECT_TEMPORAL_CLIPPED_HEP_CROSS_SCALE_AGGREGATE = (
+    "select_temporal_label_free_support_stress_candidate_across_cross_scale_evidence"
 )
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -586,6 +607,85 @@ def write_temporal_clipped_hep_aggregate_report(
     return report
 
 
+def write_temporal_clipped_hep_cross_scale_aggregate_report(
+    decision_report_paths: list[Path] | tuple[Path, ...] = (
+        DEFAULT_TEMPORAL_CLIPPED_CROSS_SCALE_AGGREGATE_REPORTS
+    ),
+    out_dir: Path = DEFAULT_TEMPORAL_CLIPPED_CROSS_SCALE_AGGREGATE_OUT_DIR,
+    *,
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+    max_pinned_vs_repicked_delta: float = DEFAULT_MAX_PINNED_VS_REPICKED_DELTA,
+) -> dict[str, Any]:
+    """Write a cross-scale aggregate report from temporal clipped decisions."""
+
+    report = write_temporal_clipped_hep_aggregate_report(
+        decision_report_paths,
+        out_dir,
+        max_logit_delta=max_logit_delta,
+        max_pinned_vs_repicked_delta=max_pinned_vs_repicked_delta,
+    )
+    evidence = report["evidence"]
+    scale_backend_pairs = sorted(
+        {
+            (entry["scale"], entry["backend"])
+            for entry in evidence["entries"]
+            if entry.get("scale") is not None and entry.get("backend") is not None
+        }
+    )
+    required_pairs = {
+        ("seed_smoke", "local"),
+        ("seed_smoke", "colab"),
+        ("validation", "local"),
+        ("validation", "colab"),
+        ("extended", "local"),
+        ("extended", "colab"),
+    }
+    present_pairs = set(scale_backend_pairs)
+    missing_pairs = sorted(required_pairs - present_pairs)
+    failures = list(evidence["failures"])
+    for scale, backend in missing_pairs:
+        failures.append(
+            {
+                "field": "decision_report.scale_backend_pair",
+                "expected": f"{scale}/{backend}",
+                "actual": "missing",
+            }
+        )
+
+    decision = _temporal_cross_scale_aggregate_decision(
+        evidence["entries"],
+        failures,
+    )
+    evidence["scale_backend_pairs"] = [
+        {"scale": scale, "backend": backend} for scale, backend in scale_backend_pairs
+    ]
+    evidence["scale_count"] = len({scale for scale, _backend in scale_backend_pairs})
+    evidence["failures"] = failures
+    report["status"] = "pass" if decision["decision"] != INSUFFICIENT_EVIDENCE else "fail"
+    report["decision"] = decision["decision"]
+    report["selected_label_free_support_stress_candidate"] = decision["selected"]
+    report["policy"]["requires_seed_smoke_validation_and_extended_evidence"] = True
+    report["policy"]["requires_local_and_colab_evidence_per_scale"] = True
+    report["policy"]["reason_default_promotion_is_blocked"] = (
+        "This aggregate selects temporal consistency across seed-smoke, validation, "
+        "and extended char support-stress evidence; default promotion still needs "
+        "a separately defined promotion gate and broader non-char validation."
+    )
+    report["rationale"] = decision["rationale"]
+    report["next_step"] = decision["next_step"]
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_temporal_cross_scale_aggregate_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def _decision(evidence: dict[str, Any], *, max_logit_delta: float) -> dict[str, Any]:
     if (
         evidence["artifact_check_status"] != "pass"
@@ -880,6 +980,7 @@ def _temporal_aggregate_entry(
     )
     seed = _infer_seed_from_report(path, comparison_dir, temporal_candidates)
     backend = _infer_backend_from_report(path, comparison_dir)
+    scale = _infer_scale_from_report(path, comparison_dir, temporal_candidates)
     selected = report.get("selected_label_free_support_stress_candidate") is True
     failures = []
     if report.get("status") != "pass":
@@ -940,6 +1041,7 @@ def _temporal_aggregate_entry(
     return {
         "path": str(path),
         "comparison_dir": comparison_dir,
+        "scale": scale,
         "seed": seed,
         "backend": backend,
         "status": report.get("status"),
@@ -980,6 +1082,27 @@ def _infer_seed_from_report(
             return int("".join(digits))
     if any("temporal_clipped_hep" in text for text in texts):
         return 1
+    return None
+
+
+def _infer_scale_from_report(
+    path: Path,
+    comparison_dir: Any,
+    temporal_candidates: list[Any],
+) -> str | None:
+    texts = [str(path), str(comparison_dir or "")]
+    texts.extend(
+        str(candidate.get("experiment_id", ""))
+        for candidate in temporal_candidates
+        if isinstance(candidate, dict)
+    )
+    joined = " ".join(texts)
+    if "extended" in joined:
+        return "extended"
+    if "validation" in joined:
+        return "validation"
+    if "smoke" in joined or "seed" in joined or "temporal_clipped_hep" in joined:
+        return "seed_smoke"
     return None
 
 
@@ -1025,6 +1148,42 @@ def _temporal_aggregate_decision(
         "next_step": (
             "run a broader non-smoke temporal-clipped validation before any "
             "default-promotion decision"
+        ),
+    }
+
+
+def _temporal_cross_scale_aggregate_decision(
+    entries: list[dict[str, Any]],
+    failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if failures or not entries:
+        return {
+            "decision": INSUFFICIENT_EVIDENCE,
+            "selected": False,
+            "rationale": (
+                "The cross-scale aggregate requires every temporal clipped decision "
+                "report to pass, select temporal consistency, include an accepted "
+                "nonzero temporal alpha inside the stability budgets, and cover "
+                "seed-smoke, validation, and extended local/Colab evidence."
+            ),
+            "next_step": (
+                "repair or regenerate the missing or failing cross-scale temporal "
+                "clipped decision reports"
+            ),
+        }
+
+    return {
+        "decision": SELECT_TEMPORAL_CLIPPED_HEP_CROSS_SCALE_AGGREGATE,
+        "selected": True,
+        "rationale": (
+            "All included seed-smoke, validation, and extended local/Colab decision "
+            "reports select temporal consistency as the deployable label-free "
+            "support-stress candidate and include a nonzero temporal alpha with "
+            "loss improvement inside both stability budgets."
+        ),
+        "next_step": (
+            "define and run the next broader promotion gate before changing the "
+            "default support-stress mitigation path"
         ),
     }
 
@@ -1387,6 +1546,87 @@ def _write_temporal_aggregate_markdown(path: Path, report: dict[str, Any]) -> No
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_temporal_cross_scale_aggregate_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Temporal Clipped HEP Cross-Scale Aggregate",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        (
+            "- Selected label-free support-stress candidate: "
+            f"`{report['selected_label_free_support_stress_candidate']}`"
+        ),
+        (
+            "- Promote to default support-stress mitigation: "
+            f"`{report['promote_to_default_support_stress_mitigation']}`"
+        ),
+        f"- Report count: `{evidence['report_count']}`",
+        f"- Scale count: `{evidence['scale_count']}`",
+        f"- Selected report count: `{evidence['selected_report_count']}`",
+        f"- Accepted temporal report count: `{evidence['accepted_temporal_report_count']}`",
+        (
+            "- Mean temporal loss improvement from alpha 0: "
+            f"`{_format_metric(evidence['mean_temporal_loss_improvement_from_alpha0'])}`"
+        ),
+        (
+            "- Max temporal logit delta from ordinary: "
+            f"`{_format_metric(evidence['max_temporal_logit_delta_from_ordinary'])}`"
+        ),
+        (
+            "- Max temporal pinned-vs-repicked logit delta: "
+            f"`{_format_metric(evidence['max_temporal_pinned_vs_repicked_logit_delta'])}`"
+        ),
+        (
+            "- Max support change fraction: "
+            f"`{_format_metric(evidence['max_support_change_fraction'])}`"
+        ),
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        (
+            "| Scale | Seed | Backend | Status | Selected | Alpha | Loss improvement "
+            "| Logit delta | Pinned-vs-repicked | Source |"
+        ),
+        "| --- | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for entry in evidence["entries"]:
+        alpha = entry.get("best_temporal_alpha") or {}
+        lines.append(
+            (
+                f"| {entry.get('scale') or ''} "
+                f"| {entry.get('seed') or ''} "
+                f"| {entry.get('backend') or ''} "
+                f"| {entry.get('status') or ''} "
+                f"| {entry.get('selected_label_free_support_stress_candidate')} "
+                f"| {_format_metric(alpha.get('alpha'))} "
+                f"| {_format_metric(alpha.get('loss_improvement_from_alpha0'))} "
+                f"| {_format_metric(alpha.get('max_logit_delta_from_ordinary'))} "
+                f"| {_format_metric(alpha.get('pinned_vs_repicked_logit_delta'))} "
+                f"| `{entry.get('path')}` |"
+            )
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -1405,6 +1645,7 @@ def main() -> None:
             "guided-clipped-hep",
             "temporal-clipped-hep",
             "temporal-clipped-hep-aggregate",
+            "temporal-clipped-hep-cross-scale-aggregate",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -1474,6 +1715,14 @@ def main() -> None:
         report = write_temporal_clipped_hep_aggregate_report(
             args.decision_report or DEFAULT_TEMPORAL_CLIPPED_AGGREGATE_REPORTS,
             args.out or DEFAULT_TEMPORAL_CLIPPED_AGGREGATE_OUT_DIR,
+            max_logit_delta=args.max_logit_delta,
+            max_pinned_vs_repicked_delta=args.max_pinned_vs_repicked_delta,
+        )
+    elif args.report == "temporal-clipped-hep-cross-scale-aggregate":
+        report = write_temporal_clipped_hep_cross_scale_aggregate_report(
+            args.decision_report
+            or DEFAULT_TEMPORAL_CLIPPED_CROSS_SCALE_AGGREGATE_REPORTS,
+            args.out or DEFAULT_TEMPORAL_CLIPPED_CROSS_SCALE_AGGREGATE_OUT_DIR,
             max_logit_delta=args.max_logit_delta,
             max_pinned_vs_repicked_delta=args.max_pinned_vs_repicked_delta,
         )

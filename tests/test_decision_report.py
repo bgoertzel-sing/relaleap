@@ -13,10 +13,12 @@ from relaleap.experiments.decision_report import (
     PROMOTE_CLIPPED_HEP,
     SELECT_TEMPORAL_CLIPPED_HEP,
     SELECT_TEMPORAL_CLIPPED_HEP_AGGREGATE,
+    SELECT_TEMPORAL_CLIPPED_HEP_CROSS_SCALE_AGGREGATE,
     write_clipped_hep_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pinned_support_decision_report,
     write_temporal_clipped_hep_aggregate_report,
+    write_temporal_clipped_hep_cross_scale_aggregate_report,
     write_temporal_clipped_hep_decision_report,
 )
 
@@ -354,6 +356,87 @@ class TemporalClippedHepAggregateReportTest(unittest.TestCase):
                         "path": str(tmp_path / "missing.json"),
                     }
                 ],
+            )
+
+    def test_cross_scale_temporal_reports_pass_aggregate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            report_paths = []
+            for scale in ("seed_smoke", "validation", "extended"):
+                for backend in ("local", "colab"):
+                    comparison_dir = tmp_path / f"{backend}_{scale}_comparison"
+                    _write_temporal_clipped_comparison(
+                        comparison_dir,
+                        temporal_nonzero_loss=3.99,
+                        entropy_nonzero_loss=4.01,
+                        guided_nonzero_loss=3.9,
+                        temporal_nonzero_delta=0.01,
+                        temporal_nonzero_pinned_vs_repicked=0.02,
+                    )
+                    out_dir = (
+                        tmp_path / f"temporal_clipped_hep_{scale}_{backend}_decision"
+                    )
+                    decision = write_temporal_clipped_hep_decision_report(
+                        comparison_dir,
+                        out_dir,
+                    )
+                    self.assertEqual(decision["status"], "pass")
+                    report_paths.append(out_dir / "decision_report.json")
+
+            aggregate = write_temporal_clipped_hep_cross_scale_aggregate_report(
+                report_paths,
+                tmp_path / "cross_scale_aggregate",
+            )
+
+            self.assertEqual(aggregate["status"], "pass")
+            self.assertEqual(
+                aggregate["decision"],
+                SELECT_TEMPORAL_CLIPPED_HEP_CROSS_SCALE_AGGREGATE,
+            )
+            self.assertTrue(aggregate["selected_label_free_support_stress_candidate"])
+            self.assertFalse(aggregate["promote_to_default_support_stress_mitigation"])
+            self.assertEqual(aggregate["evidence"]["report_count"], 6)
+            self.assertEqual(aggregate["evidence"]["scale_count"], 3)
+            self.assertEqual(
+                aggregate["evidence"]["accepted_temporal_report_count"],
+                6,
+            )
+            self.assertTrue(
+                (tmp_path / "cross_scale_aggregate" / "decision_report.json").is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "cross_scale_aggregate" / "decision_report.md").is_file()
+            )
+
+    def test_cross_scale_aggregate_requires_each_scale_backend_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "local_seed_smoke_comparison"
+            _write_temporal_clipped_comparison(
+                comparison_dir,
+                temporal_nonzero_loss=3.99,
+                entropy_nonzero_loss=4.01,
+                guided_nonzero_loss=3.9,
+                temporal_nonzero_delta=0.01,
+                temporal_nonzero_pinned_vs_repicked=0.02,
+            )
+            out_dir = tmp_path / "temporal_seed_smoke_local_decision"
+            write_temporal_clipped_hep_decision_report(comparison_dir, out_dir)
+
+            aggregate = write_temporal_clipped_hep_cross_scale_aggregate_report(
+                [out_dir / "decision_report.json"],
+                tmp_path / "cross_scale_aggregate",
+            )
+
+            self.assertEqual(aggregate["status"], "fail")
+            self.assertEqual(aggregate["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIn(
+                {
+                    "field": "decision_report.scale_backend_pair",
+                    "expected": "extended/colab",
+                    "actual": "missing",
+                },
+                aggregate["evidence"]["failures"],
             )
 
 

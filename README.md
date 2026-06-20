@@ -467,6 +467,23 @@ This keeps temporal consistency as an opt-in candidate while checking whether
 the label-free signal survives a longer-context support-stress probe before any
 default-promotion decision.
 
+After the seed-smoke, validation, and extended local/Colab temporal decision
+reports exist, write the command-driven cross-scale aggregate report without
+rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report temporal-clipped-hep-cross-scale-aggregate \
+  --out results/reports/temporal_clipped_hep_cross_scale_aggregate
+```
+
+The cross-scale aggregate fails closed if any expected decision report is
+missing, fails, does not select temporal consistency, lacks an accepted nonzero
+temporal alpha inside the stability budgets, or omits a seed-smoke, validation,
+or extended local/Colab evidence pair. It can select temporal consistency
+across the current char support-stress evidence, but still blocks default
+promotion until a broader promotion gate is defined and run.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
