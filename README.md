@@ -484,6 +484,24 @@ or extended local/Colab evidence pair. It can select temporal consistency
 across the current char support-stress evidence, but still blocks default
 promotion until a broader promotion gate is defined and run.
 
+After the cross-scale aggregate exists, define the next temporal clipped HEP
+promotion gate without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report temporal-clipped-hep-promotion-gate \
+  --out results/reports/temporal_clipped_hep_promotion_gate
+```
+
+The promotion-gate report consumes the cross-scale aggregate and records the
+next required evidence before any default support-stress mitigation change: one
+larger char-level temporal-vs-entropy-vs-guided clipped support-stress
+comparison and one non-char tokenized comparison, each with local and Colab
+artifact-backed decisions, passing artifact checks, nonzero support-repick
+evidence, and an accepted nonzero temporal alpha inside the ordinary-logit and
+pinned-vs-repicked budgets. This report defines the gate only; it does not
+promote temporal clipped HEP by itself.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 

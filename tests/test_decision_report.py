@@ -14,12 +14,14 @@ from relaleap.experiments.decision_report import (
     SELECT_TEMPORAL_CLIPPED_HEP,
     SELECT_TEMPORAL_CLIPPED_HEP_AGGREGATE,
     SELECT_TEMPORAL_CLIPPED_HEP_CROSS_SCALE_AGGREGATE,
+    DEFINE_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE,
     write_clipped_hep_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pinned_support_decision_report,
     write_temporal_clipped_hep_aggregate_report,
     write_temporal_clipped_hep_cross_scale_aggregate_report,
     write_temporal_clipped_hep_decision_report,
+    write_temporal_clipped_hep_promotion_gate_report,
 )
 
 
@@ -437,6 +439,87 @@ class TemporalClippedHepAggregateReportTest(unittest.TestCase):
                     "actual": "missing",
                 },
                 aggregate["evidence"]["failures"],
+            )
+
+
+class TemporalClippedHepPromotionGateReportTest(unittest.TestCase):
+    def test_passing_cross_scale_aggregate_defines_promotion_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            report_paths = []
+            for scale in ("seed_smoke", "validation", "extended"):
+                for backend in ("local", "colab"):
+                    comparison_dir = tmp_path / f"{backend}_{scale}_comparison"
+                    _write_temporal_clipped_comparison(
+                        comparison_dir,
+                        temporal_nonzero_loss=3.99,
+                        entropy_nonzero_loss=4.01,
+                        guided_nonzero_loss=3.9,
+                        temporal_nonzero_delta=0.01,
+                        temporal_nonzero_pinned_vs_repicked=0.02,
+                    )
+                    out_dir = (
+                        tmp_path / f"temporal_clipped_hep_{scale}_{backend}_decision"
+                    )
+                    write_temporal_clipped_hep_decision_report(comparison_dir, out_dir)
+                    report_paths.append(out_dir / "decision_report.json")
+
+            cross_scale = write_temporal_clipped_hep_cross_scale_aggregate_report(
+                report_paths,
+                tmp_path / "cross_scale_aggregate",
+            )
+            self.assertEqual(cross_scale["status"], "pass")
+
+            gate = write_temporal_clipped_hep_promotion_gate_report(
+                tmp_path / "cross_scale_aggregate" / "decision_report.json",
+                tmp_path / "promotion_gate",
+            )
+
+            self.assertEqual(gate["status"], "pass")
+            self.assertEqual(
+                gate["decision"],
+                DEFINE_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE,
+            )
+            self.assertFalse(gate["promote_to_default_support_stress_mitigation"])
+            self.assertEqual(len(gate["evidence"]["required_evidence"]), 2)
+            self.assertEqual(
+                gate["evidence"]["required_evidence"][0]["gate"],
+                "larger_char_local_colab",
+            )
+            self.assertEqual(
+                gate["evidence"]["required_evidence"][1]["gate"],
+                "non_char_tokenized_local_colab",
+            )
+            self.assertTrue(
+                (tmp_path / "promotion_gate" / "decision_report.json").is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "promotion_gate" / "decision_report.md").is_file()
+            )
+
+    def test_missing_cross_scale_aggregate_blocks_promotion_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            missing_report = tmp_path / "missing_cross_scale.json"
+
+            gate = write_temporal_clipped_hep_promotion_gate_report(
+                missing_report,
+                tmp_path / "promotion_gate",
+            )
+
+            self.assertEqual(gate["status"], "fail")
+            self.assertEqual(gate["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(gate["selected_label_free_support_stress_candidate"])
+            self.assertEqual(
+                gate["evidence"]["failures"],
+                [
+                    {
+                        "field": "cross_scale_report",
+                        "expected": "file exists",
+                        "actual": "missing",
+                        "path": str(missing_report),
+                    }
+                ],
             )
 
 

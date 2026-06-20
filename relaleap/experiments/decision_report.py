@@ -57,6 +57,12 @@ DEFAULT_TEMPORAL_CLIPPED_CROSS_SCALE_AGGREGATE_REPORTS = (
 DEFAULT_TEMPORAL_CLIPPED_CROSS_SCALE_AGGREGATE_OUT_DIR = Path(
     "results/reports/temporal_clipped_hep_cross_scale_aggregate"
 )
+DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_CROSS_SCALE_REPORT = (
+    DEFAULT_TEMPORAL_CLIPPED_CROSS_SCALE_AGGREGATE_OUT_DIR / "decision_report.json"
+)
+DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_OUT_DIR = Path(
+    "results/reports/temporal_clipped_hep_promotion_gate"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -68,6 +74,9 @@ SELECT_TEMPORAL_CLIPPED_HEP_AGGREGATE = (
 )
 SELECT_TEMPORAL_CLIPPED_HEP_CROSS_SCALE_AGGREGATE = (
     "select_temporal_label_free_support_stress_candidate_across_cross_scale_evidence"
+)
+DEFINE_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE = (
+    "define_temporal_label_free_support_stress_promotion_gate"
 )
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -683,6 +692,202 @@ def write_temporal_clipped_hep_cross_scale_aggregate_report(
         out_dir / "decision_report.md",
         report,
     )
+    return report
+
+
+def write_temporal_clipped_hep_promotion_gate_report(
+    cross_scale_report_path: Path = DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_CROSS_SCALE_REPORT,
+    out_dir: Path = DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_OUT_DIR,
+) -> dict[str, Any]:
+    """Define the next promotion gate after cross-scale temporal evidence."""
+
+    failures = []
+    cross_scale_report: dict[str, Any] | None = None
+    if not cross_scale_report_path.is_file():
+        failures.append(
+            {
+                "field": "cross_scale_report",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(cross_scale_report_path),
+            }
+        )
+    else:
+        cross_scale_report = _read_json_object(cross_scale_report_path)
+        if cross_scale_report.get("status") != "pass":
+            failures.append(
+                {
+                    "field": "cross_scale_report.status",
+                    "expected": "pass",
+                    "actual": cross_scale_report.get("status"),
+                    "path": str(cross_scale_report_path),
+                }
+            )
+        if (
+            cross_scale_report.get("decision")
+            != SELECT_TEMPORAL_CLIPPED_HEP_CROSS_SCALE_AGGREGATE
+        ):
+            failures.append(
+                {
+                    "field": "cross_scale_report.decision",
+                    "expected": SELECT_TEMPORAL_CLIPPED_HEP_CROSS_SCALE_AGGREGATE,
+                    "actual": cross_scale_report.get("decision"),
+                    "path": str(cross_scale_report_path),
+                }
+            )
+        if (
+            cross_scale_report.get("selected_label_free_support_stress_candidate")
+            is not True
+        ):
+            failures.append(
+                {
+                    "field": (
+                        "cross_scale_report."
+                        "selected_label_free_support_stress_candidate"
+                    ),
+                    "expected": True,
+                    "actual": cross_scale_report.get(
+                        "selected_label_free_support_stress_candidate"
+                    ),
+                    "path": str(cross_scale_report_path),
+                }
+            )
+
+    evidence = (
+        cross_scale_report.get("evidence", {})
+        if isinstance(cross_scale_report, dict)
+        and isinstance(cross_scale_report.get("evidence"), dict)
+        else {}
+    )
+    required_evidence = [
+        {
+            "gate": "larger_char_local_colab",
+            "description": (
+                "Run the temporal-vs-entropy-vs-guided clipped support-stress "
+                "comparison on a larger char-level setting than the current "
+                "extended check."
+            ),
+            "minimum_scale": {
+                "seq_len": 128,
+                "hidden_dim": 96,
+                "num_columns": 24,
+                "pc_steps": 4,
+                "training_steps": 50,
+            },
+            "required_backends": ["local", "colab"],
+            "required_runs": [
+                "clipped_baseline",
+                "prediction_entropy_gradient",
+                "temporal_consistency_gradient",
+                "supervised_ce_gradient",
+            ],
+        },
+        {
+            "gate": "non_char_tokenized_local_colab",
+            "description": (
+                "Run the same deployable temporal candidate against entropy and "
+                "the guided oracle on a non-char tokenized language-model setting."
+            ),
+            "minimum_scale": {
+                "seq_len": 64,
+                "hidden_dim": 96,
+                "num_columns": 24,
+                "pc_steps": 4,
+                "training_steps": 50,
+            },
+            "required_backends": ["local", "colab"],
+            "required_runs": [
+                "clipped_baseline",
+                "prediction_entropy_gradient",
+                "temporal_consistency_gradient",
+                "supervised_ce_gradient",
+            ],
+        },
+    ]
+    acceptance_policy = {
+        "requires_cross_scale_aggregate_pass": True,
+        "requires_each_gate_local_and_colab": True,
+        "requires_passing_artifact_checks": True,
+        "requires_temporal_selected_in_each_gate": True,
+        "requires_accepted_nonzero_temporal_alpha_in_each_gate": True,
+        "requires_temporal_loss_improvement_from_alpha0": True,
+        "max_logit_delta_from_ordinary": DEFAULT_MAX_LOGIT_DELTA,
+        "max_pinned_vs_repicked_logit_delta": DEFAULT_MAX_PINNED_VS_REPICKED_DELTA,
+        "requires_nonzero_support_repick_evidence": True,
+        "requires_entropy_and_guided_context_runs": True,
+    }
+    status = "fail" if failures else "pass"
+    report = {
+        "status": status,
+        "decision": (
+            DEFINE_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE
+            if status == "pass"
+            else INSUFFICIENT_EVIDENCE
+        ),
+        "selected_label_free_support_stress_candidate": status == "pass",
+        "promote_to_default_support_stress_mitigation": False,
+        "deployable_label_free_signal": True,
+        "policy": {
+            **acceptance_policy,
+            "allows_default_promotion": False,
+            "reason_default_promotion_is_blocked": (
+                "This report defines the next promotion gate. It does not satisfy "
+                "that gate or change the default support-stress mitigation path."
+            ),
+        },
+        "evidence": {
+            "cross_scale_report_path": str(cross_scale_report_path),
+            "cross_scale_status": None
+            if cross_scale_report is None
+            else cross_scale_report.get("status"),
+            "cross_scale_decision": None
+            if cross_scale_report is None
+            else cross_scale_report.get("decision"),
+            "cross_scale_report_count": evidence.get("report_count"),
+            "cross_scale_scale_count": evidence.get("scale_count"),
+            "cross_scale_accepted_temporal_report_count": evidence.get(
+                "accepted_temporal_report_count"
+            ),
+            "cross_scale_mean_temporal_loss_improvement_from_alpha0": evidence.get(
+                "mean_temporal_loss_improvement_from_alpha0"
+            ),
+            "cross_scale_max_temporal_logit_delta_from_ordinary": evidence.get(
+                "max_temporal_logit_delta_from_ordinary"
+            ),
+            "cross_scale_max_temporal_pinned_vs_repicked_logit_delta": evidence.get(
+                "max_temporal_pinned_vs_repicked_logit_delta"
+            ),
+            "cross_scale_max_support_change_fraction": evidence.get(
+                "max_support_change_fraction"
+            ),
+            "required_evidence": required_evidence,
+            "failures": failures,
+        },
+        "rationale": (
+            "The current cross-scale char evidence selects temporal consistency, "
+            "but default promotion needs evidence outside the completed char "
+            "settings. The gate requires one larger char setting and one non-char "
+            "tokenized setting, each with local and Colab artifact-backed temporal "
+            "decisions against the clipped baseline, entropy probe, and guided oracle."
+            if status == "pass"
+            else (
+                "The promotion gate cannot be defined until the cross-scale temporal "
+                "aggregate is present, passing, and selecting temporal consistency."
+            )
+        ),
+        "next_step": (
+            "add the larger-char promotion-gate configs and run their local comparison"
+            if status == "pass"
+            else "repair or regenerate the cross-scale temporal aggregate report"
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_temporal_promotion_gate_markdown(out_dir / "decision_report.md", report)
     return report
 
 
@@ -1627,6 +1832,78 @@ def _write_temporal_cross_scale_aggregate_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_temporal_promotion_gate_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Temporal Clipped HEP Promotion Gate",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        (
+            "- Promote to default support-stress mitigation: "
+            f"`{report['promote_to_default_support_stress_mitigation']}`"
+        ),
+        f"- Cross-scale report: `{evidence['cross_scale_report_path']}`",
+        f"- Cross-scale status: `{evidence['cross_scale_status']}`",
+        f"- Cross-scale decision: `{evidence['cross_scale_decision']}`",
+        (
+            "- Cross-scale accepted temporal report count: "
+            f"`{evidence['cross_scale_accepted_temporal_report_count']}`"
+        ),
+        (
+            "- Cross-scale mean temporal loss improvement from alpha 0: "
+            f"`{_format_metric(evidence['cross_scale_mean_temporal_loss_improvement_from_alpha0'])}`"
+        ),
+        (
+            "- Cross-scale max temporal logit delta from ordinary: "
+            f"`{_format_metric(evidence['cross_scale_max_temporal_logit_delta_from_ordinary'])}`"
+        ),
+        (
+            "- Cross-scale max temporal pinned-vs-repicked logit delta: "
+            f"`{_format_metric(evidence['cross_scale_max_temporal_pinned_vs_repicked_logit_delta'])}`"
+        ),
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Required Evidence",
+        "",
+        (
+            "| Gate | Backends | Minimum seq len | Minimum hidden dim "
+            "| Minimum columns | Minimum steps |"
+        ),
+        "| --- | --- | ---: | ---: | ---: | ---: |",
+    ]
+    for requirement in evidence["required_evidence"]:
+        minimum = requirement["minimum_scale"]
+        lines.append(
+            (
+                f"| {requirement['gate']} "
+                f"| {', '.join(requirement['required_backends'])} "
+                f"| {minimum['seq_len']} "
+                f"| {minimum['hidden_dim']} "
+                f"| {minimum['num_columns']} "
+                f"| {minimum['training_steps']} |"
+            )
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -1646,6 +1923,7 @@ def main() -> None:
             "temporal-clipped-hep",
             "temporal-clipped-hep-aggregate",
             "temporal-clipped-hep-cross-scale-aggregate",
+            "temporal-clipped-hep-promotion-gate",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -1725,6 +2003,13 @@ def main() -> None:
             args.out or DEFAULT_TEMPORAL_CLIPPED_CROSS_SCALE_AGGREGATE_OUT_DIR,
             max_logit_delta=args.max_logit_delta,
             max_pinned_vs_repicked_delta=args.max_pinned_vs_repicked_delta,
+        )
+    elif args.report == "temporal-clipped-hep-promotion-gate":
+        report = write_temporal_clipped_hep_promotion_gate_report(
+            args.decision_report[0]
+            if args.decision_report
+            else DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_CROSS_SCALE_REPORT,
+            args.out or DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_OUT_DIR,
         )
     else:
         report = write_pinned_support_decision_report(
