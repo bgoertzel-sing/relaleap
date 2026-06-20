@@ -26,12 +26,28 @@ DEFAULT_TEMPORAL_CLIPPED_COMPARISON_DIR = Path(
     "results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep"
 )
 DEFAULT_TEMPORAL_CLIPPED_OUT_DIR = Path("results/reports/temporal_clipped_hep_decision")
+DEFAULT_TEMPORAL_CLIPPED_AGGREGATE_REPORTS = (
+    Path("results/reports/temporal_clipped_hep_seed1_local_decision/decision_report.json"),
+    Path("results/reports/temporal_clipped_hep_decision/decision_report.json"),
+    Path("results/reports/temporal_clipped_hep_seed2_decision/decision_report.json"),
+    Path("results/reports/temporal_clipped_hep_seed2_colab_decision/decision_report.json"),
+    Path("results/reports/temporal_clipped_hep_seed3_local_decision/decision_report.json"),
+    Path("results/reports/temporal_clipped_hep_seed3_colab_decision/decision_report.json"),
+    Path("results/reports/temporal_clipped_hep_seed4_local_decision/decision_report.json"),
+    Path("results/reports/temporal_clipped_hep_seed4_colab_decision/decision_report.json"),
+)
+DEFAULT_TEMPORAL_CLIPPED_AGGREGATE_OUT_DIR = Path(
+    "results/reports/temporal_clipped_hep_multiseed_aggregate"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
 PROMOTE_CLIPPED_HEP = "promote_to_default_support_stress_mitigation"
 GUIDED_ORACLE_CONFIRMED = "guided_oracle_confirmed"
 SELECT_TEMPORAL_CLIPPED_HEP = "select_temporal_label_free_support_stress_candidate"
+SELECT_TEMPORAL_CLIPPED_HEP_AGGREGATE = (
+    "select_temporal_label_free_support_stress_candidate_across_seed_smoke_evidence"
+)
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
@@ -433,6 +449,143 @@ def write_temporal_clipped_hep_decision_report(
     return report
 
 
+def write_temporal_clipped_hep_aggregate_report(
+    decision_report_paths: list[Path] | tuple[Path, ...] = (
+        DEFAULT_TEMPORAL_CLIPPED_AGGREGATE_REPORTS
+    ),
+    out_dir: Path = DEFAULT_TEMPORAL_CLIPPED_AGGREGATE_OUT_DIR,
+    *,
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+    max_pinned_vs_repicked_delta: float = DEFAULT_MAX_PINNED_VS_REPICKED_DELTA,
+) -> dict[str, Any]:
+    """Write a multi-seed aggregate report from temporal clipped decisions."""
+
+    if max_logit_delta < 0.0:
+        raise ValueError("max_logit_delta must be non-negative")
+    if max_pinned_vs_repicked_delta < 0.0:
+        raise ValueError("max_pinned_vs_repicked_delta must be non-negative")
+
+    entries = []
+    failures = []
+    for path in decision_report_paths:
+        path = Path(path)
+        if not path.is_file():
+            failures.append(
+                {
+                    "field": "decision_report",
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(path),
+                }
+            )
+            continue
+        report = _read_json_object(path)
+        entry = _temporal_aggregate_entry(
+            path,
+            report,
+            max_logit_delta=max_logit_delta,
+            max_pinned_vs_repicked_delta=max_pinned_vs_repicked_delta,
+        )
+        entries.append(entry)
+        failures.extend(entry["failures"])
+
+    seed_backend_pairs = sorted(
+        {
+            (entry["seed"], entry["backend"])
+            for entry in entries
+            if entry["seed"] is not None and entry["backend"] is not None
+        }
+    )
+    selected_entries = [
+        entry for entry in entries if entry["selected_label_free_support_stress_candidate"]
+    ]
+    accepted_entries = [
+        entry for entry in entries if entry["best_temporal_alpha"] is not None
+    ]
+    improvements = [
+        entry["best_temporal_alpha"]["loss_improvement_from_alpha0"]
+        for entry in accepted_entries
+        if entry["best_temporal_alpha"]["loss_improvement_from_alpha0"] is not None
+    ]
+    logit_deltas = [
+        entry["best_temporal_alpha"]["max_logit_delta_from_ordinary"]
+        for entry in accepted_entries
+        if entry["best_temporal_alpha"]["max_logit_delta_from_ordinary"] is not None
+    ]
+    pinned_deltas = [
+        entry["best_temporal_alpha"]["pinned_vs_repicked_logit_delta"]
+        for entry in accepted_entries
+        if entry["best_temporal_alpha"]["pinned_vs_repicked_logit_delta"] is not None
+    ]
+    support_changes = [
+        entry["max_support_change_fraction"]
+        for entry in entries
+        if entry["max_support_change_fraction"] is not None
+    ]
+    decision = _temporal_aggregate_decision(entries, failures)
+    report = {
+        "status": "pass" if decision["decision"] != INSUFFICIENT_EVIDENCE else "fail",
+        "decision": decision["decision"],
+        "selected_label_free_support_stress_candidate": decision["selected"],
+        "promote_to_default_support_stress_mitigation": False,
+        "deployable_label_free_signal": True,
+        "policy": {
+            "max_logit_delta_from_ordinary": max_logit_delta,
+            "max_pinned_vs_repicked_logit_delta": max_pinned_vs_repicked_delta,
+            "requires_all_decision_reports_present": True,
+            "requires_all_decision_reports_passing": True,
+            "requires_all_reports_select_temporal_candidate": True,
+            "requires_each_report_accepted_temporal_nonzero_alpha": True,
+            "allows_default_promotion": False,
+            "reason_default_promotion_is_blocked": (
+                "This aggregate covers deterministic char-smoke seed evidence only; "
+                "default promotion requires broader non-smoke validation."
+            ),
+        },
+        "evidence": {
+            "decision_report_paths": [str(path) for path in decision_report_paths],
+            "report_count": len(entries),
+            "selected_report_count": len(selected_entries),
+            "accepted_temporal_report_count": len(accepted_entries),
+            "seed_backend_pairs": [
+                {"seed": seed, "backend": backend} for seed, backend in seed_backend_pairs
+            ],
+            "seed_count": len({seed for seed, _backend in seed_backend_pairs}),
+            "backend_count": len({backend for _seed, backend in seed_backend_pairs}),
+            "min_temporal_loss_improvement_from_alpha0": min(improvements)
+            if improvements
+            else None,
+            "mean_temporal_loss_improvement_from_alpha0": (
+                sum(improvements) / len(improvements) if improvements else None
+            ),
+            "max_temporal_loss_improvement_from_alpha0": max(improvements)
+            if improvements
+            else None,
+            "max_temporal_logit_delta_from_ordinary": max(logit_deltas)
+            if logit_deltas
+            else None,
+            "max_temporal_pinned_vs_repicked_logit_delta": max(pinned_deltas)
+            if pinned_deltas
+            else None,
+            "max_support_change_fraction": max(support_changes)
+            if support_changes
+            else None,
+            "entries": entries,
+            "failures": failures,
+        },
+        "rationale": decision["rationale"],
+        "next_step": decision["next_step"],
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_temporal_aggregate_markdown(out_dir / "decision_report.md", report)
+    return report
+
+
 def _decision(evidence: dict[str, Any], *, max_logit_delta: float) -> dict[str, Any]:
     if (
         evidence["artifact_check_status"] != "pass"
@@ -693,6 +846,186 @@ def _temporal_clipped_decision(
             "nonzero HEP alpha improves loss under the default stability policy."
         ),
         "next_step": "keep temporal clipped HEP diagnostic-only and inspect alternative label-free error signals",
+    }
+
+
+def _temporal_aggregate_entry(
+    path: Path,
+    report: dict[str, Any],
+    *,
+    max_logit_delta: float,
+    max_pinned_vs_repicked_delta: float,
+) -> dict[str, Any]:
+    evidence = report.get("evidence") if isinstance(report.get("evidence"), dict) else {}
+    comparison_dir = evidence.get("comparison_dir")
+    temporal_candidates = evidence.get("temporal_alpha_candidates")
+    if not isinstance(temporal_candidates, list):
+        temporal_candidates = []
+    accepted = [
+        candidate
+        for candidate in temporal_candidates
+        if isinstance(candidate, dict)
+        and float(candidate.get("alpha", 0.0)) != 0.0
+        and candidate.get("loss_improvement_from_alpha0") is not None
+        and float(candidate["loss_improvement_from_alpha0"]) > 0.0
+        and float(candidate.get("max_logit_delta_from_ordinary", 0.0))
+        <= max_logit_delta
+        and float(candidate.get("pinned_vs_repicked_logit_delta", 0.0))
+        <= max_pinned_vs_repicked_delta
+    ]
+    best_temporal_alpha = (
+        max(accepted, key=lambda candidate: float(candidate["loss_improvement_from_alpha0"]))
+        if accepted
+        else None
+    )
+    seed = _infer_seed_from_report(path, comparison_dir, temporal_candidates)
+    backend = _infer_backend_from_report(path, comparison_dir)
+    selected = report.get("selected_label_free_support_stress_candidate") is True
+    failures = []
+    if report.get("status") != "pass":
+        failures.append(
+            {
+                "field": "decision_report.status",
+                "expected": "pass",
+                "actual": report.get("status"),
+                "path": str(path),
+            }
+        )
+    if report.get("decision") != SELECT_TEMPORAL_CLIPPED_HEP:
+        failures.append(
+            {
+                "field": "decision_report.decision",
+                "expected": SELECT_TEMPORAL_CLIPPED_HEP,
+                "actual": report.get("decision"),
+                "path": str(path),
+            }
+        )
+    if not selected:
+        failures.append(
+            {
+                "field": "decision_report.selected_label_free_support_stress_candidate",
+                "expected": True,
+                "actual": report.get("selected_label_free_support_stress_candidate"),
+                "path": str(path),
+            }
+        )
+    if best_temporal_alpha is None:
+        failures.append(
+            {
+                "field": "decision_report.temporal_alpha_candidates",
+                "expected": "accepted nonzero temporal alpha",
+                "actual": "none",
+                "path": str(path),
+            }
+        )
+    if seed is None:
+        failures.append(
+            {
+                "field": "decision_report.seed",
+                "expected": "inferable seed",
+                "actual": None,
+                "path": str(path),
+            }
+        )
+    if backend is None:
+        failures.append(
+            {
+                "field": "decision_report.backend",
+                "expected": "local or colab",
+                "actual": None,
+                "path": str(path),
+            }
+        )
+
+    return {
+        "path": str(path),
+        "comparison_dir": comparison_dir,
+        "seed": seed,
+        "backend": backend,
+        "status": report.get("status"),
+        "decision": report.get("decision"),
+        "selected_label_free_support_stress_candidate": selected,
+        "artifact_check_status": evidence.get("artifact_check_status"),
+        "comparison_status": evidence.get("comparison_status"),
+        "verdict_status": evidence.get("verdict_status"),
+        "max_support_change_fraction": evidence.get("max_support_change_fraction"),
+        "best_temporal_alpha": best_temporal_alpha,
+        "failures": failures,
+    }
+
+
+def _infer_seed_from_report(
+    path: Path,
+    comparison_dir: Any,
+    temporal_candidates: list[Any],
+) -> int | None:
+    texts = [str(path), str(comparison_dir or "")]
+    texts.extend(
+        str(candidate.get("experiment_id", ""))
+        for candidate in temporal_candidates
+        if isinstance(candidate, dict)
+    )
+    for text in texts:
+        marker = "seed"
+        if marker not in text:
+            continue
+        suffix = text.split(marker, 1)[1]
+        digits = []
+        for char in suffix:
+            if char.isdigit():
+                digits.append(char)
+            elif digits:
+                break
+        if digits:
+            return int("".join(digits))
+    if any("temporal_clipped_hep" in text for text in texts):
+        return 1
+    return None
+
+
+def _infer_backend_from_report(path: Path, comparison_dir: Any) -> str | None:
+    text = f"{path} {comparison_dir or ''}"
+    if "colab_" in text or "_colab_" in text:
+        return "colab"
+    if "local" in text:
+        return "local"
+    if "results/comparisons/" in text or "temporal_clipped_hep" in text:
+        return "local"
+    return None
+
+
+def _temporal_aggregate_decision(
+    entries: list[dict[str, Any]],
+    failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if failures or not entries:
+        return {
+            "decision": INSUFFICIENT_EVIDENCE,
+            "selected": False,
+            "rationale": (
+                "The aggregate requires every temporal clipped decision report to "
+                "pass, select temporal consistency, and include an accepted nonzero "
+                "temporal alpha inside the stability budgets."
+            ),
+            "next_step": (
+                "repair or regenerate the missing or failing temporal clipped "
+                "decision reports"
+            ),
+        }
+
+    return {
+        "decision": SELECT_TEMPORAL_CLIPPED_HEP_AGGREGATE,
+        "selected": True,
+        "rationale": (
+            "All included local and Colab seed-smoke decision reports select temporal "
+            "consistency as the deployable label-free support-stress candidate and "
+            "include a nonzero temporal alpha with loss improvement inside both "
+            "stability budgets."
+        ),
+        "next_step": (
+            "run a broader non-smoke temporal-clipped validation before any "
+            "default-promotion decision"
+        ),
     }
 
 
@@ -978,6 +1311,82 @@ def _write_temporal_clipped_markdown(path: Path, report: dict[str, Any]) -> None
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_temporal_aggregate_markdown(path: Path, report: dict[str, Any]) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Temporal Clipped HEP Multi-Seed Aggregate",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        (
+            "- Selected label-free support-stress candidate: "
+            f"`{report['selected_label_free_support_stress_candidate']}`"
+        ),
+        (
+            "- Promote to default support-stress mitigation: "
+            f"`{report['promote_to_default_support_stress_mitigation']}`"
+        ),
+        f"- Report count: `{evidence['report_count']}`",
+        f"- Selected report count: `{evidence['selected_report_count']}`",
+        f"- Accepted temporal report count: `{evidence['accepted_temporal_report_count']}`",
+        (
+            "- Mean temporal loss improvement from alpha 0: "
+            f"`{_format_metric(evidence['mean_temporal_loss_improvement_from_alpha0'])}`"
+        ),
+        (
+            "- Max temporal logit delta from ordinary: "
+            f"`{_format_metric(evidence['max_temporal_logit_delta_from_ordinary'])}`"
+        ),
+        (
+            "- Max temporal pinned-vs-repicked logit delta: "
+            f"`{_format_metric(evidence['max_temporal_pinned_vs_repicked_logit_delta'])}`"
+        ),
+        (
+            "- Max support change fraction: "
+            f"`{_format_metric(evidence['max_support_change_fraction'])}`"
+        ),
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        (
+            "| Seed | Backend | Status | Selected | Alpha | Loss improvement "
+            "| Logit delta | Pinned-vs-repicked | Source |"
+        ),
+        "| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for entry in evidence["entries"]:
+        alpha = entry.get("best_temporal_alpha") or {}
+        lines.append(
+            (
+                f"| {entry.get('seed') or ''} "
+                f"| {entry.get('backend') or ''} "
+                f"| {entry.get('status') or ''} "
+                f"| {entry.get('selected_label_free_support_stress_candidate')} "
+                f"| {_format_metric(alpha.get('alpha'))} "
+                f"| {_format_metric(alpha.get('loss_improvement_from_alpha0'))} "
+                f"| {_format_metric(alpha.get('max_logit_delta_from_ordinary'))} "
+                f"| {_format_metric(alpha.get('pinned_vs_repicked_logit_delta'))} "
+                f"| `{entry.get('path')}` |"
+            )
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -995,6 +1404,7 @@ def main() -> None:
             "clipped-hep",
             "guided-clipped-hep",
             "temporal-clipped-hep",
+            "temporal-clipped-hep-aggregate",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -1008,6 +1418,15 @@ def main() -> None:
         "--artifact-check",
         type=Path,
         help="Optional existing artifact check JSON to use as evidence.",
+    )
+    parser.add_argument(
+        "--decision-report",
+        action="append",
+        type=Path,
+        help=(
+            "Decision report JSON to include in an aggregate report. Repeat for "
+            "multiple reports. Defaults are used only for aggregate reports."
+        ),
     )
     parser.add_argument(
         "--out",
@@ -1048,6 +1467,13 @@ def main() -> None:
             args.comparison_dir or DEFAULT_TEMPORAL_CLIPPED_COMPARISON_DIR,
             args.out or DEFAULT_TEMPORAL_CLIPPED_OUT_DIR,
             artifact_check_path=args.artifact_check,
+            max_logit_delta=args.max_logit_delta,
+            max_pinned_vs_repicked_delta=args.max_pinned_vs_repicked_delta,
+        )
+    elif args.report == "temporal-clipped-hep-aggregate":
+        report = write_temporal_clipped_hep_aggregate_report(
+            args.decision_report or DEFAULT_TEMPORAL_CLIPPED_AGGREGATE_REPORTS,
+            args.out or DEFAULT_TEMPORAL_CLIPPED_AGGREGATE_OUT_DIR,
             max_logit_delta=args.max_logit_delta,
             max_pinned_vs_repicked_delta=args.max_pinned_vs_repicked_delta,
         )

@@ -370,6 +370,22 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed4/artifact_check.json
 ```
 
+After seed-1 through seed-4 local and Colab temporal decision reports exist,
+write the command-driven aggregate report without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report temporal-clipped-hep-aggregate \
+  --out results/reports/temporal_clipped_hep_multiseed_aggregate
+```
+
+The aggregate fails closed if any expected decision report is missing, fails,
+does not select temporal consistency, or lacks an accepted nonzero temporal
+alpha inside the ordinary-logit and pinned-vs-repicked delta budgets. It can
+select temporal consistency as the current label-free support-stress candidate
+across smoke seed evidence, but still blocks default promotion pending broader
+non-smoke validation.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 

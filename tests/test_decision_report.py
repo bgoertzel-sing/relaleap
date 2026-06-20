@@ -12,9 +12,11 @@ from relaleap.experiments.decision_report import (
     PROMOTE,
     PROMOTE_CLIPPED_HEP,
     SELECT_TEMPORAL_CLIPPED_HEP,
+    SELECT_TEMPORAL_CLIPPED_HEP_AGGREGATE,
     write_clipped_hep_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pinned_support_decision_report,
+    write_temporal_clipped_hep_aggregate_report,
     write_temporal_clipped_hep_decision_report,
 )
 
@@ -282,6 +284,77 @@ class TemporalClippedHepDecisionReportTest(unittest.TestCase):
             self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
             self.assertFalse(report["selected_label_free_support_stress_candidate"])
             self.assertFalse(report["promote_to_default_support_stress_mitigation"])
+
+
+class TemporalClippedHepAggregateReportTest(unittest.TestCase):
+    def test_all_selected_temporal_reports_pass_aggregate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            report_paths = []
+            for seed in (1, 2):
+                for backend in ("local", "colab"):
+                    comparison_dir = tmp_path / f"{backend}_comparison_seed{seed}"
+                    _write_temporal_clipped_comparison(
+                        comparison_dir,
+                        temporal_nonzero_loss=3.99,
+                        entropy_nonzero_loss=4.01,
+                        guided_nonzero_loss=3.9,
+                        temporal_nonzero_delta=0.01,
+                        temporal_nonzero_pinned_vs_repicked=0.02,
+                    )
+                    out_dir = tmp_path / f"temporal_seed{seed}_{backend}_decision"
+                    decision = write_temporal_clipped_hep_decision_report(
+                        comparison_dir,
+                        out_dir,
+                    )
+                    self.assertEqual(decision["status"], "pass")
+                    report_paths.append(out_dir / "decision_report.json")
+
+            aggregate = write_temporal_clipped_hep_aggregate_report(
+                report_paths,
+                tmp_path / "aggregate",
+            )
+
+            self.assertEqual(aggregate["status"], "pass")
+            self.assertEqual(
+                aggregate["decision"],
+                SELECT_TEMPORAL_CLIPPED_HEP_AGGREGATE,
+            )
+            self.assertTrue(aggregate["selected_label_free_support_stress_candidate"])
+            self.assertFalse(aggregate["promote_to_default_support_stress_mitigation"])
+            self.assertEqual(aggregate["evidence"]["report_count"], 4)
+            self.assertEqual(aggregate["evidence"]["selected_report_count"], 4)
+            self.assertEqual(
+                aggregate["evidence"]["accepted_temporal_report_count"],
+                4,
+            )
+            self.assertTrue(
+                (tmp_path / "aggregate" / "decision_report.json").is_file()
+            )
+            self.assertTrue((tmp_path / "aggregate" / "decision_report.md").is_file())
+
+    def test_missing_temporal_report_fails_aggregate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            aggregate = write_temporal_clipped_hep_aggregate_report(
+                [tmp_path / "missing.json"],
+                tmp_path / "aggregate",
+            )
+
+            self.assertEqual(aggregate["status"], "fail")
+            self.assertEqual(aggregate["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(aggregate["selected_label_free_support_stress_candidate"])
+            self.assertEqual(
+                aggregate["evidence"]["failures"],
+                [
+                    {
+                        "field": "decision_report",
+                        "expected": "file exists",
+                        "actual": "missing",
+                        "path": str(tmp_path / "missing.json"),
+                    }
+                ],
+            )
 
 
 def _write_comparison(
