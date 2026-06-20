@@ -93,8 +93,10 @@ and the broader seed-4 temporal comparison under
 `results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed4`,
 the non-smoke temporal validation under
 `results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_clipped_hep`,
-and the extended temporal support-stress check under
-`results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep`.
+the extended temporal support-stress check under
+`results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep`,
+and the larger-char promotion-gate support-stress check under
+`results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep`.
 When that bundle is present in the rendered output, the helper extracts it
 under the local repo root so the normal after-the-fact checker can inspect the
 Colab artifact tree locally.
@@ -288,6 +290,22 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check.json
 ```
 
+The larger-char promotion-gate label-free temporal check uses sequence length
+`128`, hidden dimension `96`, `24` residual columns, `4` HEP settling steps,
+and `50` training steps:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_larger_hep_support_stress_clipped.yaml \
+  --config configs/char_larger_hep_support_stress_entropy_clipped.yaml \
+  --config configs/char_larger_hep_support_stress_temporal_clipped.yaml \
+  --config configs/char_larger_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --out results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check.json
+```
+
 After extracting the completed temporal comparison artifact bundle locally,
 write the label-free candidate decision report without rerunning Colab:
 
@@ -378,6 +396,14 @@ results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_cli
 results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_extended_hep_support_stress_entropy_clipped/summary.json
 results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_extended_hep_support_stress_temporal_clipped/summary.json
 results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_extended_hep_support_stress_guided_clipped/summary.json
+results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/summary.json
+results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/metrics.csv
+results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/notes.md
+results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check.json
+results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_clipped/summary.json
+results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_entropy_clipped/summary.json
+results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_temporal_clipped/summary.json
+results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_larger_hep_support_stress_guided_clipped/summary.json
 ```
 
 The checked-in schema v3 local baseline currently accepts HEP alpha `0.25`. The

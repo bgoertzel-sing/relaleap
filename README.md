@@ -518,6 +518,35 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/larger_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json
 ```
 
+The matching GitHub-backed Colab larger-char promotion-gate check writes the
+same artifact-backed comparison under the Colab-prefixed path:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_larger_hep_support_stress_clipped.yaml \
+  --config configs/char_larger_hep_support_stress_entropy_clipped.yaml \
+  --config configs/char_larger_hep_support_stress_temporal_clipped.yaml \
+  --config configs/char_larger_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --out results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check.json
+```
+
+After extracting the Colab artifact bundle locally, inspect the tree and write
+the larger-char temporal decision report without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --out results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json
+python -m relaleap.experiments.decision_report \
+  --report temporal-clipped-hep \
+  --comparison-dir results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --artifact-check results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json \
+  --out results/reports/temporal_clipped_hep_larger_colab_decision
+```
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
