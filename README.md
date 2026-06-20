@@ -265,6 +265,25 @@ alpha improves loss while staying inside the ordinary-logit and
 pinned-vs-repicked delta budgets; default promotion still requires broader
 evidence than the current smoke comparison.
 
+A broader opt-in temporal clipped HEP support-stress comparison repeats the
+same clipped baseline, entropy, temporal, and guided oracle probe at seed 2.
+This is the next label-free candidate check before considering any default
+support-stress mitigation:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_smoke_hep_support_stress_clipped_seed2.yaml \
+  --config configs/char_smoke_hep_support_stress_entropy_clipped_seed2.yaml \
+  --config configs/char_smoke_hep_support_stress_temporal_clipped_seed2.yaml \
+  --config configs/char_smoke_hep_support_stress_guided_clipped_seed2.yaml \
+  --out results/comparisons/support_stress_temporal_vs_entropy_guided_clipped_hep_seed2
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/support_stress_temporal_vs_entropy_guided_clipped_hep_seed2
+```
+
+This keeps the checked Phase 0 baseline unchanged while testing whether the
+seed-1 temporal consistency signal survives a seed change.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
