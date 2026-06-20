@@ -386,6 +386,32 @@ select temporal consistency as the current label-free support-stress candidate
 across smoke seed evidence, but still blocks default promotion pending broader
 non-smoke validation.
 
+A broader opt-in non-smoke temporal clipped HEP validation repeats the clipped
+baseline, entropy, temporal, and guided oracle probe with sequence length `64`,
+hidden dimension `64`, `12` residual columns, `3` HEP settling steps, and `25`
+training steps:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_support_stress_clipped.yaml \
+  --config configs/char_validation_hep_support_stress_entropy_clipped.yaml \
+  --config configs/char_validation_hep_support_stress_temporal_clipped.yaml \
+  --config configs/char_validation_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/validation_support_stress_temporal_vs_entropy_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/validation_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --out results/comparisons/validation_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json
+python -m relaleap.experiments.decision_report \
+  --report temporal-clipped-hep \
+  --comparison-dir results/comparisons/validation_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --artifact-check results/comparisons/validation_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json \
+  --out results/reports/temporal_clipped_hep_validation_local_decision
+```
+
+This keeps the checked Phase 0 baseline unchanged while testing whether the
+temporal label-free signal survives a larger deterministic char validation
+setting before any default-promotion decision.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
