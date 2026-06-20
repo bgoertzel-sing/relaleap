@@ -159,6 +159,22 @@ python -m relaleap.experiments.check_artifacts \
   --comparison-dir results/comparisons/support_stress_clipped_hep
 ```
 
+After a completed local or Colab clipped support-stress comparison, write the
+command-driven clipped-HEP decision report without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report clipped-hep \
+  --comparison-dir results/comparisons/colab_support_stress_clipped_hep \
+  --artifact-check results/comparisons/colab_support_stress_clipped_hep/artifact_check_local.json \
+  --out results/reports/clipped_hep_decision
+```
+
+The report writes `decision_report.json` and `decision_report.md`. Under the
+current default policy, clipped HEP should remain opt-in unless the evidence
+artifacts pass and a clipped nonzero HEP alpha both improves loss over alpha 0
+and stays within the ordinary-logit and pinned-vs-repicked delta budgets.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
