@@ -442,6 +442,31 @@ python -m relaleap.experiments.decision_report \
   --out results/reports/temporal_clipped_hep_validation_colab_decision
 ```
 
+A further opt-in temporal clipped HEP support-stress check moves outside the
+current char validation setting by using sequence length `96`, `16` residual
+columns, `4` HEP settling steps, and `30` training steps:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_extended_hep_support_stress_clipped.yaml \
+  --config configs/char_extended_hep_support_stress_entropy_clipped.yaml \
+  --config configs/char_extended_hep_support_stress_temporal_clipped.yaml \
+  --config configs/char_extended_hep_support_stress_guided_clipped.yaml \
+  --out results/comparisons/extended_support_stress_temporal_vs_entropy_guided_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/extended_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --out results/comparisons/extended_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json
+python -m relaleap.experiments.decision_report \
+  --report temporal-clipped-hep \
+  --comparison-dir results/comparisons/extended_support_stress_temporal_vs_entropy_guided_clipped_hep \
+  --artifact-check results/comparisons/extended_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check_local.json \
+  --out results/reports/temporal_clipped_hep_extended_local_decision
+```
+
+This keeps temporal consistency as an opt-in candidate while checking whether
+the label-free signal survives a longer-context support-stress probe before any
+default-promotion decision.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
