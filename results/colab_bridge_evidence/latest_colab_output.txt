@@ -510,7 +510,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.7617204189300537
     }
   ],
-  "runtime_seconds": 3.089,
+  "runtime_seconds": 4.2486,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -1195,7 +1195,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.841701030731201
     }
   ],
-  "runtime_seconds": 3.1197,
+  "runtime_seconds": 3.7388,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -1880,7 +1880,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.62526535987854
     }
   ],
-  "runtime_seconds": 4.0638,
+  "runtime_seconds": 3.3761,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -2565,7 +2565,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.7288691997528076
     }
   ],
-  "runtime_seconds": 4.1475,
+  "runtime_seconds": 5.4214,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -3250,7 +3250,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.721653461456299
     }
   ],
-  "runtime_seconds": 5.9934,
+  "runtime_seconds": 5.3302,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -3935,7 +3935,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.715942621231079
     }
   ],
-  "runtime_seconds": 8.6462,
+  "runtime_seconds": 10.2351,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -4620,7 +4620,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 4.163630962371826
     }
   ],
-  "runtime_seconds": 7.4028,
+  "runtime_seconds": 7.9535,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -5594,7 +5594,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.7617204189300537
     }
   ],
-  "runtime_seconds": 3.089,
+  "runtime_seconds": 4.2486,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -6279,7 +6279,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.841701030731201
     }
   ],
-  "runtime_seconds": 3.1197,
+  "runtime_seconds": 3.7388,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -6964,7 +6964,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.62526535987854
     }
   ],
-  "runtime_seconds": 4.0638,
+  "runtime_seconds": 3.3761,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -7649,7 +7649,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.7288691997528076
     }
   ],
-  "runtime_seconds": 4.1475,
+  "runtime_seconds": 5.4214,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -8334,7 +8334,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.721653461456299
     }
   ],
-  "runtime_seconds": 5.9934,
+  "runtime_seconds": 5.3302,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -9019,7 +9019,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.715942621231079
     }
   ],
-  "runtime_seconds": 8.6462,
+  "runtime_seconds": 10.2351,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -9704,7 +9704,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 4.163630962371826
     }
   ],
-  "runtime_seconds": 7.4028,
+  "runtime_seconds": 7.9535,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -10319,5 +10319,5 @@ terminal
 Terminal
 Connected to
 Python 3 Google Compute Engine backend (GPU)
-RAM: 1.54 GB/12.67 GB
-Disk: 47.32 GB/235.68 GB
+RAM: 1.56 GB/12.67 GB
+Disk: 47.33 GB/235.68 GB
