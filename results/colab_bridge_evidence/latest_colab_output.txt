@@ -510,7 +510,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.7617204189300537
     }
   ],
-  "runtime_seconds": 4.1044,
+  "runtime_seconds": 3.1013,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -1195,7 +1195,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.841701030731201
     }
   ],
-  "runtime_seconds": 3.1586,
+  "runtime_seconds": 3.2956,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -1880,7 +1880,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.62526535987854
     }
   ],
-  "runtime_seconds": 3.1211,
+  "runtime_seconds": 3.6771,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -2565,7 +2565,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.7288691997528076
     }
   ],
-  "runtime_seconds": 5.3119,
+  "runtime_seconds": 4.0991,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -3250,7 +3250,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.721653461456299
     }
   ],
-  "runtime_seconds": 5.1354,
+  "runtime_seconds": 6.0653,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -3935,7 +3935,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.715942621231079
     }
   ],
-  "runtime_seconds": 10.2376,
+  "runtime_seconds": 8.5933,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -4620,7 +4620,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 4.163630962371826
     }
   ],
-  "runtime_seconds": 6.8446,
+  "runtime_seconds": 7.0419,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -5594,7 +5594,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.7617204189300537
     }
   ],
-  "runtime_seconds": 4.1044,
+  "runtime_seconds": 3.1013,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -6279,7 +6279,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.841701030731201
     }
   ],
-  "runtime_seconds": 3.1586,
+  "runtime_seconds": 3.2956,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -6964,7 +6964,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.62526535987854
     }
   ],
-  "runtime_seconds": 3.1211,
+  "runtime_seconds": 3.6771,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -7649,7 +7649,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.7288691997528076
     }
   ],
-  "runtime_seconds": 5.3119,
+  "runtime_seconds": 4.0991,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -8334,7 +8334,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.721653461456299
     }
   ],
-  "runtime_seconds": 5.1354,
+  "runtime_seconds": 6.0653,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -9019,7 +9019,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 3.715942621231079
     }
   ],
-  "runtime_seconds": 10.2376,
+  "runtime_seconds": 8.5933,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -9704,7 +9704,7 @@ Streaming output truncated to the last 5000 lines.
       "zero_init_loss": 4.163630962371826
     }
   ],
-  "runtime_seconds": 6.8446,
+  "runtime_seconds": 7.0419,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -10313,14 +10313,11 @@ print('\n'.join(textwrap.wrap(bundle, width=120)))
 print('RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_END')
 print('RelaLeap Colab Phase 0 comparison completed.')
 Colab paid products - Cancel contracts here
-Resources
-more_vert
-close
 data_object
 Variables
 terminal
 Terminal
 Connected to
 Python 3 Google Compute Engine backend (GPU)
-RAM: 1.55 GB/12.67 GB
-Disk: 47.34 GB/235.68 GB
+RAM: 1.57 GB/12.67 GB
+Disk: 47.35 GB/235.68 GB
