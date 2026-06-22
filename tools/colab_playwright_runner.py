@@ -231,6 +231,7 @@ async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path)
                 raise TimeoutError(
                     f"Timed out waiting for Colab completion text: {COMPLETION_TEXT!r}"
                 ) from exc
+            await _dismiss_obstructive_modals(page)
             await _confirm_run_modals(
                 page,
                 max_rounds=1,
@@ -309,6 +310,49 @@ async def _confirm_run_modals(
     return any_clicked
 
 
+async def _dismiss_obstructive_modals(page) -> bool:
+    modal_patterns = [
+        "Share notebook",
+        "Share this notebook",
+        "Sharing settings",
+    ]
+    dismiss_labels = [
+        "Cancel",
+        "Close",
+        "Dismiss",
+        "Not now",
+        "No thanks",
+        "Maybe later",
+        "Skip",
+    ]
+    dismissed = False
+    for pattern in modal_patterns:
+        try:
+            modal_text = page.get_by_text(pattern, exact=False).first
+            await modal_text.wait_for(timeout=500)
+        except Exception:
+            continue
+
+        for label in dismiss_labels:
+            try:
+                button = page.get_by_role("button", name=label, exact=False).first
+                await button.click(timeout=500)
+                print(f"dismissed obstructive modal: {pattern} via {label}")
+                dismissed = True
+                break
+            except Exception:
+                pass
+
+        if not dismissed:
+            try:
+                await page.keyboard.press("Escape")
+                print(f"dismissed obstructive modal: {pattern} via Escape")
+                dismissed = True
+            except Exception:
+                pass
+    return dismissed
+
+
 async def _operate_page(
     page,
     manual_login: bool,
@@ -329,15 +373,19 @@ async def _operate_page(
         input()
 
     if run_all:
+        await _dismiss_obstructive_modals(page)
         connected = await _click_first(page, ["Connect", "Reconnect"])
         if not connected:
             print("Could not find a Connect button; it may already be connected.")
 
         await page.wait_for_timeout(8_000)
+        await _dismiss_obstructive_modals(page)
         await _trigger_run_all(page, method=run_method)
         await page.wait_for_timeout(3_000)
+        await _dismiss_obstructive_modals(page)
         await _confirm_run_modals(page)
         await page.wait_for_timeout(5_000)
+        await _dismiss_obstructive_modals(page)
         if debug_snapshot:
             await _write_debug_snapshot(page, "after_run_all")
 
