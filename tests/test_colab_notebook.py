@@ -50,6 +50,10 @@ class ColabNotebookTest(unittest.TestCase):
             "configs/char_validation_margin_penalty_hep_temporal_clipped_objective_gate.yaml",
             checkout_cell,
         )
+        self.assertIn(
+            "configs/char_validation_label_smoothing_hep_temporal_clipped_objective_gate.yaml",
+            checkout_cell,
+        )
 
     def test_run_cell_executes_token_larger_colab_path(self) -> None:
         notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
@@ -247,6 +251,39 @@ class ColabNotebookTest(unittest.TestCase):
         )
         self.assertIn(
             "Margin-penalty objective-gate validation comparison status:",
+            evidence_cell,
+        )
+
+    def test_run_cell_executes_label_smoothing_objective_gate_colab_path(self) -> None:
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+        run_cells = [
+            source
+            for source in sources
+            if "colab_validation_label_smoothing_temporal_clipped_objective_gate"
+            in source
+        ]
+
+        self.assertEqual(len(run_cells), 2)
+        run_cell, evidence_cell = run_cells
+        self.assertIn(
+            "--config configs/char_validation_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/char_validation_label_smoothing_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
+            evidence_cell,
+        )
+        self.assertIn(
+            "supervised_ce_label_smoothing",
+            evidence_cell,
+        )
+        self.assertIn(
+            "Label-smoothing objective-gate validation comparison status:",
             evidence_cell,
         )
 

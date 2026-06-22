@@ -195,6 +195,38 @@ class Phase0SmokeTest(unittest.TestCase):
         )
         self.assertGreater(result.residual_parameter_delta, 0.0)
 
+    def test_supervised_ce_label_smoothing_objective_toggle(self) -> None:
+        label_smoothing_config = copy.deepcopy(CONFIG)
+        label_smoothing_config["training"] = {
+            "residual_objective": "supervised_ce_label_smoothing",
+            "label_smoothing_weight": 0.05,
+        }
+
+        try:
+            result = run_phase0_smoke(label_smoothing_config)
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        self.assertEqual(result.residual_objective, "supervised_ce_label_smoothing")
+        self.assertEqual(result.label_smoothing_weight, 0.05)
+        self.assertTrue(all(result.invariants.values()))
+        self.assertEqual(result.to_summary()["label_smoothing_weight"], 0.05)
+        self.assertTrue(
+            all(
+                row["phase"] == "residual_update"
+                for row in result.to_metric_rows()[1:]
+            )
+        )
+        self.assertTrue(
+            all(
+                row["residual_objective"] == "supervised_ce_label_smoothing"
+                for row in result.to_metric_rows()
+            )
+        )
+        self.assertGreater(result.residual_parameter_delta, 0.0)
+
     def test_hep_alpha_sweep_records_nonzero_alpha_rows(self) -> None:
         hep_config = copy.deepcopy(CONFIG)
         hep_config["run"]["max_steps"] = 1

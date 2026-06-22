@@ -638,6 +638,29 @@ python -m relaleap.experiments.decision_report \
   --out results/reports/margin_penalty_residual_objective_decision
 ```
 
+The label-smoothing objective-gate validation adds the next non-PC residual
+objective variant to the same command-driven Colab validation path:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_label_smoothing_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_validation_label_smoothing_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_validation_label_smoothing_temporal_clipped_objective_gate \
+  --out results/comparisons/colab_validation_label_smoothing_temporal_clipped_objective_gate/artifact_check.json
+```
+
+After matching local and Colab label-smoothing artifacts exist, write the
+command-driven label-smoothing objective decision report without rerunning
+experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report label-smoothing-residual-objective-decision \
+  --out results/reports/label_smoothing_residual_objective_decision
+```
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 
