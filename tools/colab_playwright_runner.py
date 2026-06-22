@@ -31,6 +31,14 @@ COLAB_NOTEBOOK_URL = (
 COMPLETION_TEXT = "RelaLeap Colab Phase 0 comparison completed."
 ARTIFACT_BUNDLE_BEGIN = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_BEGIN"
 ARTIFACT_BUNDLE_END = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_END"
+ERROR_MARKERS = (
+    "Traceback (most recent call last)",
+    "AssertionError",
+    "KeyError",
+    "ModuleNotFoundError",
+    "FileNotFoundError",
+    "RuntimeError",
+)
 OUTPUT_SELECTORS = (
     "colab-static-output-renderer",
     ".output",
@@ -112,6 +120,7 @@ async def _wait_for_rendered_output_text(page, text: str, timeout_ms: int) -> No
 
 
 def _validate_evidence_text(text: str) -> None:
+    _raise_for_rendered_python_error(text)
     required = [
         'cuda_available: True',
         '"status": "pass"',
@@ -183,6 +192,17 @@ def _validate_evidence_text(text: str) -> None:
         )
 
 
+def _raise_for_rendered_python_error(text: str) -> None:
+    for marker in ERROR_MARKERS:
+        index = text.find(marker)
+        if index < 0:
+            continue
+        start = max(0, index - 800)
+        end = min(len(text), index + 2400)
+        excerpt = text[start:end].strip()
+        raise RuntimeError(f"Colab rendered Python error marker {marker!r}:\n{excerpt}")
+
+
 def _extract_colab_artifact_bundle(
     text: str,
     destination_root: Path = Path("."),
@@ -225,6 +245,12 @@ async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path)
             await _wait_for_rendered_output_text(page, COMPLETION_TEXT, timeout_ms=3_000)
             break
         except Exception as exc:
+            rendered_text = await _rendered_output_text(page)
+            try:
+                _raise_for_rendered_python_error(rendered_text)
+            except RuntimeError:
+                await _write_evidence(page, evidence_out)
+                raise
             elapsed = asyncio.get_running_loop().time() - started
             if elapsed >= timeout_seconds:
                 await _write_evidence(page, evidence_out)
