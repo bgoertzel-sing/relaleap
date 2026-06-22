@@ -103,6 +103,21 @@ DEFAULT_RESIDUAL_OBJECTIVE_GATE_OUT_DIR = Path(
 DEFAULT_PC_RESIDUAL_OBJECTIVE_DIAGNOSTICS_OUT_DIR = Path(
     "results/reports/pc_residual_objective_diagnostics"
 )
+DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_COMPARISON_DIRS = (
+    Path("results/comparisons/validation_pc_anchor_temporal_clipped_objective_gate"),
+    Path(
+        "results/comparisons/colab_validation_pc_anchor_temporal_clipped_objective_gate"
+    ),
+)
+DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
+    DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[0]
+    / "artifact_check_local.json",
+    DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[1]
+    / "artifact_check_local.json",
+)
+DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_OUT_DIR = Path(
+    "results/reports/anchored_pc_residual_objective_decision"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -131,6 +146,7 @@ CONTINUE_PC_RESIDUAL_OBJECTIVE_VALIDATION = (
     "continue_pc_residual_objective_validation"
 )
 DIAGNOSE_PC_RESIDUAL_OBJECTIVE = "diagnose_pc_residual_objective_gap"
+STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION = "stop_pc_residual_objective_validation"
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
@@ -1710,6 +1726,186 @@ def write_pc_residual_objective_diagnostics_report(
     return report
 
 
+def write_anchored_pc_residual_objective_decision_report(
+    comparison_dirs: list[Path] | tuple[Path, ...] = (
+        DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_COMPARISON_DIRS
+    ),
+    out_dir: Path = DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_OUT_DIR,
+    *,
+    artifact_check_paths: list[Path] | tuple[Path, ...] | None = (
+        DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS
+    ),
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+) -> dict[str, Any]:
+    """Decide whether the CE-anchored PC objective merits more validation."""
+
+    if max_logit_delta < 0.0:
+        raise ValueError("max_logit_delta must be non-negative")
+
+    entries = []
+    failures = []
+    artifact_paths = list(artifact_check_paths or [])
+    for index, comparison_dir in enumerate(comparison_dirs):
+        comparison_dir = Path(comparison_dir)
+        artifact_check_path = (
+            Path(artifact_paths[index]) if index < len(artifact_paths) else None
+        )
+        entry = _anchored_pc_residual_objective_entry(
+            comparison_dir,
+            artifact_check_path=artifact_check_path,
+            max_logit_delta=max_logit_delta,
+        )
+        entries.append(entry)
+        failures.extend(entry["failures"])
+
+    backends = sorted(
+        {
+            entry["backend"]
+            for entry in entries
+            if entry.get("backend") in {"local", "colab"}
+        }
+    )
+    for backend in sorted({"local", "colab"} - set(backends)):
+        failures.append(
+            {
+                "field": "comparison.backend",
+                "expected": backend,
+                "actual": "missing",
+            }
+        )
+
+    supervised_runs = [
+        entry["supervised_run"] for entry in entries if entry.get("supervised_run")
+    ]
+    pc_runs = [entry["pc_run"] for entry in entries if entry.get("pc_run")]
+    anchored_runs = [
+        entry["anchored_pc_run"] for entry in entries if entry.get("anchored_pc_run")
+    ]
+    anchored_ce_wins = [
+        entry
+        for entry in entries
+        if entry.get("supervised_run")
+        and entry.get("anchored_pc_run")
+        and entry["anchored_pc_run"]["best_hep_loss"] is not None
+        and entry["supervised_run"]["best_hep_loss"] is not None
+        and entry["anchored_pc_run"]["best_hep_loss"]
+        < entry["supervised_run"]["best_hep_loss"]
+    ]
+    anchored_minus_supervised = [
+        entry["anchored_pc_minus_supervised_best_hep_loss"]
+        for entry in entries
+        if entry.get("anchored_pc_minus_supervised_best_hep_loss") is not None
+    ]
+    pc_minus_supervised = [
+        entry["pc_minus_supervised_best_hep_loss"]
+        for entry in entries
+        if entry.get("pc_minus_supervised_best_hep_loss") is not None
+    ]
+    anchor_gap_reductions = [
+        entry["pc_to_anchored_gap_reduction"]
+        for entry in entries
+        if entry.get("pc_to_anchored_gap_reduction") is not None
+    ]
+    status = "fail" if failures else "pass"
+    continue_pc = status == "pass" and bool(anchored_ce_wins)
+    report = {
+        "status": status,
+        "decision": (
+            CONTINUE_PC_RESIDUAL_OBJECTIVE_VALIDATION
+            if continue_pc
+            else (
+                STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION
+                if status == "pass"
+                else INSUFFICIENT_EVIDENCE
+            )
+        ),
+        "continue_pc_residual_objective_validation": continue_pc,
+        "selected_pc_residual_objective_variant": (
+            "pc_logit_mse_ce_anchor" if continue_pc else None
+        ),
+        "promote_residual_learning_method": False,
+        "default_residual_objective": "supervised_ce",
+        "policy": {
+            "max_logit_delta_from_ordinary": max_logit_delta,
+            "requires_local_and_colab_evidence": True,
+            "requires_passing_artifact_checks": True,
+            "requires_supervised_unanchored_and_anchored_pc_runs": True,
+            "requires_support_stress_preset_disabled": True,
+            "requires_temporal_clipped_hep_path": True,
+            "requires_all_objectives_improve_own_training_loss": True,
+            "requires_anchored_pc_lower_supervised_ce_hep_loss_to_continue_pc": True,
+            "allows_residual_objective_promotion": False,
+            "diagnostic_decision_only": True,
+        },
+        "evidence": {
+            "comparison_dirs": [str(path) for path in comparison_dirs],
+            "artifact_check_paths": [str(path) for path in artifact_paths],
+            "backend_count": len(backends),
+            "backends": backends,
+            "comparison_count": len(entries),
+            "supervised_run_count": len(supervised_runs),
+            "pc_run_count": len(pc_runs),
+            "anchored_pc_run_count": len(anchored_runs),
+            "anchored_pc_ce_win_count": len(anchored_ce_wins),
+            "mean_pc_minus_supervised_best_hep_loss": (
+                sum(pc_minus_supervised) / len(pc_minus_supervised)
+                if pc_minus_supervised
+                else None
+            ),
+            "mean_anchored_pc_minus_supervised_best_hep_loss": (
+                sum(anchored_minus_supervised) / len(anchored_minus_supervised)
+                if anchored_minus_supervised
+                else None
+            ),
+            "mean_pc_to_anchored_gap_reduction": (
+                sum(anchor_gap_reductions) / len(anchor_gap_reductions)
+                if anchor_gap_reductions
+                else None
+            ),
+            "entries": entries,
+            "failures": failures,
+        },
+        "rationale": (
+            "The CE-anchored PC objective closes much of the unanchored PC "
+            "supervised-CE HEP loss gap, but it still does not beat supervised CE "
+            "residual training in the checked local and Colab artifacts. PC "
+            "objective validation should stop under the current gate."
+            if status == "pass" and not continue_pc
+            else (
+                "The CE-anchored PC objective beats supervised CE HEP loss in at "
+                "least one artifact-backed backend, so it merits a broader "
+                "PC-objective validation before any default change."
+                if status == "pass"
+                else (
+                    "The anchored-PC decision requires matching local and Colab "
+                    "comparisons with passing artifact checks and valid supervised, "
+                    "unanchored PC, and anchored PC temporal-clipped runs."
+                )
+            )
+        ),
+        "next_step": (
+            "stop PC residual-objective validation under the current gate and select a non-PC residual-learning variant to test next"
+            if status == "pass" and not continue_pc
+            else (
+                "run a broader anchored-PC objective comparison outside the current char validation setting"
+                if status == "pass"
+                else "repair or regenerate the anchored-PC objective comparison artifacts"
+            )
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_anchored_pc_residual_objective_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def _residual_objective_gate_entry(
     comparison_dir: Path,
     *,
@@ -1882,6 +2078,161 @@ def _residual_objective_gate_entry(
         "pc_run": pc_run,
         "failures": failures,
     }
+
+
+def _anchored_pc_residual_objective_entry(
+    comparison_dir: Path,
+    *,
+    artifact_check_path: Path | None,
+    max_logit_delta: float,
+) -> dict[str, Any]:
+    entry = _residual_objective_gate_entry(
+        comparison_dir,
+        artifact_check_path=artifact_check_path,
+        max_logit_delta=max_logit_delta,
+    )
+    comparison = (
+        _read_json_object(comparison_dir / "summary.json")
+        if (comparison_dir / "summary.json").is_file()
+        else None
+    )
+    runs = (
+        comparison.get("runs", [])
+        if isinstance(comparison, dict) and isinstance(comparison.get("runs"), list)
+        else []
+    )
+    anchored_runs = _runs_with_residual_objective(runs, "pc_logit_mse_ce_anchor")
+    anchored_run = (
+        _residual_objective_run_entry(
+            anchored_runs[0],
+            max_logit_delta=max_logit_delta,
+        )
+        if anchored_runs
+        else None
+    )
+    entry["anchored_pc_run"] = anchored_run
+    if not anchored_runs:
+        entry["failures"].append(
+            {
+                "field": "comparison.runs.pc_logit_mse_ce_anchor",
+                "expected": "one run",
+                "actual": 0,
+                "path": str(comparison_dir),
+            }
+        )
+    elif anchored_run is not None:
+        _append_residual_objective_run_failures(
+            entry["failures"],
+            comparison_dir,
+            anchored_run,
+        )
+
+    supervised = entry.get("supervised_run")
+    pc = entry.get("pc_run")
+    entry["pc_minus_supervised_best_hep_loss"] = _best_loss_delta(pc, supervised)
+    entry["anchored_pc_minus_supervised_best_hep_loss"] = _best_loss_delta(
+        anchored_run,
+        supervised,
+    )
+    entry["anchored_pc_minus_unanchored_pc_best_hep_loss"] = _best_loss_delta(
+        anchored_run,
+        pc,
+    )
+    entry["pc_to_anchored_gap_reduction"] = (
+        None
+        if entry["pc_minus_supervised_best_hep_loss"] is None
+        or entry["anchored_pc_minus_supervised_best_hep_loss"] is None
+        else (
+            entry["pc_minus_supervised_best_hep_loss"]
+            - entry["anchored_pc_minus_supervised_best_hep_loss"]
+        )
+    )
+    return entry
+
+
+def _append_residual_objective_run_failures(
+    failures: list[dict[str, Any]],
+    comparison_dir: Path,
+    run_entry: dict[str, Any],
+) -> None:
+    prefix = f"run.{run_entry['experiment_id']}"
+    if run_entry["status"] != "ok":
+        failures.append(
+            {
+                "field": f"{prefix}.status",
+                "expected": "ok",
+                "actual": run_entry["status"],
+                "path": str(comparison_dir),
+            }
+        )
+    if run_entry["support_stress_preset"] is not False:
+        failures.append(
+            {
+                "field": f"{prefix}.support_stress_preset",
+                "expected": False,
+                "actual": run_entry["support_stress_preset"],
+                "path": str(comparison_dir),
+            }
+        )
+    if run_entry["hep_settling_objective"] != "temporal_consistency_gradient":
+        failures.append(
+            {
+                "field": f"{prefix}.hep_settling_objective",
+                "expected": "temporal_consistency_gradient",
+                "actual": run_entry["hep_settling_objective"],
+                "path": str(comparison_dir),
+            }
+        )
+    if run_entry["hep_update_clip_norm"] != 0.01:
+        failures.append(
+            {
+                "field": f"{prefix}.hep_update_clip_norm",
+                "expected": 0.01,
+                "actual": run_entry["hep_update_clip_norm"],
+                "path": str(comparison_dir),
+            }
+        )
+    if not run_entry["own_loss_improved"]:
+        failures.append(
+            {
+                "field": f"{prefix}.residual_loss_delta",
+                "expected": "< 0.0",
+                "actual": run_entry["residual_loss_delta"],
+                "path": str(comparison_dir),
+            }
+        )
+    if not run_entry["accepted_hep_alphas"]:
+        failures.append(
+            {
+                "field": f"{prefix}.hep_alpha_sweep",
+                "expected": "accepted nonzero alpha",
+                "actual": "none",
+                "path": str(comparison_dir),
+            }
+        )
+    for invariant, passed in run_entry["invariants"].items():
+        if passed is not True:
+            failures.append(
+                {
+                    "field": f"{prefix}.invariants.{invariant}",
+                    "expected": True,
+                    "actual": passed,
+                    "path": str(comparison_dir),
+                }
+            )
+
+
+def _best_loss_delta(
+    left: Any,
+    right: Any,
+) -> float | None:
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        return None
+    left_loss = left.get("best_hep_loss")
+    right_loss = right.get("best_hep_loss")
+    if left_loss is None or right_loss is None:
+        return None
+    return float(left_loss) - float(right_loss)
 
 
 def _residual_objective_run_entry(
@@ -3438,6 +3789,82 @@ def _write_pc_residual_objective_diagnostics_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_anchored_pc_residual_objective_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Anchored PC Residual Objective Decision",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        (
+            "- Continue PC residual objective validation: "
+            f"`{report['continue_pc_residual_objective_validation']}`"
+        ),
+        (
+            "- Selected PC variant: "
+            f"`{report['selected_pc_residual_objective_variant']}`"
+        ),
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        f"- Backends: `{', '.join(evidence['backends'])}`",
+        (
+            "- Mean PC minus supervised best HEP loss: "
+            f"`{_format_metric(evidence['mean_pc_minus_supervised_best_hep_loss'])}`"
+        ),
+        (
+            "- Mean anchored PC minus supervised best HEP loss: "
+            f"`{_format_metric(evidence['mean_anchored_pc_minus_supervised_best_hep_loss'])}`"
+        ),
+        (
+            "- Mean PC-to-anchored gap reduction: "
+            f"`{_format_metric(evidence['mean_pc_to_anchored_gap_reduction'])}`"
+        ),
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        (
+            "| Backend | Artifact check | Supervised best HEP loss "
+            "| PC best HEP loss | Anchored PC best HEP loss "
+            "| Anchored minus supervised | Gap reduction | Source |"
+        ),
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for entry in evidence["entries"]:
+        supervised = entry.get("supervised_run") or {}
+        pc = entry.get("pc_run") or {}
+        anchored = entry.get("anchored_pc_run") or {}
+        lines.append(
+            (
+                f"| {entry.get('backend') or ''} "
+                f"| {entry.get('artifact_check_status') or ''} "
+                f"| {_format_metric(supervised.get('best_hep_loss'))} "
+                f"| {_format_metric(pc.get('best_hep_loss'))} "
+                f"| {_format_metric(anchored.get('best_hep_loss'))} "
+                f"| {_format_metric(entry.get('anchored_pc_minus_supervised_best_hep_loss'))} "
+                f"| {_format_metric(entry.get('pc_to_anchored_gap_reduction'))} "
+                f"| `{entry.get('comparison_dir')}` |"
+            )
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -3462,6 +3889,7 @@ def main() -> None:
             "post-promotion-residual-learning-gate",
             "residual-objective-gate",
             "pc-residual-objective-diagnostics",
+            "anchored-pc-residual-objective-decision",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -3598,6 +4026,17 @@ def main() -> None:
             else DEFAULT_RESIDUAL_OBJECTIVE_GATE_COMPARISON_DIRS,
             args.out or DEFAULT_PC_RESIDUAL_OBJECTIVE_DIAGNOSTICS_OUT_DIR,
             artifact_check_paths=DEFAULT_RESIDUAL_OBJECTIVE_GATE_ARTIFACT_CHECKS
+            if not args.artifact_check
+            else (args.artifact_check,),
+            max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "anchored-pc-residual-objective-decision":
+        report = write_anchored_pc_residual_objective_decision_report(
+            tuple(args.decision_report)
+            if args.decision_report
+            else DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_COMPARISON_DIRS,
+            args.out or DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_OUT_DIR,
+            artifact_check_paths=DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS
             if not args.artifact_check
             else (args.artifact_check,),
             max_logit_delta=args.max_logit_delta,

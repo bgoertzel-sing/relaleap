@@ -20,6 +20,8 @@ from relaleap.experiments.decision_report import (
     KEEP_SUPERVISED_CE_RESIDUAL_OBJECTIVE_DEFAULT,
     CONTINUE_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
+    STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
+    write_anchored_pc_residual_objective_decision_report,
     write_clipped_hep_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -989,6 +991,138 @@ class PcResidualObjectiveDiagnosticsReportTest(unittest.TestCase):
             )
 
 
+class AnchoredPcResidualObjectiveDecisionReportTest(unittest.TestCase):
+    def test_valid_local_and_colab_anchor_stops_pc_validation_without_ce_win(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dirs = []
+            artifact_checks = []
+            for backend in ("local", "colab"):
+                comparison_dir = tmp_path / f"{backend}_anchor_objective_gate"
+                _write_residual_objective_gate_comparison(
+                    comparison_dir,
+                    pc_best_hep_loss=3.60,
+                    anchored_pc_best_hep_loss=3.5801,
+                    support_stress_preset=False,
+                )
+                artifact_check = comparison_dir / "artifact_check_local.json"
+                artifact_check.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                comparison_dirs.append(comparison_dir)
+                artifact_checks.append(artifact_check)
+
+            report = write_anchored_pc_residual_objective_decision_report(
+                comparison_dirs,
+                tmp_path / "anchored_pc_decision",
+                artifact_check_paths=artifact_checks,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
+            )
+            self.assertFalse(report["continue_pc_residual_objective_validation"])
+            self.assertIsNone(report["selected_pc_residual_objective_variant"])
+            self.assertEqual(report["evidence"]["anchored_pc_ce_win_count"], 0)
+            self.assertGreater(
+                report["evidence"]["mean_pc_to_anchored_gap_reduction"],
+                0.0,
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "anchored_pc_decision"
+                    / "decision_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "anchored_pc_decision"
+                    / "decision_report.md"
+                ).is_file()
+            )
+
+    def test_anchor_ce_win_continues_pc_validation_without_promotion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dirs = []
+            artifact_checks = []
+            for backend in ("local", "colab"):
+                comparison_dir = tmp_path / f"{backend}_anchor_objective_gate"
+                _write_residual_objective_gate_comparison(
+                    comparison_dir,
+                    pc_best_hep_loss=3.60,
+                    anchored_pc_best_hep_loss=3.57,
+                    support_stress_preset=False,
+                )
+                artifact_check = comparison_dir / "artifact_check_local.json"
+                artifact_check.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                comparison_dirs.append(comparison_dir)
+                artifact_checks.append(artifact_check)
+
+            report = write_anchored_pc_residual_objective_decision_report(
+                comparison_dirs,
+                tmp_path / "anchored_pc_decision",
+                artifact_check_paths=artifact_checks,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                CONTINUE_PC_RESIDUAL_OBJECTIVE_VALIDATION,
+            )
+            self.assertTrue(report["continue_pc_residual_objective_validation"])
+            self.assertEqual(
+                report["selected_pc_residual_objective_variant"],
+                "pc_logit_mse_ce_anchor",
+            )
+            self.assertFalse(report["promote_residual_learning_method"])
+            self.assertEqual(report["evidence"]["anchored_pc_ce_win_count"], 2)
+
+    def test_missing_anchored_run_blocks_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "local_anchor_objective_gate"
+            _write_residual_objective_gate_comparison(
+                comparison_dir,
+                pc_best_hep_loss=3.60,
+                support_stress_preset=False,
+            )
+            artifact_check = comparison_dir / "artifact_check_local.json"
+            artifact_check.write_text(
+                json.dumps({"status": "pass"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_anchored_pc_residual_objective_decision_report(
+                [comparison_dir],
+                tmp_path / "anchored_pc_decision",
+                artifact_check_paths=[artifact_check],
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(report["continue_pc_residual_objective_validation"])
+            self.assertIn(
+                {
+                    "field": "comparison.runs.pc_logit_mse_ce_anchor",
+                    "expected": "one run",
+                    "actual": 0,
+                    "path": str(comparison_dir),
+                },
+                report["evidence"]["failures"],
+            )
+
+
 def _write_comparison(
     comparison_dir: Path,
     *,
@@ -1270,6 +1404,7 @@ def _write_residual_objective_gate_comparison(
     *,
     pc_best_hep_loss: float,
     support_stress_preset: bool,
+    anchored_pc_best_hep_loss: float | None = None,
 ) -> None:
     comparison_dir.mkdir(parents=True)
     runs = [
@@ -1290,6 +1425,17 @@ def _write_residual_objective_gate_comparison(
             support_stress_preset=support_stress_preset,
         ),
     ]
+    if anchored_pc_best_hep_loss is not None:
+        runs.append(
+            _residual_objective_run_entry(
+                "anchored_pc",
+                residual_objective="pc_logit_mse_ce_anchor",
+                initial_loss=0.40,
+                final_loss=0.38,
+                best_hep_loss=anchored_pc_best_hep_loss,
+                support_stress_preset=support_stress_preset,
+            )
+        )
     summary = {
         "status": "ok",
         "verdict": {

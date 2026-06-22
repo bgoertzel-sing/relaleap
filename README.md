@@ -538,6 +538,21 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_validation_pc_anchor_temporal_clipped_objective_gate/artifact_check.json
 ```
 
+After matching local and Colab anchored-PC artifacts exist, write the
+command-driven anchored-PC objective decision report without rerunning
+experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report anchored-pc-residual-objective-decision \
+  --out results/reports/anchored_pc_residual_objective_decision
+```
+
+The report writes `decision_report.json` and `decision_report.md`. Under the
+current local and Colab artifacts, anchored PC closes most of the unanchored PC
+supervised-CE HEP loss gap but still does not beat supervised CE, so the report
+stops PC residual-objective validation under the current gate.
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 
