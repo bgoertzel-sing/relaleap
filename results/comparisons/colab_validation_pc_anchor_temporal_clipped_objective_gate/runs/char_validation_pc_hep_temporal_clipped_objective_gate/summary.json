@@ -4,15 +4,15 @@
     "notes_md": true,
     "summary_json": true
   },
-  "config_path": "configs/char_validation_hep_temporal_clipped_objective_gate.yaml",
+  "config_path": "configs/char_validation_pc_hep_temporal_clipped_objective_gate.yaml",
   "cuda_available": true,
   "cuda_device_count": 1,
   "cuda_device_name": "Tesla T4",
   "device": "cuda",
   "error": null,
-  "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
-  "final_smoke_loss": 3.58673668,
-  "out_dir": "results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate/runs/char_validation_hep_temporal_clipped_objective_gate",
+  "experiment_id": "char_validation_pc_hep_temporal_clipped_objective_gate",
+  "final_smoke_loss": 0.02871708,
+  "out_dir": "results/comparisons/colab_validation_pc_anchor_temporal_clipped_objective_gate/runs/char_validation_pc_hep_temporal_clipped_objective_gate",
   "phase0": {
     "base_loss": 3.7288691997528076,
     "batch_size": 4,
@@ -21,7 +21,7 @@
     "hep_alpha_sweep": [
       {
         "alpha": 0.0,
-        "loss": 3.5867366790771484,
+        "loss": 3.5959599018096924,
         "max_logit_delta_from_ordinary": 0.0,
         "pinned_vs_repicked_logit_delta": 0.0,
         "support_change_fraction": 0.0,
@@ -29,24 +29,24 @@
       },
       {
         "alpha": 0.25,
-        "loss": 3.586721420288086,
-        "max_logit_delta_from_ordinary": 0.00012314319610595703,
+        "loss": 3.595945119857788,
+        "max_logit_delta_from_ordinary": 0.00012123584747314453,
         "pinned_vs_repicked_logit_delta": 0.0,
         "support_change_fraction": 0.0,
         "support_transition_count": 0.0
       },
       {
         "alpha": 0.5,
-        "loss": 3.586705446243286,
-        "max_logit_delta_from_ordinary": 0.00024569034576416016,
+        "loss": 3.5959298610687256,
+        "max_logit_delta_from_ordinary": 0.0002422332763671875,
         "pinned_vs_repicked_logit_delta": 0.0,
         "support_change_fraction": 0.0,
         "support_transition_count": 0.0
       },
       {
         "alpha": 1.0,
-        "loss": 3.586674451828003,
-        "max_logit_delta_from_ordinary": 0.0004913806915283203,
+        "loss": 3.595900774002075,
+        "max_logit_delta_from_ordinary": 0.00048422813415527344,
         "pinned_vs_repicked_logit_delta": 0.0,
         "support_change_fraction": 0.0,
         "support_transition_count": 0.0
@@ -54,7 +54,7 @@
     ],
     "hep_settling_objective": "temporal_consistency_gradient",
     "hep_update_clip_norm": 0.01,
-    "initial_loss": 3.7288691997528076,
+    "initial_loss": 0.029016628861427307,
     "invariants": {
       "frozen_base_unchanged": true,
       "hep_alpha_0_equivalence": true,
@@ -64,9 +64,9 @@
     "max_hep_alpha0_logit_delta": 0.0,
     "max_zero_init_logit_delta": 0.0,
     "pinned_support": false,
-    "post_step_loss": 3.5867366790771484,
-    "residual_objective": "supervised_ce",
-    "residual_parameter_delta": 58.667205810546875,
+    "post_step_loss": 0.028717081993818283,
+    "residual_objective": "pc_logit_mse",
+    "residual_parameter_delta": 58.83655548095703,
     "seq_len": 64,
     "support_instability": {
       "hep_alpha": 1.0,
@@ -86,7 +86,7 @@
     "zero_init_loss": 3.7288691997528076
   },
   "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
-  "runtime_seconds": 1.6885,
+  "runtime_seconds": 0.4635,
   "seed": 1,
   "status": "ok",
   "torch_available": true,

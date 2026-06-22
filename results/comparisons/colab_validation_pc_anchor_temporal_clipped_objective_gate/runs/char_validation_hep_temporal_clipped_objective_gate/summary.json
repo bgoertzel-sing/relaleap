@@ -12,7 +12,7 @@
   "error": null,
   "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
   "final_smoke_loss": 3.58673668,
-  "out_dir": "results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate/runs/char_validation_hep_temporal_clipped_objective_gate",
+  "out_dir": "results/comparisons/colab_validation_pc_anchor_temporal_clipped_objective_gate/runs/char_validation_hep_temporal_clipped_objective_gate",
   "phase0": {
     "base_loss": 3.7288691997528076,
     "batch_size": 4,
@@ -86,7 +86,7 @@
     "zero_init_loss": 3.7288691997528076
   },
   "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
-  "runtime_seconds": 1.6885,
+  "runtime_seconds": 1.7452,
   "seed": 1,
   "status": "ok",
   "torch_available": true,
