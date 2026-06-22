@@ -79,12 +79,13 @@
       "support_transition_count": 999
     },
     "support_stress": true,
+    "support_stress_preset": true,
     "training_steps": 50,
     "vocab_size": 34,
     "zero_init_loss": 3.715942621231079
   },
   "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
-  "runtime_seconds": 1.4938,
+  "runtime_seconds": 1.7839,
   "seed": 1,
   "status": "ok",
   "torch_available": true,

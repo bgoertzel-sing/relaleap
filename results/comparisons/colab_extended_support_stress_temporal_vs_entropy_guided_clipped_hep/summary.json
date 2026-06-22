@@ -75,6 +75,7 @@
         "support_transition_count": 735
       },
       "support_stress": true,
+      "support_stress_preset": true,
       "training_steps": 30,
       "zero_init_loss": 3.721653461456299
     },
@@ -151,6 +152,7 @@
         "support_transition_count": 735
       },
       "support_stress": true,
+      "support_stress_preset": true,
       "training_steps": 30,
       "zero_init_loss": 3.721653461456299
     },
@@ -227,6 +229,7 @@
         "support_transition_count": 735
       },
       "support_stress": true,
+      "support_stress_preset": true,
       "training_steps": 30,
       "zero_init_loss": 3.721653461456299
     },
@@ -303,11 +306,12 @@
         "support_transition_count": 735
       },
       "support_stress": true,
+      "support_stress_preset": true,
       "training_steps": 30,
       "zero_init_loss": 3.721653461456299
     }
   ],
-  "runtime_seconds": 4.8268,
+  "runtime_seconds": 6.4901,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,

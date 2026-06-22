@@ -19,6 +19,7 @@ import asyncio
 import base64
 from datetime import datetime, timezone
 import io
+import json
 import sys
 from pathlib import Path
 import zipfile
@@ -125,7 +126,6 @@ def _validate_evidence_text(text: str) -> None:
         'cuda_available: True',
         '"status": "pass"',
         "Accepted HEP alpha:",
-        '"pinned_support": true',
         "Pinned HEP status: ok",
         "Support-stress comparison status: ok",
         "Support-stress artifact check: pass",
@@ -196,6 +196,39 @@ def _validate_evidence_text(text: str) -> None:
         raise RuntimeError(
             "Colab completed, but evidence is missing required rendered output "
             f"marker(s): {', '.join(missing)}"
+        )
+    _validate_pinned_support_evidence(text)
+
+
+def _validate_pinned_support_evidence(text: str) -> None:
+    if '"pinned_support": true' in text:
+        return
+
+    begin = text.find(ARTIFACT_BUNDLE_BEGIN)
+    end = text.find(ARTIFACT_BUNDLE_END)
+    if begin < 0 or end < 0 or end <= begin:
+        raise RuntimeError(
+            "Colab completed, but evidence is missing required pinned-support "
+            "marker and artifact bundle."
+        )
+
+    encoded = text[begin + len(ARTIFACT_BUNDLE_BEGIN) : end]
+    encoded = "".join(encoded.split())
+    with zipfile.ZipFile(io.BytesIO(base64.b64decode(encoded))) as archive:
+        summary_name = "results/runs/colab_char_smoke_pinned_hep/summary.json"
+        try:
+            summary = json.loads(archive.read(summary_name))
+        except KeyError as exc:
+            raise RuntimeError(
+                "Colab completed, but artifact bundle is missing required "
+                f"pinned-support summary: {summary_name}"
+            ) from exc
+
+    pinned_support = summary.get("phase0", {}).get("pinned_support")
+    if pinned_support is not True:
+        raise RuntimeError(
+            "Colab completed, but pinned-support summary did not report "
+            "phase0.pinned_support true."
         )
 
 

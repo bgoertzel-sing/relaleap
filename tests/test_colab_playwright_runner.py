@@ -15,6 +15,7 @@ from tools.colab_playwright_runner import (
     _confirm_run_modals,
     _extract_colab_artifact_bundle,
     _validate_evidence_text,
+    _validate_pinned_support_evidence,
     _wait_for_completion,
 )
 
@@ -127,6 +128,19 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     ]
                 )
             )
+
+    def test_validate_pinned_support_accepts_artifact_bundle_summary(self) -> None:
+        bundle = _zip_base64(
+            {
+                "results/runs/colab_char_smoke_pinned_hep/summary.json": (
+                    '{"phase0": {"pinned_support": true}}\n'
+                )
+            }
+        )
+
+        _validate_pinned_support_evidence(
+            "\n".join([ARTIFACT_BUNDLE_BEGIN, bundle, ARTIFACT_BUNDLE_END])
+        )
 
     def test_extract_colab_artifact_bundle_writes_safe_paths(self) -> None:
         bundle = _zip_base64(
