@@ -239,6 +239,8 @@ def _extract_colab_artifact_bundle(
 async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path) -> None:
     timeout_seconds = timeout_minutes * 60
     started = asyncio.get_running_loop().time()
+    runtime_prompt_confirmations = 0
+    max_runtime_prompt_confirmations = 3
     print(f"waiting up to {timeout_minutes:g} minute(s) for Colab completion text")
     while True:
         try:
@@ -258,12 +260,22 @@ async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path)
                     f"Timed out waiting for Colab completion text: {COMPLETION_TEXT!r}"
                 ) from exc
             await _dismiss_obstructive_modals(page)
-            await _confirm_run_modals(
+            confirmed_runtime_prompt = await _confirm_run_modals(
                 page,
                 max_rounds=1,
                 timeout_ms=750,
                 include_run_all=False,
             )
+            if confirmed_runtime_prompt:
+                runtime_prompt_confirmations += 1
+                if runtime_prompt_confirmations >= max_runtime_prompt_confirmations:
+                    await _write_evidence(page, evidence_out)
+                    raise RuntimeError(
+                        "Colab runtime prompts persisted after "
+                        f"{max_runtime_prompt_confirmations} non-interactive "
+                        "confirmation attempt(s); manual Chrome/Colab runtime "
+                        "resolution is required before rerunning the bridge."
+                    )
 
     await _write_evidence(page, evidence_out)
     text = evidence_out.read_text()

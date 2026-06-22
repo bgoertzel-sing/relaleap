@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import patch
 
 from tools.colab_playwright_runner import (
     ARTIFACT_BUNDLE_BEGIN,
@@ -14,6 +15,7 @@ from tools.colab_playwright_runner import (
     _confirm_run_modals,
     _extract_colab_artifact_bundle,
     _validate_evidence_text,
+    _wait_for_completion,
 )
 
 
@@ -174,6 +176,61 @@ class ConfirmRunModalsTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Run all cells", page.text_labels)
         self.assertIn("Reconnect", page.role_labels)
         self.assertIn("Reconnect", page.text_labels)
+
+    async def test_completion_wait_fails_after_repeated_runtime_prompts(self) -> None:
+        async def never_completed(*args, **kwargs):
+            raise TimeoutError("not done")
+
+        async def no_rendered_output(*args, **kwargs):
+            return ""
+
+        async def no_obstructive_modal(*args, **kwargs):
+            return False
+
+        async def runtime_prompt_confirmed(*args, **kwargs):
+            return True
+
+        async def write_evidence(page, evidence_out):
+            evidence_out.write_text("partial evidence\n", encoding="utf-8")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            evidence_out = Path(tmpdir) / "evidence.txt"
+            with (
+                patch(
+                    "tools.colab_playwright_runner._wait_for_rendered_output_text",
+                    never_completed,
+                ),
+                patch(
+                    "tools.colab_playwright_runner._rendered_output_text",
+                    no_rendered_output,
+                ),
+                patch(
+                    "tools.colab_playwright_runner._dismiss_obstructive_modals",
+                    no_obstructive_modal,
+                ),
+                patch(
+                    "tools.colab_playwright_runner._confirm_run_modals",
+                    runtime_prompt_confirmed,
+                ),
+                patch(
+                    "tools.colab_playwright_runner._write_evidence",
+                    write_evidence,
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "manual Chrome/Colab runtime resolution is required",
+                ):
+                    await _wait_for_completion(
+                        _RecordingPage(),
+                        timeout_minutes=1.0,
+                        evidence_out=evidence_out,
+                    )
+
+            self.assertEqual(
+                evidence_out.read_text(encoding="utf-8"),
+                "partial evidence\n",
+            )
 
 
 class _RecordingPage:
