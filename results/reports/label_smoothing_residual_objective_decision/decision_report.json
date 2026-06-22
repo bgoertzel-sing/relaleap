@@ -1,0 +1,312 @@
+{
+  "continue_label_smoothing_residual_objective_validation": false,
+  "decision": "stop_label_smoothing_residual_objective_validation",
+  "default_residual_objective": "supervised_ce",
+  "evidence": {
+    "artifact_check_paths": [
+      "results/comparisons/validation_label_smoothing_temporal_clipped_objective_gate/artifact_check_local.json",
+      "results/comparisons/colab_validation_label_smoothing_temporal_clipped_objective_gate/artifact_check_local.json"
+    ],
+    "backend_count": 2,
+    "backends": [
+      "colab",
+      "local"
+    ],
+    "comparison_count": 2,
+    "comparison_dirs": [
+      "results/comparisons/validation_label_smoothing_temporal_clipped_objective_gate",
+      "results/comparisons/colab_validation_label_smoothing_temporal_clipped_objective_gate"
+    ],
+    "entries": [
+      {
+        "artifact_check_path": "results/comparisons/validation_label_smoothing_temporal_clipped_objective_gate/artifact_check_local.json",
+        "artifact_check_status": "pass",
+        "backend": "local",
+        "comparison_dir": "results/comparisons/validation_label_smoothing_temporal_clipped_objective_gate",
+        "comparison_status": "ok",
+        "failures": [],
+        "label_smoothing_minus_supervised_best_hep_loss": 0.00021147727966308594,
+        "label_smoothing_minus_supervised_final_residual_loss": 0.005753990000000098,
+        "label_smoothing_run": {
+          "accepted_hep_alphas": [
+            {
+              "alpha": 0.25,
+              "experiment_id": "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
+              "loss": 3.58693265914917,
+              "loss_improvement_from_alpha0": 1.52587890625e-05,
+              "max_logit_delta_from_ordinary": 0.00012195110321044922,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 0.5,
+              "experiment_id": "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
+              "loss": 3.586916923522949,
+              "loss_improvement_from_alpha0": 3.0994415283203125e-05,
+              "max_logit_delta_from_ordinary": 0.00024390220642089844,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 1.0,
+              "experiment_id": "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
+              "loss": 3.586885929107666,
+              "loss_improvement_from_alpha0": 6.198883056640625e-05,
+              "max_logit_delta_from_ordinary": 0.0004876852035522461,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            }
+          ],
+          "best_hep_alpha": {
+            "alpha": 1.0,
+            "experiment_id": "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
+            "loss": 3.586885929107666,
+            "loss_improvement_from_alpha0": 6.198883056640625e-05,
+            "max_logit_delta_from_ordinary": 0.0004876852035522461,
+            "pinned_vs_repicked_logit_delta": 0.0,
+            "support_change_fraction": 0.0
+          },
+          "best_hep_loss": 3.586885929107666,
+          "dataset": "tiny_shakespeare_char",
+          "experiment_id": "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
+          "final_residual_loss": 3.59249067,
+          "hep_settling_objective": "temporal_consistency_gradient",
+          "hep_update_clip_norm": 0.01,
+          "initial_residual_loss": 3.7271924,
+          "invariants": {
+            "frozen_base_unchanged": true,
+            "hep_alpha_0_equivalence": true,
+            "residual_parameters_updated": true,
+            "zero_init_identity": true
+          },
+          "own_loss_improved": true,
+          "residual_loss_delta": -0.13470172999999974,
+          "residual_loss_ratio": 0.9638597325965786,
+          "residual_objective": "supervised_ce_label_smoothing",
+          "status": "ok",
+          "support_stress": true,
+          "support_stress_preset": false,
+          "training_steps": 25
+        },
+        "supervised_run": {
+          "accepted_hep_alphas": [
+            {
+              "alpha": 0.25,
+              "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
+              "loss": 3.586721420288086,
+              "loss_improvement_from_alpha0": 1.52587890625e-05,
+              "max_logit_delta_from_ordinary": 0.00012290477752685547,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 0.5,
+              "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
+              "loss": 3.586705446243286,
+              "loss_improvement_from_alpha0": 3.123283386230469e-05,
+              "max_logit_delta_from_ordinary": 0.0002453327178955078,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 1.0,
+              "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
+              "loss": 3.586674451828003,
+              "loss_improvement_from_alpha0": 6.222724914550781e-05,
+              "max_logit_delta_from_ordinary": 0.0004912614822387695,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            }
+          ],
+          "best_hep_alpha": {
+            "alpha": 1.0,
+            "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
+            "loss": 3.586674451828003,
+            "loss_improvement_from_alpha0": 6.222724914550781e-05,
+            "max_logit_delta_from_ordinary": 0.0004912614822387695,
+            "pinned_vs_repicked_logit_delta": 0.0,
+            "support_change_fraction": 0.0
+          },
+          "best_hep_loss": 3.586674451828003,
+          "dataset": "tiny_shakespeare_char",
+          "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
+          "final_residual_loss": 3.58673668,
+          "hep_settling_objective": "temporal_consistency_gradient",
+          "hep_update_clip_norm": 0.01,
+          "initial_residual_loss": 3.72886968,
+          "invariants": {
+            "frozen_base_unchanged": true,
+            "hep_alpha_0_equivalence": true,
+            "residual_parameters_updated": true,
+            "zero_init_identity": true
+          },
+          "own_loss_improved": true,
+          "residual_loss_delta": -0.14213299999999984,
+          "residual_loss_ratio": 0.9618830873166906,
+          "residual_objective": "supervised_ce",
+          "status": "ok",
+          "support_stress": true,
+          "support_stress_preset": false,
+          "training_steps": 25
+        },
+        "verdict_status": "pass"
+      },
+      {
+        "artifact_check_path": "results/comparisons/colab_validation_label_smoothing_temporal_clipped_objective_gate/artifact_check_local.json",
+        "artifact_check_status": "pass",
+        "backend": "colab",
+        "comparison_dir": "results/comparisons/colab_validation_label_smoothing_temporal_clipped_objective_gate",
+        "comparison_status": "ok",
+        "failures": [],
+        "label_smoothing_minus_supervised_best_hep_loss": 0.00021147727966308594,
+        "label_smoothing_minus_supervised_final_residual_loss": 0.005753990000000098,
+        "label_smoothing_run": {
+          "accepted_hep_alphas": [
+            {
+              "alpha": 0.25,
+              "experiment_id": "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
+              "loss": 3.586932420730591,
+              "loss_improvement_from_alpha0": 1.5497207641601562e-05,
+              "max_logit_delta_from_ordinary": 0.00012195110321044922,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 0.5,
+              "experiment_id": "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
+              "loss": 3.586916923522949,
+              "loss_improvement_from_alpha0": 3.0994415283203125e-05,
+              "max_logit_delta_from_ordinary": 0.00024390220642089844,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 1.0,
+              "experiment_id": "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
+              "loss": 3.586885929107666,
+              "loss_improvement_from_alpha0": 6.198883056640625e-05,
+              "max_logit_delta_from_ordinary": 0.0004878044128417969,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            }
+          ],
+          "best_hep_alpha": {
+            "alpha": 1.0,
+            "experiment_id": "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
+            "loss": 3.586885929107666,
+            "loss_improvement_from_alpha0": 6.198883056640625e-05,
+            "max_logit_delta_from_ordinary": 0.0004878044128417969,
+            "pinned_vs_repicked_logit_delta": 0.0,
+            "support_change_fraction": 0.0
+          },
+          "best_hep_loss": 3.586885929107666,
+          "dataset": "tiny_shakespeare_char",
+          "experiment_id": "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
+          "final_residual_loss": 3.59249067,
+          "hep_settling_objective": "temporal_consistency_gradient",
+          "hep_update_clip_norm": 0.01,
+          "initial_residual_loss": 3.72719193,
+          "invariants": {
+            "frozen_base_unchanged": true,
+            "hep_alpha_0_equivalence": true,
+            "residual_parameters_updated": true,
+            "zero_init_identity": true
+          },
+          "own_loss_improved": true,
+          "residual_loss_delta": -0.13470125999999993,
+          "residual_loss_ratio": 0.9638598541395748,
+          "residual_objective": "supervised_ce_label_smoothing",
+          "status": "ok",
+          "support_stress": true,
+          "support_stress_preset": false,
+          "training_steps": 25
+        },
+        "supervised_run": {
+          "accepted_hep_alphas": [
+            {
+              "alpha": 0.25,
+              "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
+              "loss": 3.586721420288086,
+              "loss_improvement_from_alpha0": 1.52587890625e-05,
+              "max_logit_delta_from_ordinary": 0.00012314319610595703,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 0.5,
+              "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
+              "loss": 3.586705446243286,
+              "loss_improvement_from_alpha0": 3.123283386230469e-05,
+              "max_logit_delta_from_ordinary": 0.00024569034576416016,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 1.0,
+              "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
+              "loss": 3.586674451828003,
+              "loss_improvement_from_alpha0": 6.222724914550781e-05,
+              "max_logit_delta_from_ordinary": 0.0004913806915283203,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            }
+          ],
+          "best_hep_alpha": {
+            "alpha": 1.0,
+            "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
+            "loss": 3.586674451828003,
+            "loss_improvement_from_alpha0": 6.222724914550781e-05,
+            "max_logit_delta_from_ordinary": 0.0004913806915283203,
+            "pinned_vs_repicked_logit_delta": 0.0,
+            "support_change_fraction": 0.0
+          },
+          "best_hep_loss": 3.586674451828003,
+          "dataset": "tiny_shakespeare_char",
+          "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
+          "final_residual_loss": 3.58673668,
+          "hep_settling_objective": "temporal_consistency_gradient",
+          "hep_update_clip_norm": 0.01,
+          "initial_residual_loss": 3.7288692,
+          "invariants": {
+            "frozen_base_unchanged": true,
+            "hep_alpha_0_equivalence": true,
+            "residual_parameters_updated": true,
+            "zero_init_identity": true
+          },
+          "own_loss_improved": true,
+          "residual_loss_delta": -0.1421325200000001,
+          "residual_loss_ratio": 0.9618832111354294,
+          "residual_objective": "supervised_ce",
+          "status": "ok",
+          "support_stress": true,
+          "support_stress_preset": false,
+          "training_steps": 25
+        },
+        "verdict_status": "pass"
+      }
+    ],
+    "failures": [],
+    "label_smoothing_ce_win_count": 0,
+    "label_smoothing_run_count": 2,
+    "mean_label_smoothing_minus_supervised_best_hep_loss": 0.00021147727966308594,
+    "mean_label_smoothing_minus_supervised_final_residual_loss": 0.005753990000000098,
+    "supervised_run_count": 2
+  },
+  "next_step": "select the next non-PC residual objective variant to test under the objective gate",
+  "policy": {
+    "allows_residual_objective_promotion": false,
+    "diagnostic_decision_only": true,
+    "max_logit_delta_from_ordinary": 0.1,
+    "requires_both_objectives_improve_own_training_loss": true,
+    "requires_label_smoothing_lower_supervised_ce_hep_loss_to_continue": true,
+    "requires_local_and_colab_evidence": true,
+    "requires_passing_artifact_checks": true,
+    "requires_supervised_and_label_smoothing_runs": true,
+    "requires_support_stress_preset_disabled": true,
+    "requires_temporal_clipped_hep_path": true
+  },
+  "promote_residual_learning_method": false,
+  "rationale": "The label-smoothing objective improves its own residual training loss but does not beat supervised CE on best temporal-clipped HEP supervised loss in the checked local and Colab artifacts. It should not continue under the current objective gate.",
+  "selected_residual_objective_variant": null,
+  "status": "pass"
+}
