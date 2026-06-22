@@ -15,6 +15,7 @@ from relaleap.experiments.decision_report import (
     SELECT_TEMPORAL_CLIPPED_HEP_AGGREGATE,
     SELECT_TEMPORAL_CLIPPED_HEP_CROSS_SCALE_AGGREGATE,
     DEFINE_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE,
+    SATISFY_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE,
     write_clipped_hep_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pinned_support_decision_report,
@@ -22,6 +23,7 @@ from relaleap.experiments.decision_report import (
     write_temporal_clipped_hep_cross_scale_aggregate_report,
     write_temporal_clipped_hep_decision_report,
     write_temporal_clipped_hep_promotion_gate_report,
+    write_temporal_clipped_hep_promotion_gate_satisfaction_report,
 )
 
 
@@ -520,6 +522,130 @@ class TemporalClippedHepPromotionGateReportTest(unittest.TestCase):
                         "path": str(missing_report),
                     }
                 ],
+            )
+
+
+class TemporalClippedHepPromotionGateSatisfactionReportTest(unittest.TestCase):
+    def test_larger_and_tokenized_local_colab_reports_satisfy_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            gate_report = tmp_path / "promotion_gate" / "decision_report.json"
+            gate_report.parent.mkdir(parents=True)
+            gate_report.write_text(
+                json.dumps(
+                    {
+                        "status": "pass",
+                        "decision": DEFINE_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            report_paths = []
+            for gate in ("larger", "token_larger"):
+                for backend in ("local", "colab"):
+                    comparison_dir = tmp_path / f"{backend}_{gate}_comparison"
+                    _write_temporal_clipped_comparison(
+                        comparison_dir,
+                        temporal_nonzero_loss=3.99,
+                        entropy_nonzero_loss=4.01,
+                        guided_nonzero_loss=3.9,
+                        temporal_nonzero_delta=0.01,
+                        temporal_nonzero_pinned_vs_repicked=0.02,
+                    )
+                    out_dir = tmp_path / f"temporal_clipped_hep_{gate}_{backend}_decision"
+                    decision = write_temporal_clipped_hep_decision_report(
+                        comparison_dir,
+                        out_dir,
+                    )
+                    self.assertEqual(decision["status"], "pass")
+                    report_paths.append(out_dir / "decision_report.json")
+
+            satisfaction = write_temporal_clipped_hep_promotion_gate_satisfaction_report(
+                gate_report,
+                report_paths,
+                tmp_path / "promotion_gate_satisfaction",
+            )
+
+            self.assertEqual(satisfaction["status"], "pass")
+            self.assertEqual(
+                satisfaction["decision"],
+                SATISFY_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE,
+            )
+            self.assertTrue(satisfaction["promotion_gate_satisfied"])
+            self.assertTrue(
+                satisfaction["promote_to_default_support_stress_mitigation"]
+            )
+            self.assertEqual(satisfaction["evidence"]["report_count"], 4)
+            self.assertEqual(
+                satisfaction["evidence"]["accepted_temporal_report_count"],
+                4,
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "promotion_gate_satisfaction"
+                    / "decision_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "promotion_gate_satisfaction"
+                    / "decision_report.md"
+                ).is_file()
+            )
+
+    def test_missing_gate_pair_blocks_satisfaction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            gate_report = tmp_path / "promotion_gate" / "decision_report.json"
+            gate_report.parent.mkdir(parents=True)
+            gate_report.write_text(
+                json.dumps(
+                    {
+                        "status": "pass",
+                        "decision": DEFINE_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            comparison_dir = tmp_path / "local_larger_comparison"
+            _write_temporal_clipped_comparison(
+                comparison_dir,
+                temporal_nonzero_loss=3.99,
+                entropy_nonzero_loss=4.01,
+                guided_nonzero_loss=3.9,
+                temporal_nonzero_delta=0.01,
+                temporal_nonzero_pinned_vs_repicked=0.02,
+            )
+            out_dir = tmp_path / "temporal_clipped_hep_larger_local_decision"
+            write_temporal_clipped_hep_decision_report(comparison_dir, out_dir)
+
+            satisfaction = write_temporal_clipped_hep_promotion_gate_satisfaction_report(
+                gate_report,
+                [out_dir / "decision_report.json"],
+                tmp_path / "promotion_gate_satisfaction",
+            )
+
+            self.assertEqual(satisfaction["status"], "fail")
+            self.assertEqual(satisfaction["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(satisfaction["promotion_gate_satisfied"])
+            self.assertFalse(
+                satisfaction["promote_to_default_support_stress_mitigation"]
+            )
+            self.assertIn(
+                {
+                    "field": "decision_report.gate_backend_pair",
+                    "expected": "non_char_tokenized_local_colab/colab",
+                    "actual": "missing",
+                },
+                satisfaction["evidence"]["failures"],
             )
 
 

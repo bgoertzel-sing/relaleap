@@ -63,6 +63,22 @@ DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_CROSS_SCALE_REPORT = (
 DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_OUT_DIR = Path(
     "results/reports/temporal_clipped_hep_promotion_gate"
 )
+DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_SATISFACTION_REPORT = (
+    DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_OUT_DIR / "decision_report.json"
+)
+DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_SATISFACTION_REPORTS = (
+    Path("results/reports/temporal_clipped_hep_larger_local_decision/decision_report.json"),
+    Path("results/reports/temporal_clipped_hep_larger_colab_decision/decision_report.json"),
+    Path(
+        "results/reports/temporal_clipped_hep_token_larger_local_decision/decision_report.json"
+    ),
+    Path(
+        "results/reports/temporal_clipped_hep_token_larger_colab_decision/decision_report.json"
+    ),
+)
+DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_SATISFACTION_OUT_DIR = Path(
+    "results/reports/temporal_clipped_hep_promotion_gate_satisfaction"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -77,6 +93,9 @@ SELECT_TEMPORAL_CLIPPED_HEP_CROSS_SCALE_AGGREGATE = (
 )
 DEFINE_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE = (
     "define_temporal_label_free_support_stress_promotion_gate"
+)
+SATISFY_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE = (
+    "satisfy_temporal_label_free_support_stress_promotion_gate"
 )
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -891,6 +910,220 @@ def write_temporal_clipped_hep_promotion_gate_report(
     return report
 
 
+def write_temporal_clipped_hep_promotion_gate_satisfaction_report(
+    promotion_gate_report_path: Path = DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_SATISFACTION_REPORT,
+    decision_report_paths: list[Path] | tuple[Path, ...] = (
+        DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_SATISFACTION_REPORTS
+    ),
+    out_dir: Path = DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_SATISFACTION_OUT_DIR,
+    *,
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+    max_pinned_vs_repicked_delta: float = DEFAULT_MAX_PINNED_VS_REPICKED_DELTA,
+) -> dict[str, Any]:
+    """Decide whether the temporal clipped HEP promotion gate is satisfied."""
+
+    if max_logit_delta < 0.0:
+        raise ValueError("max_logit_delta must be non-negative")
+    if max_pinned_vs_repicked_delta < 0.0:
+        raise ValueError("max_pinned_vs_repicked_delta must be non-negative")
+
+    failures = []
+    promotion_gate_report: dict[str, Any] | None = None
+    if not promotion_gate_report_path.is_file():
+        failures.append(
+            {
+                "field": "promotion_gate_report",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(promotion_gate_report_path),
+            }
+        )
+    else:
+        promotion_gate_report = _read_json_object(promotion_gate_report_path)
+        if promotion_gate_report.get("status") != "pass":
+            failures.append(
+                {
+                    "field": "promotion_gate_report.status",
+                    "expected": "pass",
+                    "actual": promotion_gate_report.get("status"),
+                    "path": str(promotion_gate_report_path),
+                }
+            )
+        if (
+            promotion_gate_report.get("decision")
+            != DEFINE_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE
+        ):
+            failures.append(
+                {
+                    "field": "promotion_gate_report.decision",
+                    "expected": DEFINE_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE,
+                    "actual": promotion_gate_report.get("decision"),
+                    "path": str(promotion_gate_report_path),
+                }
+            )
+
+    entries = []
+    for path in decision_report_paths:
+        path = Path(path)
+        if not path.is_file():
+            failures.append(
+                {
+                    "field": "decision_report",
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(path),
+                }
+            )
+            continue
+        report = _read_json_object(path)
+        entry = _temporal_promotion_gate_entry(
+            path,
+            report,
+            max_logit_delta=max_logit_delta,
+            max_pinned_vs_repicked_delta=max_pinned_vs_repicked_delta,
+        )
+        entries.append(entry)
+        failures.extend(entry["failures"])
+
+    gate_backend_pairs = sorted(
+        {
+            (entry["gate"], entry["backend"])
+            for entry in entries
+            if entry.get("gate") is not None and entry.get("backend") is not None
+        }
+    )
+    required_pairs = {
+        ("larger_char_local_colab", "local"),
+        ("larger_char_local_colab", "colab"),
+        ("non_char_tokenized_local_colab", "local"),
+        ("non_char_tokenized_local_colab", "colab"),
+    }
+    for gate, backend in sorted(required_pairs - set(gate_backend_pairs)):
+        failures.append(
+            {
+                "field": "decision_report.gate_backend_pair",
+                "expected": f"{gate}/{backend}",
+                "actual": "missing",
+            }
+        )
+
+    accepted_entries = [
+        entry for entry in entries if entry.get("best_temporal_alpha") is not None
+    ]
+    improvements = [
+        entry["best_temporal_alpha"]["loss_improvement_from_alpha0"]
+        for entry in accepted_entries
+        if entry["best_temporal_alpha"]["loss_improvement_from_alpha0"] is not None
+    ]
+    logit_deltas = [
+        entry["best_temporal_alpha"]["max_logit_delta_from_ordinary"]
+        for entry in accepted_entries
+        if entry["best_temporal_alpha"]["max_logit_delta_from_ordinary"] is not None
+    ]
+    pinned_deltas = [
+        entry["best_temporal_alpha"]["pinned_vs_repicked_logit_delta"]
+        for entry in accepted_entries
+        if entry["best_temporal_alpha"]["pinned_vs_repicked_logit_delta"] is not None
+    ]
+    support_changes = [
+        entry["max_support_change_fraction"]
+        for entry in entries
+        if entry["max_support_change_fraction"] is not None
+    ]
+    status = "fail" if failures else "pass"
+    report = {
+        "status": status,
+        "decision": (
+            SATISFY_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE
+            if status == "pass"
+            else INSUFFICIENT_EVIDENCE
+        ),
+        "selected_label_free_support_stress_candidate": status == "pass",
+        "promotion_gate_satisfied": status == "pass",
+        "promote_to_default_support_stress_mitigation": status == "pass",
+        "deployable_label_free_signal": True,
+        "policy": {
+            "max_logit_delta_from_ordinary": max_logit_delta,
+            "max_pinned_vs_repicked_logit_delta": max_pinned_vs_repicked_delta,
+            "requires_promotion_gate_report_pass": True,
+            "requires_larger_char_local_and_colab": True,
+            "requires_non_char_tokenized_local_and_colab": True,
+            "requires_all_decision_reports_passing": True,
+            "requires_all_reports_select_temporal_candidate": True,
+            "requires_each_report_accepted_temporal_nonzero_alpha": True,
+            "requires_passing_artifact_checks": True,
+            "requires_nonzero_support_repick_evidence": True,
+            "allows_default_promotion": True,
+        },
+        "evidence": {
+            "promotion_gate_report_path": str(promotion_gate_report_path),
+            "promotion_gate_status": None
+            if promotion_gate_report is None
+            else promotion_gate_report.get("status"),
+            "promotion_gate_decision": None
+            if promotion_gate_report is None
+            else promotion_gate_report.get("decision"),
+            "decision_report_paths": [str(path) for path in decision_report_paths],
+            "report_count": len(entries),
+            "accepted_temporal_report_count": len(accepted_entries),
+            "gate_backend_pairs": [
+                {"gate": gate, "backend": backend}
+                for gate, backend in gate_backend_pairs
+            ],
+            "gate_count": len({gate for gate, _backend in gate_backend_pairs}),
+            "backend_count": len({backend for _gate, backend in gate_backend_pairs}),
+            "min_temporal_loss_improvement_from_alpha0": min(improvements)
+            if improvements
+            else None,
+            "mean_temporal_loss_improvement_from_alpha0": (
+                sum(improvements) / len(improvements) if improvements else None
+            ),
+            "max_temporal_loss_improvement_from_alpha0": max(improvements)
+            if improvements
+            else None,
+            "max_temporal_logit_delta_from_ordinary": max(logit_deltas)
+            if logit_deltas
+            else None,
+            "max_temporal_pinned_vs_repicked_logit_delta": max(pinned_deltas)
+            if pinned_deltas
+            else None,
+            "max_support_change_fraction": max(support_changes)
+            if support_changes
+            else None,
+            "entries": entries,
+            "failures": failures,
+        },
+        "rationale": (
+            "The defined promotion gate is satisfied: larger-char and non-char "
+            "tokenized local/Colab reports all pass, select temporal consistency, "
+            "show nonzero support repicking, and include accepted nonzero temporal "
+            "alphas inside both stability budgets."
+            if status == "pass"
+            else (
+                "The promotion gate is not satisfied until the gate definition and "
+                "all larger-char and non-char tokenized local/Colab decisions pass "
+                "with accepted temporal alphas and nonzero support repicking."
+            )
+        ),
+        "next_step": (
+            "make the explicit default support-stress mitigation change to temporal clipped HEP"
+            if status == "pass"
+            else "repair or regenerate the missing or failing promotion-gate evidence reports"
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_temporal_promotion_gate_satisfaction_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def _decision(evidence: dict[str, Any], *, max_logit_delta: float) -> dict[str, Any]:
     if (
         evidence["artifact_check_status"] != "pass"
@@ -1261,6 +1494,62 @@ def _temporal_aggregate_entry(
     }
 
 
+def _temporal_promotion_gate_entry(
+    path: Path,
+    report: dict[str, Any],
+    *,
+    max_logit_delta: float,
+    max_pinned_vs_repicked_delta: float,
+) -> dict[str, Any]:
+    entry = _temporal_aggregate_entry(
+        path,
+        report,
+        max_logit_delta=max_logit_delta,
+        max_pinned_vs_repicked_delta=max_pinned_vs_repicked_delta,
+    )
+    evidence = report.get("evidence") if isinstance(report.get("evidence"), dict) else {}
+    temporal_candidates = evidence.get("temporal_alpha_candidates")
+    if not isinstance(temporal_candidates, list):
+        temporal_candidates = []
+    gate = _infer_promotion_gate_from_report(
+        path,
+        evidence.get("comparison_dir"),
+        temporal_candidates,
+    )
+    entry["gate"] = gate
+    if gate is None:
+        entry["failures"].append(
+            {
+                "field": "decision_report.gate",
+                "expected": "larger char or non-char tokenized gate",
+                "actual": None,
+                "path": str(path),
+            }
+        )
+    if entry.get("artifact_check_status") != "pass":
+        entry["failures"].append(
+            {
+                "field": "decision_report.artifact_check_status",
+                "expected": "pass",
+                "actual": entry.get("artifact_check_status"),
+                "path": str(path),
+            }
+        )
+    if (
+        entry.get("max_support_change_fraction") is None
+        or float(entry["max_support_change_fraction"]) <= 0.0
+    ):
+        entry["failures"].append(
+            {
+                "field": "decision_report.max_support_change_fraction",
+                "expected": "> 0.0",
+                "actual": entry.get("max_support_change_fraction"),
+                "path": str(path),
+            }
+        )
+    return entry
+
+
 def _infer_seed_from_report(
     path: Path,
     comparison_dir: Any,
@@ -1302,6 +1591,10 @@ def _infer_scale_from_report(
         if isinstance(candidate, dict)
     )
     joined = " ".join(texts)
+    if "token_larger" in joined:
+        return "token_larger"
+    if "larger" in joined:
+        return "larger"
     if "extended" in joined:
         return "extended"
     if "validation" in joined:
@@ -1319,6 +1612,25 @@ def _infer_backend_from_report(path: Path, comparison_dir: Any) -> str | None:
         return "local"
     if "results/comparisons/" in text or "temporal_clipped_hep" in text:
         return "local"
+    return None
+
+
+def _infer_promotion_gate_from_report(
+    path: Path,
+    comparison_dir: Any,
+    temporal_candidates: list[Any],
+) -> str | None:
+    texts = [str(path), str(comparison_dir or "")]
+    texts.extend(
+        str(candidate.get("experiment_id", ""))
+        for candidate in temporal_candidates
+        if isinstance(candidate, dict)
+    )
+    joined = " ".join(texts)
+    if "token_larger" in joined:
+        return "non_char_tokenized_local_colab"
+    if "larger" in joined:
+        return "larger_char_local_colab"
     return None
 
 
@@ -1904,6 +2216,89 @@ def _write_temporal_promotion_gate_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_temporal_promotion_gate_satisfaction_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Temporal Clipped HEP Promotion Gate Satisfaction",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        f"- Promotion gate satisfied: `{report['promotion_gate_satisfied']}`",
+        (
+            "- Promote to default support-stress mitigation: "
+            f"`{report['promote_to_default_support_stress_mitigation']}`"
+        ),
+        f"- Promotion gate report: `{evidence['promotion_gate_report_path']}`",
+        f"- Promotion gate status: `{evidence['promotion_gate_status']}`",
+        f"- Promotion gate decision: `{evidence['promotion_gate_decision']}`",
+        f"- Report count: `{evidence['report_count']}`",
+        (
+            "- Accepted temporal report count: "
+            f"`{evidence['accepted_temporal_report_count']}`"
+        ),
+        (
+            "- Mean temporal loss improvement from alpha 0: "
+            f"`{_format_metric(evidence['mean_temporal_loss_improvement_from_alpha0'])}`"
+        ),
+        (
+            "- Max temporal logit delta from ordinary: "
+            f"`{_format_metric(evidence['max_temporal_logit_delta_from_ordinary'])}`"
+        ),
+        (
+            "- Max temporal pinned-vs-repicked logit delta: "
+            f"`{_format_metric(evidence['max_temporal_pinned_vs_repicked_logit_delta'])}`"
+        ),
+        (
+            "- Max support change fraction: "
+            f"`{_format_metric(evidence['max_support_change_fraction'])}`"
+        ),
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        (
+            "| Gate | Backend | Status | Artifact check | Selected | Alpha "
+            "| Loss improvement | Logit delta | Pinned-vs-repicked | Support change | Source |"
+        ),
+        "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for entry in evidence["entries"]:
+        alpha = entry.get("best_temporal_alpha") or {}
+        lines.append(
+            (
+                f"| {entry.get('gate') or ''} "
+                f"| {entry.get('backend') or ''} "
+                f"| {entry.get('status') or ''} "
+                f"| {entry.get('artifact_check_status') or ''} "
+                f"| {entry.get('selected_label_free_support_stress_candidate')} "
+                f"| {_format_metric(alpha.get('alpha'))} "
+                f"| {_format_metric(alpha.get('loss_improvement_from_alpha0'))} "
+                f"| {_format_metric(alpha.get('max_logit_delta_from_ordinary'))} "
+                f"| {_format_metric(alpha.get('pinned_vs_repicked_logit_delta'))} "
+                f"| {_format_metric(entry.get('max_support_change_fraction'))} "
+                f"| `{entry.get('path')}` |"
+            )
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -1924,6 +2319,7 @@ def main() -> None:
             "temporal-clipped-hep-aggregate",
             "temporal-clipped-hep-cross-scale-aggregate",
             "temporal-clipped-hep-promotion-gate",
+            "temporal-clipped-hep-promotion-gate-satisfaction",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -2010,6 +2406,21 @@ def main() -> None:
             if args.decision_report
             else DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_CROSS_SCALE_REPORT,
             args.out or DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_OUT_DIR,
+        )
+    elif args.report == "temporal-clipped-hep-promotion-gate-satisfaction":
+        decision_reports = (
+            args.decision_report[1:]
+            if args.decision_report and len(args.decision_report) > 1
+            else DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_SATISFACTION_REPORTS
+        )
+        report = write_temporal_clipped_hep_promotion_gate_satisfaction_report(
+            args.decision_report[0]
+            if args.decision_report
+            else DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_SATISFACTION_REPORT,
+            decision_reports,
+            args.out or DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_SATISFACTION_OUT_DIR,
+            max_logit_delta=args.max_logit_delta,
+            max_pinned_vs_repicked_delta=args.max_pinned_vs_repicked_delta,
         )
     else:
         report = write_pinned_support_decision_report(

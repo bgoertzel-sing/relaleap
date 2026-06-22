@@ -1,0 +1,165 @@
+{
+  "decision": "satisfy_temporal_label_free_support_stress_promotion_gate",
+  "deployable_label_free_signal": true,
+  "evidence": {
+    "accepted_temporal_report_count": 4,
+    "backend_count": 2,
+    "decision_report_paths": [
+      "results/reports/temporal_clipped_hep_larger_local_decision/decision_report.json",
+      "results/reports/temporal_clipped_hep_larger_colab_decision/decision_report.json",
+      "results/reports/temporal_clipped_hep_token_larger_local_decision/decision_report.json",
+      "results/reports/temporal_clipped_hep_token_larger_colab_decision/decision_report.json"
+    ],
+    "entries": [
+      {
+        "artifact_check_status": "pass",
+        "backend": "local",
+        "best_temporal_alpha": {
+          "alpha": 1.0,
+          "experiment_id": "char_larger_hep_support_stress_temporal_clipped",
+          "loss": 3.920978307723999,
+          "loss_improvement_from_alpha0": 5.435943603515625e-05,
+          "max_logit_delta_from_ordinary": 0.0006286799907684326,
+          "pinned_vs_repicked_logit_delta": 0.003198862075805664,
+          "support_change_fraction": 0.650390625
+        },
+        "comparison_dir": "results/comparisons/larger_support_stress_temporal_vs_entropy_guided_clipped_hep",
+        "comparison_status": "ok",
+        "decision": "select_temporal_label_free_support_stress_candidate",
+        "failures": [],
+        "gate": "larger_char_local_colab",
+        "max_support_change_fraction": 0.650390625,
+        "path": "results/reports/temporal_clipped_hep_larger_local_decision/decision_report.json",
+        "scale": "larger",
+        "seed": 1,
+        "selected_label_free_support_stress_candidate": true,
+        "status": "pass",
+        "verdict_status": "pass"
+      },
+      {
+        "artifact_check_status": "pass",
+        "backend": "colab",
+        "best_temporal_alpha": {
+          "alpha": 1.0,
+          "experiment_id": "char_larger_hep_support_stress_temporal_clipped",
+          "loss": 3.920978307723999,
+          "loss_improvement_from_alpha0": 5.412101745605469e-05,
+          "max_logit_delta_from_ordinary": 0.0006286799907684326,
+          "pinned_vs_repicked_logit_delta": 0.0031991004943847656,
+          "support_change_fraction": 0.650390625
+        },
+        "comparison_dir": "results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep",
+        "comparison_status": "ok",
+        "decision": "select_temporal_label_free_support_stress_candidate",
+        "failures": [],
+        "gate": "larger_char_local_colab",
+        "max_support_change_fraction": 0.650390625,
+        "path": "results/reports/temporal_clipped_hep_larger_colab_decision/decision_report.json",
+        "scale": "larger",
+        "seed": 1,
+        "selected_label_free_support_stress_candidate": true,
+        "status": "pass",
+        "verdict_status": "pass"
+      },
+      {
+        "artifact_check_status": "pass",
+        "backend": "local",
+        "best_temporal_alpha": {
+          "alpha": 1.0,
+          "experiment_id": "token_larger_hep_support_stress_temporal_clipped",
+          "loss": 4.53264856338501,
+          "loss_improvement_from_alpha0": 0.000110626220703125,
+          "max_logit_delta_from_ordinary": 0.0017414987087249756,
+          "pinned_vs_repicked_logit_delta": 0.003972291946411133,
+          "support_change_fraction": 0.60546875
+        },
+        "comparison_dir": "results/comparisons/token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep",
+        "comparison_status": "ok",
+        "decision": "select_temporal_label_free_support_stress_candidate",
+        "failures": [],
+        "gate": "non_char_tokenized_local_colab",
+        "max_support_change_fraction": 0.60546875,
+        "path": "results/reports/temporal_clipped_hep_token_larger_local_decision/decision_report.json",
+        "scale": "token_larger",
+        "seed": 1,
+        "selected_label_free_support_stress_candidate": true,
+        "status": "pass",
+        "verdict_status": "pass"
+      },
+      {
+        "artifact_check_status": "pass",
+        "backend": "colab",
+        "best_temporal_alpha": {
+          "alpha": 1.0,
+          "experiment_id": "token_larger_hep_support_stress_temporal_clipped",
+          "loss": 4.532649040222168,
+          "loss_improvement_from_alpha0": 0.00011014938354492188,
+          "max_logit_delta_from_ordinary": 0.0017414391040802002,
+          "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+          "support_change_fraction": 0.60546875
+        },
+        "comparison_dir": "results/comparisons/colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep",
+        "comparison_status": "ok",
+        "decision": "select_temporal_label_free_support_stress_candidate",
+        "failures": [],
+        "gate": "non_char_tokenized_local_colab",
+        "max_support_change_fraction": 0.60546875,
+        "path": "results/reports/temporal_clipped_hep_token_larger_colab_decision/decision_report.json",
+        "scale": "token_larger",
+        "seed": 1,
+        "selected_label_free_support_stress_candidate": true,
+        "status": "pass",
+        "verdict_status": "pass"
+      }
+    ],
+    "failures": [],
+    "gate_backend_pairs": [
+      {
+        "backend": "colab",
+        "gate": "larger_char_local_colab"
+      },
+      {
+        "backend": "local",
+        "gate": "larger_char_local_colab"
+      },
+      {
+        "backend": "colab",
+        "gate": "non_char_tokenized_local_colab"
+      },
+      {
+        "backend": "local",
+        "gate": "non_char_tokenized_local_colab"
+      }
+    ],
+    "gate_count": 2,
+    "max_support_change_fraction": 0.650390625,
+    "max_temporal_logit_delta_from_ordinary": 0.0017414987087249756,
+    "max_temporal_loss_improvement_from_alpha0": 0.000110626220703125,
+    "max_temporal_pinned_vs_repicked_logit_delta": 0.003972291946411133,
+    "mean_temporal_loss_improvement_from_alpha0": 8.231401443481445e-05,
+    "min_temporal_loss_improvement_from_alpha0": 5.412101745605469e-05,
+    "promotion_gate_decision": "define_temporal_label_free_support_stress_promotion_gate",
+    "promotion_gate_report_path": "results/reports/temporal_clipped_hep_promotion_gate/decision_report.json",
+    "promotion_gate_status": "pass",
+    "report_count": 4
+  },
+  "next_step": "make the explicit default support-stress mitigation change to temporal clipped HEP",
+  "policy": {
+    "allows_default_promotion": true,
+    "max_logit_delta_from_ordinary": 0.1,
+    "max_pinned_vs_repicked_logit_delta": 0.1,
+    "requires_all_decision_reports_passing": true,
+    "requires_all_reports_select_temporal_candidate": true,
+    "requires_each_report_accepted_temporal_nonzero_alpha": true,
+    "requires_larger_char_local_and_colab": true,
+    "requires_non_char_tokenized_local_and_colab": true,
+    "requires_nonzero_support_repick_evidence": true,
+    "requires_passing_artifact_checks": true,
+    "requires_promotion_gate_report_pass": true
+  },
+  "promote_to_default_support_stress_mitigation": true,
+  "promotion_gate_satisfied": true,
+  "rationale": "The defined promotion gate is satisfied: larger-char and non-char tokenized local/Colab reports all pass, select temporal consistency, show nonzero support repicking, and include accepted nonzero temporal alphas inside both stability budgets.",
+  "selected_label_free_support_stress_candidate": true,
+  "status": "pass"
+}

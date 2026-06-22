@@ -598,6 +598,24 @@ python -m relaleap.experiments.decision_report \
   --out results/reports/temporal_clipped_hep_token_larger_colab_decision
 ```
 
+After the larger-char and tokenized local/Colab decision reports exist, write
+the command-driven promotion-gate satisfaction report without rerunning
+experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report temporal-clipped-hep-promotion-gate-satisfaction \
+  --out results/reports/temporal_clipped_hep_promotion_gate_satisfaction
+```
+
+The report writes `decision_report.json` and `decision_report.md`. It fails
+closed unless the promotion-gate definition report passes and the larger-char
+and tokenized local/Colab reports all pass, select temporal consistency, show
+nonzero support repicking, and include an accepted nonzero temporal alpha inside
+the ordinary-logit and pinned-vs-repicked budgets. A passing report satisfies
+the defined promotion gate and recommends the next explicit default
+support-stress mitigation change to temporal clipped HEP.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
