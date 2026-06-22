@@ -585,6 +585,22 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/artifact_check.json
 ```
 
+After matching local and Colab confidence-penalty artifacts exist, write the
+command-driven confidence-penalty objective decision report without rerunning
+experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report confidence-penalty-residual-objective-decision \
+  --out results/reports/confidence_penalty_residual_objective_decision
+```
+
+The report writes `decision_report.json` and `decision_report.md`. Under the
+current local and Colab artifacts, confidence penalty improves its own final
+residual training loss but is still worse than supervised CE on best
+temporal-clipped HEP supervised loss, so the report stops confidence-penalty
+objective validation under the current gate.
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 

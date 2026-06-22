@@ -344,6 +344,16 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/artifact_check.json
 ```
 
+After matching local and extracted Colab confidence-penalty artifacts exist,
+write the command-driven confidence-penalty objective decision report without
+rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report confidence-penalty-residual-objective-decision \
+  --out results/reports/confidence_penalty_residual_objective_decision
+```
+
 The extended label-free temporal check moves outside the current char
 validation setting with sequence length `96`, hidden dimension `64`, `16`
 residual columns, `4` HEP settling steps, and `30` training steps:

@@ -118,6 +118,21 @@ DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
 DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_OUT_DIR = Path(
     "results/reports/anchored_pc_residual_objective_decision"
 )
+DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS = (
+    Path("results/comparisons/validation_confidence_penalty_temporal_clipped_objective_gate"),
+    Path(
+        "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate"
+    ),
+)
+DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
+    DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[0]
+    / "artifact_check_local.json",
+    DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[1]
+    / "artifact_check_local.json",
+)
+DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_OUT_DIR = Path(
+    "results/reports/confidence_penalty_residual_objective_decision"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -145,8 +160,14 @@ KEEP_SUPERVISED_CE_RESIDUAL_OBJECTIVE_DEFAULT = (
 CONTINUE_PC_RESIDUAL_OBJECTIVE_VALIDATION = (
     "continue_pc_residual_objective_validation"
 )
+CONTINUE_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION = (
+    "continue_confidence_penalty_residual_objective_validation"
+)
 DIAGNOSE_PC_RESIDUAL_OBJECTIVE = "diagnose_pc_residual_objective_gap"
 STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION = "stop_pc_residual_objective_validation"
+STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION = (
+    "stop_confidence_penalty_residual_objective_validation"
+)
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
@@ -1906,6 +1927,177 @@ def write_anchored_pc_residual_objective_decision_report(
     return report
 
 
+def write_confidence_penalty_residual_objective_decision_report(
+    comparison_dirs: list[Path] | tuple[Path, ...] = (
+        DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS
+    ),
+    out_dir: Path = DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_OUT_DIR,
+    *,
+    artifact_check_paths: list[Path] | tuple[Path, ...] | None = (
+        DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS
+    ),
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+) -> dict[str, Any]:
+    """Decide whether confidence-penalty CE merits more objective validation."""
+
+    if max_logit_delta < 0.0:
+        raise ValueError("max_logit_delta must be non-negative")
+
+    entries = []
+    failures = []
+    artifact_paths = list(artifact_check_paths or [])
+    for index, comparison_dir in enumerate(comparison_dirs):
+        comparison_dir = Path(comparison_dir)
+        artifact_check_path = (
+            Path(artifact_paths[index]) if index < len(artifact_paths) else None
+        )
+        entry = _confidence_penalty_residual_objective_entry(
+            comparison_dir,
+            artifact_check_path=artifact_check_path,
+            max_logit_delta=max_logit_delta,
+        )
+        entries.append(entry)
+        failures.extend(entry["failures"])
+
+    backends = sorted(
+        {
+            entry["backend"]
+            for entry in entries
+            if entry.get("backend") in {"local", "colab"}
+        }
+    )
+    for backend in sorted({"local", "colab"} - set(backends)):
+        failures.append(
+            {
+                "field": "comparison.backend",
+                "expected": backend,
+                "actual": "missing",
+            }
+        )
+
+    supervised_runs = [
+        entry["supervised_run"] for entry in entries if entry.get("supervised_run")
+    ]
+    confidence_runs = [
+        entry["confidence_penalty_run"]
+        for entry in entries
+        if entry.get("confidence_penalty_run")
+    ]
+    confidence_ce_wins = [
+        entry
+        for entry in entries
+        if entry.get("supervised_run")
+        and entry.get("confidence_penalty_run")
+        and entry["confidence_penalty_run"]["best_hep_loss"] is not None
+        and entry["supervised_run"]["best_hep_loss"] is not None
+        and entry["confidence_penalty_run"]["best_hep_loss"]
+        < entry["supervised_run"]["best_hep_loss"]
+    ]
+    confidence_minus_supervised = [
+        entry["confidence_penalty_minus_supervised_best_hep_loss"]
+        for entry in entries
+        if entry.get("confidence_penalty_minus_supervised_best_hep_loss") is not None
+    ]
+    residual_loss_deltas = [
+        entry["confidence_penalty_minus_supervised_final_residual_loss"]
+        for entry in entries
+        if entry.get("confidence_penalty_minus_supervised_final_residual_loss")
+        is not None
+    ]
+    status = "fail" if failures else "pass"
+    continue_variant = status == "pass" and bool(confidence_ce_wins)
+    report = {
+        "status": status,
+        "decision": (
+            CONTINUE_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION
+            if continue_variant
+            else (
+                STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION
+                if status == "pass"
+                else INSUFFICIENT_EVIDENCE
+            )
+        ),
+        "continue_confidence_penalty_residual_objective_validation": continue_variant,
+        "selected_residual_objective_variant": (
+            "supervised_ce_confidence_penalty" if continue_variant else None
+        ),
+        "promote_residual_learning_method": False,
+        "default_residual_objective": "supervised_ce",
+        "policy": {
+            "max_logit_delta_from_ordinary": max_logit_delta,
+            "requires_local_and_colab_evidence": True,
+            "requires_passing_artifact_checks": True,
+            "requires_supervised_and_confidence_penalty_runs": True,
+            "requires_support_stress_preset_disabled": True,
+            "requires_temporal_clipped_hep_path": True,
+            "requires_both_objectives_improve_own_training_loss": True,
+            "requires_confidence_penalty_lower_supervised_ce_hep_loss_to_continue": True,
+            "allows_residual_objective_promotion": False,
+            "diagnostic_decision_only": True,
+        },
+        "evidence": {
+            "comparison_dirs": [str(path) for path in comparison_dirs],
+            "artifact_check_paths": [str(path) for path in artifact_paths],
+            "backend_count": len(backends),
+            "backends": backends,
+            "comparison_count": len(entries),
+            "supervised_run_count": len(supervised_runs),
+            "confidence_penalty_run_count": len(confidence_runs),
+            "confidence_penalty_ce_win_count": len(confidence_ce_wins),
+            "mean_confidence_penalty_minus_supervised_best_hep_loss": (
+                sum(confidence_minus_supervised) / len(confidence_minus_supervised)
+                if confidence_minus_supervised
+                else None
+            ),
+            "mean_confidence_penalty_minus_supervised_final_residual_loss": (
+                sum(residual_loss_deltas) / len(residual_loss_deltas)
+                if residual_loss_deltas
+                else None
+            ),
+            "entries": entries,
+            "failures": failures,
+        },
+        "rationale": (
+            "The confidence-penalty objective improves its own residual training "
+            "loss but does not beat supervised CE on best temporal-clipped HEP "
+            "supervised loss in the checked local and Colab artifacts. It should "
+            "not continue under the current objective gate."
+            if status == "pass" and not continue_variant
+            else (
+                "The confidence-penalty objective beats supervised CE HEP loss in "
+                "at least one artifact-backed backend, so it merits broader "
+                "objective validation before any default change."
+                if status == "pass"
+                else (
+                    "The confidence-penalty decision requires matching local and "
+                    "Colab comparisons with passing artifact checks and valid "
+                    "supervised and confidence-penalty temporal-clipped runs."
+                )
+            )
+        ),
+        "next_step": (
+            "select the next non-PC residual objective variant to test under the objective gate"
+            if status == "pass" and not continue_variant
+            else (
+                "run a broader confidence-penalty objective comparison outside the current char validation setting"
+                if status == "pass"
+                else "repair or regenerate the confidence-penalty objective comparison artifacts"
+            )
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_confidence_penalty_residual_objective_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def _residual_objective_gate_entry(
     comparison_dir: Path,
     *,
@@ -2148,6 +2340,153 @@ def _anchored_pc_residual_objective_entry(
         )
     )
     return entry
+
+
+def _confidence_penalty_residual_objective_entry(
+    comparison_dir: Path,
+    *,
+    artifact_check_path: Path | None,
+    max_logit_delta: float,
+) -> dict[str, Any]:
+    entry = _residual_objective_variant_entry(
+        comparison_dir,
+        variant_objective="supervised_ce_confidence_penalty",
+        variant_field="confidence_penalty_run",
+        missing_field="comparison.runs.supervised_ce_confidence_penalty",
+        artifact_check_path=artifact_check_path,
+        max_logit_delta=max_logit_delta,
+    )
+    supervised = entry.get("supervised_run")
+    confidence = entry.get("confidence_penalty_run")
+    entry["confidence_penalty_minus_supervised_best_hep_loss"] = _best_loss_delta(
+        confidence,
+        supervised,
+    )
+    entry["confidence_penalty_minus_supervised_final_residual_loss"] = (
+        None
+        if not isinstance(confidence, dict)
+        or not isinstance(supervised, dict)
+        or confidence.get("final_residual_loss") is None
+        or supervised.get("final_residual_loss") is None
+        else float(confidence["final_residual_loss"])
+        - float(supervised["final_residual_loss"])
+    )
+    return entry
+
+
+def _residual_objective_variant_entry(
+    comparison_dir: Path,
+    *,
+    variant_objective: str,
+    variant_field: str,
+    missing_field: str,
+    artifact_check_path: Path | None,
+    max_logit_delta: float,
+) -> dict[str, Any]:
+    failures = []
+    comparison: dict[str, Any] | None = None
+    artifact_check: dict[str, Any] | None = None
+    if not (comparison_dir / "summary.json").is_file():
+        failures.append(
+            {
+                "field": "comparison.summary.json",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(comparison_dir / "summary.json"),
+            }
+        )
+    else:
+        comparison = _read_json_object(comparison_dir / "summary.json")
+    if artifact_check_path is not None and artifact_check_path.is_file():
+        artifact_check = _read_json_object(artifact_check_path)
+    elif comparison is not None:
+        artifact_check = check_comparison_artifacts(comparison_dir)
+
+    runs = (
+        comparison.get("runs", [])
+        if isinstance(comparison, dict) and isinstance(comparison.get("runs"), list)
+        else []
+    )
+    supervised_runs = _runs_with_residual_objective(runs, "supervised_ce")
+    variant_runs = _runs_with_residual_objective(runs, variant_objective)
+    supervised_run = (
+        _residual_objective_run_entry(supervised_runs[0], max_logit_delta=max_logit_delta)
+        if supervised_runs
+        else None
+    )
+    variant_run = (
+        _residual_objective_run_entry(variant_runs[0], max_logit_delta=max_logit_delta)
+        if variant_runs
+        else None
+    )
+    verdict = comparison.get("verdict") if isinstance(comparison, dict) else None
+    verdict = verdict if isinstance(verdict, dict) else {}
+    backend = _infer_backend_from_report(comparison_dir, comparison_dir)
+
+    if artifact_check is None or artifact_check.get("status") != "pass":
+        failures.append(
+            {
+                "field": "artifact_check.status",
+                "expected": "pass",
+                "actual": None if artifact_check is None else artifact_check.get("status"),
+                "path": str(artifact_check_path or comparison_dir),
+            }
+        )
+    if comparison is None or comparison.get("status") != "ok":
+        failures.append(
+            {
+                "field": "comparison.status",
+                "expected": "ok",
+                "actual": None if comparison is None else comparison.get("status"),
+                "path": str(comparison_dir),
+            }
+        )
+    if verdict.get("status") != "pass":
+        failures.append(
+            {
+                "field": "comparison.verdict.status",
+                "expected": "pass",
+                "actual": verdict.get("status"),
+                "path": str(comparison_dir),
+            }
+        )
+    if not supervised_runs:
+        failures.append(
+            {
+                "field": "comparison.runs.supervised_ce",
+                "expected": "one run",
+                "actual": 0,
+                "path": str(comparison_dir),
+            }
+        )
+    if not variant_runs:
+        failures.append(
+            {
+                "field": missing_field,
+                "expected": "one run",
+                "actual": 0,
+                "path": str(comparison_dir),
+            }
+        )
+    for run_entry in (supervised_run, variant_run):
+        if run_entry is not None:
+            _append_residual_objective_run_failures(
+                failures,
+                comparison_dir,
+                run_entry,
+            )
+
+    return {
+        "comparison_dir": str(comparison_dir),
+        "artifact_check_path": str(artifact_check_path) if artifact_check_path else None,
+        "backend": backend,
+        "artifact_check_status": None if artifact_check is None else artifact_check.get("status"),
+        "comparison_status": None if comparison is None else comparison.get("status"),
+        "verdict_status": verdict.get("status"),
+        "supervised_run": supervised_run,
+        variant_field: variant_run,
+        "failures": failures,
+    }
 
 
 def _append_residual_objective_run_failures(
@@ -3865,6 +4204,76 @@ def _write_anchored_pc_residual_objective_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_confidence_penalty_residual_objective_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Confidence-Penalty Residual Objective Decision",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        (
+            "- Continue confidence-penalty validation: "
+            f"`{report['continue_confidence_penalty_residual_objective_validation']}`"
+        ),
+        (
+            "- Selected variant: "
+            f"`{report['selected_residual_objective_variant']}`"
+        ),
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        f"- Backends: `{', '.join(evidence['backends'])}`",
+        (
+            "- Mean confidence-penalty minus supervised best HEP loss: "
+            f"`{_format_metric(evidence['mean_confidence_penalty_minus_supervised_best_hep_loss'])}`"
+        ),
+        (
+            "- Mean confidence-penalty minus supervised final residual loss: "
+            f"`{_format_metric(evidence['mean_confidence_penalty_minus_supervised_final_residual_loss'])}`"
+        ),
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        (
+            "| Backend | Artifact check | Supervised best HEP loss "
+            "| Confidence-penalty best HEP loss | Confidence minus supervised "
+            "| Confidence final residual loss | Source |"
+        ),
+        "| --- | --- | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for entry in evidence["entries"]:
+        supervised = entry.get("supervised_run") or {}
+        confidence = entry.get("confidence_penalty_run") or {}
+        lines.append(
+            (
+                f"| {entry.get('backend') or ''} "
+                f"| {entry.get('artifact_check_status') or ''} "
+                f"| {_format_metric(supervised.get('best_hep_loss'))} "
+                f"| {_format_metric(confidence.get('best_hep_loss'))} "
+                f"| {_format_metric(entry.get('confidence_penalty_minus_supervised_best_hep_loss'))} "
+                f"| {_format_metric(confidence.get('final_residual_loss'))} "
+                f"| `{entry.get('comparison_dir')}` |"
+            )
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -3890,6 +4299,7 @@ def main() -> None:
             "residual-objective-gate",
             "pc-residual-objective-diagnostics",
             "anchored-pc-residual-objective-decision",
+            "confidence-penalty-residual-objective-decision",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -4037,6 +4447,17 @@ def main() -> None:
             else DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_COMPARISON_DIRS,
             args.out or DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_OUT_DIR,
             artifact_check_paths=DEFAULT_ANCHORED_PC_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS
+            if not args.artifact_check
+            else (args.artifact_check,),
+            max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "confidence-penalty-residual-objective-decision":
+        report = write_confidence_penalty_residual_objective_decision_report(
+            tuple(args.decision_report)
+            if args.decision_report
+            else DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS,
+            args.out or DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_OUT_DIR,
+            artifact_check_paths=DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS
             if not args.artifact_check
             else (args.artifact_check,),
             max_logit_delta=args.max_logit_delta,

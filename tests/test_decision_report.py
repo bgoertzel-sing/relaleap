@@ -19,10 +19,13 @@ from relaleap.experiments.decision_report import (
     DEFINE_POST_PROMOTION_RESIDUAL_LEARNING_GATE,
     KEEP_SUPERVISED_CE_RESIDUAL_OBJECTIVE_DEFAULT,
     CONTINUE_PC_RESIDUAL_OBJECTIVE_VALIDATION,
+    CONTINUE_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
+    STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
     write_anchored_pc_residual_objective_decision_report,
     write_clipped_hep_decision_report,
+    write_confidence_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
     write_pinned_support_decision_report,
@@ -1123,6 +1126,146 @@ class AnchoredPcResidualObjectiveDecisionReportTest(unittest.TestCase):
             )
 
 
+class ConfidencePenaltyResidualObjectiveDecisionReportTest(unittest.TestCase):
+    def test_valid_local_and_colab_confidence_penalty_stops_variant_without_ce_win(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dirs = []
+            artifact_checks = []
+            for backend in ("local", "colab"):
+                comparison_dir = tmp_path / f"{backend}_confidence_objective_gate"
+                _write_residual_objective_gate_comparison(
+                    comparison_dir,
+                    pc_best_hep_loss=3.60,
+                    confidence_penalty_best_hep_loss=3.5801,
+                    support_stress_preset=False,
+                )
+                artifact_check = comparison_dir / "artifact_check_local.json"
+                artifact_check.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                comparison_dirs.append(comparison_dir)
+                artifact_checks.append(artifact_check)
+
+            report = write_confidence_penalty_residual_objective_decision_report(
+                comparison_dirs,
+                tmp_path / "confidence_penalty_decision",
+                artifact_check_paths=artifact_checks,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
+            )
+            self.assertFalse(
+                report["continue_confidence_penalty_residual_objective_validation"]
+            )
+            self.assertIsNone(report["selected_residual_objective_variant"])
+            self.assertEqual(report["evidence"]["confidence_penalty_ce_win_count"], 0)
+            self.assertLess(
+                report[
+                    "evidence"
+                ]["mean_confidence_penalty_minus_supervised_final_residual_loss"],
+                0.0,
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "confidence_penalty_decision"
+                    / "decision_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "confidence_penalty_decision"
+                    / "decision_report.md"
+                ).is_file()
+            )
+
+    def test_confidence_penalty_ce_win_continues_variant_without_promotion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dirs = []
+            artifact_checks = []
+            for backend in ("local", "colab"):
+                comparison_dir = tmp_path / f"{backend}_confidence_objective_gate"
+                _write_residual_objective_gate_comparison(
+                    comparison_dir,
+                    pc_best_hep_loss=3.60,
+                    confidence_penalty_best_hep_loss=3.57,
+                    support_stress_preset=False,
+                )
+                artifact_check = comparison_dir / "artifact_check_local.json"
+                artifact_check.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                comparison_dirs.append(comparison_dir)
+                artifact_checks.append(artifact_check)
+
+            report = write_confidence_penalty_residual_objective_decision_report(
+                comparison_dirs,
+                tmp_path / "confidence_penalty_decision",
+                artifact_check_paths=artifact_checks,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                CONTINUE_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
+            )
+            self.assertTrue(
+                report["continue_confidence_penalty_residual_objective_validation"]
+            )
+            self.assertEqual(
+                report["selected_residual_objective_variant"],
+                "supervised_ce_confidence_penalty",
+            )
+            self.assertFalse(report["promote_residual_learning_method"])
+            self.assertEqual(report["evidence"]["confidence_penalty_ce_win_count"], 2)
+
+    def test_missing_confidence_penalty_run_blocks_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "local_confidence_objective_gate"
+            _write_residual_objective_gate_comparison(
+                comparison_dir,
+                pc_best_hep_loss=3.60,
+                support_stress_preset=False,
+            )
+            artifact_check = comparison_dir / "artifact_check_local.json"
+            artifact_check.write_text(
+                json.dumps({"status": "pass"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_confidence_penalty_residual_objective_decision_report(
+                [comparison_dir],
+                tmp_path / "confidence_penalty_decision",
+                artifact_check_paths=[artifact_check],
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(
+                report["continue_confidence_penalty_residual_objective_validation"]
+            )
+            self.assertIn(
+                {
+                    "field": "comparison.runs.supervised_ce_confidence_penalty",
+                    "expected": "one run",
+                    "actual": 0,
+                    "path": str(comparison_dir),
+                },
+                report["evidence"]["failures"],
+            )
+
+
 def _write_comparison(
     comparison_dir: Path,
     *,
@@ -1405,6 +1548,7 @@ def _write_residual_objective_gate_comparison(
     pc_best_hep_loss: float,
     support_stress_preset: bool,
     anchored_pc_best_hep_loss: float | None = None,
+    confidence_penalty_best_hep_loss: float | None = None,
 ) -> None:
     comparison_dir.mkdir(parents=True)
     runs = [
@@ -1433,6 +1577,17 @@ def _write_residual_objective_gate_comparison(
                 initial_loss=0.40,
                 final_loss=0.38,
                 best_hep_loss=anchored_pc_best_hep_loss,
+                support_stress_preset=support_stress_preset,
+            )
+        )
+    if confidence_penalty_best_hep_loss is not None:
+        runs.append(
+            _residual_objective_run_entry(
+                "confidence_penalty",
+                residual_objective="supervised_ce_confidence_penalty",
+                initial_loss=3.69,
+                final_loss=3.55,
+                best_hep_loss=confidence_penalty_best_hep_loss,
                 support_stress_preset=support_stress_preset,
             )
         )
