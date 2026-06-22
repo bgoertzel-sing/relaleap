@@ -30,6 +30,10 @@ class ColabNotebookTest(unittest.TestCase):
             "configs/token_larger_hep_support_stress_clipped.yaml",
             checkout_cell,
         )
+        self.assertIn(
+            "configs/char_validation_pc_hep_support_stress_temporal_clipped.yaml",
+            checkout_cell,
+        )
 
     def test_run_cell_executes_token_larger_colab_path(self) -> None:
         notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
@@ -61,6 +65,38 @@ class ColabNotebookTest(unittest.TestCase):
         )
         self.assertIn("token_larger_hep_support_stress_temporal_clipped", evidence_cell)
         self.assertIn("tiny_shakespeare_word", evidence_cell)
+
+    def test_run_cell_executes_validation_pc_colab_path(self) -> None:
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+        run_cells = [
+            source
+            for source in sources
+            if "colab_validation_pc_vs_supervised_temporal_clipped_hep" in source
+        ]
+
+        self.assertEqual(len(run_cells), 2)
+        run_cell, evidence_cell = run_cells
+        self.assertIn(
+            "--config configs/char_validation_hep_support_stress_temporal_clipped.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/char_validation_pc_hep_support_stress_temporal_clipped.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "char_validation_hep_support_stress_temporal_clipped",
+            evidence_cell,
+        )
+        self.assertIn(
+            "char_validation_pc_hep_support_stress_temporal_clipped",
+            evidence_cell,
+        )
+        self.assertIn(
+            "Validation PC-vs-supervised temporal clipped comparison status:",
+            evidence_cell,
+        )
 
 
 if __name__ == "__main__":

@@ -93,6 +93,9 @@ and the broader seed-4 temporal comparison under
 `results/comparisons/colab_support_stress_temporal_vs_entropy_guided_clipped_hep_seed4`,
 the non-smoke temporal validation under
 `results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_clipped_hep`,
+the post-promotion validation PC-vs-supervised temporal-clipped comparison
+under
+`results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep`,
 the extended temporal support-stress check under
 `results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep`,
 the larger-char promotion-gate support-stress check under
@@ -279,6 +282,20 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_clipped_hep/artifact_check.json
 ```
 
+The post-promotion validation PC-vs-supervised temporal-clipped comparison uses
+the same command-driven harness and artifact checker under the Colab-prefixed
+validation path:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_support_stress_temporal_clipped.yaml \
+  --config configs/char_validation_pc_hep_support_stress_temporal_clipped.yaml \
+  --out results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep \
+  --out results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep/artifact_check.json
+```
+
 The extended label-free temporal check moves outside the current char
 validation setting with sequence length `96`, hidden dimension `64`, `16`
 residual columns, `4` HEP settling steps, and `30` training steps:
@@ -409,6 +426,12 @@ results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_c
 results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_validation_hep_support_stress_entropy_clipped/summary.json
 results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_validation_hep_support_stress_temporal_clipped/summary.json
 results/comparisons/colab_validation_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/char_validation_hep_support_stress_guided_clipped/summary.json
+results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep/summary.json
+results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep/metrics.csv
+results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep/notes.md
+results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep/artifact_check.json
+results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep/runs/char_validation_hep_support_stress_temporal_clipped/summary.json
+results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep/runs/char_validation_pc_hep_support_stress_temporal_clipped/summary.json
 results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep/summary.json
 results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep/metrics.csv
 results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep/notes.md
