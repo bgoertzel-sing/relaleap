@@ -1611,6 +1611,41 @@ class FocalResidualObjectiveDecisionReportTest(unittest.TestCase):
             self.assertFalse(report["promote_residual_learning_method"])
             self.assertEqual(report["evidence"]["focal_ce_win_count"], 2)
 
+    def test_mixed_focal_evidence_stops_variant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dirs = []
+            artifact_checks = []
+            for backend, focal_loss in (
+                ("local", 3.57),
+                ("colab", 3.5801),
+            ):
+                comparison_dir = tmp_path / f"{backend}_focal_objective_gate"
+                _write_residual_objective_gate_comparison(
+                    comparison_dir,
+                    pc_best_hep_loss=3.60,
+                    focal_best_hep_loss=focal_loss,
+                    support_stress_preset=False,
+                )
+                artifact_check = comparison_dir / "artifact_check_local.json"
+                artifact_check.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                comparison_dirs.append(comparison_dir)
+                artifact_checks.append(artifact_check)
+
+            report = write_focal_residual_objective_decision_report(
+                comparison_dirs,
+                tmp_path / "focal_decision",
+                artifact_check_paths=artifact_checks,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["decision"], STOP_FOCAL_RESIDUAL_OBJECTIVE_VALIDATION)
+            self.assertFalse(report["continue_focal_residual_objective_validation"])
+            self.assertEqual(report["evidence"]["focal_ce_win_count"], 1)
+
     def test_missing_focal_run_blocks_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)

@@ -166,11 +166,17 @@ DEFAULT_LABEL_SMOOTHING_RESIDUAL_OBJECTIVE_OUT_DIR = Path(
 DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS = (
     Path("results/comparisons/validation_focal_temporal_clipped_objective_gate"),
     Path("results/comparisons/colab_validation_focal_temporal_clipped_objective_gate"),
+    Path("results/comparisons/extended_focal_temporal_clipped_objective_gate"),
+    Path("results/comparisons/colab_extended_focal_temporal_clipped_objective_gate"),
 )
 DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
     DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[0]
     / "artifact_check_local.json",
     DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[1]
+    / "artifact_check_local.json",
+    DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[2]
+    / "artifact_check_local.json",
+    DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[3]
     / "artifact_check_local.json",
 )
 DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_OUT_DIR = Path(
@@ -2912,7 +2918,7 @@ def write_focal_residual_objective_decision_report(
         if entry.get("focal_minus_supervised_final_residual_loss") is not None
     ]
     status = "fail" if failures else "pass"
-    continue_variant = status == "pass" and bool(focal_ce_wins)
+    continue_variant = status == "pass" and len(focal_ce_wins) == len(entries)
     report = {
         "status": status,
         "decision": (
@@ -2938,7 +2944,7 @@ def write_focal_residual_objective_decision_report(
             "requires_support_stress_preset_disabled": True,
             "requires_temporal_clipped_hep_path": True,
             "requires_both_objectives_improve_own_training_loss": True,
-            "requires_focal_lower_supervised_ce_hep_loss_to_continue": True,
+            "requires_focal_lower_supervised_ce_hep_loss_in_every_comparison_to_continue": True,
             "allows_residual_objective_promotion": False,
             "diagnostic_decision_only": True,
         },
@@ -2971,9 +2977,10 @@ def write_focal_residual_objective_decision_report(
             "continue under the current objective gate."
             if status == "pass" and not continue_variant
             else (
-                "The focal objective beats supervised CE HEP loss in at least "
-                "one artifact-backed backend, so it merits broader objective "
-                "validation before any default change."
+                "The focal objective beats supervised CE HEP loss in every "
+                "artifact-backed comparison, including the broader extended "
+                "local and Colab checks, so it remains the selected objective "
+                "variant for the next scale before any default change."
                 if status == "pass"
                 else (
                     "The focal decision requires matching local and Colab "
@@ -2986,7 +2993,7 @@ def write_focal_residual_objective_decision_report(
             "select the next non-PC residual objective variant to test under the objective gate"
             if status == "pass" and not continue_variant
             else (
-                "run a broader focal objective comparison outside the current char validation setting"
+                "run the next focal objective scale check under the same objective gate"
                 if status == "pass"
                 else "repair or regenerate the focal objective comparison artifacts"
             )
