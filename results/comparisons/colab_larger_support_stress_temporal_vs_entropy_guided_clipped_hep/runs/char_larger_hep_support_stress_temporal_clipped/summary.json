@@ -19,6 +19,7 @@
     "ce_anchor_weight": 0.1,
     "confidence_penalty_weight": 0.01,
     "dataset": "tiny_shakespeare_char",
+    "focal_gamma": 2.0,
     "hep_alpha_sweep": [
       {
         "alpha": 0.0,
@@ -90,7 +91,7 @@
     "zero_init_loss": 3.715942621231079
   },
   "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
-  "runtime_seconds": 1.582,
+  "runtime_seconds": 1.4163,
   "seed": 1,
   "status": "ok",
   "torch_available": true,
