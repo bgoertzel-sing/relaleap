@@ -16,6 +16,7 @@
   "phase0": {
     "base_loss": 3.7288691997528076,
     "batch_size": 4,
+    "dataset": "tiny_shakespeare_char",
     "hep_alpha_sweep": [
       {
         "alpha": 0.0,
@@ -83,7 +84,7 @@
     "zero_init_loss": 3.7288691997528076
   },
   "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
-  "runtime_seconds": 0.423,
+  "runtime_seconds": 0.3514,
   "seed": 1,
   "status": "ok",
   "torch_available": true,

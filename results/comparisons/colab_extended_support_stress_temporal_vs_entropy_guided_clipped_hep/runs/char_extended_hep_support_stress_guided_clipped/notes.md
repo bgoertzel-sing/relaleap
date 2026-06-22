@@ -1,6 +1,6 @@
 # char_extended_hep_support_stress_guided_clipped
 
-RelaLeap char-level Phase 0 smoke run.
+RelaLeap Phase 0 smoke run.
 
 - Status: `ok`
 - Error: `none`

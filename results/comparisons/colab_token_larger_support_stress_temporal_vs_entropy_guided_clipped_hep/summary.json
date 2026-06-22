@@ -1,0 +1,459 @@
+{
+  "loss_scale_note": "Residual objectives may use different loss scales; compare each trajectory against its own initial loss.",
+  "out_dir": "results/comparisons/colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep",
+  "runs": [
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "base_loss": 4.163630962371826,
+      "config_path": "configs/token_larger_hep_support_stress_clipped.yaml",
+      "dataset": "tiny_shakespeare_word",
+      "error": null,
+      "experiment_id": "token_larger_hep_support_stress_clipped",
+      "final_residual_loss": 4.53275919,
+      "hep_alpha_sweep": [
+        {
+          "alpha": 0.0,
+          "loss": 4.532759189605713,
+          "max_logit_delta_from_ordinary": 0.0,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        },
+        {
+          "alpha": 0.25,
+          "loss": 4.532759189605713,
+          "max_logit_delta_from_ordinary": 0.0,
+          "pinned_vs_repicked_logit_delta": 0.0009946823120117188,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        },
+        {
+          "alpha": 0.5,
+          "loss": 4.532759189605713,
+          "max_logit_delta_from_ordinary": 0.0,
+          "pinned_vs_repicked_logit_delta": 0.001986980438232422,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        },
+        {
+          "alpha": 1.0,
+          "loss": 4.532759189605713,
+          "max_logit_delta_from_ordinary": 0.0,
+          "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        }
+      ],
+      "hep_settling_objective": "residual_adapter",
+      "hep_update_clip_norm": 0.01,
+      "initial_residual_loss": 4.16363096,
+      "invariants": {
+        "frozen_base_unchanged": true,
+        "hep_alpha_0_equivalence": true,
+        "residual_parameters_updated": true,
+        "zero_init_identity": true
+      },
+      "pinned_support": false,
+      "residual_loss_delta": 0.3691282300000003,
+      "residual_loss_ratio": 1.088655366805131,
+      "residual_objective": "supervised_ce",
+      "run_dir": "results/comparisons/colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/token_larger_hep_support_stress_clipped",
+      "status": "ok",
+      "support_instability": {
+        "hep_alpha": 1.0,
+        "hep_update_clip_norm": 0.01,
+        "pc_steps": 4,
+        "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+        "support_change_fraction": 0.60546875,
+        "support_changed": true,
+        "support_changed_positions": 155,
+        "support_positions": 256,
+        "support_transition_count": 465
+      },
+      "support_stress": true,
+      "training_steps": 50,
+      "zero_init_loss": 4.163630962371826
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "base_loss": 4.163630962371826,
+      "config_path": "configs/token_larger_hep_support_stress_entropy_clipped.yaml",
+      "dataset": "tiny_shakespeare_word",
+      "error": null,
+      "experiment_id": "token_larger_hep_support_stress_entropy_clipped",
+      "final_residual_loss": 4.53275919,
+      "hep_alpha_sweep": [
+        {
+          "alpha": 0.0,
+          "loss": 4.532759189605713,
+          "max_logit_delta_from_ordinary": 0.0,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        },
+        {
+          "alpha": 0.25,
+          "loss": 4.53281307220459,
+          "max_logit_delta_from_ordinary": 0.0007538795471191406,
+          "pinned_vs_repicked_logit_delta": 0.0009946823120117188,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        },
+        {
+          "alpha": 0.5,
+          "loss": 4.532867431640625,
+          "max_logit_delta_from_ordinary": 0.0015058517456054688,
+          "pinned_vs_repicked_logit_delta": 0.001986980438232422,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        },
+        {
+          "alpha": 1.0,
+          "loss": 4.532977104187012,
+          "max_logit_delta_from_ordinary": 0.00301361083984375,
+          "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        }
+      ],
+      "hep_settling_objective": "prediction_entropy_gradient",
+      "hep_update_clip_norm": 0.01,
+      "initial_residual_loss": 4.16363096,
+      "invariants": {
+        "frozen_base_unchanged": true,
+        "hep_alpha_0_equivalence": true,
+        "residual_parameters_updated": true,
+        "zero_init_identity": true
+      },
+      "pinned_support": false,
+      "residual_loss_delta": 0.3691282300000003,
+      "residual_loss_ratio": 1.088655366805131,
+      "residual_objective": "supervised_ce",
+      "run_dir": "results/comparisons/colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/token_larger_hep_support_stress_entropy_clipped",
+      "status": "ok",
+      "support_instability": {
+        "hep_alpha": 1.0,
+        "hep_update_clip_norm": 0.01,
+        "pc_steps": 4,
+        "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+        "support_change_fraction": 0.60546875,
+        "support_changed": true,
+        "support_changed_positions": 155,
+        "support_positions": 256,
+        "support_transition_count": 465
+      },
+      "support_stress": true,
+      "training_steps": 50,
+      "zero_init_loss": 4.163630962371826
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "base_loss": 4.163630962371826,
+      "config_path": "configs/token_larger_hep_support_stress_temporal_clipped.yaml",
+      "dataset": "tiny_shakespeare_word",
+      "error": null,
+      "experiment_id": "token_larger_hep_support_stress_temporal_clipped",
+      "final_residual_loss": 4.53275919,
+      "hep_alpha_sweep": [
+        {
+          "alpha": 0.0,
+          "loss": 4.532759189605713,
+          "max_logit_delta_from_ordinary": 0.0,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        },
+        {
+          "alpha": 0.25,
+          "loss": 4.5327324867248535,
+          "max_logit_delta_from_ordinary": 0.0004353821277618408,
+          "pinned_vs_repicked_logit_delta": 0.0009946823120117188,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        },
+        {
+          "alpha": 0.5,
+          "loss": 4.532703876495361,
+          "max_logit_delta_from_ordinary": 0.0008707940578460693,
+          "pinned_vs_repicked_logit_delta": 0.001986980438232422,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        },
+        {
+          "alpha": 1.0,
+          "loss": 4.532649040222168,
+          "max_logit_delta_from_ordinary": 0.0017414391040802002,
+          "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        }
+      ],
+      "hep_settling_objective": "temporal_consistency_gradient",
+      "hep_update_clip_norm": 0.01,
+      "initial_residual_loss": 4.16363096,
+      "invariants": {
+        "frozen_base_unchanged": true,
+        "hep_alpha_0_equivalence": true,
+        "residual_parameters_updated": true,
+        "zero_init_identity": true
+      },
+      "pinned_support": false,
+      "residual_loss_delta": 0.3691282300000003,
+      "residual_loss_ratio": 1.088655366805131,
+      "residual_objective": "supervised_ce",
+      "run_dir": "results/comparisons/colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/token_larger_hep_support_stress_temporal_clipped",
+      "status": "ok",
+      "support_instability": {
+        "hep_alpha": 1.0,
+        "hep_update_clip_norm": 0.01,
+        "pc_steps": 4,
+        "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+        "support_change_fraction": 0.60546875,
+        "support_changed": true,
+        "support_changed_positions": 155,
+        "support_positions": 256,
+        "support_transition_count": 465
+      },
+      "support_stress": true,
+      "training_steps": 50,
+      "zero_init_loss": 4.163630962371826
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "base_loss": 4.163630962371826,
+      "config_path": "configs/token_larger_hep_support_stress_guided_clipped.yaml",
+      "dataset": "tiny_shakespeare_word",
+      "error": null,
+      "experiment_id": "token_larger_hep_support_stress_guided_clipped",
+      "final_residual_loss": 4.53275919,
+      "hep_alpha_sweep": [
+        {
+          "alpha": 0.0,
+          "loss": 4.532759189605713,
+          "max_logit_delta_from_ordinary": 0.0,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        },
+        {
+          "alpha": 0.25,
+          "loss": 4.531764030456543,
+          "max_logit_delta_from_ordinary": 0.0011456608772277832,
+          "pinned_vs_repicked_logit_delta": 0.0009946823120117188,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        },
+        {
+          "alpha": 0.5,
+          "loss": 4.530769348144531,
+          "max_logit_delta_from_ordinary": 0.0022910237312316895,
+          "pinned_vs_repicked_logit_delta": 0.001986980438232422,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        },
+        {
+          "alpha": 1.0,
+          "loss": 4.52877950668335,
+          "max_logit_delta_from_ordinary": 0.0045819878578186035,
+          "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+          "support_change_fraction": 0.60546875,
+          "support_transition_count": 465.0
+        }
+      ],
+      "hep_settling_objective": "supervised_ce_gradient",
+      "hep_update_clip_norm": 0.01,
+      "initial_residual_loss": 4.16363096,
+      "invariants": {
+        "frozen_base_unchanged": true,
+        "hep_alpha_0_equivalence": true,
+        "residual_parameters_updated": true,
+        "zero_init_identity": true
+      },
+      "pinned_support": false,
+      "residual_loss_delta": 0.3691282300000003,
+      "residual_loss_ratio": 1.088655366805131,
+      "residual_objective": "supervised_ce",
+      "run_dir": "results/comparisons/colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/token_larger_hep_support_stress_guided_clipped",
+      "status": "ok",
+      "support_instability": {
+        "hep_alpha": 1.0,
+        "hep_update_clip_norm": 0.01,
+        "pc_steps": 4,
+        "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+        "support_change_fraction": 0.60546875,
+        "support_changed": true,
+        "support_changed_positions": 155,
+        "support_positions": 256,
+        "support_transition_count": 465
+      },
+      "support_stress": true,
+      "training_steps": 50,
+      "zero_init_loss": 4.163630962371826
+    }
+  ],
+  "runtime_seconds": 7.1032,
+  "status": "ok",
+  "verdict": {
+    "artifact_invariant_count": 12,
+    "artifact_invariants_passed": true,
+    "best_hep_alpha_by_loss": {
+      "alpha": 1.0,
+      "experiment_id": "token_larger_hep_support_stress_guided_clipped",
+      "loss": 4.52877950668335,
+      "max_logit_delta_from_ordinary": 0.0045819878578186035
+    },
+    "failed_artifact_invariants": [],
+    "failed_invariants": [],
+    "hep_alpha_acceptance": {
+      "accepted_alpha": {
+        "accepted": true,
+        "alpha": 1.0,
+        "alpha0_loss": 4.532759189605713,
+        "experiment_id": "token_larger_hep_support_stress_guided_clipped",
+        "loss": 4.52877950668335,
+        "loss_improvement_from_alpha0": 0.003979682922363281,
+        "max_logit_delta_from_ordinary": 0.0045819878578186035
+      },
+      "baseline_alpha0": {
+        "alpha": 0.0,
+        "experiment_id": "token_larger_hep_support_stress_clipped",
+        "loss": 4.532759189605713,
+        "max_logit_delta_from_ordinary": 0.0
+      },
+      "candidate_count": 12,
+      "candidates": [
+        {
+          "accepted": false,
+          "alpha": 0.25,
+          "alpha0_loss": 4.532759189605713,
+          "experiment_id": "token_larger_hep_support_stress_clipped",
+          "loss": 4.532759189605713,
+          "loss_improvement_from_alpha0": 0.0,
+          "max_logit_delta_from_ordinary": 0.0
+        },
+        {
+          "accepted": false,
+          "alpha": 0.5,
+          "alpha0_loss": 4.532759189605713,
+          "experiment_id": "token_larger_hep_support_stress_clipped",
+          "loss": 4.532759189605713,
+          "loss_improvement_from_alpha0": 0.0,
+          "max_logit_delta_from_ordinary": 0.0
+        },
+        {
+          "accepted": false,
+          "alpha": 1.0,
+          "alpha0_loss": 4.532759189605713,
+          "experiment_id": "token_larger_hep_support_stress_clipped",
+          "loss": 4.532759189605713,
+          "loss_improvement_from_alpha0": 0.0,
+          "max_logit_delta_from_ordinary": 0.0
+        },
+        {
+          "accepted": false,
+          "alpha": 0.25,
+          "alpha0_loss": 4.532759189605713,
+          "experiment_id": "token_larger_hep_support_stress_entropy_clipped",
+          "loss": 4.53281307220459,
+          "loss_improvement_from_alpha0": -5.3882598876953125e-05,
+          "max_logit_delta_from_ordinary": 0.0007538795471191406
+        },
+        {
+          "accepted": false,
+          "alpha": 0.5,
+          "alpha0_loss": 4.532759189605713,
+          "experiment_id": "token_larger_hep_support_stress_entropy_clipped",
+          "loss": 4.532867431640625,
+          "loss_improvement_from_alpha0": -0.00010824203491210938,
+          "max_logit_delta_from_ordinary": 0.0015058517456054688
+        },
+        {
+          "accepted": false,
+          "alpha": 1.0,
+          "alpha0_loss": 4.532759189605713,
+          "experiment_id": "token_larger_hep_support_stress_entropy_clipped",
+          "loss": 4.532977104187012,
+          "loss_improvement_from_alpha0": -0.00021791458129882812,
+          "max_logit_delta_from_ordinary": 0.00301361083984375
+        },
+        {
+          "accepted": true,
+          "alpha": 0.25,
+          "alpha0_loss": 4.532759189605713,
+          "experiment_id": "token_larger_hep_support_stress_guided_clipped",
+          "loss": 4.531764030456543,
+          "loss_improvement_from_alpha0": 0.0009951591491699219,
+          "max_logit_delta_from_ordinary": 0.0011456608772277832
+        },
+        {
+          "accepted": true,
+          "alpha": 0.5,
+          "alpha0_loss": 4.532759189605713,
+          "experiment_id": "token_larger_hep_support_stress_guided_clipped",
+          "loss": 4.530769348144531,
+          "loss_improvement_from_alpha0": 0.0019898414611816406,
+          "max_logit_delta_from_ordinary": 0.0022910237312316895
+        },
+        {
+          "accepted": true,
+          "alpha": 1.0,
+          "alpha0_loss": 4.532759189605713,
+          "experiment_id": "token_larger_hep_support_stress_guided_clipped",
+          "loss": 4.52877950668335,
+          "loss_improvement_from_alpha0": 0.003979682922363281,
+          "max_logit_delta_from_ordinary": 0.0045819878578186035
+        },
+        {
+          "accepted": true,
+          "alpha": 0.25,
+          "alpha0_loss": 4.532759189605713,
+          "experiment_id": "token_larger_hep_support_stress_temporal_clipped",
+          "loss": 4.5327324867248535,
+          "loss_improvement_from_alpha0": 2.6702880859375e-05,
+          "max_logit_delta_from_ordinary": 0.0004353821277618408
+        },
+        {
+          "accepted": true,
+          "alpha": 0.5,
+          "alpha0_loss": 4.532759189605713,
+          "experiment_id": "token_larger_hep_support_stress_temporal_clipped",
+          "loss": 4.532703876495361,
+          "loss_improvement_from_alpha0": 5.53131103515625e-05,
+          "max_logit_delta_from_ordinary": 0.0008707940578460693
+        },
+        {
+          "accepted": true,
+          "alpha": 1.0,
+          "alpha0_loss": 4.532759189605713,
+          "experiment_id": "token_larger_hep_support_stress_temporal_clipped",
+          "loss": 4.532649040222168,
+          "loss_improvement_from_alpha0": 0.00011014938354492188,
+          "max_logit_delta_from_ordinary": 0.0017414391040802002
+        }
+      ],
+      "max_logit_delta_from_ordinary": 0.1,
+      "min_loss_improvement_from_alpha0": 0.0,
+      "rejected_count": 6,
+      "status": "accepted"
+    },
+    "invariant_count": 16,
+    "invariants_passed": true,
+    "status": "pass"
+  }
+}

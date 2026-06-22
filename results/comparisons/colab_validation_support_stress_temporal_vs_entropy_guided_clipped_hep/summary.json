@@ -10,6 +10,7 @@
       },
       "base_loss": 3.7288691997528076,
       "config_path": "configs/char_validation_hep_support_stress_clipped.yaml",
+      "dataset": "tiny_shakespeare_char",
       "error": null,
       "experiment_id": "char_validation_hep_support_stress_clipped",
       "final_residual_loss": 4.60237598,
@@ -85,6 +86,7 @@
       },
       "base_loss": 3.7288691997528076,
       "config_path": "configs/char_validation_hep_support_stress_entropy_clipped.yaml",
+      "dataset": "tiny_shakespeare_char",
       "error": null,
       "experiment_id": "char_validation_hep_support_stress_entropy_clipped",
       "final_residual_loss": 4.60237598,
@@ -160,6 +162,7 @@
       },
       "base_loss": 3.7288691997528076,
       "config_path": "configs/char_validation_hep_support_stress_temporal_clipped.yaml",
+      "dataset": "tiny_shakespeare_char",
       "error": null,
       "experiment_id": "char_validation_hep_support_stress_temporal_clipped",
       "final_residual_loss": 4.60237598,
@@ -235,6 +238,7 @@
       },
       "base_loss": 3.7288691997528076,
       "config_path": "configs/char_validation_hep_support_stress_guided_clipped.yaml",
+      "dataset": "tiny_shakespeare_char",
       "error": null,
       "experiment_id": "char_validation_hep_support_stress_guided_clipped",
       "final_residual_loss": 4.60237598,
@@ -303,7 +307,7 @@
       "zero_init_loss": 3.7288691997528076
     }
   ],
-  "runtime_seconds": 5.6053,
+  "runtime_seconds": 4.2689,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,

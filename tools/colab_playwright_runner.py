@@ -265,6 +265,7 @@ async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path)
                 max_rounds=1,
                 timeout_ms=750,
                 include_run_all=False,
+                include_generic_runtime_controls=False,
             )
             if confirmed_runtime_prompt:
                 runtime_prompt_confirmations += 1
@@ -309,24 +310,30 @@ async def _confirm_run_modals(
     max_rounds: int = 12,
     timeout_ms: int = 1_500,
     include_run_all: bool = True,
+    include_generic_runtime_controls: bool = True,
 ) -> bool:
     run_all_labels = [
         "Run anyway",
         "Run all",
         "Run all cells",
     ]
-    runtime_labels = [
+    explicit_runtime_labels = [
         "Resume",
         "Reconnect",
-        "Connect",
         "Connect to a hosted runtime",
         "Restart runtime",
         "Restart and run all",
         "Continue",
-        "OK",
-        "Ok",
         "Yes",
     ]
+    generic_runtime_labels = [
+        "Connect",
+        "OK",
+        "Ok",
+    ]
+    runtime_labels = [*explicit_runtime_labels]
+    if include_generic_runtime_controls:
+        runtime_labels.extend(generic_runtime_labels)
     labels = [*run_all_labels, *runtime_labels] if include_run_all else runtime_labels
     any_clicked = False
     for _ in range(max_rounds):

@@ -1,0 +1,92 @@
+{
+  "artifact_invariants": {
+    "metrics_csv": true,
+    "notes_md": true,
+    "summary_json": true
+  },
+  "config_path": "configs/token_larger_hep_support_stress_entropy_clipped.yaml",
+  "cuda_available": true,
+  "cuda_device_count": 1,
+  "cuda_device_name": "Tesla T4",
+  "device": "cuda",
+  "error": null,
+  "experiment_id": "token_larger_hep_support_stress_entropy_clipped",
+  "final_smoke_loss": 4.53275919,
+  "out_dir": "results/comparisons/colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep/runs/token_larger_hep_support_stress_entropy_clipped",
+  "phase0": {
+    "base_loss": 4.163630962371826,
+    "batch_size": 4,
+    "dataset": "tiny_shakespeare_word",
+    "hep_alpha_sweep": [
+      {
+        "alpha": 0.0,
+        "loss": 4.532759189605713,
+        "max_logit_delta_from_ordinary": 0.0,
+        "pinned_vs_repicked_logit_delta": 0.0,
+        "support_change_fraction": 0.60546875,
+        "support_transition_count": 465.0
+      },
+      {
+        "alpha": 0.25,
+        "loss": 4.53281307220459,
+        "max_logit_delta_from_ordinary": 0.0007538795471191406,
+        "pinned_vs_repicked_logit_delta": 0.0009946823120117188,
+        "support_change_fraction": 0.60546875,
+        "support_transition_count": 465.0
+      },
+      {
+        "alpha": 0.5,
+        "loss": 4.532867431640625,
+        "max_logit_delta_from_ordinary": 0.0015058517456054688,
+        "pinned_vs_repicked_logit_delta": 0.001986980438232422,
+        "support_change_fraction": 0.60546875,
+        "support_transition_count": 465.0
+      },
+      {
+        "alpha": 1.0,
+        "loss": 4.532977104187012,
+        "max_logit_delta_from_ordinary": 0.00301361083984375,
+        "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+        "support_change_fraction": 0.60546875,
+        "support_transition_count": 465.0
+      }
+    ],
+    "hep_settling_objective": "prediction_entropy_gradient",
+    "hep_update_clip_norm": 0.01,
+    "initial_loss": 4.163630962371826,
+    "invariants": {
+      "frozen_base_unchanged": true,
+      "hep_alpha_0_equivalence": true,
+      "residual_parameters_updated": true,
+      "zero_init_identity": true
+    },
+    "max_hep_alpha0_logit_delta": 0.0,
+    "max_zero_init_logit_delta": 0.0,
+    "pinned_support": false,
+    "post_step_loss": 4.532759189605713,
+    "residual_objective": "supervised_ce",
+    "residual_parameter_delta": 948.1387786865234,
+    "seq_len": 64,
+    "support_instability": {
+      "hep_alpha": 1.0,
+      "hep_update_clip_norm": 0.01,
+      "pc_steps": 4,
+      "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+      "support_change_fraction": 0.60546875,
+      "support_changed": true,
+      "support_changed_positions": 155,
+      "support_positions": 256,
+      "support_transition_count": 465
+    },
+    "support_stress": true,
+    "training_steps": 50,
+    "vocab_size": 56,
+    "zero_init_loss": 4.163630962371826
+  },
+  "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
+  "runtime_seconds": 0.9058,
+  "seed": 1,
+  "status": "ok",
+  "torch_available": true,
+  "torch_version": "2.11.0+cu128"
+}

@@ -177,6 +177,27 @@ class ConfirmRunModalsTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Reconnect", page.role_labels)
         self.assertIn("Reconnect", page.text_labels)
 
+    async def test_completion_wait_can_skip_generic_runtime_controls(self) -> None:
+        page = _RecordingPage()
+
+        clicked = await _confirm_run_modals(
+            page,
+            max_rounds=1,
+            timeout_ms=1,
+            include_run_all=False,
+            include_generic_runtime_controls=False,
+        )
+
+        self.assertFalse(clicked)
+        self.assertIn("Reconnect", page.role_labels)
+        self.assertNotIn("Connect", page.role_labels)
+        self.assertNotIn("OK", page.role_labels)
+        self.assertNotIn("Ok", page.role_labels)
+        self.assertIn("Reconnect", page.text_labels)
+        self.assertNotIn("Connect", page.text_labels)
+        self.assertNotIn("OK", page.text_labels)
+        self.assertNotIn("Ok", page.text_labels)
+
     async def test_completion_wait_fails_after_repeated_runtime_prompts(self) -> None:
         async def never_completed(*args, **kwargs):
             raise TimeoutError("not done")

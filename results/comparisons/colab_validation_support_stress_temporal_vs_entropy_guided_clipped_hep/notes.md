@@ -1,6 +1,6 @@
-# Char Smoke Objective Comparison
+# RelaLeap Objective Comparison
 
-Command-driven comparison of Phase 0 char-smoke residual objectives.
+Command-driven comparison of Phase 0 residual objectives.
 
 - Status: `ok`
 - Verdict: `pass`

@@ -1,0 +1,186 @@
+{
+  "decision": "select_temporal_label_free_support_stress_candidate",
+  "deployable_label_free_signal": true,
+  "evidence": {
+    "artifact_check_status": "pass",
+    "clipped_baseline_alpha_candidates": [
+      {
+        "alpha": 0.0,
+        "experiment_id": "token_larger_hep_support_stress_clipped",
+        "loss": 4.532759189605713,
+        "loss_improvement_from_alpha0": 0.0,
+        "max_logit_delta_from_ordinary": 0.0,
+        "pinned_vs_repicked_logit_delta": 0.0,
+        "support_change_fraction": 0.60546875
+      },
+      {
+        "alpha": 0.25,
+        "experiment_id": "token_larger_hep_support_stress_clipped",
+        "loss": 4.532759189605713,
+        "loss_improvement_from_alpha0": 0.0,
+        "max_logit_delta_from_ordinary": 0.0,
+        "pinned_vs_repicked_logit_delta": 0.0009946823120117188,
+        "support_change_fraction": 0.60546875
+      },
+      {
+        "alpha": 0.5,
+        "experiment_id": "token_larger_hep_support_stress_clipped",
+        "loss": 4.532759189605713,
+        "loss_improvement_from_alpha0": 0.0,
+        "max_logit_delta_from_ordinary": 0.0,
+        "pinned_vs_repicked_logit_delta": 0.001986980438232422,
+        "support_change_fraction": 0.60546875
+      },
+      {
+        "alpha": 1.0,
+        "experiment_id": "token_larger_hep_support_stress_clipped",
+        "loss": 4.532759189605713,
+        "loss_improvement_from_alpha0": 0.0,
+        "max_logit_delta_from_ordinary": 0.0,
+        "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+        "support_change_fraction": 0.60546875
+      }
+    ],
+    "clipped_baseline_run_count": 1,
+    "comparison_dir": "results/comparisons/colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep",
+    "comparison_status": "ok",
+    "entropy_alpha_candidates": [
+      {
+        "alpha": 0.0,
+        "experiment_id": "token_larger_hep_support_stress_entropy_clipped",
+        "loss": 4.532759189605713,
+        "loss_improvement_from_alpha0": 0.0,
+        "max_logit_delta_from_ordinary": 0.0,
+        "pinned_vs_repicked_logit_delta": 0.0,
+        "support_change_fraction": 0.60546875
+      },
+      {
+        "alpha": 0.25,
+        "experiment_id": "token_larger_hep_support_stress_entropy_clipped",
+        "loss": 4.53281307220459,
+        "loss_improvement_from_alpha0": -5.3882598876953125e-05,
+        "max_logit_delta_from_ordinary": 0.0007538795471191406,
+        "pinned_vs_repicked_logit_delta": 0.0009946823120117188,
+        "support_change_fraction": 0.60546875
+      },
+      {
+        "alpha": 0.5,
+        "experiment_id": "token_larger_hep_support_stress_entropy_clipped",
+        "loss": 4.532867431640625,
+        "loss_improvement_from_alpha0": -0.00010824203491210938,
+        "max_logit_delta_from_ordinary": 0.0015058517456054688,
+        "pinned_vs_repicked_logit_delta": 0.001986980438232422,
+        "support_change_fraction": 0.60546875
+      },
+      {
+        "alpha": 1.0,
+        "experiment_id": "token_larger_hep_support_stress_entropy_clipped",
+        "loss": 4.532977104187012,
+        "loss_improvement_from_alpha0": -0.00021791458129882812,
+        "max_logit_delta_from_ordinary": 0.00301361083984375,
+        "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+        "support_change_fraction": 0.60546875
+      }
+    ],
+    "entropy_run_count": 1,
+    "guided_alpha_candidates": [
+      {
+        "alpha": 0.0,
+        "experiment_id": "token_larger_hep_support_stress_guided_clipped",
+        "loss": 4.532759189605713,
+        "loss_improvement_from_alpha0": 0.0,
+        "max_logit_delta_from_ordinary": 0.0,
+        "pinned_vs_repicked_logit_delta": 0.0,
+        "support_change_fraction": 0.60546875
+      },
+      {
+        "alpha": 0.25,
+        "experiment_id": "token_larger_hep_support_stress_guided_clipped",
+        "loss": 4.531764030456543,
+        "loss_improvement_from_alpha0": 0.0009951591491699219,
+        "max_logit_delta_from_ordinary": 0.0011456608772277832,
+        "pinned_vs_repicked_logit_delta": 0.0009946823120117188,
+        "support_change_fraction": 0.60546875
+      },
+      {
+        "alpha": 0.5,
+        "experiment_id": "token_larger_hep_support_stress_guided_clipped",
+        "loss": 4.530769348144531,
+        "loss_improvement_from_alpha0": 0.0019898414611816406,
+        "max_logit_delta_from_ordinary": 0.0022910237312316895,
+        "pinned_vs_repicked_logit_delta": 0.001986980438232422,
+        "support_change_fraction": 0.60546875
+      },
+      {
+        "alpha": 1.0,
+        "experiment_id": "token_larger_hep_support_stress_guided_clipped",
+        "loss": 4.52877950668335,
+        "loss_improvement_from_alpha0": 0.003979682922363281,
+        "max_logit_delta_from_ordinary": 0.0045819878578186035,
+        "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+        "support_change_fraction": 0.60546875
+      }
+    ],
+    "guided_run_count": 1,
+    "max_support_change_fraction": 0.60546875,
+    "max_temporal_pinned_vs_repicked_logit_delta": 0.003972053527832031,
+    "support_stress_run_count": 4,
+    "temporal_alpha_candidates": [
+      {
+        "alpha": 0.0,
+        "experiment_id": "token_larger_hep_support_stress_temporal_clipped",
+        "loss": 4.532759189605713,
+        "loss_improvement_from_alpha0": 0.0,
+        "max_logit_delta_from_ordinary": 0.0,
+        "pinned_vs_repicked_logit_delta": 0.0,
+        "support_change_fraction": 0.60546875
+      },
+      {
+        "alpha": 0.25,
+        "experiment_id": "token_larger_hep_support_stress_temporal_clipped",
+        "loss": 4.5327324867248535,
+        "loss_improvement_from_alpha0": 2.6702880859375e-05,
+        "max_logit_delta_from_ordinary": 0.0004353821277618408,
+        "pinned_vs_repicked_logit_delta": 0.0009946823120117188,
+        "support_change_fraction": 0.60546875
+      },
+      {
+        "alpha": 0.5,
+        "experiment_id": "token_larger_hep_support_stress_temporal_clipped",
+        "loss": 4.532703876495361,
+        "loss_improvement_from_alpha0": 5.53131103515625e-05,
+        "max_logit_delta_from_ordinary": 0.0008707940578460693,
+        "pinned_vs_repicked_logit_delta": 0.001986980438232422,
+        "support_change_fraction": 0.60546875
+      },
+      {
+        "alpha": 1.0,
+        "experiment_id": "token_larger_hep_support_stress_temporal_clipped",
+        "loss": 4.532649040222168,
+        "loss_improvement_from_alpha0": 0.00011014938354492188,
+        "max_logit_delta_from_ordinary": 0.0017414391040802002,
+        "pinned_vs_repicked_logit_delta": 0.003972053527832031,
+        "support_change_fraction": 0.60546875
+      }
+    ],
+    "temporal_run_count": 1,
+    "verdict_status": "pass"
+  },
+  "next_step": "use temporal consistency as the selected label-free candidate for the next support-stress mitigation experiment",
+  "policy": {
+    "allows_default_promotion": false,
+    "max_logit_delta_from_ordinary": 0.1,
+    "max_pinned_vs_repicked_logit_delta": 0.1,
+    "reason_default_promotion_is_blocked": "temporal_consistency_gradient is deployable, but this report only selects the next label-free support-stress candidate; default promotion requires broader evidence than the current smoke comparison",
+    "requires_entropy_and_guided_context_runs": true,
+    "requires_nonzero_support_repick_evidence": true,
+    "requires_passing_artifact_check": true,
+    "requires_temporal_nonzero_alpha_loss_improvement": true,
+    "requires_temporal_nonzero_alpha_within_logit_delta_budget": true,
+    "requires_temporal_nonzero_alpha_within_pinned_vs_repicked_budget": true
+  },
+  "promote_to_default_support_stress_mitigation": false,
+  "rationale": "Temporal clipped HEP is deployable at inference time and produced a nonzero alpha with support-stress loss improvement inside both stability budgets, while entropy did not improve loss in the same comparison and the guided oracle remains diagnostic-only.",
+  "selected_label_free_support_stress_candidate": true,
+  "status": "pass"
+}
