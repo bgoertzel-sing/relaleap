@@ -6,12 +6,12 @@
 - Selected variant: `supervised_ce_focal`
 - Default residual objective: `supervised_ce`
 - Backends: `colab, local`
-- Mean focal minus supervised best HEP loss: `-0.00029993`
-- Mean focal minus supervised final residual loss: `-0.21018743`
+- Mean focal minus supervised best HEP loss: `-0.00072455`
+- Mean focal minus supervised final residual loss: `-0.22285255`
 
 ## Rationale
 
-The focal objective beats supervised CE HEP loss in every artifact-backed comparison, including the broader extended local and Colab checks, so it remains the selected objective variant for the next scale before any default change.
+The focal objective beats supervised CE HEP loss in every artifact-backed comparison, including the broader extended and larger local and Colab checks, so it remains the selected objective variant for the next scale before any default change.
 
 ## Evidence
 
@@ -21,6 +21,8 @@ The focal objective beats supervised CE HEP loss in every artifact-backed compar
 | colab | pass | 3.58667445 | 3.58648062 | -0.00019383 | 3.37802339 | `results/comparisons/colab_validation_focal_temporal_clipped_objective_gate` |
 | local | pass | 3.56882930 | 3.56842327 | -0.00040603 | 3.35723019 | `results/comparisons/extended_focal_temporal_clipped_objective_gate` |
 | colab | pass | 3.56882930 | 3.56842327 | -0.00040603 | 3.35723019 | `results/comparisons/colab_extended_focal_temporal_clipped_objective_gate` |
+| local | pass | 3.39827180 | 3.39669800 | -0.00157380 | 3.15012836 | `results/comparisons/larger_focal_temporal_clipped_objective_gate` |
+| colab | pass | 3.39827180 | 3.39669800 | -0.00157380 | 3.15012836 | `results/comparisons/colab_larger_focal_temporal_clipped_objective_gate` |
 
 ## Next Step
 

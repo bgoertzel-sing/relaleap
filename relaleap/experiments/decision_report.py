@@ -168,6 +168,8 @@ DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS = (
     Path("results/comparisons/colab_validation_focal_temporal_clipped_objective_gate"),
     Path("results/comparisons/extended_focal_temporal_clipped_objective_gate"),
     Path("results/comparisons/colab_extended_focal_temporal_clipped_objective_gate"),
+    Path("results/comparisons/larger_focal_temporal_clipped_objective_gate"),
+    Path("results/comparisons/colab_larger_focal_temporal_clipped_objective_gate"),
 )
 DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
     DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[0]
@@ -177,6 +179,10 @@ DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
     DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[2]
     / "artifact_check_local.json",
     DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[3]
+    / "artifact_check_local.json",
+    DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[4]
+    / "artifact_check_local.json",
+    DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[5]
     / "artifact_check_local.json",
 )
 DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_OUT_DIR = Path(
@@ -2979,8 +2985,8 @@ def write_focal_residual_objective_decision_report(
             else (
                 "The focal objective beats supervised CE HEP loss in every "
                 "artifact-backed comparison, including the broader extended "
-                "local and Colab checks, so it remains the selected objective "
-                "variant for the next scale before any default change."
+                "and larger local and Colab checks, so it remains the selected "
+                "objective variant for the next scale before any default change."
                 if status == "pass"
                 else (
                     "The focal decision requires matching local and Colab "
