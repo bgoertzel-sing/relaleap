@@ -1,17 +1,17 @@
 # Focal Residual Objective Decision
 
-- Status: `fail`
-- Decision: `insufficient_evidence`
-- Continue focal validation: `False`
-- Selected variant: `None`
+- Status: `pass`
+- Decision: `continue_focal_residual_objective_validation`
+- Continue focal validation: `True`
+- Selected variant: `supervised_ce_focal`
 - Default residual objective: `supervised_ce`
 - Backends: `colab, local`
-- Mean focal minus supervised best HEP loss: `-0.00065478`
-- Mean focal minus supervised final residual loss: `-0.21224785`
+- Mean focal minus supervised best HEP loss: `-0.00065103`
+- Mean focal minus supervised final residual loss: `-0.21699464`
 
 ## Rationale
 
-The focal decision requires matching local and Colab comparisons with passing artifact checks and valid supervised and focal temporal-clipped runs.
+The focal objective beats supervised CE HEP loss in every artifact-backed comparison, including the broader extended, larger, tokenized larger, and xlarge local and Colab checks, so it remains the selected objective variant for the next scale before any default change.
 
 ## Evidence
 
@@ -26,17 +26,8 @@ The focal decision requires matching local and Colab comparisons with passing ar
 | local | pass | 4.05921125 | 4.05874681 | -0.00046444 | 3.90255094 | `results/comparisons/token_larger_focal_temporal_clipped_objective_gate` |
 | colab | pass | 4.05921125 | 4.05874681 | -0.00046444 | 3.90255117 | `results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate` |
 | local | pass | 3.31775665 | 3.31713986 | -0.00061679 | 3.05805564 | `results/comparisons/char_xlarge_focal_temporal_clipped_objective_gate` |
-| colab |  |  |  |  |  | `results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate` |
-
-## Failures
-
-- `comparison.summary.json` expected `file exists`, got `missing` at `results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/summary.json`
-- `artifact_check.status` expected `pass`, got `None` at `results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json`
-- `comparison.status` expected `ok`, got `None` at `results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate`
-- `comparison.verdict.status` expected `pass`, got `None` at `results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate`
-- `comparison.runs.supervised_ce` expected `one run`, got `0` at `results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate`
-- `comparison.runs.supervised_ce_focal` expected `one run`, got `0` at `results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate`
+| colab | pass | 3.31775713 | 3.31713986 | -0.00061727 | 3.05805540 | `results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate` |
 
 ## Next Step
 
-run or extract the missing matching focal objective comparison artifacts
+run the next focal objective scale check under the same objective gate

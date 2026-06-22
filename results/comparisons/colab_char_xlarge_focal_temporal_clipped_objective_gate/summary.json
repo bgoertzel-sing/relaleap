@@ -1,0 +1,255 @@
+{
+  "loss_scale_note": "Residual objectives may use different loss scales; compare each trajectory against its own initial loss.",
+  "out_dir": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate",
+  "runs": [
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "base_loss": 3.65675950050354,
+      "config_path": "configs/char_xlarge_hep_temporal_clipped_objective_gate.yaml",
+      "dataset": "tiny_shakespeare_char",
+      "error": null,
+      "experiment_id": "char_xlarge_hep_temporal_clipped_objective_gate",
+      "final_residual_loss": 3.3177712,
+      "hep_alpha_sweep": [
+        {
+          "alpha": 0.0,
+          "loss": 3.3177711963653564,
+          "max_logit_delta_from_ordinary": 0.0,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        },
+        {
+          "alpha": 0.25,
+          "loss": 3.317767858505249,
+          "max_logit_delta_from_ordinary": 0.00010979175567626953,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        },
+        {
+          "alpha": 0.5,
+          "loss": 3.317763566970825,
+          "max_logit_delta_from_ordinary": 0.0002193152904510498,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        },
+        {
+          "alpha": 1.0,
+          "loss": 3.3177571296691895,
+          "max_logit_delta_from_ordinary": 0.0004382133483886719,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        }
+      ],
+      "hep_settling_objective": "temporal_consistency_gradient",
+      "hep_update_clip_norm": 0.01,
+      "initial_residual_loss": 3.6567595,
+      "invariants": {
+        "frozen_base_unchanged": true,
+        "hep_alpha_0_equivalence": true,
+        "residual_parameters_updated": true,
+        "zero_init_identity": true
+      },
+      "pinned_support": false,
+      "residual_loss_delta": -0.3389883,
+      "residual_loss_ratio": 0.9072981693217724,
+      "residual_objective": "supervised_ce",
+      "run_dir": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/runs/char_xlarge_hep_temporal_clipped_objective_gate",
+      "status": "ok",
+      "support_instability": {
+        "hep_alpha": 1.0,
+        "hep_update_clip_norm": 0.01,
+        "pc_steps": 4,
+        "pinned_vs_repicked_logit_delta": 0.0,
+        "support_change_fraction": 0.0,
+        "support_changed": false,
+        "support_changed_positions": 0,
+        "support_positions": 640,
+        "support_transition_count": 0
+      },
+      "support_stress": true,
+      "support_stress_preset": false,
+      "training_steps": 60,
+      "zero_init_loss": 3.65675950050354
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "base_loss": 3.65675950050354,
+      "config_path": "configs/char_xlarge_focal_hep_temporal_clipped_objective_gate.yaml",
+      "dataset": "tiny_shakespeare_char",
+      "error": null,
+      "experiment_id": "char_xlarge_focal_hep_temporal_clipped_objective_gate",
+      "final_residual_loss": 3.0580554,
+      "hep_alpha_sweep": [
+        {
+          "alpha": 0.0,
+          "loss": 3.3171539306640625,
+          "max_logit_delta_from_ordinary": 0.0,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        },
+        {
+          "alpha": 0.25,
+          "loss": 3.3171510696411133,
+          "max_logit_delta_from_ordinary": 0.00011309981346130371,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        },
+        {
+          "alpha": 0.5,
+          "loss": 3.3171470165252686,
+          "max_logit_delta_from_ordinary": 0.0002263188362121582,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        },
+        {
+          "alpha": 1.0,
+          "loss": 3.3171398639678955,
+          "max_logit_delta_from_ordinary": 0.00045245885848999023,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        }
+      ],
+      "hep_settling_objective": "temporal_consistency_gradient",
+      "hep_update_clip_norm": 0.01,
+      "initial_residual_loss": 3.46068215,
+      "invariants": {
+        "frozen_base_unchanged": true,
+        "hep_alpha_0_equivalence": true,
+        "residual_parameters_updated": true,
+        "zero_init_identity": true
+      },
+      "pinned_support": false,
+      "residual_loss_delta": -0.4026267499999996,
+      "residual_loss_ratio": 0.8836568247101226,
+      "residual_objective": "supervised_ce_focal",
+      "run_dir": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/runs/char_xlarge_focal_hep_temporal_clipped_objective_gate",
+      "status": "ok",
+      "support_instability": {
+        "hep_alpha": 1.0,
+        "hep_update_clip_norm": 0.01,
+        "pc_steps": 4,
+        "pinned_vs_repicked_logit_delta": 0.0,
+        "support_change_fraction": 0.0,
+        "support_changed": false,
+        "support_changed_positions": 0,
+        "support_positions": 640,
+        "support_transition_count": 0
+      },
+      "support_stress": true,
+      "support_stress_preset": false,
+      "training_steps": 60,
+      "zero_init_loss": 3.65675950050354
+    }
+  ],
+  "runtime_seconds": 9.4734,
+  "status": "ok",
+  "verdict": {
+    "artifact_invariant_count": 6,
+    "artifact_invariants_passed": true,
+    "best_hep_alpha_by_loss": {
+      "alpha": 1.0,
+      "experiment_id": "char_xlarge_focal_hep_temporal_clipped_objective_gate",
+      "loss": 3.3171398639678955,
+      "max_logit_delta_from_ordinary": 0.00045245885848999023
+    },
+    "failed_artifact_invariants": [],
+    "failed_invariants": [],
+    "hep_alpha_acceptance": {
+      "accepted_alpha": {
+        "accepted": true,
+        "alpha": 1.0,
+        "alpha0_loss": 3.3171539306640625,
+        "experiment_id": "char_xlarge_focal_hep_temporal_clipped_objective_gate",
+        "loss": 3.3171398639678955,
+        "loss_improvement_from_alpha0": 1.4066696166992188e-05,
+        "max_logit_delta_from_ordinary": 0.00045245885848999023
+      },
+      "baseline_alpha0": {
+        "alpha": 0.0,
+        "experiment_id": "char_xlarge_focal_hep_temporal_clipped_objective_gate",
+        "loss": 3.3171539306640625,
+        "max_logit_delta_from_ordinary": 0.0
+      },
+      "candidate_count": 6,
+      "candidates": [
+        {
+          "accepted": true,
+          "alpha": 0.25,
+          "alpha0_loss": 3.3171539306640625,
+          "experiment_id": "char_xlarge_focal_hep_temporal_clipped_objective_gate",
+          "loss": 3.3171510696411133,
+          "loss_improvement_from_alpha0": 2.86102294921875e-06,
+          "max_logit_delta_from_ordinary": 0.00011309981346130371
+        },
+        {
+          "accepted": true,
+          "alpha": 0.5,
+          "alpha0_loss": 3.3171539306640625,
+          "experiment_id": "char_xlarge_focal_hep_temporal_clipped_objective_gate",
+          "loss": 3.3171470165252686,
+          "loss_improvement_from_alpha0": 6.9141387939453125e-06,
+          "max_logit_delta_from_ordinary": 0.0002263188362121582
+        },
+        {
+          "accepted": true,
+          "alpha": 1.0,
+          "alpha0_loss": 3.3171539306640625,
+          "experiment_id": "char_xlarge_focal_hep_temporal_clipped_objective_gate",
+          "loss": 3.3171398639678955,
+          "loss_improvement_from_alpha0": 1.4066696166992188e-05,
+          "max_logit_delta_from_ordinary": 0.00045245885848999023
+        },
+        {
+          "accepted": true,
+          "alpha": 0.25,
+          "alpha0_loss": 3.3177711963653564,
+          "experiment_id": "char_xlarge_hep_temporal_clipped_objective_gate",
+          "loss": 3.317767858505249,
+          "loss_improvement_from_alpha0": 3.337860107421875e-06,
+          "max_logit_delta_from_ordinary": 0.00010979175567626953
+        },
+        {
+          "accepted": true,
+          "alpha": 0.5,
+          "alpha0_loss": 3.3177711963653564,
+          "experiment_id": "char_xlarge_hep_temporal_clipped_objective_gate",
+          "loss": 3.317763566970825,
+          "loss_improvement_from_alpha0": 7.62939453125e-06,
+          "max_logit_delta_from_ordinary": 0.0002193152904510498
+        },
+        {
+          "accepted": true,
+          "alpha": 1.0,
+          "alpha0_loss": 3.3177711963653564,
+          "experiment_id": "char_xlarge_hep_temporal_clipped_objective_gate",
+          "loss": 3.3177571296691895,
+          "loss_improvement_from_alpha0": 1.4066696166992188e-05,
+          "max_logit_delta_from_ordinary": 0.0004382133483886719
+        }
+      ],
+      "max_logit_delta_from_ordinary": 0.1,
+      "min_loss_improvement_from_alpha0": 0.0,
+      "rejected_count": 0,
+      "status": "accepted"
+    },
+    "invariant_count": 8,
+    "invariants_passed": true,
+    "status": "pass"
+  }
+}
