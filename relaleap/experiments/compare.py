@@ -365,6 +365,7 @@ def _comparison_entry(
         "zero_init_loss": phase0.get("zero_init_loss"),
         "pinned_support": phase0.get("pinned_support", False),
         "support_stress": phase0.get("support_stress", False),
+        "support_stress_preset": phase0.get("support_stress_preset", False),
         "hep_update_clip_norm": phase0.get("hep_update_clip_norm"),
         "hep_settling_objective": phase0.get(
             "hep_settling_objective",

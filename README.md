@@ -431,6 +431,23 @@ This keeps the checked Phase 0 baseline unchanged while returning the
 post-promotion research loop to supervised-vs-PC residual objective evidence
 under the promoted deployable temporal clipped HEP path.
 
+The support-stress validation pair above intentionally preserves historical
+support-repicking evidence by rewriting residual atom values before the HEP
+sweep, so it is not objective-discriminative after residual training. The
+objective-discriminative local gate keeps the same promoted temporal clipped
+HEP inference path but disables that support-stress preset, so CE/HEP behavior
+is measured on the learned supervised or PC residual values:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_pc_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/validation_pc_vs_supervised_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/validation_pc_vs_supervised_temporal_clipped_objective_gate \
+  --out results/comparisons/validation_pc_vs_supervised_temporal_clipped_objective_gate/artifact_check_local.json
+```
+
 The matching GitHub-backed PC validation uses the same command-driven harness
 and writes the artifact tree under its Colab-prefixed validation path:
 

@@ -379,6 +379,47 @@ class Phase0SmokeTest(unittest.TestCase):
         self.assertGreater(alpha1["support_change_fraction"], 0.0)
         self.assertGreater(alpha1["pinned_vs_repicked_logit_delta"], 0.0)
 
+    def test_support_stress_without_preset_preserves_learned_residual_values(
+        self,
+    ) -> None:
+        stress_config = copy.deepcopy(CONFIG)
+        stress_config["run"]["max_steps"] = 2
+        stress_config["run"]["experiment_id"] = "test_support_stress_no_preset"
+        stress_config["model"]["columns"]["support_stress"] = True
+        stress_config["model"]["columns"]["support_stress_preset"] = False
+        stress_config["inference"] = {
+            "pc_steps": 2,
+            "hep_alpha": 0.0,
+            "hep_alpha_sweep": "0.0,1.0",
+            "hep_update_clip_norm": 0.01,
+            "hep_settling_objective": "temporal_consistency_gradient",
+        }
+
+        try:
+            result = run_phase0_smoke(stress_config)
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        phases = [row["phase"] for row in result.to_metric_rows()]
+        residual_update_loss = [
+            row["residual_loss"]
+            for row in result.to_metric_rows()
+            if row["phase"] == "residual_update"
+        ][-1]
+        alpha0 = [
+            entry for entry in result.hep_alpha_sweep if entry["alpha"] == 0.0
+        ][0]
+
+        self.assertTrue(result.support_stress)
+        self.assertFalse(result.support_stress_preset)
+        self.assertFalse(result.to_summary()["support_stress_preset"])
+        self.assertNotIn("support_stress", phases)
+        self.assertAlmostEqual(result.post_step_loss, residual_update_loss)
+        self.assertAlmostEqual(alpha0["loss"], residual_update_loss)
+        self.assertTrue(result.invariants["hep_alpha_0_equivalence"])
+
     def test_default_support_stress_config_uses_temporal_clipped_hep(self) -> None:
         config = _read_config(Path("configs/char_smoke_hep_support_stress.yaml"))
 

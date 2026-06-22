@@ -50,6 +50,7 @@ class Phase0Result:
     max_hep_alpha0_logit_delta: float
     pinned_support: bool
     support_stress: bool
+    support_stress_preset: bool
     support_instability: dict[str, float | int | bool]
     hep_update_clip_norm: float | None
     hep_settling_objective: str
@@ -73,6 +74,7 @@ class Phase0Result:
             "max_hep_alpha0_logit_delta": self.max_hep_alpha0_logit_delta,
             "pinned_support": self.pinned_support,
             "support_stress": self.support_stress,
+            "support_stress_preset": self.support_stress_preset,
             "support_instability": self.support_instability,
             "hep_update_clip_norm": self.hep_update_clip_norm,
             "hep_settling_objective": self.hep_settling_objective,
@@ -126,6 +128,9 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     top_k = int(column_cfg.get("top_k", 1))
     pinned_support = bool(column_cfg.get("pinned_support", False))
     support_stress = bool(column_cfg.get("support_stress", False))
+    support_stress_preset = support_stress and bool(
+        column_cfg.get("support_stress_preset", True)
+    )
     pc_steps = int(inference_cfg.get("pc_steps", 1))
     hep_alpha = float(inference_cfg.get("hep_alpha", 0.0))
     hep_update_clip_norm = _parse_optional_float(
@@ -296,7 +301,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             )
         )
 
-    if support_stress:
+    if support_stress_preset:
         _apply_hep_support_stress(base, residual, inputs)
         with torch.no_grad():
             post_step_loss_tensor = _residual_loss(
@@ -408,6 +413,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         max_hep_alpha0_logit_delta=max_hep_alpha0_delta,
         pinned_support=pinned_support,
         support_stress=support_stress,
+        support_stress_preset=support_stress_preset,
         support_instability=support_instability,
         hep_update_clip_norm=hep_update_clip_norm,
         hep_settling_objective=hep_settling_objective,
