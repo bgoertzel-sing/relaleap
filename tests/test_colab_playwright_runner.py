@@ -100,6 +100,25 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                 )
             )
 
+    def test_validate_evidence_rejects_rendered_python_traceback(self) -> None:
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Colab rendered Python error marker 'Traceback",
+        ):
+            _validate_evidence_text(
+                "\n".join(
+                    [
+                        "summary_status: ok",
+                        "verdict_status: pass",
+                        "KeyError Traceback (most recent call last)",
+                        "/tmp/ipykernel_12222/3779044106.py in <cell line: 0>()",
+                        "169 assert token_temporal_check['status'] == 'pass'",
+                        "170 token_temporal_runs = {run['experiment_id']: run for run in token_temporal_summary['runs']}",
+                        "171 assert token_temporal_runs['token_larger_hep_support_stress_clipped']['dataset'] == 'tiny_shakespeare_word'",
+                    ]
+                )
+            )
+
     def test_extract_colab_artifact_bundle_writes_safe_paths(self) -> None:
         bundle = _zip_base64(
             {
