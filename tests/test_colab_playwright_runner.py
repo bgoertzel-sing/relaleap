@@ -193,6 +193,11 @@ class ConfirmRunModalsTest(unittest.IsolatedAsyncioTestCase):
         async def write_evidence(page, evidence_out):
             evidence_out.write_text("partial evidence\n", encoding="utf-8")
 
+        snapshots = []
+
+        async def write_debug_snapshot(page, label):
+            snapshots.append(label)
+
         with tempfile.TemporaryDirectory() as tmpdir:
             evidence_out = Path(tmpdir) / "evidence.txt"
             with (
@@ -216,6 +221,10 @@ class ConfirmRunModalsTest(unittest.IsolatedAsyncioTestCase):
                     "tools.colab_playwright_runner._write_evidence",
                     write_evidence,
                 ),
+                patch(
+                    "tools.colab_playwright_runner._write_debug_snapshot",
+                    write_debug_snapshot,
+                ),
             ):
                 with self.assertRaisesRegex(
                     RuntimeError,
@@ -231,6 +240,7 @@ class ConfirmRunModalsTest(unittest.IsolatedAsyncioTestCase):
                 evidence_out.read_text(encoding="utf-8"),
                 "partial evidence\n",
             )
+            self.assertEqual(snapshots, ["runtime_prompt_blocked"])
 
 
 class _RecordingPage:

@@ -269,6 +269,7 @@ async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path)
             if confirmed_runtime_prompt:
                 runtime_prompt_confirmations += 1
                 if runtime_prompt_confirmations >= max_runtime_prompt_confirmations:
+                    await _write_debug_snapshot(page, "runtime_prompt_blocked")
                     await _write_evidence(page, evidence_out)
                     raise RuntimeError(
                         "Colab runtime prompts persisted after "

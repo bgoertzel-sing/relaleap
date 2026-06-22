@@ -1,34 +1,4 @@
 # Rendered Colab output
-Mon Jun 22 08:46:38 2026       
-+-----------------------------------------------------------------------------------------+
-| NVIDIA-SMI 580.82.07              Driver Version: 580.82.07      CUDA Version: 13.0     |
-+-----------------------------------------+------------------------+----------------------+
-| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
-| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
-|                                         |                        |               MIG M. |
-|=========================================+========================+======================|
-|   0  Tesla T4                       Off |   00000000:00:04.0 Off |                    0 |
-| N/A   52C    P8             10W /   70W |       3MiB /  15360MiB |      0%      Default |
-|                                         |                        |                  N/A |
-+-----------------------------------------+------------------------+----------------------+
-
-+-----------------------------------------------------------------------------------------+
-| Processes:                                                                              |
-|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
-|        ID   ID                                                               Usage      |
-|=========================================================================================|
-|  No running processes found                                                             |
-+-----------------------------------------------------------------------------------------+
-platform: Linux-6.6.122+-x86_64-with-glibc2.35
-torch: 2.11.0+cu128
-cuda_available: True
-cuda_device: Tesla T4
-
-/content/relaleap
-From https://github.com/bgoertzel-sing/relaleap
- * branch            main       -> FETCH_HEAD
-HEAD is now at a1acdda Record blocked Colab token promotion run
-
 Installing build dependencies ... done
   Checking if build backend supports build_editable ... done
   Getting requirements to build editable ... done
@@ -201,7 +171,7 @@ Installing build dependencies ... done
       "zero_init_loss": 3.6108925342559814
     }
   ],
-  "runtime_seconds": 2.9967,
+  "runtime_seconds": 3.5769,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 9,
@@ -356,7 +326,7 @@ Installing build dependencies ... done
     "zero_init_loss": 3.6108925342559814
   },
   "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
-  "runtime_seconds": 1.1021,
+  "runtime_seconds": 1.1648,
   "seed": 1,
   "status": "ok",
   "torch_available": true,
@@ -519,7 +489,7 @@ Installing build dependencies ... done
       "zero_init_loss": 3.6108925342559814
     }
   ],
-  "runtime_seconds": 3.5856,
+  "runtime_seconds": 2.9599,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 6,
@@ -900,7 +870,7 @@ Installing build dependencies ... done
       "zero_init_loss": 3.6108925342559814
     }
   ],
-  "runtime_seconds": 2.8394,
+  "runtime_seconds": 3.2584,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 6,
@@ -1281,7 +1251,7 @@ Installing build dependencies ... done
       "zero_init_loss": 3.6108925342559814
     }
   ],
-  "runtime_seconds": 2.8538,
+  "runtime_seconds": 2.9928,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 6,
@@ -1830,7 +1800,7 @@ Installing build dependencies ... done
       "zero_init_loss": 3.6108925342559814
     }
   ],
-  "runtime_seconds": 3.5959,
+  "runtime_seconds": 3.197,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -2519,7 +2489,7 @@ Installing build dependencies ... done
       "zero_init_loss": 3.7617204189300537
     }
   ],
-  "runtime_seconds": 3.109,
+  "runtime_seconds": 3.429,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -2939,31 +2909,6 @@ print('torch:', torch.__version__)
 print('cuda_available:', torch.cuda.is_available())
 if torch.cuda.is_available():
     print('cuda_device:', torch.cuda.get_device_name(0))
-Mon Jun 22 08:46:38 2026       
-+-----------------------------------------------------------------------------------------+
-| NVIDIA-SMI 580.82.07              Driver Version: 580.82.07      CUDA Version: 13.0     |
-+-----------------------------------------+------------------------+----------------------+
-| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
-| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
-|                                         |                        |               MIG M. |
-|=========================================+========================+======================|
-|   0  Tesla T4                       Off |   00000000:00:04.0 Off |                    0 |
-| N/A   52C    P8             10W /   70W |       3MiB /  15360MiB |      0%      Default |
-|                                         |                        |                  N/A |
-+-----------------------------------------+------------------------+----------------------+
-
-+-----------------------------------------------------------------------------------------+
-| Processes:                                                                              |
-|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
-|        ID   ID                                                               Usage      |
-|=========================================================================================|
-|  No running processes found                                                             |
-+-----------------------------------------------------------------------------------------+
-platform: Linux-6.6.122+-x86_64-with-glibc2.35
-torch: 2.11.0+cu128
-cuda_available: True
-cuda_device: Tesla T4
-
 from pathlib import Path
 repo = Path('/content/relaleap')
 if repo.exists():
@@ -2978,11 +2923,6 @@ else:
     !git reset --hard origin/main
 assert Path('configs/char_larger_hep_support_stress_clipped.yaml').is_file()
 assert Path('configs/token_larger_hep_support_stress_clipped.yaml').is_file()
-
-/content/relaleap
-From https://github.com/bgoertzel-sing/relaleap
- * branch            main       -> FETCH_HEAD
-HEAD is now at a1acdda Record blocked Colab token promotion run
 
 !python -m pip install -q -e '.[notebook]'
 !python -m relaleap.experiments.compare --out results/comparisons/colab_phase0 --baseline-reference baselines/phase0_char_smoke_comparison.json
@@ -3183,7 +3123,7 @@ HEAD is now at a1acdda Record blocked Colab token promotion run
       "zero_init_loss": 3.6108925342559814
     }
   ],
-  "runtime_seconds": 2.9967,
+  "runtime_seconds": 3.5769,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 9,
@@ -3338,7 +3278,7 @@ HEAD is now at a1acdda Record blocked Colab token promotion run
     "zero_init_loss": 3.6108925342559814
   },
   "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
-  "runtime_seconds": 1.1021,
+  "runtime_seconds": 1.1648,
   "seed": 1,
   "status": "ok",
   "torch_available": true,
@@ -3501,7 +3441,7 @@ HEAD is now at a1acdda Record blocked Colab token promotion run
       "zero_init_loss": 3.6108925342559814
     }
   ],
-  "runtime_seconds": 3.5856,
+  "runtime_seconds": 2.9599,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 6,
@@ -3882,7 +3822,7 @@ HEAD is now at a1acdda Record blocked Colab token promotion run
       "zero_init_loss": 3.6108925342559814
     }
   ],
-  "runtime_seconds": 2.8394,
+  "runtime_seconds": 3.2584,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 6,
@@ -4263,7 +4203,7 @@ HEAD is now at a1acdda Record blocked Colab token promotion run
       "zero_init_loss": 3.6108925342559814
     }
   ],
-  "runtime_seconds": 2.8538,
+  "runtime_seconds": 2.9928,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 6,
@@ -4812,7 +4752,7 @@ HEAD is now at a1acdda Record blocked Colab token promotion run
       "zero_init_loss": 3.6108925342559814
     }
   ],
-  "runtime_seconds": 3.5959,
+  "runtime_seconds": 3.197,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -5501,7 +5441,7 @@ HEAD is now at a1acdda Record blocked Colab token promotion run
       "zero_init_loss": 3.7617204189300537
     }
   ],
-  "runtime_seconds": 3.109,
+  "runtime_seconds": 3.429,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 12,
@@ -6115,3 +6055,12 @@ data_object
 Variables
 terminal
 Terminal
+Connect to a hosted runtime: T4
+Change runtime type
+Connect to Google Cloud runtime
+Connect to a local runtime
+View resources
+Manage sessions
+Disconnect and delete runtime
+Show executed code history
+Focus the last run cell
