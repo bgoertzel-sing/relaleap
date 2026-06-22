@@ -37,6 +37,8 @@ class Phase0Result:
     residual_objective: str
     ce_anchor_weight: float
     confidence_penalty_weight: float
+    margin_penalty_weight: float
+    target_logit_margin: float
     dataset: str
     vocab_size: int
     seq_len: int
@@ -64,6 +66,8 @@ class Phase0Result:
             "residual_objective": self.residual_objective,
             "ce_anchor_weight": self.ce_anchor_weight,
             "confidence_penalty_weight": self.confidence_penalty_weight,
+            "margin_penalty_weight": self.margin_penalty_weight,
+            "target_logit_margin": self.target_logit_margin,
             "dataset": self.dataset,
             "vocab_size": self.vocab_size,
             "seq_len": self.seq_len,
@@ -127,6 +131,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     confidence_penalty_weight = float(
         training_cfg.get("confidence_penalty_weight", 0.01)
     )
+    margin_penalty_weight = float(training_cfg.get("margin_penalty_weight", 0.01))
+    target_logit_margin = float(training_cfg.get("target_logit_margin", 0.25))
     dataset = str(data_cfg.get("dataset", "tiny_shakespeare_char"))
     seq_len = int(data_cfg.get("seq_len", 32))
     hidden_dim = int(base_cfg.get("hidden_dim", 32))
@@ -162,15 +168,21 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         raise ValueError("training.ce_anchor_weight must be non-negative")
     if confidence_penalty_weight < 0.0:
         raise ValueError("training.confidence_penalty_weight must be non-negative")
+    if margin_penalty_weight < 0.0:
+        raise ValueError("training.margin_penalty_weight must be non-negative")
+    if target_logit_margin < 0.0:
+        raise ValueError("training.target_logit_margin must be non-negative")
     if residual_objective not in {
         "supervised_ce",
         "supervised_ce_confidence_penalty",
+        "supervised_ce_margin_penalty",
         "pc_logit_mse",
         "pc_logit_mse_ce_anchor",
     }:
         raise ValueError(
             "training.residual_objective must be one of: "
             "supervised_ce, supervised_ce_confidence_penalty, "
+            "supervised_ce_margin_penalty, "
             "pc_logit_mse, pc_logit_mse_ce_anchor"
         )
     if hep_settling_objective not in {
@@ -249,6 +261,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         objective=residual_objective,
         ce_anchor_weight=ce_anchor_weight,
         confidence_penalty_weight=confidence_penalty_weight,
+        margin_penalty_weight=margin_penalty_weight,
+        target_logit_margin=target_logit_margin,
     )
     metric_rows: list[dict[str, float | int | str]] = [
         _metric_row(
@@ -281,6 +295,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             objective=residual_objective,
             ce_anchor_weight=ce_anchor_weight,
             confidence_penalty_weight=confidence_penalty_weight,
+            margin_penalty_weight=margin_penalty_weight,
+            target_logit_margin=target_logit_margin,
         )
         loss.backward()
         optimizer.step()
@@ -294,6 +310,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 objective=residual_objective,
                 ce_anchor_weight=ce_anchor_weight,
                 confidence_penalty_weight=confidence_penalty_weight,
+                margin_penalty_weight=margin_penalty_weight,
+                target_logit_margin=target_logit_margin,
             )
             max_hep_alpha0_delta = _max_hep_delta_from_ordinary(
                 base,
@@ -338,6 +356,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 objective=residual_objective,
                 ce_anchor_weight=ce_anchor_weight,
                 confidence_penalty_weight=confidence_penalty_weight,
+                margin_penalty_weight=margin_penalty_weight,
+                target_logit_margin=target_logit_margin,
             )
             max_hep_alpha0_delta = _max_hep_delta_from_ordinary(
                 base,
@@ -427,6 +447,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         residual_objective=residual_objective,
         ce_anchor_weight=ce_anchor_weight,
         confidence_penalty_weight=confidence_penalty_weight,
+        margin_penalty_weight=margin_penalty_weight,
+        target_logit_margin=target_logit_margin,
         dataset=dataset,
         vocab_size=vocab_size,
         seq_len=seq_len,
@@ -747,6 +769,8 @@ def _residual_loss(
     objective: str,
     ce_anchor_weight: float = 0.1,
     confidence_penalty_weight: float = 0.01,
+    margin_penalty_weight: float = 0.01,
+    target_logit_margin: float = 0.25,
 ) -> Any:
     import torch
     import torch.nn.functional as F
@@ -765,6 +789,20 @@ def _residual_loss(
         probs = torch.softmax(prediction_logits, dim=-1)
         entropy = -(probs * log_probs).sum(dim=-1).mean()
         return ce_loss - confidence_penalty_weight * entropy
+    if objective == "supervised_ce_margin_penalty":
+        target_logits = prediction_logits.gather(
+            dim=-1,
+            index=prediction_targets.unsqueeze(-1),
+        ).squeeze(-1)
+        target_mask = F.one_hot(prediction_targets, num_classes=vocab_size).bool()
+        strongest_other_logits = prediction_logits.masked_fill(
+            target_mask,
+            float("-inf"),
+        ).max(dim=-1).values
+        margin_shortfall = F.relu(
+            target_logit_margin - (target_logits - strongest_other_logits)
+        )
+        return ce_loss + margin_penalty_weight * margin_shortfall.mean()
     if objective in {"pc_logit_mse", "pc_logit_mse_ce_anchor"}:
         pc_loss = F.mse_loss(
             torch.softmax(prediction_logits, dim=-1),

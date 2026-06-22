@@ -87,7 +87,7 @@
     "zero_init_loss": 4.163630962371826
   },
   "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
-  "runtime_seconds": 1.2566,
+  "runtime_seconds": 1.2816,
   "seed": 1,
   "status": "ok",
   "torch_available": true,

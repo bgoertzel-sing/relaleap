@@ -133,6 +133,21 @@ DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
 DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_OUT_DIR = Path(
     "results/reports/confidence_penalty_residual_objective_decision"
 )
+DEFAULT_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS = (
+    Path("results/comparisons/validation_margin_penalty_temporal_clipped_objective_gate"),
+    Path(
+        "results/comparisons/colab_validation_margin_penalty_temporal_clipped_objective_gate"
+    ),
+)
+DEFAULT_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
+    DEFAULT_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[0]
+    / "artifact_check_local.json",
+    DEFAULT_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[1]
+    / "artifact_check_local.json",
+)
+DEFAULT_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_OUT_DIR = Path(
+    "results/reports/margin_penalty_residual_objective_decision"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -163,10 +178,16 @@ CONTINUE_PC_RESIDUAL_OBJECTIVE_VALIDATION = (
 CONTINUE_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION = (
     "continue_confidence_penalty_residual_objective_validation"
 )
+CONTINUE_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION = (
+    "continue_margin_penalty_residual_objective_validation"
+)
 DIAGNOSE_PC_RESIDUAL_OBJECTIVE = "diagnose_pc_residual_objective_gap"
 STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION = "stop_pc_residual_objective_validation"
 STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION = (
     "stop_confidence_penalty_residual_objective_validation"
+)
+STOP_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION = (
+    "stop_margin_penalty_residual_objective_validation"
 )
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -2374,6 +2395,208 @@ def _confidence_penalty_residual_objective_entry(
     return entry
 
 
+def write_margin_penalty_residual_objective_decision_report(
+    comparison_dirs: list[Path] | tuple[Path, ...] = (
+        DEFAULT_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS
+    ),
+    out_dir: Path = DEFAULT_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_OUT_DIR,
+    *,
+    artifact_check_paths: list[Path] | tuple[Path, ...] | None = (
+        DEFAULT_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS
+    ),
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+) -> dict[str, Any]:
+    """Decide whether margin-penalty CE merits more objective validation."""
+
+    if max_logit_delta < 0.0:
+        raise ValueError("max_logit_delta must be non-negative")
+
+    entries = []
+    failures = []
+    artifact_paths = list(artifact_check_paths or [])
+    for index, comparison_dir in enumerate(comparison_dirs):
+        comparison_dir = Path(comparison_dir)
+        artifact_check_path = (
+            Path(artifact_paths[index]) if index < len(artifact_paths) else None
+        )
+        entry = _margin_penalty_residual_objective_entry(
+            comparison_dir,
+            artifact_check_path=artifact_check_path,
+            max_logit_delta=max_logit_delta,
+        )
+        entries.append(entry)
+        failures.extend(entry["failures"])
+
+    backends = sorted(
+        {
+            entry["backend"]
+            for entry in entries
+            if entry.get("backend") in {"local", "colab"}
+        }
+    )
+    for backend in sorted({"local", "colab"} - set(backends)):
+        failures.append(
+            {
+                "field": "comparison.backend",
+                "expected": backend,
+                "actual": "missing",
+            }
+        )
+
+    supervised_runs = [
+        entry["supervised_run"] for entry in entries if entry.get("supervised_run")
+    ]
+    margin_runs = [
+        entry["margin_penalty_run"]
+        for entry in entries
+        if entry.get("margin_penalty_run")
+    ]
+    margin_ce_wins = [
+        entry
+        for entry in entries
+        if entry.get("supervised_run")
+        and entry.get("margin_penalty_run")
+        and entry["margin_penalty_run"]["best_hep_loss"] is not None
+        and entry["supervised_run"]["best_hep_loss"] is not None
+        and entry["margin_penalty_run"]["best_hep_loss"]
+        < entry["supervised_run"]["best_hep_loss"]
+    ]
+    margin_minus_supervised = [
+        entry["margin_penalty_minus_supervised_best_hep_loss"]
+        for entry in entries
+        if entry.get("margin_penalty_minus_supervised_best_hep_loss") is not None
+    ]
+    residual_loss_deltas = [
+        entry["margin_penalty_minus_supervised_final_residual_loss"]
+        for entry in entries
+        if entry.get("margin_penalty_minus_supervised_final_residual_loss") is not None
+    ]
+    status = "fail" if failures else "pass"
+    continue_variant = status == "pass" and bool(margin_ce_wins)
+    report = {
+        "status": status,
+        "decision": (
+            CONTINUE_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION
+            if continue_variant
+            else (
+                STOP_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION
+                if status == "pass"
+                else INSUFFICIENT_EVIDENCE
+            )
+        ),
+        "continue_margin_penalty_residual_objective_validation": continue_variant,
+        "selected_residual_objective_variant": (
+            "supervised_ce_margin_penalty" if continue_variant else None
+        ),
+        "promote_residual_learning_method": False,
+        "default_residual_objective": "supervised_ce",
+        "policy": {
+            "max_logit_delta_from_ordinary": max_logit_delta,
+            "requires_local_and_colab_evidence": True,
+            "requires_passing_artifact_checks": True,
+            "requires_supervised_and_margin_penalty_runs": True,
+            "requires_support_stress_preset_disabled": True,
+            "requires_temporal_clipped_hep_path": True,
+            "requires_both_objectives_improve_own_training_loss": True,
+            "requires_margin_penalty_lower_supervised_ce_hep_loss_to_continue": True,
+            "allows_residual_objective_promotion": False,
+            "diagnostic_decision_only": True,
+        },
+        "evidence": {
+            "comparison_dirs": [str(path) for path in comparison_dirs],
+            "artifact_check_paths": [str(path) for path in artifact_paths],
+            "backend_count": len(backends),
+            "backends": backends,
+            "comparison_count": len(entries),
+            "supervised_run_count": len(supervised_runs),
+            "margin_penalty_run_count": len(margin_runs),
+            "margin_penalty_ce_win_count": len(margin_ce_wins),
+            "mean_margin_penalty_minus_supervised_best_hep_loss": (
+                sum(margin_minus_supervised) / len(margin_minus_supervised)
+                if margin_minus_supervised
+                else None
+            ),
+            "mean_margin_penalty_minus_supervised_final_residual_loss": (
+                sum(residual_loss_deltas) / len(residual_loss_deltas)
+                if residual_loss_deltas
+                else None
+            ),
+            "entries": entries,
+            "failures": failures,
+        },
+        "rationale": (
+            "The margin-penalty objective improves its own residual training "
+            "loss but does not beat supervised CE on best temporal-clipped HEP "
+            "supervised loss in the checked local and Colab artifacts. It should "
+            "not continue under the current objective gate."
+            if status == "pass" and not continue_variant
+            else (
+                "The margin-penalty objective beats supervised CE HEP loss in "
+                "at least one artifact-backed backend, so it merits broader "
+                "objective validation before any default change."
+                if status == "pass"
+                else (
+                    "The margin-penalty decision requires matching local and "
+                    "Colab comparisons with passing artifact checks and valid "
+                    "supervised and margin-penalty temporal-clipped runs."
+                )
+            )
+        ),
+        "next_step": (
+            "select the next non-PC residual objective variant to test under the objective gate"
+            if status == "pass" and not continue_variant
+            else (
+                "run a broader margin-penalty objective comparison outside the current char validation setting"
+                if status == "pass"
+                else "repair or regenerate the margin-penalty objective comparison artifacts"
+            )
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_margin_penalty_residual_objective_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
+def _margin_penalty_residual_objective_entry(
+    comparison_dir: Path,
+    *,
+    artifact_check_path: Path | None,
+    max_logit_delta: float,
+) -> dict[str, Any]:
+    entry = _residual_objective_variant_entry(
+        comparison_dir,
+        variant_objective="supervised_ce_margin_penalty",
+        variant_field="margin_penalty_run",
+        missing_field="comparison.runs.supervised_ce_margin_penalty",
+        artifact_check_path=artifact_check_path,
+        max_logit_delta=max_logit_delta,
+    )
+    supervised = entry.get("supervised_run")
+    margin = entry.get("margin_penalty_run")
+    entry["margin_penalty_minus_supervised_best_hep_loss"] = _best_loss_delta(
+        margin,
+        supervised,
+    )
+    entry["margin_penalty_minus_supervised_final_residual_loss"] = (
+        None
+        if not isinstance(margin, dict)
+        or not isinstance(supervised, dict)
+        or margin.get("final_residual_loss") is None
+        or supervised.get("final_residual_loss") is None
+        else float(margin["final_residual_loss"])
+        - float(supervised["final_residual_loss"])
+    )
+    return entry
+
+
 def _residual_objective_variant_entry(
     comparison_dir: Path,
     *,
@@ -4274,6 +4497,76 @@ def _write_confidence_penalty_residual_objective_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_margin_penalty_residual_objective_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Margin-Penalty Residual Objective Decision",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        (
+            "- Continue margin-penalty validation: "
+            f"`{report['continue_margin_penalty_residual_objective_validation']}`"
+        ),
+        (
+            "- Selected variant: "
+            f"`{report['selected_residual_objective_variant']}`"
+        ),
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        f"- Backends: `{', '.join(evidence['backends'])}`",
+        (
+            "- Mean margin-penalty minus supervised best HEP loss: "
+            f"`{_format_metric(evidence['mean_margin_penalty_minus_supervised_best_hep_loss'])}`"
+        ),
+        (
+            "- Mean margin-penalty minus supervised final residual loss: "
+            f"`{_format_metric(evidence['mean_margin_penalty_minus_supervised_final_residual_loss'])}`"
+        ),
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        (
+            "| Backend | Artifact check | Supervised best HEP loss "
+            "| Margin-penalty best HEP loss | Margin minus supervised "
+            "| Margin final residual loss | Source |"
+        ),
+        "| --- | --- | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for entry in evidence["entries"]:
+        supervised = entry.get("supervised_run") or {}
+        margin = entry.get("margin_penalty_run") or {}
+        lines.append(
+            (
+                f"| {entry.get('backend') or ''} "
+                f"| {entry.get('artifact_check_status') or ''} "
+                f"| {_format_metric(supervised.get('best_hep_loss'))} "
+                f"| {_format_metric(margin.get('best_hep_loss'))} "
+                f"| {_format_metric(entry.get('margin_penalty_minus_supervised_best_hep_loss'))} "
+                f"| {_format_metric(margin.get('final_residual_loss'))} "
+                f"| `{entry.get('comparison_dir')}` |"
+            )
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -4300,6 +4593,7 @@ def main() -> None:
             "pc-residual-objective-diagnostics",
             "anchored-pc-residual-objective-decision",
             "confidence-penalty-residual-objective-decision",
+            "margin-penalty-residual-objective-decision",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -4458,6 +4752,17 @@ def main() -> None:
             else DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS,
             args.out or DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_OUT_DIR,
             artifact_check_paths=DEFAULT_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS
+            if not args.artifact_check
+            else (args.artifact_check,),
+            max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "margin-penalty-residual-objective-decision":
+        report = write_margin_penalty_residual_objective_decision_report(
+            tuple(args.decision_report)
+            if args.decision_report
+            else DEFAULT_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS,
+            args.out or DEFAULT_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_OUT_DIR,
+            artifact_check_paths=DEFAULT_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS
             if not args.artifact_check
             else (args.artifact_check,),
             max_logit_delta=args.max_logit_delta,

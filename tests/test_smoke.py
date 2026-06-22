@@ -160,6 +160,41 @@ class Phase0SmokeTest(unittest.TestCase):
         )
         self.assertGreater(result.residual_parameter_delta, 0.0)
 
+    def test_supervised_ce_margin_penalty_objective_toggle(self) -> None:
+        margin_config = copy.deepcopy(CONFIG)
+        margin_config["training"] = {
+            "residual_objective": "supervised_ce_margin_penalty",
+            "margin_penalty_weight": 0.02,
+            "target_logit_margin": 0.3,
+        }
+
+        try:
+            result = run_phase0_smoke(margin_config)
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        self.assertEqual(result.residual_objective, "supervised_ce_margin_penalty")
+        self.assertEqual(result.margin_penalty_weight, 0.02)
+        self.assertEqual(result.target_logit_margin, 0.3)
+        self.assertTrue(all(result.invariants.values()))
+        self.assertEqual(result.to_summary()["margin_penalty_weight"], 0.02)
+        self.assertEqual(result.to_summary()["target_logit_margin"], 0.3)
+        self.assertTrue(
+            all(
+                row["phase"] == "residual_update"
+                for row in result.to_metric_rows()[1:]
+            )
+        )
+        self.assertTrue(
+            all(
+                row["residual_objective"] == "supervised_ce_margin_penalty"
+                for row in result.to_metric_rows()
+            )
+        )
+        self.assertGreater(result.residual_parameter_delta, 0.0)
+
     def test_hep_alpha_sweep_records_nonzero_alpha_rows(self) -> None:
         hep_config = copy.deepcopy(CONFIG)
         hep_config["run"]["max_steps"] = 1

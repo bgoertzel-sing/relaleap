@@ -103,6 +103,8 @@ the anchored-PC objective-gate validation comparison under
 `results/comparisons/colab_validation_pc_anchor_temporal_clipped_objective_gate`,
 the confidence-penalty objective-gate validation comparison under
 `results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate`,
+the margin-penalty objective-gate validation comparison under
+`results/comparisons/colab_validation_margin_penalty_temporal_clipped_objective_gate`,
 the extended temporal support-stress check under
 `results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep`,
 the larger-char promotion-gate support-stress check under
@@ -352,6 +354,29 @@ rerunning experiments:
 python -m relaleap.experiments.decision_report \
   --report confidence-penalty-residual-objective-decision \
   --out results/reports/confidence_penalty_residual_objective_decision
+```
+
+The margin-penalty objective-gate validation adds the next non-PC
+residual-objective variant to the same command-driven Colab validation path:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_margin_penalty_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_validation_margin_penalty_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_validation_margin_penalty_temporal_clipped_objective_gate \
+  --out results/comparisons/colab_validation_margin_penalty_temporal_clipped_objective_gate/artifact_check.json
+```
+
+After matching local and extracted Colab margin-penalty artifacts exist, write
+the command-driven margin-penalty objective decision report without rerunning
+experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report margin-penalty-residual-objective-decision \
+  --out results/reports/margin_penalty_residual_objective_decision
 ```
 
 The extended label-free temporal check moves outside the current char
