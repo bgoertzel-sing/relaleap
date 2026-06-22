@@ -524,6 +524,20 @@ The current local evidence passes artifacts and invariants. The anchored PC
 variant closes nearly all of the unanchored PC supervised-CE HEP loss gap, but
 supervised CE remains slightly better under the same validation gate.
 
+The matching Colab validation uses the same three configs and writes the
+Colab-prefixed artifact tree:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_pc_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_pc_anchor_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_validation_pc_anchor_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_validation_pc_anchor_temporal_clipped_objective_gate \
+  --out results/comparisons/colab_validation_pc_anchor_temporal_clipped_objective_gate/artifact_check.json
+```
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 
