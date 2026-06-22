@@ -553,6 +553,25 @@ current local and Colab artifacts, anchored PC closes most of the unanchored PC
 supervised-CE HEP loss gap but still does not beat supervised CE, so the report
 stops PC residual-objective validation under the current gate.
 
+The first non-PC residual objective variant adds a small confidence penalty to
+supervised CE while preserving the objective-gate setting that disables the
+support-stress preset and keeps the promoted temporal clipped HEP path:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_confidence_penalty_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/validation_confidence_penalty_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/validation_confidence_penalty_temporal_clipped_objective_gate \
+  --out results/comparisons/validation_confidence_penalty_temporal_clipped_objective_gate/artifact_check.json
+```
+
+The current local evidence passes artifacts and invariants. The confidence
+penalty improves its own configured objective by a similar ratio to supervised
+CE, but supervised CE still has the lower best temporal-clipped HEP CE loss in
+this first validation comparison.
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 

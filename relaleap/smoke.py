@@ -36,6 +36,7 @@ class Phase0Result:
 
     residual_objective: str
     ce_anchor_weight: float
+    confidence_penalty_weight: float
     dataset: str
     vocab_size: int
     seq_len: int
@@ -62,6 +63,7 @@ class Phase0Result:
         return {
             "residual_objective": self.residual_objective,
             "ce_anchor_weight": self.ce_anchor_weight,
+            "confidence_penalty_weight": self.confidence_penalty_weight,
             "dataset": self.dataset,
             "vocab_size": self.vocab_size,
             "seq_len": self.seq_len,
@@ -122,6 +124,9 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         )
     )
     ce_anchor_weight = float(training_cfg.get("ce_anchor_weight", 0.1))
+    confidence_penalty_weight = float(
+        training_cfg.get("confidence_penalty_weight", 0.01)
+    )
     dataset = str(data_cfg.get("dataset", "tiny_shakespeare_char"))
     seq_len = int(data_cfg.get("seq_len", 32))
     hidden_dim = int(base_cfg.get("hidden_dim", 32))
@@ -155,14 +160,18 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             raise ValueError("HEP alpha values must be between 0.0 and 1.0")
     if ce_anchor_weight < 0.0:
         raise ValueError("training.ce_anchor_weight must be non-negative")
+    if confidence_penalty_weight < 0.0:
+        raise ValueError("training.confidence_penalty_weight must be non-negative")
     if residual_objective not in {
         "supervised_ce",
+        "supervised_ce_confidence_penalty",
         "pc_logit_mse",
         "pc_logit_mse_ce_anchor",
     }:
         raise ValueError(
             "training.residual_objective must be one of: "
-            "supervised_ce, pc_logit_mse, pc_logit_mse_ce_anchor"
+            "supervised_ce, supervised_ce_confidence_penalty, "
+            "pc_logit_mse, pc_logit_mse_ce_anchor"
         )
     if hep_settling_objective not in {
         "residual_adapter",
@@ -239,6 +248,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         vocab_size,
         objective=residual_objective,
         ce_anchor_weight=ce_anchor_weight,
+        confidence_penalty_weight=confidence_penalty_weight,
     )
     metric_rows: list[dict[str, float | int | str]] = [
         _metric_row(
@@ -270,6 +280,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             vocab_size,
             objective=residual_objective,
             ce_anchor_weight=ce_anchor_weight,
+            confidence_penalty_weight=confidence_penalty_weight,
         )
         loss.backward()
         optimizer.step()
@@ -282,6 +293,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 vocab_size,
                 objective=residual_objective,
                 ce_anchor_weight=ce_anchor_weight,
+                confidence_penalty_weight=confidence_penalty_weight,
             )
             max_hep_alpha0_delta = _max_hep_delta_from_ordinary(
                 base,
@@ -325,6 +337,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 vocab_size,
                 objective=residual_objective,
                 ce_anchor_weight=ce_anchor_weight,
+                confidence_penalty_weight=confidence_penalty_weight,
             )
             max_hep_alpha0_delta = _max_hep_delta_from_ordinary(
                 base,
@@ -413,6 +426,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     return Phase0Result(
         residual_objective=residual_objective,
         ce_anchor_weight=ce_anchor_weight,
+        confidence_penalty_weight=confidence_penalty_weight,
         dataset=dataset,
         vocab_size=vocab_size,
         seq_len=seq_len,
@@ -732,6 +746,7 @@ def _residual_loss(
     *,
     objective: str,
     ce_anchor_weight: float = 0.1,
+    confidence_penalty_weight: float = 0.01,
 ) -> Any:
     import torch
     import torch.nn.functional as F
@@ -745,6 +760,11 @@ def _residual_loss(
     )
     if objective == "supervised_ce":
         return ce_loss
+    if objective == "supervised_ce_confidence_penalty":
+        log_probs = torch.log_softmax(prediction_logits, dim=-1)
+        probs = torch.softmax(prediction_logits, dim=-1)
+        entropy = -(probs * log_probs).sum(dim=-1).mean()
+        return ce_loss - confidence_penalty_weight * entropy
     if objective in {"pc_logit_mse", "pc_logit_mse_ce_anchor"}:
         pc_loss = F.mse_loss(
             torch.softmax(prediction_logits, dim=-1),
