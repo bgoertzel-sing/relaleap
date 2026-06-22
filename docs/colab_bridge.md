@@ -96,6 +96,9 @@ the non-smoke temporal validation under
 the post-promotion validation PC-vs-supervised temporal-clipped comparison
 under
 `results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep`,
+the objective-discriminative validation PC-vs-supervised temporal-clipped
+comparison under
+`results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate`,
 the extended temporal support-stress check under
 `results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep`,
 the larger-char promotion-gate support-stress check under
@@ -296,6 +299,20 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep/artifact_check.json
 ```
 
+The objective-discriminative validation PC-vs-supervised temporal-clipped
+comparison disables the support-stress preset while keeping the promoted
+temporal clipped HEP path:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_pc_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate \
+  --out results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate/artifact_check.json
+```
+
 The extended label-free temporal check moves outside the current char
 validation setting with sequence length `96`, hidden dimension `64`, `16`
 residual columns, `4` HEP settling steps, and `30` training steps:
@@ -432,6 +449,12 @@ results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep/notes
 results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep/artifact_check.json
 results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep/runs/char_validation_hep_support_stress_temporal_clipped/summary.json
 results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_hep/runs/char_validation_pc_hep_support_stress_temporal_clipped/summary.json
+results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate/summary.json
+results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate/metrics.csv
+results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate/notes.md
+results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate/artifact_check.json
+results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate/runs/char_validation_hep_temporal_clipped_objective_gate/summary.json
+results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate/runs/char_validation_pc_hep_temporal_clipped_objective_gate/summary.json
 results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep/summary.json
 results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep/metrics.csv
 results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep/notes.md
