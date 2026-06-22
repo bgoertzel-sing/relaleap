@@ -412,6 +412,25 @@ This keeps the checked Phase 0 baseline unchanged while testing whether the
 temporal label-free signal survives a larger deterministic char validation
 setting before any default-promotion decision.
 
+After temporal clipped HEP is promoted as the default support-stress mitigation,
+the next residual-layer learning check compares supervised residual training
+against PC-style logit-MSE residual training under the same temporal clipped
+validation setting:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_support_stress_temporal_clipped.yaml \
+  --config configs/char_validation_pc_hep_support_stress_temporal_clipped.yaml \
+  --out results/comparisons/validation_pc_vs_supervised_temporal_clipped_hep
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/validation_pc_vs_supervised_temporal_clipped_hep \
+  --out results/comparisons/validation_pc_vs_supervised_temporal_clipped_hep/artifact_check_local.json
+```
+
+This keeps the checked Phase 0 baseline unchanged while returning the
+post-promotion research loop to supervised-vs-PC residual objective evidence
+under the promoted deployable temporal clipped HEP path.
+
 The matching GitHub-backed Colab validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 
