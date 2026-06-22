@@ -138,7 +138,9 @@ python -m relaleap.experiments.run --config configs/char_smoke_pinned_hep.yaml -
 ```
 
 The notebook also runs the support-instability diagnostic comparison selected
-by the current automation status:
+by the current automation status. The default support-stress config uses
+temporal-consistency clipped HEP; the pinned config remains the pinned-support
+diagnostic path:
 
 ```bash
 python -m relaleap.experiments.compare \
@@ -150,7 +152,8 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_support_stress_pinned_vs_repicked/artifact_check.json
 ```
 
-The notebook also runs the opt-in clipped HEP support-stress comparison:
+The notebook also runs the clipped residual-adapter support-stress control
+against the promoted temporal clipped support-stress default:
 
 ```bash
 python -m relaleap.experiments.compare \

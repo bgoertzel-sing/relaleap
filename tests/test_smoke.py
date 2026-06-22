@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from relaleap.experiments.run import _read_config
 from relaleap.experiments.run import run
 from relaleap.smoke import (
     ResidualColumns,
@@ -377,6 +378,16 @@ class Phase0SmokeTest(unittest.TestCase):
         ][0]
         self.assertGreater(alpha1["support_change_fraction"], 0.0)
         self.assertGreater(alpha1["pinned_vs_repicked_logit_delta"], 0.0)
+
+    def test_default_support_stress_config_uses_temporal_clipped_hep(self) -> None:
+        config = _read_config(Path("configs/char_smoke_hep_support_stress.yaml"))
+
+        inference = config["inference"]
+        self.assertEqual(inference["hep_update_clip_norm"], 0.01)
+        self.assertEqual(
+            inference["hep_settling_objective"],
+            "temporal_consistency_gradient",
+        )
 
     def test_hep_update_clip_config_is_reported(self) -> None:
         clipped_config = copy.deepcopy(CONFIG)

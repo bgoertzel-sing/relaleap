@@ -131,9 +131,11 @@ for every alpha. That means this smoke case does not yet exercise support
 repicking during settling, so pinned support remains an opt-in artifact-only
 smoke path rather than a separate checked baseline.
 
-An additional opt-in stress config intentionally reshapes the trained residual
+The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic
-sees nonzero repicking without changing the checked Phase 0 baseline:
+sees nonzero repicking without changing the checked Phase 0 baseline. After the
+promotion-gate evidence passed, this support-stress path now uses the
+deployable temporal-consistency settling signal with the `0.01` per-token clip:
 
 ```bash
 python -m relaleap.experiments.run \
@@ -141,14 +143,13 @@ python -m relaleap.experiments.run \
   --out results/runs/char_smoke_hep_support_stress
 ```
 
-This is diagnostic-only evidence. It should be used to inspect whether pinned
-support and repicked settling diverge before promoting pinned-support behavior
-into the default comparison baseline.
+This is the default support-stress mitigation path. It remains outside the
+checked Phase 0 comparison baseline.
 
-A separate opt-in clipped HEP support-stress config bounds each settling update
-by per-token hidden-state norm. This probes whether an HEP mechanism can keep
-nonzero settling inside the ordinary-logit delta budget without changing the
-checked Phase 0 baseline or promoting pinned support:
+A separate clipped residual-adapter support-stress control bounds each settling
+update by per-token hidden-state norm while leaving the settling objective on
+the residual adapter. This preserves the earlier control path for comparison
+against the promoted temporal clipped default:
 
 ```bash
 python -m relaleap.experiments.compare \
@@ -170,10 +171,9 @@ python -m relaleap.experiments.decision_report \
   --out results/reports/clipped_hep_decision
 ```
 
-The report writes `decision_report.json` and `decision_report.md`. Under the
-current default policy, clipped HEP should remain opt-in unless the evidence
-artifacts pass and a clipped nonzero HEP alpha both improves loss over alpha 0
-and stays within the ordinary-logit and pinned-vs-repicked delta budgets.
+The report writes `decision_report.json` and `decision_report.md`. The clipped
+residual-adapter control remains useful as comparison evidence, but the default
+support-stress mitigation path is temporal clipped HEP after the promotion gate.
 
 An additional opt-in guided clipped HEP support-stress config uses a supervised
 cross-entropy hidden-state gradient step during settling. This is a diagnostic
@@ -612,9 +612,9 @@ The report writes `decision_report.json` and `decision_report.md`. It fails
 closed unless the promotion-gate definition report passes and the larger-char
 and tokenized local/Colab reports all pass, select temporal consistency, show
 nonzero support repicking, and include an accepted nonzero temporal alpha inside
-the ordinary-logit and pinned-vs-repicked budgets. A passing report satisfies
-the defined promotion gate and recommends the next explicit default
-support-stress mitigation change to temporal clipped HEP.
+the ordinary-logit and pinned-vs-repicked budgets. A passing report satisfied
+the defined promotion gate and led to the explicit default support-stress
+mitigation change to temporal clipped HEP.
 
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
