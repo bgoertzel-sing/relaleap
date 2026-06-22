@@ -35,6 +35,7 @@ class Phase0Result:
     """Structured result returned by the Phase 0 smoke routine."""
 
     residual_objective: str
+    ce_anchor_weight: float
     dataset: str
     vocab_size: int
     seq_len: int
@@ -60,6 +61,7 @@ class Phase0Result:
     def to_summary(self) -> dict[str, Any]:
         return {
             "residual_objective": self.residual_objective,
+            "ce_anchor_weight": self.ce_anchor_weight,
             "dataset": self.dataset,
             "vocab_size": self.vocab_size,
             "seq_len": self.seq_len,
@@ -119,6 +121,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             run_cfg.get("residual_objective", "supervised_ce"),
         )
     )
+    ce_anchor_weight = float(training_cfg.get("ce_anchor_weight", 0.1))
     dataset = str(data_cfg.get("dataset", "tiny_shakespeare_char"))
     seq_len = int(data_cfg.get("seq_len", 32))
     hidden_dim = int(base_cfg.get("hidden_dim", 32))
@@ -150,9 +153,16 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     for alpha in hep_alpha_sweep:
         if alpha < 0.0 or alpha > 1.0:
             raise ValueError("HEP alpha values must be between 0.0 and 1.0")
-    if residual_objective not in {"supervised_ce", "pc_logit_mse"}:
+    if ce_anchor_weight < 0.0:
+        raise ValueError("training.ce_anchor_weight must be non-negative")
+    if residual_objective not in {
+        "supervised_ce",
+        "pc_logit_mse",
+        "pc_logit_mse_ce_anchor",
+    }:
         raise ValueError(
-            "training.residual_objective must be one of: supervised_ce, pc_logit_mse"
+            "training.residual_objective must be one of: "
+            "supervised_ce, pc_logit_mse, pc_logit_mse_ce_anchor"
         )
     if hep_settling_objective not in {
         "residual_adapter",
@@ -228,6 +238,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         targets,
         vocab_size,
         objective=residual_objective,
+        ce_anchor_weight=ce_anchor_weight,
     )
     metric_rows: list[dict[str, float | int | str]] = [
         _metric_row(
@@ -258,6 +269,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             targets,
             vocab_size,
             objective=residual_objective,
+            ce_anchor_weight=ce_anchor_weight,
         )
         loss.backward()
         optimizer.step()
@@ -269,6 +281,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 targets,
                 vocab_size,
                 objective=residual_objective,
+                ce_anchor_weight=ce_anchor_weight,
             )
             max_hep_alpha0_delta = _max_hep_delta_from_ordinary(
                 base,
@@ -311,6 +324,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 targets,
                 vocab_size,
                 objective=residual_objective,
+                ce_anchor_weight=ce_anchor_weight,
             )
             max_hep_alpha0_delta = _max_hep_delta_from_ordinary(
                 base,
@@ -398,6 +412,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
 
     return Phase0Result(
         residual_objective=residual_objective,
+        ce_anchor_weight=ce_anchor_weight,
         dataset=dataset,
         vocab_size=vocab_size,
         seq_len=seq_len,
@@ -716,6 +731,7 @@ def _residual_loss(
     vocab_size: int,
     *,
     objective: str,
+    ce_anchor_weight: float = 0.1,
 ) -> Any:
     import torch
     import torch.nn.functional as F
@@ -723,18 +739,23 @@ def _residual_loss(
     logits = base(inputs, residual_adapter=residual)
     prediction_logits = logits[:, :-1, :]
     prediction_targets = targets[:, :-1]
+    ce_loss = F.cross_entropy(
+        prediction_logits.reshape(-1, vocab_size),
+        prediction_targets.reshape(-1),
+    )
     if objective == "supervised_ce":
-        return F.cross_entropy(
-            prediction_logits.reshape(-1, vocab_size),
-            prediction_targets.reshape(-1),
+        return ce_loss
+    if objective in {"pc_logit_mse", "pc_logit_mse_ce_anchor"}:
+        pc_loss = F.mse_loss(
+            torch.softmax(prediction_logits, dim=-1),
+            F.one_hot(
+                prediction_targets,
+                num_classes=vocab_size,
+            ).to(dtype=prediction_logits.dtype),
         )
-    if objective == "pc_logit_mse":
-        target_distribution = F.one_hot(
-            prediction_targets,
-            num_classes=vocab_size,
-        ).to(dtype=prediction_logits.dtype)
-        prediction_distribution = torch.softmax(prediction_logits, dim=-1)
-        return F.mse_loss(prediction_distribution, target_distribution)
+        if objective == "pc_logit_mse":
+            return pc_loss
+        return pc_loss + ce_anchor_weight * ce_loss
     raise ValueError(f"Unsupported residual objective: {objective}")
 
 
@@ -938,7 +959,7 @@ def _torch_no_grad() -> Any:
 
 
 def _residual_update_phase(objective: str) -> str:
-    if objective == "pc_logit_mse":
+    if objective in {"pc_logit_mse", "pc_logit_mse_ce_anchor"}:
         return "pc_residual_update"
     return "residual_update"
 

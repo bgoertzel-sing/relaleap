@@ -505,6 +505,25 @@ diagnostic-only: it quantifies the PC-minus-supervised best HEP CE-loss gap,
 own-objective loss ratios, and HEP alpha gains so the next PC objective variant
 can be chosen before another promotion-style gate.
 
+The first PC objective variant adds a small supervised CE anchor to the PC
+logit-MSE loss while preserving the objective-gate setting that disables the
+support-stress preset and keeps the promoted temporal clipped HEP path:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_pc_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_pc_anchor_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/validation_pc_anchor_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/validation_pc_anchor_temporal_clipped_objective_gate \
+  --out results/comparisons/validation_pc_anchor_temporal_clipped_objective_gate/artifact_check_local.json
+```
+
+The current local evidence passes artifacts and invariants. The anchored PC
+variant closes nearly all of the unanchored PC supervised-CE HEP loss gap, but
+supervised CE remains slightly better under the same validation gate.
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 
