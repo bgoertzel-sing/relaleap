@@ -87,6 +87,19 @@ DEFAULT_POST_PROMOTION_GATE_CONFIG = Path("configs/char_smoke_hep_support_stress
 DEFAULT_POST_PROMOTION_GATE_OUT_DIR = Path(
     "results/reports/post_promotion_residual_learning_gate"
 )
+DEFAULT_RESIDUAL_OBJECTIVE_GATE_COMPARISON_DIRS = (
+    Path("results/comparisons/validation_pc_vs_supervised_temporal_clipped_objective_gate"),
+    Path(
+        "results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate"
+    ),
+)
+DEFAULT_RESIDUAL_OBJECTIVE_GATE_ARTIFACT_CHECKS = (
+    DEFAULT_RESIDUAL_OBJECTIVE_GATE_COMPARISON_DIRS[0] / "artifact_check_local.json",
+    DEFAULT_RESIDUAL_OBJECTIVE_GATE_COMPARISON_DIRS[1] / "artifact_check_local.json",
+)
+DEFAULT_RESIDUAL_OBJECTIVE_GATE_OUT_DIR = Path(
+    "results/reports/residual_objective_gate_decision"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -107,6 +120,12 @@ SATISFY_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE = (
 )
 DEFINE_POST_PROMOTION_RESIDUAL_LEARNING_GATE = (
     "define_post_promotion_residual_layer_learning_gate"
+)
+KEEP_SUPERVISED_CE_RESIDUAL_OBJECTIVE_DEFAULT = (
+    "keep_supervised_ce_residual_objective_default"
+)
+CONTINUE_PC_RESIDUAL_OBJECTIVE_VALIDATION = (
+    "continue_pc_residual_objective_validation"
 )
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -1391,6 +1410,428 @@ def write_post_promotion_residual_learning_gate_report(
     return report
 
 
+def write_residual_objective_gate_decision_report(
+    comparison_dirs: list[Path] | tuple[Path, ...] = (
+        DEFAULT_RESIDUAL_OBJECTIVE_GATE_COMPARISON_DIRS
+    ),
+    out_dir: Path = DEFAULT_RESIDUAL_OBJECTIVE_GATE_OUT_DIR,
+    *,
+    artifact_check_paths: list[Path] | tuple[Path, ...] | None = (
+        DEFAULT_RESIDUAL_OBJECTIVE_GATE_ARTIFACT_CHECKS
+    ),
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+) -> dict[str, Any]:
+    """Decide the supervised-vs-PC residual objective gate from artifacts."""
+
+    if max_logit_delta < 0.0:
+        raise ValueError("max_logit_delta must be non-negative")
+
+    entries = []
+    failures = []
+    artifact_paths = list(artifact_check_paths or [])
+    for index, comparison_dir in enumerate(comparison_dirs):
+        comparison_dir = Path(comparison_dir)
+        artifact_check_path = (
+            Path(artifact_paths[index]) if index < len(artifact_paths) else None
+        )
+        entry = _residual_objective_gate_entry(
+            comparison_dir,
+            artifact_check_path=artifact_check_path,
+            max_logit_delta=max_logit_delta,
+        )
+        entries.append(entry)
+        failures.extend(entry["failures"])
+
+    backend_pairs = sorted(
+        {
+            entry["backend"]
+            for entry in entries
+            if entry.get("backend") in {"local", "colab"}
+        }
+    )
+    for backend in sorted({"local", "colab"} - set(backend_pairs)):
+        failures.append(
+            {
+                "field": "comparison.backend",
+                "expected": backend,
+                "actual": "missing",
+            }
+        )
+
+    supervised_entries = [
+        entry["supervised_run"] for entry in entries if entry.get("supervised_run")
+    ]
+    pc_entries = [entry["pc_run"] for entry in entries if entry.get("pc_run")]
+    supervised_best_losses = [
+        run["best_hep_loss"] for run in supervised_entries if run["best_hep_loss"] is not None
+    ]
+    pc_best_losses = [
+        run["best_hep_loss"] for run in pc_entries if run["best_hep_loss"] is not None
+    ]
+    supervised_deltas = [
+        run["residual_loss_delta"]
+        for run in supervised_entries
+        if run["residual_loss_delta"] is not None
+    ]
+    pc_deltas = [
+        run["residual_loss_delta"]
+        for run in pc_entries
+        if run["residual_loss_delta"] is not None
+    ]
+    pc_ce_wins = [
+        entry
+        for entry in entries
+        if entry.get("supervised_run")
+        and entry.get("pc_run")
+        and entry["pc_run"]["best_hep_loss"] is not None
+        and entry["supervised_run"]["best_hep_loss"] is not None
+        and entry["pc_run"]["best_hep_loss"] < entry["supervised_run"]["best_hep_loss"]
+    ]
+    decision = _residual_objective_gate_decision(entries, failures, pc_ce_wins)
+    report = {
+        "status": "pass" if decision["decision"] != INSUFFICIENT_EVIDENCE else "fail",
+        "decision": decision["decision"],
+        "continue_pc_residual_objective_validation": decision["continue_pc"],
+        "promote_residual_learning_method": False,
+        "default_residual_objective": "supervised_ce",
+        "policy": {
+            "max_logit_delta_from_ordinary": max_logit_delta,
+            "requires_local_and_colab_evidence": True,
+            "requires_passing_artifact_checks": True,
+            "requires_supervised_and_pc_runs": True,
+            "requires_support_stress_preset_disabled": True,
+            "requires_temporal_clipped_hep_path": True,
+            "requires_both_objectives_improve_own_training_loss": True,
+            "requires_pc_lower_supervised_ce_hep_loss_for_pc_promotion": True,
+            "allows_residual_objective_promotion": False,
+            "reason_residual_objective_promotion_is_blocked": (
+                "This report decides whether the current objective-gate evidence "
+                "justifies continued PC validation. It does not change the default "
+                "residual training objective."
+            ),
+        },
+        "evidence": {
+            "comparison_dirs": [str(path) for path in comparison_dirs],
+            "artifact_check_paths": [str(path) for path in artifact_paths],
+            "backend_count": len(backend_pairs),
+            "backends": backend_pairs,
+            "comparison_count": len(entries),
+            "supervised_run_count": len(supervised_entries),
+            "pc_run_count": len(pc_entries),
+            "pc_ce_win_count": len(pc_ce_wins),
+            "min_supervised_residual_loss_delta": min(supervised_deltas)
+            if supervised_deltas
+            else None,
+            "min_pc_residual_loss_delta": min(pc_deltas) if pc_deltas else None,
+            "mean_supervised_best_hep_loss": (
+                sum(supervised_best_losses) / len(supervised_best_losses)
+                if supervised_best_losses
+                else None
+            ),
+            "mean_pc_best_hep_loss": (
+                sum(pc_best_losses) / len(pc_best_losses) if pc_best_losses else None
+            ),
+            "entries": entries,
+            "failures": failures,
+        },
+        "rationale": decision["rationale"],
+        "next_step": decision["next_step"],
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_residual_objective_gate_markdown(out_dir / "decision_report.md", report)
+    return report
+
+
+def _residual_objective_gate_entry(
+    comparison_dir: Path,
+    *,
+    artifact_check_path: Path | None,
+    max_logit_delta: float,
+) -> dict[str, Any]:
+    failures = []
+    comparison: dict[str, Any] | None = None
+    artifact_check: dict[str, Any] | None = None
+    if not (comparison_dir / "summary.json").is_file():
+        failures.append(
+            {
+                "field": "comparison.summary.json",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(comparison_dir / "summary.json"),
+            }
+        )
+    else:
+        comparison = _read_json_object(comparison_dir / "summary.json")
+    if artifact_check_path is not None and artifact_check_path.is_file():
+        artifact_check = _read_json_object(artifact_check_path)
+    elif comparison is not None:
+        artifact_check = check_comparison_artifacts(comparison_dir)
+
+    runs = (
+        comparison.get("runs", [])
+        if isinstance(comparison, dict) and isinstance(comparison.get("runs"), list)
+        else []
+    )
+    supervised_runs = _runs_with_residual_objective(runs, "supervised_ce")
+    pc_runs = _runs_with_residual_objective(runs, "pc_logit_mse")
+    supervised_run = (
+        _residual_objective_run_entry(supervised_runs[0], max_logit_delta=max_logit_delta)
+        if supervised_runs
+        else None
+    )
+    pc_run = (
+        _residual_objective_run_entry(pc_runs[0], max_logit_delta=max_logit_delta)
+        if pc_runs
+        else None
+    )
+    verdict = comparison.get("verdict") if isinstance(comparison, dict) else None
+    verdict = verdict if isinstance(verdict, dict) else {}
+    backend = _infer_backend_from_report(comparison_dir, comparison_dir)
+
+    if artifact_check is None or artifact_check.get("status") != "pass":
+        failures.append(
+            {
+                "field": "artifact_check.status",
+                "expected": "pass",
+                "actual": None if artifact_check is None else artifact_check.get("status"),
+                "path": str(artifact_check_path or comparison_dir),
+            }
+        )
+    if comparison is None or comparison.get("status") != "ok":
+        failures.append(
+            {
+                "field": "comparison.status",
+                "expected": "ok",
+                "actual": None if comparison is None else comparison.get("status"),
+                "path": str(comparison_dir),
+            }
+        )
+    if verdict.get("status") != "pass":
+        failures.append(
+            {
+                "field": "comparison.verdict.status",
+                "expected": "pass",
+                "actual": verdict.get("status"),
+                "path": str(comparison_dir),
+            }
+        )
+    if not supervised_runs:
+        failures.append(
+            {
+                "field": "comparison.runs.supervised_ce",
+                "expected": "one run",
+                "actual": 0,
+                "path": str(comparison_dir),
+            }
+        )
+    if not pc_runs:
+        failures.append(
+            {
+                "field": "comparison.runs.pc_logit_mse",
+                "expected": "one run",
+                "actual": 0,
+                "path": str(comparison_dir),
+            }
+        )
+
+    for run_entry in (supervised_run, pc_run):
+        if run_entry is None:
+            continue
+        prefix = f"run.{run_entry['experiment_id']}"
+        if run_entry["status"] != "ok":
+            failures.append(
+                {
+                    "field": f"{prefix}.status",
+                    "expected": "ok",
+                    "actual": run_entry["status"],
+                    "path": str(comparison_dir),
+                }
+            )
+        if run_entry["support_stress_preset"] is not False:
+            failures.append(
+                {
+                    "field": f"{prefix}.support_stress_preset",
+                    "expected": False,
+                    "actual": run_entry["support_stress_preset"],
+                    "path": str(comparison_dir),
+                }
+            )
+        if run_entry["hep_settling_objective"] != "temporal_consistency_gradient":
+            failures.append(
+                {
+                    "field": f"{prefix}.hep_settling_objective",
+                    "expected": "temporal_consistency_gradient",
+                    "actual": run_entry["hep_settling_objective"],
+                    "path": str(comparison_dir),
+                }
+            )
+        if run_entry["hep_update_clip_norm"] != 0.01:
+            failures.append(
+                {
+                    "field": f"{prefix}.hep_update_clip_norm",
+                    "expected": 0.01,
+                    "actual": run_entry["hep_update_clip_norm"],
+                    "path": str(comparison_dir),
+                }
+            )
+        if not run_entry["own_loss_improved"]:
+            failures.append(
+                {
+                    "field": f"{prefix}.residual_loss_delta",
+                    "expected": "< 0.0",
+                    "actual": run_entry["residual_loss_delta"],
+                    "path": str(comparison_dir),
+                }
+            )
+        if not run_entry["accepted_hep_alphas"]:
+            failures.append(
+                {
+                    "field": f"{prefix}.hep_alpha_sweep",
+                    "expected": "accepted nonzero alpha",
+                    "actual": "none",
+                    "path": str(comparison_dir),
+                }
+            )
+        for invariant, passed in run_entry["invariants"].items():
+            if passed is not True:
+                failures.append(
+                    {
+                        "field": f"{prefix}.invariants.{invariant}",
+                        "expected": True,
+                        "actual": passed,
+                        "path": str(comparison_dir),
+                    }
+                )
+
+    return {
+        "comparison_dir": str(comparison_dir),
+        "artifact_check_path": str(artifact_check_path) if artifact_check_path else None,
+        "backend": backend,
+        "artifact_check_status": None if artifact_check is None else artifact_check.get("status"),
+        "comparison_status": None if comparison is None else comparison.get("status"),
+        "verdict_status": verdict.get("status"),
+        "supervised_run": supervised_run,
+        "pc_run": pc_run,
+        "failures": failures,
+    }
+
+
+def _residual_objective_run_entry(
+    run: dict[str, Any],
+    *,
+    max_logit_delta: float,
+) -> dict[str, Any]:
+    initial_loss = _optional_float(run.get("initial_residual_loss"))
+    final_loss = _optional_float(run.get("final_residual_loss"))
+    residual_delta = (
+        None if initial_loss is None or final_loss is None else final_loss - initial_loss
+    )
+    alpha_candidates = _alpha_candidates([run])
+    accepted = [
+        candidate
+        for candidate in alpha_candidates
+        if candidate["alpha"] != 0.0
+        and candidate["loss_improvement_from_alpha0"] is not None
+        and candidate["loss_improvement_from_alpha0"] > 0.0
+        and candidate["max_logit_delta_from_ordinary"] <= max_logit_delta
+    ]
+    best_hep = min(
+        (
+            candidate
+            for candidate in alpha_candidates
+            if candidate["loss"] is not None
+        ),
+        key=lambda candidate: candidate["loss"],
+        default=None,
+    )
+    return {
+        "experiment_id": run.get("experiment_id"),
+        "residual_objective": run.get("residual_objective"),
+        "status": run.get("status"),
+        "dataset": run.get("dataset"),
+        "training_steps": run.get("training_steps"),
+        "support_stress": run.get("support_stress"),
+        "support_stress_preset": run.get("support_stress_preset"),
+        "hep_settling_objective": run.get("hep_settling_objective"),
+        "hep_update_clip_norm": run.get("hep_update_clip_norm"),
+        "initial_residual_loss": initial_loss,
+        "final_residual_loss": final_loss,
+        "residual_loss_delta": residual_delta,
+        "residual_loss_ratio": _optional_float(run.get("residual_loss_ratio")),
+        "own_loss_improved": residual_delta is not None and residual_delta < 0.0,
+        "best_hep_loss": None if best_hep is None else best_hep["loss"],
+        "best_hep_alpha": best_hep,
+        "accepted_hep_alphas": accepted,
+        "invariants": run.get("invariants")
+        if isinstance(run.get("invariants"), dict)
+        else {},
+    }
+
+
+def _residual_objective_gate_decision(
+    entries: list[dict[str, Any]],
+    failures: list[dict[str, Any]],
+    pc_ce_wins: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if failures or not entries:
+        return {
+            "decision": INSUFFICIENT_EVIDENCE,
+            "continue_pc": False,
+            "rationale": (
+                "The residual objective gate requires matching local and Colab "
+                "comparisons with passing artifact checks, supervised and PC runs, "
+                "disabled support-stress presets, temporal clipped HEP, passing "
+                "invariants, and own-objective loss improvement."
+            ),
+            "next_step": "repair or regenerate the objective-gate comparison artifacts",
+        }
+    if pc_ce_wins:
+        return {
+            "decision": CONTINUE_PC_RESIDUAL_OBJECTIVE_VALIDATION,
+            "continue_pc": True,
+            "rationale": (
+                "PC-style residual training improved its own objective and produced "
+                "lower supervised CE HEP loss than supervised residual training in "
+                "at least one artifact-backed backend, so it merits broader PC "
+                "objective validation before any default change."
+            ),
+            "next_step": "run a broader supervised-vs-PC objective-gate comparison outside the current char validation setting",
+        }
+    return {
+        "decision": KEEP_SUPERVISED_CE_RESIDUAL_OBJECTIVE_DEFAULT,
+        "continue_pc": False,
+        "rationale": (
+            "The objective-discriminative local and Colab evidence is valid and both "
+            "objectives improve their own training losses, but PC-style residual "
+            "training does not beat supervised residual training on supervised CE "
+            "HEP loss. The default residual objective should remain supervised CE."
+        ),
+        "next_step": "inspect PC residual objective variants or diagnostics before another promotion-style objective gate",
+    }
+
+
+def _runs_with_residual_objective(
+    runs: list[Any],
+    residual_objective: str,
+) -> list[dict[str, Any]]:
+    return [
+        run
+        for run in runs
+        if isinstance(run, dict) and run.get("residual_objective") == residual_objective
+    ]
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
 def _decision(evidence: dict[str, Any], *, max_logit_delta: float) -> dict[str, Any]:
     if (
         evidence["artifact_check_status"] != "pass"
@@ -2655,6 +3096,83 @@ def _write_post_promotion_residual_learning_gate_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_residual_objective_gate_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Residual Objective Gate Decision",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        (
+            "- Continue PC residual objective validation: "
+            f"`{report['continue_pc_residual_objective_validation']}`"
+        ),
+        (
+            "- Promote residual learning method: "
+            f"`{report['promote_residual_learning_method']}`"
+        ),
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        f"- Backends: `{', '.join(evidence['backends'])}`",
+        f"- Supervised run count: `{evidence['supervised_run_count']}`",
+        f"- PC run count: `{evidence['pc_run_count']}`",
+        f"- PC CE win count: `{evidence['pc_ce_win_count']}`",
+        (
+            "- Mean supervised best HEP loss: "
+            f"`{_format_metric(evidence['mean_supervised_best_hep_loss'])}`"
+        ),
+        (
+            "- Mean PC best HEP loss: "
+            f"`{_format_metric(evidence['mean_pc_best_hep_loss'])}`"
+        ),
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        (
+            "| Backend | Artifact check | Verdict | Objective | Own loss delta "
+            "| Best HEP alpha | Best HEP loss | Support preset disabled | Source |"
+        ),
+        "| --- | --- | --- | --- | ---: | ---: | ---: | --- | --- |",
+    ]
+    for entry in evidence["entries"]:
+        for key in ("supervised_run", "pc_run"):
+            run = entry.get(key)
+            if not run:
+                continue
+            alpha = run.get("best_hep_alpha") or {}
+            lines.append(
+                (
+                    f"| {entry.get('backend') or ''} "
+                    f"| {entry.get('artifact_check_status') or ''} "
+                    f"| {entry.get('verdict_status') or ''} "
+                    f"| {run.get('residual_objective') or ''} "
+                    f"| {_format_metric(run.get('residual_loss_delta'))} "
+                    f"| {_format_metric(alpha.get('alpha'))} "
+                    f"| {_format_metric(run.get('best_hep_loss'))} "
+                    f"| {run.get('support_stress_preset') is False} "
+                    f"| `{entry.get('comparison_dir')}` |"
+                )
+            )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -2677,6 +3195,7 @@ def main() -> None:
             "temporal-clipped-hep-promotion-gate",
             "temporal-clipped-hep-promotion-gate-satisfaction",
             "post-promotion-residual-learning-gate",
+            "residual-objective-gate",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -2794,6 +3313,17 @@ def main() -> None:
             else DEFAULT_POST_PROMOTION_GATE_SATISFACTION_REPORT,
             args.config_path or DEFAULT_POST_PROMOTION_GATE_CONFIG,
             args.out or DEFAULT_POST_PROMOTION_GATE_OUT_DIR,
+        )
+    elif args.report == "residual-objective-gate":
+        report = write_residual_objective_gate_decision_report(
+            tuple(args.decision_report)
+            if args.decision_report
+            else DEFAULT_RESIDUAL_OBJECTIVE_GATE_COMPARISON_DIRS,
+            args.out or DEFAULT_RESIDUAL_OBJECTIVE_GATE_OUT_DIR,
+            artifact_check_paths=DEFAULT_RESIDUAL_OBJECTIVE_GATE_ARTIFACT_CHECKS
+            if not args.artifact_check
+            else (args.artifact_check,),
+            max_logit_delta=args.max_logit_delta,
         )
     else:
         report = write_pinned_support_decision_report(

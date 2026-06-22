@@ -474,6 +474,22 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_validation_pc_vs_supervised_temporal_clipped_objective_gate/artifact_check.json
 ```
 
+After matching local and Colab objective-gate artifacts exist, write the
+command-driven supervised-vs-PC residual-objective decision report without
+rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report residual-objective-gate \
+  --out results/reports/residual_objective_gate_decision
+```
+
+The report writes `decision_report.json` and `decision_report.md`. The current
+artifact-backed local and Colab objective-gate evidence keeps supervised CE as
+the default residual objective: both supervised and PC runs improve their own
+training losses with the support-stress preset disabled, but PC has worse
+supervised CE HEP loss than supervised residual training in both backends.
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 
