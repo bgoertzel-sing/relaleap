@@ -490,6 +490,21 @@ the default residual objective: both supervised and PC runs improve their own
 training losses with the support-stress preset disabled, but PC has worse
 supervised CE HEP loss than supervised residual training in both backends.
 
+To inspect that PC objective gap without rerunning local or Colab experiments,
+write the command-driven diagnostic report over the same artifact-backed
+objective-gate evidence:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report pc-residual-objective-diagnostics \
+  --out results/reports/pc_residual_objective_diagnostics
+```
+
+The report writes `decision_report.json` and `decision_report.md`. It is
+diagnostic-only: it quantifies the PC-minus-supervised best HEP CE-loss gap,
+own-objective loss ratios, and HEP alpha gains so the next PC objective variant
+can be chosen before another promotion-style gate.
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 

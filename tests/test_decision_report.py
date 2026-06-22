@@ -19,8 +19,10 @@ from relaleap.experiments.decision_report import (
     DEFINE_POST_PROMOTION_RESIDUAL_LEARNING_GATE,
     KEEP_SUPERVISED_CE_RESIDUAL_OBJECTIVE_DEFAULT,
     CONTINUE_PC_RESIDUAL_OBJECTIVE_VALIDATION,
+    DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     write_clipped_hep_decision_report,
     write_guided_clipped_hep_decision_report,
+    write_pc_residual_objective_diagnostics_report,
     write_pinned_support_decision_report,
     write_post_promotion_residual_learning_gate_report,
     write_residual_objective_gate_decision_report,
@@ -891,6 +893,92 @@ class ResidualObjectiveGateDecisionReportTest(unittest.TestCase):
                 },
                 report["evidence"]["failures"],
             )
+            self.assertIn(
+                {
+                    "field": "comparison.backend",
+                    "expected": "colab",
+                    "actual": "missing",
+                },
+                report["evidence"]["failures"],
+            )
+
+
+class PcResidualObjectiveDiagnosticsReportTest(unittest.TestCase):
+    def test_valid_local_and_colab_diagnostics_quantify_pc_ce_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dirs = []
+            artifact_checks = []
+            for backend in ("local", "colab"):
+                comparison_dir = tmp_path / f"{backend}_objective_gate_comparison"
+                _write_residual_objective_gate_comparison(
+                    comparison_dir,
+                    pc_best_hep_loss=3.60,
+                    support_stress_preset=False,
+                )
+                artifact_check = comparison_dir / "artifact_check_local.json"
+                artifact_check.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                comparison_dirs.append(comparison_dir)
+                artifact_checks.append(artifact_check)
+
+            report = write_pc_residual_objective_diagnostics_report(
+                comparison_dirs,
+                tmp_path / "pc_objective_diagnostics",
+                artifact_check_paths=artifact_checks,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["decision"], DIAGNOSE_PC_RESIDUAL_OBJECTIVE)
+            self.assertEqual(report["evidence"]["pc_worse_ce_backend_count"], 2)
+            self.assertAlmostEqual(
+                report["evidence"]["mean_pc_minus_supervised_best_hep_loss"],
+                0.02,
+            )
+            self.assertAlmostEqual(
+                report["evidence"]["mean_pc_best_hep_loss_improvement_from_alpha0"],
+                0.001,
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "pc_objective_diagnostics"
+                    / "decision_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "pc_objective_diagnostics"
+                    / "decision_report.md"
+                ).is_file()
+            )
+
+    def test_diagnostics_fail_without_matching_backends(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "local_objective_gate_comparison"
+            _write_residual_objective_gate_comparison(
+                comparison_dir,
+                pc_best_hep_loss=3.60,
+                support_stress_preset=False,
+            )
+            artifact_check = comparison_dir / "artifact_check_local.json"
+            artifact_check.write_text(
+                json.dumps({"status": "pass"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_pc_residual_objective_diagnostics_report(
+                [comparison_dir],
+                tmp_path / "pc_objective_diagnostics",
+                artifact_check_paths=[artifact_check],
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
             self.assertIn(
                 {
                     "field": "comparison.backend",
