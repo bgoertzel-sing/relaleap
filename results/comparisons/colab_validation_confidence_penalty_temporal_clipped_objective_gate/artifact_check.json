@@ -1,0 +1,144 @@
+{
+  "artifact_invariants": {
+    "count": 6,
+    "failed_count": 0,
+    "passed": true
+  },
+  "artifacts": [
+    {
+      "exists": true,
+      "label": "comparison.summary.json",
+      "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "comparison.metrics.csv",
+      "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "comparison.notes.md",
+      "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_hep_temporal_clipped_objective_gate.summary.json",
+      "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_hep_temporal_clipped_objective_gate/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_hep_temporal_clipped_objective_gate.metrics.csv",
+      "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_hep_temporal_clipped_objective_gate/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_hep_temporal_clipped_objective_gate.notes.md",
+      "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_hep_temporal_clipped_objective_gate/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_confidence_penalty_hep_temporal_clipped_objective_gate.summary.json",
+      "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_confidence_penalty_hep_temporal_clipped_objective_gate/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_confidence_penalty_hep_temporal_clipped_objective_gate.metrics.csv",
+      "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_confidence_penalty_hep_temporal_clipped_objective_gate/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_confidence_penalty_hep_temporal_clipped_objective_gate.notes.md",
+      "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_confidence_penalty_hep_temporal_clipped_objective_gate/notes.md"
+    }
+  ],
+  "baseline_comparison": {
+    "mismatch_count": null,
+    "present": false,
+    "status": null
+  },
+  "baseline_reference_comparison": {
+    "mismatch_count": null,
+    "present": false,
+    "status": null
+  },
+  "comparison_dir": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate",
+  "failures": [],
+  "hep_alpha_acceptance": {
+    "accepted_alpha": {
+      "accepted": true,
+      "alpha": 1.0,
+      "alpha0_loss": 3.5867366790771484,
+      "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
+      "loss": 3.586674451828003,
+      "loss_improvement_from_alpha0": 6.222724914550781e-05,
+      "max_logit_delta_from_ordinary": 0.0004913806915283203
+    },
+    "status": "accepted"
+  },
+  "phase0_invariants": {
+    "count": 8,
+    "failed_count": 0,
+    "passed": true
+  },
+  "runs": [
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.char_validation_hep_temporal_clipped_objective_gate.summary.json",
+          "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_hep_temporal_clipped_objective_gate/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.char_validation_hep_temporal_clipped_objective_gate.metrics.csv",
+          "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_hep_temporal_clipped_objective_gate/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.char_validation_hep_temporal_clipped_objective_gate.notes.md",
+          "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_hep_temporal_clipped_objective_gate/notes.md"
+        }
+      ],
+      "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
+      "run_dir": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_hep_temporal_clipped_objective_gate",
+      "summary_failures": [],
+      "summary_status": "ok"
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.char_validation_confidence_penalty_hep_temporal_clipped_objective_gate.summary.json",
+          "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_confidence_penalty_hep_temporal_clipped_objective_gate/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.char_validation_confidence_penalty_hep_temporal_clipped_objective_gate.metrics.csv",
+          "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_confidence_penalty_hep_temporal_clipped_objective_gate/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.char_validation_confidence_penalty_hep_temporal_clipped_objective_gate.notes.md",
+          "path": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_confidence_penalty_hep_temporal_clipped_objective_gate/notes.md"
+        }
+      ],
+      "experiment_id": "char_validation_confidence_penalty_hep_temporal_clipped_objective_gate",
+      "run_dir": "results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/runs/char_validation_confidence_penalty_hep_temporal_clipped_objective_gate",
+      "summary_failures": [],
+      "summary_status": "ok"
+    }
+  ],
+  "status": "pass",
+  "summary_status": "ok",
+  "verdict_status": "pass"
+}
