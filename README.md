@@ -616,6 +616,24 @@ the ordinary-logit and pinned-vs-repicked budgets. A passing report satisfied
 the defined promotion gate and led to the explicit default support-stress
 mitigation change to temporal clipped HEP.
 
+After the default support-stress mitigation has been promoted, define the next
+residual-layer learning gate without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report post-promotion-residual-learning-gate \
+  --config-path configs/char_smoke_hep_support_stress.yaml \
+  --out results/reports/post_promotion_residual_learning_gate
+```
+
+The report fails closed unless the temporal clipped HEP promotion-gate
+satisfaction report passes and `configs/char_smoke_hep_support_stress.yaml`
+contains the promoted temporal-consistency settling objective with the `0.01`
+clip. A passing report defines, but does not run or promote, the next gate:
+compare supervised residual updates against the existing PC-style residual
+objective under the promoted temporal clipped support-stress default, with
+local and Colab artifact-backed decisions before any residual-objective change.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 

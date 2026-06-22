@@ -79,6 +79,14 @@ DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_SATISFACTION_REPORTS = (
 DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_SATISFACTION_OUT_DIR = Path(
     "results/reports/temporal_clipped_hep_promotion_gate_satisfaction"
 )
+DEFAULT_POST_PROMOTION_GATE_SATISFACTION_REPORT = (
+    DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_SATISFACTION_OUT_DIR
+    / "decision_report.json"
+)
+DEFAULT_POST_PROMOTION_GATE_CONFIG = Path("configs/char_smoke_hep_support_stress.yaml")
+DEFAULT_POST_PROMOTION_GATE_OUT_DIR = Path(
+    "results/reports/post_promotion_residual_learning_gate"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -96,6 +104,9 @@ DEFINE_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE = (
 )
 SATISFY_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE = (
     "satisfy_temporal_label_free_support_stress_promotion_gate"
+)
+DEFINE_POST_PROMOTION_RESIDUAL_LEARNING_GATE = (
+    "define_post_promotion_residual_layer_learning_gate"
 )
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -1124,6 +1135,262 @@ def write_temporal_clipped_hep_promotion_gate_satisfaction_report(
     return report
 
 
+def write_post_promotion_residual_learning_gate_report(
+    promotion_satisfaction_report_path: Path = DEFAULT_POST_PROMOTION_GATE_SATISFACTION_REPORT,
+    default_support_stress_config_path: Path = DEFAULT_POST_PROMOTION_GATE_CONFIG,
+    out_dir: Path = DEFAULT_POST_PROMOTION_GATE_OUT_DIR,
+) -> dict[str, Any]:
+    """Define the next residual-layer learning gate after temporal HEP promotion."""
+
+    failures = []
+    promotion_satisfaction_report: dict[str, Any] | None = None
+    if not promotion_satisfaction_report_path.is_file():
+        failures.append(
+            {
+                "field": "promotion_satisfaction_report",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(promotion_satisfaction_report_path),
+            }
+        )
+    else:
+        promotion_satisfaction_report = _read_json_object(
+            promotion_satisfaction_report_path
+        )
+        if promotion_satisfaction_report.get("status") != "pass":
+            failures.append(
+                {
+                    "field": "promotion_satisfaction_report.status",
+                    "expected": "pass",
+                    "actual": promotion_satisfaction_report.get("status"),
+                    "path": str(promotion_satisfaction_report_path),
+                }
+            )
+        if (
+            promotion_satisfaction_report.get("decision")
+            != SATISFY_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE
+        ):
+            failures.append(
+                {
+                    "field": "promotion_satisfaction_report.decision",
+                    "expected": SATISFY_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE,
+                    "actual": promotion_satisfaction_report.get("decision"),
+                    "path": str(promotion_satisfaction_report_path),
+                }
+            )
+        if promotion_satisfaction_report.get("promotion_gate_satisfied") is not True:
+            failures.append(
+                {
+                    "field": "promotion_satisfaction_report.promotion_gate_satisfied",
+                    "expected": True,
+                    "actual": promotion_satisfaction_report.get(
+                        "promotion_gate_satisfied"
+                    ),
+                    "path": str(promotion_satisfaction_report_path),
+                }
+            )
+        if (
+            promotion_satisfaction_report.get(
+                "promote_to_default_support_stress_mitigation"
+            )
+            is not True
+        ):
+            failures.append(
+                {
+                    "field": (
+                        "promotion_satisfaction_report."
+                        "promote_to_default_support_stress_mitigation"
+                    ),
+                    "expected": True,
+                    "actual": promotion_satisfaction_report.get(
+                        "promote_to_default_support_stress_mitigation"
+                    ),
+                    "path": str(promotion_satisfaction_report_path),
+                }
+            )
+
+    default_config: dict[str, Any] | None = None
+    if not default_support_stress_config_path.is_file():
+        failures.append(
+            {
+                "field": "default_support_stress_config",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(default_support_stress_config_path),
+            }
+        )
+    else:
+        default_config = _read_config_object(default_support_stress_config_path)
+        inference = (
+            default_config.get("inference", {})
+            if isinstance(default_config.get("inference"), dict)
+            else {}
+        )
+        if inference.get("hep_settling_objective") != "temporal_consistency_gradient":
+            failures.append(
+                {
+                    "field": "default_support_stress_config.hep_settling_objective",
+                    "expected": "temporal_consistency_gradient",
+                    "actual": inference.get("hep_settling_objective"),
+                    "path": str(default_support_stress_config_path),
+                }
+            )
+        if inference.get("hep_update_clip_norm") != 0.01:
+            failures.append(
+                {
+                    "field": "default_support_stress_config.hep_update_clip_norm",
+                    "expected": 0.01,
+                    "actual": inference.get("hep_update_clip_norm"),
+                    "path": str(default_support_stress_config_path),
+                }
+            )
+
+    required_evidence = [
+        {
+            "gate": "pc_residual_objective_under_promoted_temporal_default",
+            "description": (
+                "Compare supervised residual training against PC-style residual "
+                "training while keeping the promoted temporal clipped "
+                "support-stress default active."
+            ),
+            "required_backends": ["local", "colab"],
+            "required_runs": [
+                "supervised_ce_temporal_clipped_support_stress",
+                "pc_logit_mse_temporal_clipped_support_stress",
+            ],
+            "minimum_scale": {
+                "dataset": "tiny_shakespeare_char",
+                "seq_len": 64,
+                "hidden_dim": 64,
+                "num_columns": 12,
+                "pc_steps": 3,
+                "training_steps": 25,
+            },
+        },
+        {
+            "gate": "frozen_base_and_zero_identity_regression",
+            "description": (
+                "Require both residual objectives to preserve the frozen-base and "
+                "zero-initialized residual invariants under the promoted default."
+            ),
+            "required_invariants": [
+                "zero_init_identity",
+                "frozen_base_unchanged",
+                "hep_alpha_0_equivalence",
+                "residual_parameters_updated",
+            ],
+        },
+        {
+            "gate": "artifact_backed_residual_learning_decision",
+            "description": (
+                "Write a command-driven decision report from completed local and "
+                "Colab artifacts before changing the default residual objective."
+            ),
+            "required_artifacts": [
+                "summary.json",
+                "metrics.csv",
+                "notes.md",
+                "artifact_check.json",
+                "decision_report.json",
+            ],
+        },
+    ]
+    status = "fail" if failures else "pass"
+    report = {
+        "status": status,
+        "decision": (
+            DEFINE_POST_PROMOTION_RESIDUAL_LEARNING_GATE
+            if status == "pass"
+            else INSUFFICIENT_EVIDENCE
+        ),
+        "promoted_temporal_support_stress_default_confirmed": status == "pass",
+        "promote_residual_learning_method": False,
+        "policy": {
+            "requires_promotion_gate_satisfaction_pass": True,
+            "requires_default_support_stress_temporal_consistency": True,
+            "requires_default_support_stress_clip_norm": 0.01,
+            "requires_local_and_colab_evidence": True,
+            "requires_supervised_and_pc_residual_objective_runs": True,
+            "requires_passing_artifact_checks": True,
+            "allows_residual_objective_promotion": False,
+            "reason_residual_objective_promotion_is_blocked": (
+                "This report defines the next gate after temporal clipped HEP "
+                "promotion. It does not execute the residual-objective comparison "
+                "or change the default residual training objective."
+            ),
+        },
+        "evidence": {
+            "promotion_satisfaction_report_path": str(
+                promotion_satisfaction_report_path
+            ),
+            "promotion_satisfaction_status": None
+            if promotion_satisfaction_report is None
+            else promotion_satisfaction_report.get("status"),
+            "promotion_satisfaction_decision": None
+            if promotion_satisfaction_report is None
+            else promotion_satisfaction_report.get("decision"),
+            "promotion_gate_satisfied": None
+            if promotion_satisfaction_report is None
+            else promotion_satisfaction_report.get("promotion_gate_satisfied"),
+            "default_support_stress_config_path": str(
+                default_support_stress_config_path
+            ),
+            "default_support_stress_experiment_id": (
+                ((default_config or {}).get("run") or {}).get("experiment_id")
+                if isinstance((default_config or {}).get("run"), dict)
+                else None
+            ),
+            "default_support_stress_settling_objective": (
+                ((default_config or {}).get("inference") or {}).get(
+                    "hep_settling_objective"
+                )
+                if isinstance((default_config or {}).get("inference"), dict)
+                else None
+            ),
+            "default_support_stress_clip_norm": (
+                ((default_config or {}).get("inference") or {}).get(
+                    "hep_update_clip_norm"
+                )
+                if isinstance((default_config or {}).get("inference"), dict)
+                else None
+            ),
+            "required_evidence": required_evidence,
+            "failures": failures,
+        },
+        "rationale": (
+            "Temporal clipped HEP has passed its promotion gate and is present in "
+            "the default support-stress config. The next bounded research gate "
+            "should return to residual-layer learning itself: compare supervised "
+            "residual updates against the existing PC-style objective under the "
+            "promoted temporal clipped support-stress default, with local and "
+            "Colab artifact-backed decisions before any residual objective change."
+            if status == "pass"
+            else (
+                "The post-promotion residual-layer learning gate cannot be defined "
+                "until temporal clipped HEP promotion evidence is passing and the "
+                "default support-stress config contains the promoted temporal "
+                "clipped settling path."
+            )
+        ),
+        "next_step": (
+            "add PC residual-objective support-stress temporal-clipped validation configs and run the local comparison"
+            if status == "pass"
+            else "repair the temporal promotion evidence or default support-stress config"
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_post_promotion_residual_learning_gate_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def _decision(evidence: dict[str, Any], *, max_logit_delta: float) -> dict[str, Any]:
     if (
         evidence["artifact_check_status"] != "pass"
@@ -1789,6 +2056,15 @@ def _read_json_object(path: Path) -> dict[str, Any]:
     return loaded
 
 
+def _read_config_object(path: Path) -> dict[str, Any]:
+    from relaleap.experiments.run import _read_config
+
+    loaded = _read_config(path)
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{path} must contain a config object")
+    return loaded
+
+
 def _write_markdown(path: Path, report: dict[str, Any]) -> None:
     evidence = report["evidence"]
     lines = [
@@ -2299,6 +2575,86 @@ def _write_temporal_promotion_gate_satisfaction_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_post_promotion_residual_learning_gate_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Post-Promotion Residual Learning Gate",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        (
+            "- Promoted temporal support-stress default confirmed: "
+            f"`{report['promoted_temporal_support_stress_default_confirmed']}`"
+        ),
+        (
+            "- Promote residual learning method: "
+            f"`{report['promote_residual_learning_method']}`"
+        ),
+        (
+            "- Promotion satisfaction report: "
+            f"`{evidence['promotion_satisfaction_report_path']}`"
+        ),
+        (
+            "- Promotion satisfaction status: "
+            f"`{evidence['promotion_satisfaction_status']}`"
+        ),
+        (
+            "- Default support-stress config: "
+            f"`{evidence['default_support_stress_config_path']}`"
+        ),
+        (
+            "- Default settling objective: "
+            f"`{evidence['default_support_stress_settling_objective']}`"
+        ),
+        (
+            "- Default clip norm: "
+            f"`{_format_metric(evidence['default_support_stress_clip_norm'])}`"
+        ),
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Required Evidence",
+        "",
+        "| Gate | Required evidence |",
+        "| --- | --- |",
+    ]
+    for requirement in evidence["required_evidence"]:
+        required = []
+        for key in (
+            "required_backends",
+            "required_runs",
+            "required_invariants",
+            "required_artifacts",
+        ):
+            values = requirement.get(key)
+            if isinstance(values, list):
+                required.append(f"{key}: {', '.join(str(value) for value in values)}")
+        minimum = requirement.get("minimum_scale")
+        if isinstance(minimum, dict):
+            required.append(
+                "minimum_scale: "
+                + ", ".join(f"{key}={value}" for key, value in minimum.items())
+            )
+        lines.append(f"| {requirement['gate']} | {'; '.join(required)} |")
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -2320,6 +2676,7 @@ def main() -> None:
             "temporal-clipped-hep-cross-scale-aggregate",
             "temporal-clipped-hep-promotion-gate",
             "temporal-clipped-hep-promotion-gate-satisfaction",
+            "post-promotion-residual-learning-gate",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -2328,6 +2685,14 @@ def main() -> None:
         "--comparison-dir",
         type=Path,
         help="Completed comparison directory. Defaults depend on --report.",
+    )
+    parser.add_argument(
+        "--config-path",
+        type=Path,
+        help=(
+            "Config path to inspect for reports that validate promoted defaults. "
+            "Defaults depend on --report."
+        ),
     )
     parser.add_argument(
         "--artifact-check",
@@ -2421,6 +2786,14 @@ def main() -> None:
             args.out or DEFAULT_TEMPORAL_CLIPPED_PROMOTION_GATE_SATISFACTION_OUT_DIR,
             max_logit_delta=args.max_logit_delta,
             max_pinned_vs_repicked_delta=args.max_pinned_vs_repicked_delta,
+        )
+    elif args.report == "post-promotion-residual-learning-gate":
+        report = write_post_promotion_residual_learning_gate_report(
+            args.decision_report[0]
+            if args.decision_report
+            else DEFAULT_POST_PROMOTION_GATE_SATISFACTION_REPORT,
+            args.config_path or DEFAULT_POST_PROMOTION_GATE_CONFIG,
+            args.out or DEFAULT_POST_PROMOTION_GATE_OUT_DIR,
         )
     else:
         report = write_pinned_support_decision_report(

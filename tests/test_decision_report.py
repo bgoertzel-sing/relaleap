@@ -16,9 +16,11 @@ from relaleap.experiments.decision_report import (
     SELECT_TEMPORAL_CLIPPED_HEP_CROSS_SCALE_AGGREGATE,
     DEFINE_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE,
     SATISFY_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE,
+    DEFINE_POST_PROMOTION_RESIDUAL_LEARNING_GATE,
     write_clipped_hep_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pinned_support_decision_report,
+    write_post_promotion_residual_learning_gate_report,
     write_temporal_clipped_hep_aggregate_report,
     write_temporal_clipped_hep_cross_scale_aggregate_report,
     write_temporal_clipped_hep_decision_report,
@@ -646,6 +648,124 @@ class TemporalClippedHepPromotionGateSatisfactionReportTest(unittest.TestCase):
                     "actual": "missing",
                 },
                 satisfaction["evidence"]["failures"],
+            )
+
+
+class PostPromotionResidualLearningGateReportTest(unittest.TestCase):
+    def test_passing_promotion_satisfaction_defines_residual_learning_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            satisfaction_report = tmp_path / "satisfaction" / "decision_report.json"
+            satisfaction_report.parent.mkdir(parents=True)
+            satisfaction_report.write_text(
+                json.dumps(
+                    {
+                        "status": "pass",
+                        "decision": SATISFY_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE,
+                        "promotion_gate_satisfied": True,
+                        "promote_to_default_support_stress_mitigation": True,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config_path = tmp_path / "char_smoke_hep_support_stress.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "run:",
+                        "  experiment_id: char_smoke_hep_support_stress",
+                        "inference:",
+                        "  hep_update_clip_norm: 0.01",
+                        "  hep_settling_objective: temporal_consistency_gradient",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            gate = write_post_promotion_residual_learning_gate_report(
+                satisfaction_report,
+                config_path,
+                tmp_path / "post_promotion_gate",
+            )
+
+            self.assertEqual(gate["status"], "pass")
+            self.assertEqual(
+                gate["decision"],
+                DEFINE_POST_PROMOTION_RESIDUAL_LEARNING_GATE,
+            )
+            self.assertTrue(
+                gate["promoted_temporal_support_stress_default_confirmed"]
+            )
+            self.assertFalse(gate["promote_residual_learning_method"])
+            self.assertEqual(len(gate["evidence"]["required_evidence"]), 3)
+            self.assertEqual(
+                gate["evidence"]["required_evidence"][0]["gate"],
+                "pc_residual_objective_under_promoted_temporal_default",
+            )
+            self.assertTrue(
+                (tmp_path / "post_promotion_gate" / "decision_report.json").is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "post_promotion_gate" / "decision_report.md").is_file()
+            )
+
+    def test_unpromoted_default_config_blocks_residual_learning_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            satisfaction_report = tmp_path / "satisfaction" / "decision_report.json"
+            satisfaction_report.parent.mkdir(parents=True)
+            satisfaction_report.write_text(
+                json.dumps(
+                    {
+                        "status": "pass",
+                        "decision": SATISFY_TEMPORAL_CLIPPED_HEP_PROMOTION_GATE,
+                        "promotion_gate_satisfied": True,
+                        "promote_to_default_support_stress_mitigation": True,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            config_path = tmp_path / "char_smoke_hep_support_stress.yaml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "run:",
+                        "  experiment_id: char_smoke_hep_support_stress",
+                        "inference:",
+                        "  hep_update_clip_norm: 0.01",
+                        "  hep_settling_objective: residual_adapter",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            gate = write_post_promotion_residual_learning_gate_report(
+                satisfaction_report,
+                config_path,
+                tmp_path / "post_promotion_gate",
+            )
+
+            self.assertEqual(gate["status"], "fail")
+            self.assertEqual(gate["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(
+                gate["promoted_temporal_support_stress_default_confirmed"]
+            )
+            self.assertIn(
+                {
+                    "field": "default_support_stress_config.hep_settling_objective",
+                    "expected": "temporal_consistency_gradient",
+                    "actual": "residual_adapter",
+                    "path": str(config_path),
+                },
+                gate["evidence"]["failures"],
             )
 
 
