@@ -161,6 +161,8 @@ def _validate_evidence_text(text: str) -> None:
         "Larger focal objective-gate artifact check: pass",
         "Token larger focal objective-gate comparison status: ok",
         "Token larger focal objective-gate artifact check: pass",
+        "Xlarge focal objective-gate comparison status: ok",
+        "Xlarge focal objective-gate artifact check: pass",
         "Temporal clipped extended support-stress comparison status: ok",
         "Temporal clipped extended support-stress artifact check: pass",
         "Temporal clipped larger support-stress comparison status: ok",

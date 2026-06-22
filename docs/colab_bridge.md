@@ -115,6 +115,8 @@ the larger focal objective-gate comparison under
 `results/comparisons/colab_larger_focal_temporal_clipped_objective_gate`,
 the tokenized larger focal objective-gate comparison under
 `results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate`,
+the xlarge char focal objective-gate comparison under
+`results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate`,
 the extended temporal support-stress check under
 `results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep`,
 the larger-char promotion-gate support-stress check under
@@ -474,6 +476,19 @@ python -m relaleap.experiments.compare \
 python -m relaleap.experiments.check_artifacts \
   --comparison-dir results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate \
   --out results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate/artifact_check.json
+```
+
+The xlarge char focal objective-gate check increases the char setting while
+keeping the objective-discriminative temporal-clipped HEP path:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_xlarge_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_xlarge_focal_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate \
+  --out results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/artifact_check.json
 ```
 
 The extended label-free temporal check moves outside the current char

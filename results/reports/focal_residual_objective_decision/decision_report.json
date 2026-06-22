@@ -1,6 +1,6 @@
 {
-  "continue_focal_residual_objective_validation": true,
-  "decision": "continue_focal_residual_objective_validation",
+  "continue_focal_residual_objective_validation": false,
+  "decision": "insufficient_evidence",
   "default_residual_objective": "supervised_ce",
   "evidence": {
     "artifact_check_paths": [
@@ -11,14 +11,16 @@
       "results/comparisons/larger_focal_temporal_clipped_objective_gate/artifact_check_local.json",
       "results/comparisons/colab_larger_focal_temporal_clipped_objective_gate/artifact_check_local.json",
       "results/comparisons/token_larger_focal_temporal_clipped_objective_gate/artifact_check_local.json",
-      "results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate/artifact_check_local.json"
+      "results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate/artifact_check_local.json",
+      "results/comparisons/char_xlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json",
+      "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json"
     ],
     "backend_count": 2,
     "backends": [
       "colab",
       "local"
     ],
-    "comparison_count": 8,
+    "comparison_count": 10,
     "comparison_dirs": [
       "results/comparisons/validation_focal_temporal_clipped_objective_gate",
       "results/comparisons/colab_validation_focal_temporal_clipped_objective_gate",
@@ -27,7 +29,9 @@
       "results/comparisons/larger_focal_temporal_clipped_objective_gate",
       "results/comparisons/colab_larger_focal_temporal_clipped_objective_gate",
       "results/comparisons/token_larger_focal_temporal_clipped_objective_gate",
-      "results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate"
+      "results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate",
+      "results/comparisons/char_xlarge_focal_temporal_clipped_objective_gate",
+      "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate"
     ],
     "entries": [
       {
@@ -1093,16 +1097,236 @@
           "training_steps": 50
         },
         "verdict_status": "pass"
+      },
+      {
+        "artifact_check_path": "results/comparisons/char_xlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json",
+        "artifact_check_status": "pass",
+        "backend": "local",
+        "comparison_dir": "results/comparisons/char_xlarge_focal_temporal_clipped_objective_gate",
+        "comparison_status": "ok",
+        "failures": [],
+        "focal_minus_supervised_best_hep_loss": -0.0006167888641357422,
+        "focal_minus_supervised_final_residual_loss": -0.25971531999999975,
+        "focal_run": {
+          "accepted_hep_alphas": [
+            {
+              "alpha": 0.25,
+              "experiment_id": "char_xlarge_focal_hep_temporal_clipped_objective_gate",
+              "loss": 3.3171510696411133,
+              "loss_improvement_from_alpha0": 2.86102294921875e-06,
+              "max_logit_delta_from_ordinary": 0.00011324882507324219,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 0.5,
+              "experiment_id": "char_xlarge_focal_hep_temporal_clipped_objective_gate",
+              "loss": 3.3171470165252686,
+              "loss_improvement_from_alpha0": 6.9141387939453125e-06,
+              "max_logit_delta_from_ordinary": 0.0002263188362121582,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 1.0,
+              "experiment_id": "char_xlarge_focal_hep_temporal_clipped_objective_gate",
+              "loss": 3.3171398639678955,
+              "loss_improvement_from_alpha0": 1.4066696166992188e-05,
+              "max_logit_delta_from_ordinary": 0.000452578067779541,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            }
+          ],
+          "best_hep_alpha": {
+            "alpha": 1.0,
+            "experiment_id": "char_xlarge_focal_hep_temporal_clipped_objective_gate",
+            "loss": 3.3171398639678955,
+            "loss_improvement_from_alpha0": 1.4066696166992188e-05,
+            "max_logit_delta_from_ordinary": 0.000452578067779541,
+            "pinned_vs_repicked_logit_delta": 0.0,
+            "support_change_fraction": 0.0
+          },
+          "best_hep_loss": 3.3171398639678955,
+          "dataset": "tiny_shakespeare_char",
+          "experiment_id": "char_xlarge_focal_hep_temporal_clipped_objective_gate",
+          "final_residual_loss": 3.05805564,
+          "hep_settling_objective": "temporal_consistency_gradient",
+          "hep_update_clip_norm": 0.01,
+          "initial_residual_loss": 3.46068192,
+          "invariants": {
+            "frozen_base_unchanged": true,
+            "hep_alpha_0_equivalence": true,
+            "residual_parameters_updated": true,
+            "zero_init_identity": true
+          },
+          "own_loss_improved": true,
+          "residual_loss_delta": -0.4026262799999998,
+          "residual_loss_ratio": 0.8836569527892353,
+          "residual_objective": "supervised_ce_focal",
+          "status": "ok",
+          "support_stress": true,
+          "support_stress_preset": false,
+          "training_steps": 60
+        },
+        "supervised_run": {
+          "accepted_hep_alphas": [
+            {
+              "alpha": 0.25,
+              "experiment_id": "char_xlarge_hep_temporal_clipped_objective_gate",
+              "loss": 3.317767858505249,
+              "loss_improvement_from_alpha0": 3.0994415283203125e-06,
+              "max_logit_delta_from_ordinary": 0.00010961294174194336,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 0.5,
+              "experiment_id": "char_xlarge_hep_temporal_clipped_objective_gate",
+              "loss": 3.3177640438079834,
+              "loss_improvement_from_alpha0": 6.9141387939453125e-06,
+              "max_logit_delta_from_ordinary": 0.00021910667419433594,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 1.0,
+              "experiment_id": "char_xlarge_hep_temporal_clipped_objective_gate",
+              "loss": 3.3177566528320312,
+              "loss_improvement_from_alpha0": 1.430511474609375e-05,
+              "max_logit_delta_from_ordinary": 0.0004380941390991211,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            }
+          ],
+          "best_hep_alpha": {
+            "alpha": 1.0,
+            "experiment_id": "char_xlarge_hep_temporal_clipped_objective_gate",
+            "loss": 3.3177566528320312,
+            "loss_improvement_from_alpha0": 1.430511474609375e-05,
+            "max_logit_delta_from_ordinary": 0.0004380941390991211,
+            "pinned_vs_repicked_logit_delta": 0.0,
+            "support_change_fraction": 0.0
+          },
+          "best_hep_loss": 3.3177566528320312,
+          "dataset": "tiny_shakespeare_char",
+          "experiment_id": "char_xlarge_hep_temporal_clipped_objective_gate",
+          "final_residual_loss": 3.31777096,
+          "hep_settling_objective": "temporal_consistency_gradient",
+          "hep_update_clip_norm": 0.01,
+          "initial_residual_loss": 3.6567595,
+          "invariants": {
+            "frozen_base_unchanged": true,
+            "hep_alpha_0_equivalence": true,
+            "residual_parameters_updated": true,
+            "zero_init_identity": true
+          },
+          "own_loss_improved": true,
+          "residual_loss_delta": -0.33898854000000034,
+          "residual_loss_ratio": 0.9072981036898926,
+          "residual_objective": "supervised_ce",
+          "status": "ok",
+          "support_stress": true,
+          "support_stress_preset": false,
+          "training_steps": 60
+        },
+        "verdict_status": "pass"
+      },
+      {
+        "artifact_check_path": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json",
+        "artifact_check_status": null,
+        "backend": "colab",
+        "comparison_dir": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate",
+        "comparison_status": null,
+        "failures": [
+          {
+            "actual": "missing",
+            "expected": "file exists",
+            "field": "comparison.summary.json",
+            "path": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/summary.json"
+          },
+          {
+            "actual": null,
+            "expected": "pass",
+            "field": "artifact_check.status",
+            "path": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json"
+          },
+          {
+            "actual": null,
+            "expected": "ok",
+            "field": "comparison.status",
+            "path": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate"
+          },
+          {
+            "actual": null,
+            "expected": "pass",
+            "field": "comparison.verdict.status",
+            "path": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate"
+          },
+          {
+            "actual": 0,
+            "expected": "one run",
+            "field": "comparison.runs.supervised_ce",
+            "path": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate"
+          },
+          {
+            "actual": 0,
+            "expected": "one run",
+            "field": "comparison.runs.supervised_ce_focal",
+            "path": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate"
+          }
+        ],
+        "focal_minus_supervised_best_hep_loss": null,
+        "focal_minus_supervised_final_residual_loss": null,
+        "focal_run": null,
+        "supervised_run": null,
+        "verdict_status": null
       }
     ],
-    "failures": [],
-    "focal_ce_win_count": 8,
-    "focal_run_count": 8,
-    "mean_focal_minus_supervised_best_hep_loss": -0.0006595253944396973,
-    "mean_focal_minus_supervised_final_residual_loss": -0.20631441374999993,
-    "supervised_run_count": 8
+    "failures": [
+      {
+        "actual": "missing",
+        "expected": "file exists",
+        "field": "comparison.summary.json",
+        "path": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/summary.json"
+      },
+      {
+        "actual": null,
+        "expected": "pass",
+        "field": "artifact_check.status",
+        "path": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json"
+      },
+      {
+        "actual": null,
+        "expected": "ok",
+        "field": "comparison.status",
+        "path": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate"
+      },
+      {
+        "actual": null,
+        "expected": "pass",
+        "field": "comparison.verdict.status",
+        "path": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate"
+      },
+      {
+        "actual": 0,
+        "expected": "one run",
+        "field": "comparison.runs.supervised_ce",
+        "path": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate"
+      },
+      {
+        "actual": 0,
+        "expected": "one run",
+        "field": "comparison.runs.supervised_ce_focal",
+        "path": "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate"
+      }
+    ],
+    "focal_ce_win_count": 9,
+    "focal_run_count": 9,
+    "mean_focal_minus_supervised_best_hep_loss": -0.0006547768910725912,
+    "mean_focal_minus_supervised_final_residual_loss": -0.2122478477777777,
+    "supervised_run_count": 9
   },
-  "next_step": "run the next focal objective scale check under the same objective gate",
+  "next_step": "run or extract the missing matching focal objective comparison artifacts",
   "policy": {
     "allows_residual_objective_promotion": false,
     "diagnostic_decision_only": true,
@@ -1116,7 +1340,7 @@
     "requires_temporal_clipped_hep_path": true
   },
   "promote_residual_learning_method": false,
-  "rationale": "The focal objective beats supervised CE HEP loss in every artifact-backed comparison, including the broader extended, larger, and tokenized larger local and Colab checks, so it remains the selected objective variant for the next scale before any default change.",
-  "selected_residual_objective_variant": "supervised_ce_focal",
-  "status": "pass"
+  "rationale": "The focal decision requires matching local and Colab comparisons with passing artifact checks and valid supervised and focal temporal-clipped runs.",
+  "selected_residual_objective_variant": null,
+  "status": "fail"
 }

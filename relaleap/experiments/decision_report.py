@@ -174,6 +174,8 @@ DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS = (
     Path(
         "results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate"
     ),
+    Path("results/comparisons/char_xlarge_focal_temporal_clipped_objective_gate"),
+    Path("results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate"),
 )
 DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
     DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[0]
@@ -191,6 +193,10 @@ DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
     DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[6]
     / "artifact_check_local.json",
     DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[7]
+    / "artifact_check_local.json",
+    DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[8]
+    / "artifact_check_local.json",
+    DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[9]
     / "artifact_check_local.json",
 )
 DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_OUT_DIR = Path(
@@ -2993,9 +2999,9 @@ def write_focal_residual_objective_decision_report(
             else (
                 "The focal objective beats supervised CE HEP loss in every "
                 "artifact-backed comparison, including the broader extended, "
-                "larger, and tokenized larger local and Colab checks, so it "
-                "remains the selected objective variant for the next scale "
-                "before any default change."
+                "larger, tokenized larger, and xlarge local and Colab checks, "
+                "so it remains the selected objective variant for the next "
+                "scale before any default change."
                 if status == "pass"
                 else (
                     "The focal decision requires matching local and Colab "
@@ -3010,7 +3016,7 @@ def write_focal_residual_objective_decision_report(
             else (
                 "run the next focal objective scale check under the same objective gate"
                 if status == "pass"
-                else "repair or regenerate the focal objective comparison artifacts"
+                else "run or extract the missing matching focal objective comparison artifacts"
             )
         ),
     }

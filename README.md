@@ -784,6 +784,34 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate/artifact_check.json
 ```
 
+The next xlarge char-level focal objective-gate check increases the char
+setting to sequence length `160`, hidden dimension `128`, `32` residual
+columns, `4` HEP settling steps, and `60` training steps while keeping the
+objective-discriminative path and disabling the support-stress preset:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_xlarge_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_xlarge_focal_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/char_xlarge_focal_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/char_xlarge_focal_temporal_clipped_objective_gate \
+  --out results/comparisons/char_xlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json
+```
+
+The matching Colab validation uses the same pair under the Colab-prefixed
+artifact tree:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_xlarge_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_xlarge_focal_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate \
+  --out results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/artifact_check.json
+```
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 

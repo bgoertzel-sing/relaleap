@@ -74,6 +74,14 @@ class ColabNotebookTest(unittest.TestCase):
             "configs/token_larger_focal_hep_temporal_clipped_objective_gate.yaml",
             checkout_cell,
         )
+        self.assertIn(
+            "configs/char_xlarge_hep_temporal_clipped_objective_gate.yaml",
+            checkout_cell,
+        )
+        self.assertIn(
+            "configs/char_xlarge_focal_hep_temporal_clipped_objective_gate.yaml",
+            checkout_cell,
+        )
 
     def test_run_cell_executes_token_larger_colab_path(self) -> None:
         notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
@@ -436,6 +444,40 @@ class ColabNotebookTest(unittest.TestCase):
         self.assertIn("support_stress_preset'] is False", evidence_cell)
         self.assertIn(
             "Token larger focal objective-gate comparison status:",
+            evidence_cell,
+        )
+
+    def test_run_cell_executes_xlarge_focal_objective_gate_colab_path(self) -> None:
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+        run_cells = [
+            source
+            for source in sources
+            if "colab_char_xlarge_focal_temporal_clipped_objective_gate" in source
+        ]
+
+        self.assertEqual(len(run_cells), 2)
+        run_cell, evidence_cell = run_cells
+        self.assertIn(
+            "--config configs/char_xlarge_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/char_xlarge_focal_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "char_xlarge_hep_temporal_clipped_objective_gate",
+            evidence_cell,
+        )
+        self.assertIn(
+            "char_xlarge_focal_hep_temporal_clipped_objective_gate",
+            evidence_cell,
+        )
+        self.assertIn("supervised_ce_focal", evidence_cell)
+        self.assertIn("support_stress_preset'] is False", evidence_cell)
+        self.assertIn(
+            "Xlarge focal objective-gate comparison status:",
             evidence_cell,
         )
 
