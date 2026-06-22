@@ -858,6 +858,59 @@ tokenized larger focal-vs-supervised objective gate, each with local and Colab
 artifact-backed checks. This report defines the gate only; it does not promote
 focal CE by itself.
 
+The seed-2 xxlarge char repeat uses the same objective-discriminative temporal
+clipped path and scale as the seed-1 xxlarge gate, with only the seed and
+experiment IDs changed:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_xxlarge_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --config configs/char_xxlarge_focal_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --out results/comparisons/char_xxlarge_focal_temporal_clipped_objective_gate_seed2
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/char_xxlarge_focal_temporal_clipped_objective_gate_seed2 \
+  --out results/comparisons/char_xxlarge_focal_temporal_clipped_objective_gate_seed2/artifact_check_local.json
+```
+
+The matching seed-2 Colab validation uses the same pair under the
+Colab-prefixed artifact tree:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_xxlarge_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --config configs/char_xxlarge_focal_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --out results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2 \
+  --out results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2/artifact_check.json
+```
+
+The seed-2 tokenized larger repeat mirrors the seed-1 tokenized objective gate
+with deterministic word-token IDs and the same scale:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/token_larger_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --config configs/token_larger_focal_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --out results/comparisons/token_larger_focal_temporal_clipped_objective_gate_seed2
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/token_larger_focal_temporal_clipped_objective_gate_seed2 \
+  --out results/comparisons/token_larger_focal_temporal_clipped_objective_gate_seed2/artifact_check_local.json
+```
+
+The matching seed-2 Colab validation uses the same pair under the
+Colab-prefixed artifact tree:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/token_larger_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --config configs/token_larger_focal_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --out results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate_seed2
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate_seed2 \
+  --out results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate_seed2/artifact_check.json
+```
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 

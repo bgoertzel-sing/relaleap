@@ -593,6 +593,88 @@ class Phase0SmokeTest(unittest.TestCase):
             "temporal_consistency_gradient",
         )
 
+    def test_seed2_focal_objective_gate_configs_match_gate_requirements(self) -> None:
+        expected = {
+            "char_xxlarge_hep_temporal_clipped_objective_gate_seed2": {
+                "path": (
+                    "configs/"
+                    "char_xxlarge_hep_temporal_clipped_objective_gate_seed2.yaml"
+                ),
+                "dataset": "tiny_shakespeare_char",
+                "seq_len": 192,
+                "hidden_dim": 160,
+                "num_columns": 40,
+                "max_steps": 70,
+                "residual_objective": "supervised_ce",
+            },
+            "char_xxlarge_focal_hep_temporal_clipped_objective_gate_seed2": {
+                "path": (
+                    "configs/"
+                    "char_xxlarge_focal_hep_temporal_clipped_objective_gate_seed2.yaml"
+                ),
+                "dataset": "tiny_shakespeare_char",
+                "seq_len": 192,
+                "hidden_dim": 160,
+                "num_columns": 40,
+                "max_steps": 70,
+                "residual_objective": "supervised_ce_focal",
+            },
+            "token_larger_hep_temporal_clipped_objective_gate_seed2": {
+                "path": (
+                    "configs/"
+                    "token_larger_hep_temporal_clipped_objective_gate_seed2.yaml"
+                ),
+                "dataset": "tiny_shakespeare_word",
+                "seq_len": 64,
+                "hidden_dim": 96,
+                "num_columns": 24,
+                "max_steps": 50,
+                "residual_objective": "supervised_ce",
+            },
+            "token_larger_focal_hep_temporal_clipped_objective_gate_seed2": {
+                "path": (
+                    "configs/"
+                    "token_larger_focal_hep_temporal_clipped_objective_gate_seed2.yaml"
+                ),
+                "dataset": "tiny_shakespeare_word",
+                "seq_len": 64,
+                "hidden_dim": 96,
+                "num_columns": 24,
+                "max_steps": 50,
+                "residual_objective": "supervised_ce_focal",
+            },
+        }
+
+        for experiment_id, fields in expected.items():
+            with self.subTest(experiment_id=experiment_id):
+                config = _read_config(Path(fields["path"]))
+                self.assertEqual(config["run"]["experiment_id"], experiment_id)
+                self.assertEqual(config["run"]["seed"], 2)
+                self.assertEqual(config["run"]["max_steps"], fields["max_steps"])
+                self.assertEqual(config["data"]["dataset"], fields["dataset"])
+                self.assertEqual(config["data"]["seq_len"], fields["seq_len"])
+                self.assertEqual(
+                    config["training"]["residual_objective"],
+                    fields["residual_objective"],
+                )
+                if fields["residual_objective"] == "supervised_ce_focal":
+                    self.assertEqual(config["training"]["focal_gamma"], 2.0)
+                self.assertEqual(
+                    config["model"]["base"]["hidden_dim"],
+                    fields["hidden_dim"],
+                )
+                self.assertEqual(
+                    config["model"]["columns"]["num_columns"],
+                    fields["num_columns"],
+                )
+                self.assertFalse(config["model"]["columns"]["support_stress_preset"])
+                self.assertEqual(config["inference"]["pc_steps"], 4)
+                self.assertEqual(config["inference"]["hep_update_clip_norm"], 0.01)
+                self.assertEqual(
+                    config["inference"]["hep_settling_objective"],
+                    "temporal_consistency_gradient",
+                )
+
     def test_hep_update_clip_config_is_reported(self) -> None:
         clipped_config = copy.deepcopy(CONFIG)
         clipped_config["run"]["max_steps"] = 1
