@@ -755,6 +755,35 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_larger_focal_temporal_clipped_objective_gate/artifact_check.json
 ```
 
+The next tokenized focal objective-gate scale check mirrors the non-char
+tokenized temporal promotion-gate setting while preserving the
+objective-discriminative path. It uses deterministic word-token IDs with
+sequence length `64`, hidden dimension `96`, `24` residual columns, `4` HEP
+settling steps, `50` training steps, and disables the support-stress preset:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/token_larger_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/token_larger_focal_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/token_larger_focal_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/token_larger_focal_temporal_clipped_objective_gate \
+  --out results/comparisons/token_larger_focal_temporal_clipped_objective_gate/artifact_check_local.json
+```
+
+The matching Colab validation uses the same pair under the Colab-prefixed
+artifact tree:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/token_larger_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/token_larger_focal_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate \
+  --out results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate/artifact_check.json
+```
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 
