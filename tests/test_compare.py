@@ -35,6 +35,7 @@ class ComparisonReportTest(unittest.TestCase):
             "error": None,
             "phase0": {
                 "residual_objective": "supervised_ce",
+                "dataset": "tiny_shakespeare_word",
                 "training_steps": 2,
                 "base_loss": 3.0,
                 "zero_init_loss": 3.0,
@@ -56,6 +57,7 @@ class ComparisonReportTest(unittest.TestCase):
         )
 
         self.assertEqual(entry["residual_objective"], "supervised_ce")
+        self.assertEqual(entry["dataset"], "tiny_shakespeare_word")
         self.assertFalse(entry["pinned_support"])
         self.assertFalse(entry["support_stress"])
         self.assertEqual(entry["support_instability"], {})
@@ -387,6 +389,7 @@ class ComparisonReportTest(unittest.TestCase):
                     "artifact_invariants": _passing_artifact_invariants(),
                     "phase0": {
                         "residual_objective": objective,
+                        "dataset": "tiny_shakespeare_word",
                         "training_steps": 1,
                         "base_loss": 1.0,
                         "zero_init_loss": 1.0,
@@ -424,6 +427,7 @@ class ComparisonReportTest(unittest.TestCase):
             )
             self.assertEqual(len(saved["runs"]), 2)
             self.assertEqual(saved["runs"][0]["residual_loss_delta"], -0.25)
+            self.assertEqual(saved["runs"][1]["dataset"], "tiny_shakespeare_word")
             self.assertTrue(saved["runs"][1]["pinned_support"])
             self.assertTrue(saved["runs"][1]["support_stress"])
             self.assertEqual(
@@ -446,6 +450,8 @@ class ComparisonReportTest(unittest.TestCase):
             self.assertIn("hep_alpha", rows[0])
             self.assertIn("hep_loss", rows[0])
             self.assertIn("max_hep_logit_delta_from_ordinary", rows[0])
+            self.assertIn("dataset", rows[0])
+            self.assertEqual(rows[-1]["dataset"], "tiny_shakespeare_word")
             self.assertIn("pinned_support", rows[0])
             self.assertIn("support_stress", rows[0])
             self.assertEqual(rows[-1]["loss_delta_from_initial"], "-0.25000000")
