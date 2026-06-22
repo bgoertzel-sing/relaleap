@@ -176,6 +176,8 @@ DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS = (
     ),
     Path("results/comparisons/char_xlarge_focal_temporal_clipped_objective_gate"),
     Path("results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate"),
+    Path("results/comparisons/char_xxlarge_focal_temporal_clipped_objective_gate"),
+    Path("results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate"),
 )
 DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
     DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[0]
@@ -197,6 +199,10 @@ DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
     DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[8]
     / "artifact_check_local.json",
     DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[9]
+    / "artifact_check_local.json",
+    DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[10]
+    / "artifact_check_local.json",
+    DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[11]
     / "artifact_check_local.json",
 )
 DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_OUT_DIR = Path(
@@ -2999,9 +3005,9 @@ def write_focal_residual_objective_decision_report(
             else (
                 "The focal objective beats supervised CE HEP loss in every "
                 "artifact-backed comparison, including the broader extended, "
-                "larger, tokenized larger, and xlarge local and Colab checks, "
-                "so it remains the selected objective variant for the next "
-                "scale before any default change."
+                "larger, tokenized larger, xlarge, and xxlarge local and "
+                "Colab checks, so it remains the selected objective variant "
+                "for the next scale before any default change."
                 if status == "pass"
                 else (
                     "The focal decision requires matching local and Colab "
@@ -3014,7 +3020,7 @@ def write_focal_residual_objective_decision_report(
             "select the next non-PC residual objective variant to test under the objective gate"
             if status == "pass" and not continue_variant
             else (
-                "run the next focal objective scale check under the same objective gate"
+                "define the next focal objective promotion or stop gate"
                 if status == "pass"
                 else "run or extract the missing matching focal objective comparison artifacts"
             )

@@ -149,6 +149,14 @@ class ColabNotebookTest(unittest.TestCase):
             "char_xxlarge_focal_hep_temporal_clipped_objective_gate",
             evidence_cell,
         )
+        self.assertIn(
+            "Xxlarge focal objective-gate comparison status:",
+            evidence_cell,
+        )
+        self.assertIn(
+            "Xxlarge focal objective-gate artifact check:",
+            evidence_cell,
+        )
         self.assertIn("support_stress_preset'] is False", evidence_cell)
 
     def test_run_cell_executes_validation_pc_colab_path(self) -> None:

@@ -13,14 +13,16 @@
       "results/comparisons/token_larger_focal_temporal_clipped_objective_gate/artifact_check_local.json",
       "results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate/artifact_check_local.json",
       "results/comparisons/char_xlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json",
-      "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json"
+      "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json",
+      "results/comparisons/char_xxlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json",
+      "results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json"
     ],
     "backend_count": 2,
     "backends": [
       "colab",
       "local"
     ],
-    "comparison_count": 10,
+    "comparison_count": 12,
     "comparison_dirs": [
       "results/comparisons/validation_focal_temporal_clipped_objective_gate",
       "results/comparisons/colab_validation_focal_temporal_clipped_objective_gate",
@@ -31,7 +33,9 @@
       "results/comparisons/token_larger_focal_temporal_clipped_objective_gate",
       "results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate",
       "results/comparisons/char_xlarge_focal_temporal_clipped_objective_gate",
-      "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate"
+      "results/comparisons/colab_char_xlarge_focal_temporal_clipped_objective_gate",
+      "results/comparisons/char_xxlarge_focal_temporal_clipped_objective_gate",
+      "results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate"
     ],
     "entries": [
       {
@@ -1363,16 +1367,282 @@
           "training_steps": 60
         },
         "verdict_status": "pass"
+      },
+      {
+        "artifact_check_path": "results/comparisons/char_xxlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json",
+        "artifact_check_status": "pass",
+        "backend": "local",
+        "comparison_dir": "results/comparisons/char_xxlarge_focal_temporal_clipped_objective_gate",
+        "comparison_status": "ok",
+        "failures": [],
+        "focal_minus_supervised_best_hep_loss": -0.0007398128509521484,
+        "focal_minus_supervised_final_residual_loss": -0.2527895,
+        "focal_run": {
+          "accepted_hep_alphas": [
+            {
+              "alpha": 0.25,
+              "experiment_id": "char_xxlarge_focal_hep_temporal_clipped_objective_gate",
+              "loss": 3.3565006256103516,
+              "loss_improvement_from_alpha0": 7.3909759521484375e-06,
+              "max_logit_delta_from_ordinary": 0.00011348724365234375,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 0.5,
+              "experiment_id": "char_xxlarge_focal_hep_temporal_clipped_objective_gate",
+              "loss": 3.356492519378662,
+              "loss_improvement_from_alpha0": 1.5497207641601562e-05,
+              "max_logit_delta_from_ordinary": 0.0002281665802001953,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 1.0,
+              "experiment_id": "char_xxlarge_focal_hep_temporal_clipped_objective_gate",
+              "loss": 3.356477975845337,
+              "loss_improvement_from_alpha0": 3.0040740966796875e-05,
+              "max_logit_delta_from_ordinary": 0.0004572868347167969,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            }
+          ],
+          "best_hep_alpha": {
+            "alpha": 1.0,
+            "experiment_id": "char_xxlarge_focal_hep_temporal_clipped_objective_gate",
+            "loss": 3.356477975845337,
+            "loss_improvement_from_alpha0": 3.0040740966796875e-05,
+            "max_logit_delta_from_ordinary": 0.0004572868347167969,
+            "pinned_vs_repicked_logit_delta": 0.0,
+            "support_change_fraction": 0.0
+          },
+          "best_hep_loss": 3.356477975845337,
+          "dataset": "tiny_shakespeare_char",
+          "experiment_id": "char_xxlarge_focal_hep_temporal_clipped_objective_gate",
+          "final_residual_loss": 3.10445833,
+          "hep_settling_objective": "temporal_consistency_gradient",
+          "hep_update_clip_norm": 0.01,
+          "initial_residual_loss": 3.51527071,
+          "invariants": {
+            "frozen_base_unchanged": true,
+            "hep_alpha_0_equivalence": true,
+            "residual_parameters_updated": true,
+            "zero_init_identity": true
+          },
+          "own_loss_improved": true,
+          "residual_loss_delta": -0.41081237999999987,
+          "residual_loss_ratio": 0.8831349236258393,
+          "residual_objective": "supervised_ce_focal",
+          "status": "ok",
+          "support_stress": true,
+          "support_stress_preset": false,
+          "training_steps": 70
+        },
+        "supervised_run": {
+          "accepted_hep_alphas": [
+            {
+              "alpha": 0.25,
+              "experiment_id": "char_xxlarge_hep_temporal_clipped_objective_gate",
+              "loss": 3.3572404384613037,
+              "loss_improvement_from_alpha0": 7.3909759521484375e-06,
+              "max_logit_delta_from_ordinary": 0.00011229515075683594,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 0.5,
+              "experiment_id": "char_xxlarge_hep_temporal_clipped_objective_gate",
+              "loss": 3.3572323322296143,
+              "loss_improvement_from_alpha0": 1.5497207641601562e-05,
+              "max_logit_delta_from_ordinary": 0.00022459030151367188,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 1.0,
+              "experiment_id": "char_xxlarge_hep_temporal_clipped_objective_gate",
+              "loss": 3.357217788696289,
+              "loss_improvement_from_alpha0": 3.0040740966796875e-05,
+              "max_logit_delta_from_ordinary": 0.0004494190216064453,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            }
+          ],
+          "best_hep_alpha": {
+            "alpha": 1.0,
+            "experiment_id": "char_xxlarge_hep_temporal_clipped_objective_gate",
+            "loss": 3.357217788696289,
+            "loss_improvement_from_alpha0": 3.0040740966796875e-05,
+            "max_logit_delta_from_ordinary": 0.0004494190216064453,
+            "pinned_vs_repicked_logit_delta": 0.0,
+            "support_change_fraction": 0.0
+          },
+          "best_hep_loss": 3.357217788696289,
+          "dataset": "tiny_shakespeare_char",
+          "experiment_id": "char_xxlarge_hep_temporal_clipped_objective_gate",
+          "final_residual_loss": 3.35724783,
+          "hep_settling_objective": "temporal_consistency_gradient",
+          "hep_update_clip_norm": 0.01,
+          "initial_residual_loss": 3.7072227,
+          "invariants": {
+            "frozen_base_unchanged": true,
+            "hep_alpha_0_equivalence": true,
+            "residual_parameters_updated": true,
+            "zero_init_identity": true
+          },
+          "own_loss_improved": true,
+          "residual_loss_delta": -0.34997487000000005,
+          "residual_loss_ratio": 0.9055964806214636,
+          "residual_objective": "supervised_ce",
+          "status": "ok",
+          "support_stress": true,
+          "support_stress_preset": false,
+          "training_steps": 70
+        },
+        "verdict_status": "pass"
+      },
+      {
+        "artifact_check_path": "results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate/artifact_check_local.json",
+        "artifact_check_status": "pass",
+        "backend": "colab",
+        "comparison_dir": "results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate",
+        "comparison_status": "ok",
+        "failures": [],
+        "focal_minus_supervised_best_hep_loss": -0.0007398128509521484,
+        "focal_minus_supervised_final_residual_loss": -0.2527895,
+        "focal_run": {
+          "accepted_hep_alphas": [
+            {
+              "alpha": 0.25,
+              "experiment_id": "char_xxlarge_focal_hep_temporal_clipped_objective_gate",
+              "loss": 3.3565006256103516,
+              "loss_improvement_from_alpha0": 7.62939453125e-06,
+              "max_logit_delta_from_ordinary": 0.00011444091796875,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 0.5,
+              "experiment_id": "char_xxlarge_focal_hep_temporal_clipped_objective_gate",
+              "loss": 3.3564929962158203,
+              "loss_improvement_from_alpha0": 1.52587890625e-05,
+              "max_logit_delta_from_ordinary": 0.0002288818359375,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 1.0,
+              "experiment_id": "char_xxlarge_focal_hep_temporal_clipped_objective_gate",
+              "loss": 3.356477975845337,
+              "loss_improvement_from_alpha0": 3.0279159545898438e-05,
+              "max_logit_delta_from_ordinary": 0.00045800209045410156,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            }
+          ],
+          "best_hep_alpha": {
+            "alpha": 1.0,
+            "experiment_id": "char_xxlarge_focal_hep_temporal_clipped_objective_gate",
+            "loss": 3.356477975845337,
+            "loss_improvement_from_alpha0": 3.0279159545898438e-05,
+            "max_logit_delta_from_ordinary": 0.00045800209045410156,
+            "pinned_vs_repicked_logit_delta": 0.0,
+            "support_change_fraction": 0.0
+          },
+          "best_hep_loss": 3.356477975845337,
+          "dataset": "tiny_shakespeare_char",
+          "experiment_id": "char_xxlarge_focal_hep_temporal_clipped_objective_gate",
+          "final_residual_loss": 3.10445833,
+          "hep_settling_objective": "temporal_consistency_gradient",
+          "hep_update_clip_norm": 0.01,
+          "initial_residual_loss": 3.51527071,
+          "invariants": {
+            "frozen_base_unchanged": true,
+            "hep_alpha_0_equivalence": true,
+            "residual_parameters_updated": true,
+            "zero_init_identity": true
+          },
+          "own_loss_improved": true,
+          "residual_loss_delta": -0.41081237999999987,
+          "residual_loss_ratio": 0.8831349236258393,
+          "residual_objective": "supervised_ce_focal",
+          "status": "ok",
+          "support_stress": true,
+          "support_stress_preset": false,
+          "training_steps": 70
+        },
+        "supervised_run": {
+          "accepted_hep_alphas": [
+            {
+              "alpha": 0.25,
+              "experiment_id": "char_xxlarge_hep_temporal_clipped_objective_gate",
+              "loss": 3.3572404384613037,
+              "loss_improvement_from_alpha0": 7.3909759521484375e-06,
+              "max_logit_delta_from_ordinary": 0.00011181831359863281,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 0.5,
+              "experiment_id": "char_xxlarge_hep_temporal_clipped_objective_gate",
+              "loss": 3.3572323322296143,
+              "loss_improvement_from_alpha0": 1.5497207641601562e-05,
+              "max_logit_delta_from_ordinary": 0.00022482872009277344,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            },
+            {
+              "alpha": 1.0,
+              "experiment_id": "char_xxlarge_hep_temporal_clipped_objective_gate",
+              "loss": 3.357217788696289,
+              "loss_improvement_from_alpha0": 3.0040740966796875e-05,
+              "max_logit_delta_from_ordinary": 0.0004489421844482422,
+              "pinned_vs_repicked_logit_delta": 0.0,
+              "support_change_fraction": 0.0
+            }
+          ],
+          "best_hep_alpha": {
+            "alpha": 1.0,
+            "experiment_id": "char_xxlarge_hep_temporal_clipped_objective_gate",
+            "loss": 3.357217788696289,
+            "loss_improvement_from_alpha0": 3.0040740966796875e-05,
+            "max_logit_delta_from_ordinary": 0.0004489421844482422,
+            "pinned_vs_repicked_logit_delta": 0.0,
+            "support_change_fraction": 0.0
+          },
+          "best_hep_loss": 3.357217788696289,
+          "dataset": "tiny_shakespeare_char",
+          "experiment_id": "char_xxlarge_hep_temporal_clipped_objective_gate",
+          "final_residual_loss": 3.35724783,
+          "hep_settling_objective": "temporal_consistency_gradient",
+          "hep_update_clip_norm": 0.01,
+          "initial_residual_loss": 3.70722294,
+          "invariants": {
+            "frozen_base_unchanged": true,
+            "hep_alpha_0_equivalence": true,
+            "residual_parameters_updated": true,
+            "zero_init_identity": true
+          },
+          "own_loss_improved": true,
+          "residual_loss_delta": -0.3499751099999999,
+          "residual_loss_ratio": 0.9055964219945186,
+          "residual_objective": "supervised_ce",
+          "status": "ok",
+          "support_stress": true,
+          "support_stress_preset": false,
+          "training_steps": 70
+        },
+        "verdict_status": "pass"
       }
     ],
     "failures": [],
-    "focal_ce_win_count": 10,
-    "focal_run_count": 10,
-    "mean_focal_minus_supervised_best_hep_loss": -0.0006510257720947265,
-    "mean_focal_minus_supervised_final_residual_loss": -0.2169946429999999,
-    "supervised_run_count": 10
+    "focal_ce_win_count": 12,
+    "focal_run_count": 12,
+    "mean_focal_minus_supervised_best_hep_loss": -0.0006658236185709635,
+    "mean_focal_minus_supervised_final_residual_loss": -0.22296045249999993,
+    "supervised_run_count": 12
   },
-  "next_step": "run the next focal objective scale check under the same objective gate",
+  "next_step": "define the next focal objective promotion or stop gate",
   "policy": {
     "allows_residual_objective_promotion": false,
     "diagnostic_decision_only": true,
@@ -1386,7 +1656,7 @@
     "requires_temporal_clipped_hep_path": true
   },
   "promote_residual_learning_method": false,
-  "rationale": "The focal objective beats supervised CE HEP loss in every artifact-backed comparison, including the broader extended, larger, tokenized larger, and xlarge local and Colab checks, so it remains the selected objective variant for the next scale before any default change.",
+  "rationale": "The focal objective beats supervised CE HEP loss in every artifact-backed comparison, including the broader extended, larger, tokenized larger, xlarge, and xxlarge local and Colab checks, so it remains the selected objective variant for the next scale before any default change.",
   "selected_residual_objective_variant": "supervised_ce_focal",
   "status": "pass"
 }
