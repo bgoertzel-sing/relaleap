@@ -40,6 +40,7 @@ class Phase0Result:
     margin_penalty_weight: float
     target_logit_margin: float
     label_smoothing_weight: float
+    focal_gamma: float
     dataset: str
     vocab_size: int
     seq_len: int
@@ -70,6 +71,7 @@ class Phase0Result:
             "margin_penalty_weight": self.margin_penalty_weight,
             "target_logit_margin": self.target_logit_margin,
             "label_smoothing_weight": self.label_smoothing_weight,
+            "focal_gamma": self.focal_gamma,
             "dataset": self.dataset,
             "vocab_size": self.vocab_size,
             "seq_len": self.seq_len,
@@ -136,6 +138,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     margin_penalty_weight = float(training_cfg.get("margin_penalty_weight", 0.01))
     target_logit_margin = float(training_cfg.get("target_logit_margin", 0.25))
     label_smoothing_weight = float(training_cfg.get("label_smoothing_weight", 0.05))
+    focal_gamma = float(training_cfg.get("focal_gamma", 2.0))
     dataset = str(data_cfg.get("dataset", "tiny_shakespeare_char"))
     seq_len = int(data_cfg.get("seq_len", 32))
     hidden_dim = int(base_cfg.get("hidden_dim", 32))
@@ -177,11 +180,14 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         raise ValueError("training.target_logit_margin must be non-negative")
     if label_smoothing_weight < 0.0 or label_smoothing_weight >= 1.0:
         raise ValueError("training.label_smoothing_weight must be in [0.0, 1.0)")
+    if focal_gamma < 0.0:
+        raise ValueError("training.focal_gamma must be non-negative")
     if residual_objective not in {
         "supervised_ce",
         "supervised_ce_confidence_penalty",
         "supervised_ce_margin_penalty",
         "supervised_ce_label_smoothing",
+        "supervised_ce_focal",
         "pc_logit_mse",
         "pc_logit_mse_ce_anchor",
     }:
@@ -189,6 +195,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             "training.residual_objective must be one of: "
             "supervised_ce, supervised_ce_confidence_penalty, "
             "supervised_ce_margin_penalty, supervised_ce_label_smoothing, "
+            "supervised_ce_focal, "
             "pc_logit_mse, pc_logit_mse_ce_anchor"
         )
     if hep_settling_objective not in {
@@ -270,6 +277,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         margin_penalty_weight=margin_penalty_weight,
         target_logit_margin=target_logit_margin,
         label_smoothing_weight=label_smoothing_weight,
+        focal_gamma=focal_gamma,
     )
     metric_rows: list[dict[str, float | int | str]] = [
         _metric_row(
@@ -305,6 +313,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
             margin_penalty_weight=margin_penalty_weight,
             target_logit_margin=target_logit_margin,
             label_smoothing_weight=label_smoothing_weight,
+            focal_gamma=focal_gamma,
         )
         loss.backward()
         optimizer.step()
@@ -321,6 +330,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 margin_penalty_weight=margin_penalty_weight,
                 target_logit_margin=target_logit_margin,
                 label_smoothing_weight=label_smoothing_weight,
+                focal_gamma=focal_gamma,
             )
             max_hep_alpha0_delta = _max_hep_delta_from_ordinary(
                 base,
@@ -368,6 +378,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
                 margin_penalty_weight=margin_penalty_weight,
                 target_logit_margin=target_logit_margin,
                 label_smoothing_weight=label_smoothing_weight,
+                focal_gamma=focal_gamma,
             )
             max_hep_alpha0_delta = _max_hep_delta_from_ordinary(
                 base,
@@ -460,6 +471,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         margin_penalty_weight=margin_penalty_weight,
         target_logit_margin=target_logit_margin,
         label_smoothing_weight=label_smoothing_weight,
+        focal_gamma=focal_gamma,
         dataset=dataset,
         vocab_size=vocab_size,
         seq_len=seq_len,
@@ -783,6 +795,7 @@ def _residual_loss(
     margin_penalty_weight: float = 0.01,
     target_logit_margin: float = 0.25,
     label_smoothing_weight: float = 0.05,
+    focal_gamma: float = 2.0,
 ) -> Any:
     import torch
     import torch.nn.functional as F
@@ -821,6 +834,14 @@ def _residual_loss(
             prediction_targets.reshape(-1),
             label_smoothing=label_smoothing_weight,
         )
+    if objective == "supervised_ce_focal":
+        per_token_ce = F.cross_entropy(
+            prediction_logits.reshape(-1, vocab_size),
+            prediction_targets.reshape(-1),
+            reduction="none",
+        )
+        target_probs = torch.exp(-per_token_ce)
+        return ((1.0 - target_probs).pow(focal_gamma) * per_token_ce).mean()
     if objective in {"pc_logit_mse", "pc_logit_mse_ce_anchor"}:
         pc_loss = F.mse_loss(
             torch.softmax(prediction_logits, dim=-1),

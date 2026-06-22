@@ -227,6 +227,38 @@ class Phase0SmokeTest(unittest.TestCase):
         )
         self.assertGreater(result.residual_parameter_delta, 0.0)
 
+    def test_supervised_ce_focal_objective_toggle(self) -> None:
+        focal_config = copy.deepcopy(CONFIG)
+        focal_config["training"] = {
+            "residual_objective": "supervised_ce_focal",
+            "focal_gamma": 2.0,
+        }
+
+        try:
+            result = run_phase0_smoke(focal_config)
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        self.assertEqual(result.residual_objective, "supervised_ce_focal")
+        self.assertEqual(result.focal_gamma, 2.0)
+        self.assertTrue(all(result.invariants.values()))
+        self.assertEqual(result.to_summary()["focal_gamma"], 2.0)
+        self.assertTrue(
+            all(
+                row["phase"] == "residual_update"
+                for row in result.to_metric_rows()[1:]
+            )
+        )
+        self.assertTrue(
+            all(
+                row["residual_objective"] == "supervised_ce_focal"
+                for row in result.to_metric_rows()
+            )
+        )
+        self.assertGreater(result.residual_parameter_delta, 0.0)
+
     def test_hep_alpha_sweep_records_nonzero_alpha_rows(self) -> None:
         hep_config = copy.deepcopy(CONFIG)
         hep_config["run"]["max_steps"] = 1

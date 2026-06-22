@@ -661,6 +661,41 @@ python -m relaleap.experiments.decision_report \
   --out results/reports/label_smoothing_residual_objective_decision
 ```
 
+The focal objective-gate validation adds the next non-PC residual objective
+variant to the same objective-discriminative temporal clipped HEP gate:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_focal_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/validation_focal_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/validation_focal_temporal_clipped_objective_gate \
+  --out results/comparisons/validation_focal_temporal_clipped_objective_gate/artifact_check_local.json
+```
+
+The matching Colab validation uses the same pair under the Colab-prefixed
+artifact tree:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_focal_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_validation_focal_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_validation_focal_temporal_clipped_objective_gate \
+  --out results/comparisons/colab_validation_focal_temporal_clipped_objective_gate/artifact_check.json
+```
+
+After matching local and Colab focal artifacts exist, write the command-driven
+focal objective decision report without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report focal-residual-objective-decision \
+  --out results/reports/focal_residual_objective_decision
+```
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 
