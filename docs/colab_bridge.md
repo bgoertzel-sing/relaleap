@@ -109,6 +109,8 @@ the label-smoothing objective-gate validation comparison under
 `results/comparisons/colab_validation_label_smoothing_temporal_clipped_objective_gate`,
 the focal objective-gate validation comparison under
 `results/comparisons/colab_validation_focal_temporal_clipped_objective_gate`,
+the extended focal objective-gate comparison under
+`results/comparisons/colab_extended_focal_temporal_clipped_objective_gate`,
 the extended temporal support-stress check under
 `results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep`,
 the larger-char promotion-gate support-stress check under
@@ -426,6 +428,20 @@ command-driven focal objective decision report without rerunning experiments:
 python -m relaleap.experiments.decision_report \
   --report focal-residual-objective-decision \
   --out results/reports/focal_residual_objective_decision
+```
+
+The broader focal objective-gate check moves outside the current char
+validation setting while preserving the objective-discriminative temporal
+clipped HEP path:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_extended_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_extended_focal_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_extended_focal_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_extended_focal_temporal_clipped_objective_gate \
+  --out results/comparisons/colab_extended_focal_temporal_clipped_objective_gate/artifact_check.json
 ```
 
 The extended label-free temporal check moves outside the current char

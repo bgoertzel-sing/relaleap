@@ -696,6 +696,35 @@ python -m relaleap.experiments.decision_report \
   --out results/reports/focal_residual_objective_decision
 ```
 
+The broader focal objective-gate check moves outside the current char
+validation setting while preserving the objective-discriminative temporal
+clipped HEP path. It uses sequence length `96`, hidden dimension `64`, `16`
+residual columns, `4` HEP settling steps, `30` training steps, and disables the
+support-stress preset so CE/HEP behavior is measured on learned residual values:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_extended_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_extended_focal_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/extended_focal_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/extended_focal_temporal_clipped_objective_gate \
+  --out results/comparisons/extended_focal_temporal_clipped_objective_gate/artifact_check_local.json
+```
+
+The matching Colab validation uses the same pair under the Colab-prefixed
+artifact tree:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_extended_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_extended_focal_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_extended_focal_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_extended_focal_temporal_clipped_objective_gate \
+  --out results/comparisons/colab_extended_focal_temporal_clipped_objective_gate/artifact_check.json
+```
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 

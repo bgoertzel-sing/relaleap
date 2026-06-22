@@ -320,6 +320,40 @@ class ColabNotebookTest(unittest.TestCase):
             evidence_cell,
         )
 
+    def test_run_cell_executes_extended_focal_objective_gate_colab_path(self) -> None:
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+        run_cells = [
+            source
+            for source in sources
+            if "colab_extended_focal_temporal_clipped_objective_gate" in source
+        ]
+
+        self.assertEqual(len(run_cells), 2)
+        run_cell, evidence_cell = run_cells
+        self.assertIn(
+            "--config configs/char_extended_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/char_extended_focal_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "char_extended_hep_temporal_clipped_objective_gate",
+            evidence_cell,
+        )
+        self.assertIn(
+            "char_extended_focal_hep_temporal_clipped_objective_gate",
+            evidence_cell,
+        )
+        self.assertIn("supervised_ce_focal", evidence_cell)
+        self.assertIn("support_stress_preset'] is False", evidence_cell)
+        self.assertIn(
+            "Extended focal objective-gate comparison status:",
+            evidence_cell,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
