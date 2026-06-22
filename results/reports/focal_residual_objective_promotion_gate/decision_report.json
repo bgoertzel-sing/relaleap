@@ -1,0 +1,68 @@
+{
+  "decision": "define_focal_residual_objective_promotion_gate",
+  "default_residual_objective": "supervised_ce",
+  "evidence": {
+    "failures": [],
+    "focal_backend_count": 2,
+    "focal_ce_win_count": 12,
+    "focal_comparison_count": 12,
+    "focal_decision": "continue_focal_residual_objective_validation",
+    "focal_decision_report_path": "results/reports/focal_residual_objective_decision/decision_report.json",
+    "focal_decision_status": "pass",
+    "mean_focal_minus_supervised_best_hep_loss": -0.0006658236185709635,
+    "mean_focal_minus_supervised_final_residual_loss": -0.22296045249999993,
+    "required_evidence": [
+      {
+        "description": "Repeat the xxlarge char objective-discriminative temporal clipped focal-vs-supervised comparison at seed 2.",
+        "gate": "char_xxlarge_seed2_local_colab",
+        "minimum_scale": {
+          "dataset": "tiny_shakespeare_char",
+          "hidden_dim": 160,
+          "num_columns": 40,
+          "pc_steps": 4,
+          "seq_len": 192,
+          "training_steps": 70
+        },
+        "required_backends": [
+          "local",
+          "colab"
+        ]
+      },
+      {
+        "description": "Repeat the non-char tokenized larger objective gate at seed 2 so promotion is not based on one deterministic token seed.",
+        "gate": "token_larger_seed2_local_colab",
+        "minimum_scale": {
+          "dataset": "tiny_shakespeare_word",
+          "hidden_dim": 96,
+          "num_columns": 24,
+          "pc_steps": 4,
+          "seq_len": 64,
+          "training_steps": 50
+        },
+        "required_backends": [
+          "local",
+          "colab"
+        ]
+      }
+    ]
+  },
+  "next_step": "add seed-2 focal objective-gate configs for xxlarge char and token larger settings",
+  "policy": {
+    "allows_default_promotion": false,
+    "max_logit_delta_from_ordinary": 0.1,
+    "reason_default_promotion_is_blocked": "This report defines the next promotion or stop gate. It does not satisfy that gate or change the default residual objective.",
+    "requires_both_objectives_improve_own_training_loss": true,
+    "requires_each_gate_local_and_colab": true,
+    "requires_existing_decision_to_continue_focal": true,
+    "requires_focal_best_hep_loss_mean_improvement_negative": true,
+    "requires_focal_decision_report_pass": true,
+    "requires_focal_lower_supervised_ce_hep_loss_in_every_gate_comparison": true,
+    "requires_passing_artifact_checks": true,
+    "requires_support_stress_preset_disabled": true,
+    "requires_temporal_clipped_hep_path": true
+  },
+  "promote_residual_learning_method": false,
+  "rationale": "Focal CE has beaten supervised CE on best temporal-clipped HEP supervised CE loss across the current artifact-backed local and Colab validation, extended, larger, tokenized larger, xlarge, and xxlarge gates. The next gate should test seed robustness at the largest char scale and at the tokenized scale before any default residual objective change.",
+  "selected_residual_objective_variant": "supervised_ce_focal",
+  "status": "pass"
+}

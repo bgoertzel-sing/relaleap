@@ -23,6 +23,7 @@ from relaleap.experiments.decision_report import (
     CONTINUE_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
     CONTINUE_LABEL_SMOOTHING_RESIDUAL_OBJECTIVE_VALIDATION,
     CONTINUE_FOCAL_RESIDUAL_OBJECTIVE_VALIDATION,
+    DEFINE_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -34,6 +35,7 @@ from relaleap.experiments.decision_report import (
     write_confidence_penalty_residual_objective_decision_report,
     write_label_smoothing_residual_objective_decision_report,
     write_focal_residual_objective_decision_report,
+    write_focal_residual_objective_promotion_gate_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -1678,6 +1680,86 @@ class FocalResidualObjectiveDecisionReportTest(unittest.TestCase):
                     "path": str(comparison_dir),
                 },
                 report["evidence"]["failures"],
+            )
+
+    def test_passing_focal_decision_defines_promotion_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dirs = []
+            artifact_checks = []
+            for backend in ("local", "colab"):
+                comparison_dir = tmp_path / f"{backend}_focal_objective_gate"
+                _write_residual_objective_gate_comparison(
+                    comparison_dir,
+                    pc_best_hep_loss=3.60,
+                    focal_best_hep_loss=3.57,
+                    support_stress_preset=False,
+                )
+                artifact_check = comparison_dir / "artifact_check_local.json"
+                artifact_check.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                comparison_dirs.append(comparison_dir)
+                artifact_checks.append(artifact_check)
+
+            decision = write_focal_residual_objective_decision_report(
+                comparison_dirs,
+                tmp_path / "focal_decision",
+                artifact_check_paths=artifact_checks,
+            )
+            self.assertEqual(
+                decision["decision"],
+                CONTINUE_FOCAL_RESIDUAL_OBJECTIVE_VALIDATION,
+            )
+
+            gate = write_focal_residual_objective_promotion_gate_report(
+                tmp_path / "focal_decision" / "decision_report.json",
+                tmp_path / "focal_promotion_gate",
+            )
+
+            self.assertEqual(gate["status"], "pass")
+            self.assertEqual(
+                gate["decision"],
+                DEFINE_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE,
+            )
+            self.assertFalse(gate["promote_residual_learning_method"])
+            self.assertEqual(
+                gate["evidence"]["required_evidence"][0]["gate"],
+                "char_xxlarge_seed2_local_colab",
+            )
+            self.assertEqual(
+                gate["evidence"]["required_evidence"][1]["gate"],
+                "token_larger_seed2_local_colab",
+            )
+            self.assertTrue(
+                (tmp_path / "focal_promotion_gate" / "decision_report.json").is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "focal_promotion_gate" / "decision_report.md").is_file()
+            )
+
+    def test_missing_focal_decision_blocks_promotion_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            missing_report = tmp_path / "missing_focal_decision.json"
+
+            gate = write_focal_residual_objective_promotion_gate_report(
+                missing_report,
+                tmp_path / "focal_promotion_gate",
+            )
+
+            self.assertEqual(gate["status"], "fail")
+            self.assertEqual(gate["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIsNone(gate["selected_residual_objective_variant"])
+            self.assertIn(
+                {
+                    "field": "focal_decision_report",
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(missing_report),
+                },
+                gate["evidence"]["failures"],
             )
 
 
