@@ -572,6 +572,19 @@ penalty improves its own configured objective by a similar ratio to supervised
 CE, but supervised CE still has the lower best temporal-clipped HEP CE loss in
 this first validation comparison.
 
+The matching Colab validation uses the same objective-gate pair and writes the
+Colab-prefixed artifact tree:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_confidence_penalty_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate \
+  --out results/comparisons/colab_validation_confidence_penalty_temporal_clipped_objective_gate/artifact_check.json
+```
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 
