@@ -589,6 +589,16 @@ class ResidualColumns:
                 self.atom_values = nn.Parameter(
                     torch.zeros(num_columns, atoms_per_column, hidden_dim)
                 )
+                self.register_buffer(
+                    "score_tie_breaker",
+                    torch.arange(
+                        num_columns,
+                        0,
+                        -1,
+                        dtype=self.column_scores.weight.dtype,
+                    )
+                    * 1e-6,
+                )
                 nn.init.zeros_(self.column_scores.weight)
 
             def forward(
@@ -597,7 +607,10 @@ class ResidualColumns:
                 support_indices: Any | None = None,
                 return_support: bool = False,
             ) -> Any:
-                scores = self.column_scores(hidden)
+                scores = self.column_scores(hidden) + self.score_tie_breaker.to(
+                    device=hidden.device,
+                    dtype=hidden.dtype,
+                )
                 if support_indices is None:
                     top_values, top_indices = scores.topk(self.top_k, dim=-1)
                 else:

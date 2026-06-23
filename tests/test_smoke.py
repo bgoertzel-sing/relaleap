@@ -68,6 +68,28 @@ class Phase0SmokeTest(unittest.TestCase):
         )
         self.assertEqual(result.to_metric_rows()[-1]["residual_loss"], result.post_step_loss)
 
+    def test_residual_columns_break_zero_score_ties_deterministically(self) -> None:
+        try:
+            import torch
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        residual = ResidualColumns(
+            hidden_dim=4,
+            num_columns=4,
+            atoms_per_column=2,
+            top_k=2,
+        )
+        hidden = torch.zeros(2, 3, 4)
+
+        output, support = residual(hidden, return_support=True)
+
+        self.assertTrue(torch.equal(output, hidden))
+        self.assertTrue(torch.equal(support[..., 0], torch.zeros_like(support[..., 0])))
+        self.assertTrue(torch.equal(support[..., 1], torch.ones_like(support[..., 1])))
+
     def test_pc_logit_mse_objective_toggle(self) -> None:
         pc_config = copy.deepcopy(CONFIG)
         pc_config["training"] = {"residual_objective": "pc_logit_mse"}

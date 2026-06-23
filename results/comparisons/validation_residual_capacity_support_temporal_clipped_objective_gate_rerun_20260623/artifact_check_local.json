@@ -1,0 +1,230 @@
+{
+  "artifact_invariants": {
+    "count": 12,
+    "failed_count": 0,
+    "passed": true
+  },
+  "artifacts": [
+    {
+      "exists": true,
+      "label": "comparison.summary.json",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "comparison.metrics.csv",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "comparison.notes.md",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_hep_temporal_clipped_objective_gate.summary.json",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_hep_temporal_clipped_objective_gate/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_hep_temporal_clipped_objective_gate.metrics.csv",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_hep_temporal_clipped_objective_gate/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_hep_temporal_clipped_objective_gate.notes.md",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_hep_temporal_clipped_objective_gate/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_capacity_hep_temporal_clipped_objective_gate.summary.json",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_hep_temporal_clipped_objective_gate/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_capacity_hep_temporal_clipped_objective_gate.metrics.csv",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_hep_temporal_clipped_objective_gate/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_capacity_hep_temporal_clipped_objective_gate.notes.md",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_hep_temporal_clipped_objective_gate/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_support_wide_hep_temporal_clipped_objective_gate.summary.json",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_support_wide_hep_temporal_clipped_objective_gate/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_support_wide_hep_temporal_clipped_objective_gate.metrics.csv",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_support_wide_hep_temporal_clipped_objective_gate/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_support_wide_hep_temporal_clipped_objective_gate.notes.md",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_support_wide_hep_temporal_clipped_objective_gate/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.summary.json",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.metrics.csv",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.notes.md",
+      "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate/notes.md"
+    }
+  ],
+  "baseline_comparison": {
+    "mismatch_count": null,
+    "present": false,
+    "status": null
+  },
+  "baseline_reference_comparison": {
+    "mismatch_count": null,
+    "present": false,
+    "status": null
+  },
+  "comparison_dir": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623",
+  "failures": [],
+  "hep_alpha_acceptance": {
+    "accepted_alpha": {
+      "accepted": true,
+      "alpha": 1.0,
+      "alpha0_loss": 3.4848291873931885,
+      "experiment_id": "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+      "loss": 3.4847843647003174,
+      "loss_improvement_from_alpha0": 4.482269287109375e-05,
+      "max_logit_delta_from_ordinary": 0.00047338008880615234
+    },
+    "status": "accepted"
+  },
+  "phase0_invariants": {
+    "count": 16,
+    "failed_count": 0,
+    "passed": true
+  },
+  "runs": [
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.char_validation_hep_temporal_clipped_objective_gate.summary.json",
+          "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_hep_temporal_clipped_objective_gate/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.char_validation_hep_temporal_clipped_objective_gate.metrics.csv",
+          "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_hep_temporal_clipped_objective_gate/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.char_validation_hep_temporal_clipped_objective_gate.notes.md",
+          "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_hep_temporal_clipped_objective_gate/notes.md"
+        }
+      ],
+      "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
+      "run_dir": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_hep_temporal_clipped_objective_gate",
+      "summary_failures": [],
+      "summary_status": "ok"
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.char_validation_capacity_hep_temporal_clipped_objective_gate.summary.json",
+          "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_hep_temporal_clipped_objective_gate/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.char_validation_capacity_hep_temporal_clipped_objective_gate.metrics.csv",
+          "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_hep_temporal_clipped_objective_gate/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.char_validation_capacity_hep_temporal_clipped_objective_gate.notes.md",
+          "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_hep_temporal_clipped_objective_gate/notes.md"
+        }
+      ],
+      "experiment_id": "char_validation_capacity_hep_temporal_clipped_objective_gate",
+      "run_dir": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_hep_temporal_clipped_objective_gate",
+      "summary_failures": [],
+      "summary_status": "ok"
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.char_validation_support_wide_hep_temporal_clipped_objective_gate.summary.json",
+          "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_support_wide_hep_temporal_clipped_objective_gate/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.char_validation_support_wide_hep_temporal_clipped_objective_gate.metrics.csv",
+          "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_support_wide_hep_temporal_clipped_objective_gate/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.char_validation_support_wide_hep_temporal_clipped_objective_gate.notes.md",
+          "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_support_wide_hep_temporal_clipped_objective_gate/notes.md"
+        }
+      ],
+      "experiment_id": "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+      "run_dir": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_support_wide_hep_temporal_clipped_objective_gate",
+      "summary_failures": [],
+      "summary_status": "ok"
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.summary.json",
+          "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.metrics.csv",
+          "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.notes.md",
+          "path": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate/notes.md"
+        }
+      ],
+      "experiment_id": "char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate",
+      "run_dir": "results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate_rerun_20260623/runs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate",
+      "summary_failures": [],
+      "summary_status": "ok"
+    }
+  ],
+  "status": "pass",
+  "summary_status": "ok",
+  "verdict_status": "pass"
+}
