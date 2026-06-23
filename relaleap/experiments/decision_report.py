@@ -384,6 +384,12 @@ DEFAULT_RESIDUAL_SUPPORT_WIDTH_REPEAT_DECISION_ARTIFACT_CHECKS = (
 DEFAULT_RESIDUAL_SUPPORT_WIDTH_REPEAT_DECISION_OUT_DIR = Path(
     "results/reports/residual_support_width_repeat_decision"
 )
+DEFAULT_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE_REPORT = (
+    DEFAULT_RESIDUAL_SUPPORT_WIDTH_REPEAT_DECISION_OUT_DIR / "decision_report.json"
+)
+DEFAULT_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE_OUT_DIR = Path(
+    "results/reports/residual_support_width_promotion_gate"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -467,6 +473,9 @@ DEFINE_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE = (
 )
 SATISFY_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE = (
     "satisfy_residual_support_width_repeat_gate"
+)
+DEFINE_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE = (
+    "define_residual_support_width_promotion_gate"
 )
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -5125,6 +5134,182 @@ def write_residual_support_width_repeat_decision_report(
     return report
 
 
+def write_residual_support_width_promotion_gate_report(
+    repeat_decision_report_path: Path = DEFAULT_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE_REPORT,
+    out_dir: Path = DEFAULT_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE_OUT_DIR,
+) -> dict[str, Any]:
+    """Define the bounded promotion gate for default support width."""
+
+    failures = []
+    repeat_decision_report: dict[str, Any] | None = None
+    if not repeat_decision_report_path.is_file():
+        failures.append(
+            {
+                "field": "repeat_decision_report",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(repeat_decision_report_path),
+            }
+        )
+    else:
+        repeat_decision_report = _read_json_object(repeat_decision_report_path)
+        if repeat_decision_report.get("status") != "pass":
+            failures.append(
+                {
+                    "field": "repeat_decision_report.status",
+                    "expected": "pass",
+                    "actual": repeat_decision_report.get("status"),
+                    "path": str(repeat_decision_report_path),
+                }
+            )
+        if (
+            repeat_decision_report.get("decision")
+            != SATISFY_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE
+        ):
+            failures.append(
+                {
+                    "field": "repeat_decision_report.decision",
+                    "expected": SATISFY_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE,
+                    "actual": repeat_decision_report.get("decision"),
+                    "path": str(repeat_decision_report_path),
+                }
+            )
+        if repeat_decision_report.get("promote_support_width_default") is not False:
+            failures.append(
+                {
+                    "field": "repeat_decision_report.promote_support_width_default",
+                    "expected": False,
+                    "actual": repeat_decision_report.get(
+                        "promote_support_width_default"
+                    ),
+                    "path": str(repeat_decision_report_path),
+                }
+            )
+
+    evidence = (
+        repeat_decision_report.get("evidence", {})
+        if isinstance(repeat_decision_report, dict)
+        and isinstance(repeat_decision_report.get("evidence"), dict)
+        else {}
+    )
+    required_evidence = [
+        {
+            "gate": "larger_char_seed3_local_colab",
+            "description": (
+                "Repeat the top-k 1 versus top-k 2 support-width comparison at "
+                "the larger char scale with seed 3."
+            ),
+            "minimum_scale": {
+                "dataset": "tiny_shakespeare_char",
+                "seq_len": 128,
+                "hidden_dim": 96,
+                "num_columns": 24,
+                "pc_steps": 4,
+                "training_steps": 50,
+                "baseline_top_k": 1,
+                "support_width_top_k": 2,
+            },
+            "required_backends": ["local", "colab"],
+        },
+        {
+            "gate": "tokenized_seed3_local_colab",
+            "description": (
+                "Repeat the top-k 1 versus top-k 2 support-width comparison on "
+                "the tokenized larger setting with seed 3."
+            ),
+            "minimum_scale": {
+                "dataset": "tiny_shakespeare_word",
+                "seq_len": 64,
+                "hidden_dim": 96,
+                "num_columns": 24,
+                "pc_steps": 4,
+                "training_steps": 50,
+                "baseline_top_k": 1,
+                "support_width_top_k": 2,
+            },
+            "required_backends": ["local", "colab"],
+        },
+    ]
+    status = "fail" if failures else "pass"
+    report = {
+        "status": status,
+        "decision": (
+            DEFINE_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE
+            if status == "pass"
+            else INSUFFICIENT_EVIDENCE
+        ),
+        "selected_next_direction": (
+            "support_width_seed3_promotion_gate_evidence" if status == "pass" else None
+        ),
+        "promote_residual_learning_method": False,
+        "promote_support_width_default": False,
+        "default_residual_objective": "supervised_ce",
+        "default_support_stress_mitigation": "temporal_clipped_hep",
+        "policy": {
+            "requires_seed1_validation_decision_pass": True,
+            "requires_seed2_repeat_decision_pass": True,
+            "requires_seed3_larger_char_local_and_colab": True,
+            "requires_seed3_tokenized_local_and_colab": True,
+            "requires_passing_artifact_checks": True,
+            "requires_passing_comparison_verdicts": True,
+            "requires_support_stress_preset_disabled": True,
+            "requires_supervised_ce_objective": True,
+            "requires_temporal_clipped_hep": True,
+            "requires_top_k_only_change": True,
+            "requires_wide_support_alpha0_loss_improvement_per_scale": True,
+            "requires_wide_support_final_residual_loss_improvement_per_scale": True,
+            "max_logit_delta_from_ordinary": DEFAULT_MAX_LOGIT_DELTA,
+            "allows_support_width_default_change": False,
+            "reason_default_change_is_blocked": (
+                "This report defines the promotion gate. It does not satisfy "
+                "that gate or change the default residual-column support width."
+            ),
+        },
+        "evidence": {
+            "repeat_decision_report_path": str(repeat_decision_report_path),
+            "repeat_decision_status": None
+            if repeat_decision_report is None
+            else repeat_decision_report.get("status"),
+            "repeat_decision": None
+            if repeat_decision_report is None
+            else repeat_decision_report.get("decision"),
+            "repeat_backend_count": evidence.get("backend_count"),
+            "required_evidence": required_evidence,
+            "failures": _dedupe_failures(failures),
+        },
+        "rationale": (
+            "Support width top-k 2 has passed the first larger-char/tokenized "
+            "validation and the seed-2 repeat in both local and Colab artifact "
+            "trees. The default support width should still not change until a "
+            "bounded seed-3 promotion gate confirms the same ordinary alpha-0 "
+            "and final residual CE improvements at both scales and backends, "
+            "with supervised CE and temporal-clipped HEP held fixed."
+            if status == "pass"
+            else (
+                "The support-width promotion gate cannot be defined until the "
+                "seed-2 repeat decision report is present, passing, and still "
+                "leaves the default support width unchanged."
+            )
+        ),
+        "next_step": (
+            "add seed-3 support-width promotion-gate configs for larger-char and tokenized local/Colab evidence"
+            if status == "pass"
+            else "repair or regenerate the seed-2 support-width repeat decision report"
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_residual_support_width_promotion_gate_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def _focal_residual_objective_entry(
     comparison_dir: Path,
     *,
@@ -8968,6 +9153,65 @@ def _write_focal_promotion_gate_satisfaction_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_residual_support_width_promotion_gate_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Residual Support Width Promotion Gate",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        f"- Selected direction: `{report['selected_next_direction']}`",
+        f"- Promote support-width default: `{report['promote_support_width_default']}`",
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        f"- Default support-stress mitigation: `{report['default_support_stress_mitigation']}`",
+        f"- Repeat decision report: `{evidence['repeat_decision_report_path']}`",
+        f"- Repeat decision status: `{evidence['repeat_decision_status']}`",
+        f"- Repeat decision: `{evidence['repeat_decision']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Required Evidence",
+        "",
+        (
+            "| Gate | Dataset | Backends | Minimum seq len | Minimum hidden dim "
+            "| Minimum columns | Minimum steps | Baseline top-k | Support top-k |"
+        ),
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for requirement in evidence["required_evidence"]:
+        minimum = requirement["minimum_scale"]
+        lines.append(
+            (
+                f"| {requirement['gate']} "
+                f"| {minimum['dataset']} "
+                f"| {', '.join(requirement['required_backends'])} "
+                f"| {minimum['seq_len']} "
+                f"| {minimum['hidden_dim']} "
+                f"| {minimum['num_columns']} "
+                f"| {minimum['training_steps']} "
+                f"| {minimum['baseline_top_k']} "
+                f"| {minimum['support_width_top_k']} |"
+            )
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -9008,6 +9252,7 @@ def main() -> None:
             "residual-support-width-validation-decision",
             "residual-support-width-repeat-gate",
             "residual-support-width-repeat-decision",
+            "residual-support-width-promotion-gate",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -9319,6 +9564,13 @@ def main() -> None:
             if not args.artifact_check
             else (args.artifact_check,),
             max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "residual-support-width-promotion-gate":
+        report = write_residual_support_width_promotion_gate_report(
+            args.decision_report[0]
+            if args.decision_report
+            else DEFAULT_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE_REPORT,
+            args.out or DEFAULT_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE_OUT_DIR,
         )
     else:
         report = write_pinned_support_decision_report(

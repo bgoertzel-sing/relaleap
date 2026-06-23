@@ -1,0 +1,73 @@
+{
+  "decision": "define_residual_support_width_promotion_gate",
+  "default_residual_objective": "supervised_ce",
+  "default_support_stress_mitigation": "temporal_clipped_hep",
+  "evidence": {
+    "failures": [],
+    "repeat_backend_count": 2,
+    "repeat_decision": "satisfy_residual_support_width_repeat_gate",
+    "repeat_decision_report_path": "results/reports/residual_support_width_repeat_decision/decision_report.json",
+    "repeat_decision_status": "pass",
+    "required_evidence": [
+      {
+        "description": "Repeat the top-k 1 versus top-k 2 support-width comparison at the larger char scale with seed 3.",
+        "gate": "larger_char_seed3_local_colab",
+        "minimum_scale": {
+          "baseline_top_k": 1,
+          "dataset": "tiny_shakespeare_char",
+          "hidden_dim": 96,
+          "num_columns": 24,
+          "pc_steps": 4,
+          "seq_len": 128,
+          "support_width_top_k": 2,
+          "training_steps": 50
+        },
+        "required_backends": [
+          "local",
+          "colab"
+        ]
+      },
+      {
+        "description": "Repeat the top-k 1 versus top-k 2 support-width comparison on the tokenized larger setting with seed 3.",
+        "gate": "tokenized_seed3_local_colab",
+        "minimum_scale": {
+          "baseline_top_k": 1,
+          "dataset": "tiny_shakespeare_word",
+          "hidden_dim": 96,
+          "num_columns": 24,
+          "pc_steps": 4,
+          "seq_len": 64,
+          "support_width_top_k": 2,
+          "training_steps": 50
+        },
+        "required_backends": [
+          "local",
+          "colab"
+        ]
+      }
+    ]
+  },
+  "next_step": "add seed-3 support-width promotion-gate configs for larger-char and tokenized local/Colab evidence",
+  "policy": {
+    "allows_support_width_default_change": false,
+    "max_logit_delta_from_ordinary": 0.1,
+    "reason_default_change_is_blocked": "This report defines the promotion gate. It does not satisfy that gate or change the default residual-column support width.",
+    "requires_passing_artifact_checks": true,
+    "requires_passing_comparison_verdicts": true,
+    "requires_seed1_validation_decision_pass": true,
+    "requires_seed2_repeat_decision_pass": true,
+    "requires_seed3_larger_char_local_and_colab": true,
+    "requires_seed3_tokenized_local_and_colab": true,
+    "requires_supervised_ce_objective": true,
+    "requires_support_stress_preset_disabled": true,
+    "requires_temporal_clipped_hep": true,
+    "requires_top_k_only_change": true,
+    "requires_wide_support_alpha0_loss_improvement_per_scale": true,
+    "requires_wide_support_final_residual_loss_improvement_per_scale": true
+  },
+  "promote_residual_learning_method": false,
+  "promote_support_width_default": false,
+  "rationale": "Support width top-k 2 has passed the first larger-char/tokenized validation and the seed-2 repeat in both local and Colab artifact trees. The default support width should still not change until a bounded seed-3 promotion gate confirms the same ordinary alpha-0 and final residual CE improvements at both scales and backends, with supervised CE and temporal-clipped HEP held fixed.",
+  "selected_next_direction": "support_width_seed3_promotion_gate_evidence",
+  "status": "pass"
+}

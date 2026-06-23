@@ -32,6 +32,7 @@ from relaleap.experiments.decision_report import (
     CONTINUE_RESIDUAL_SUPPORT_WIDTH_VALIDATION,
     DEFINE_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE,
     SATISFY_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE,
+    DEFINE_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -56,6 +57,7 @@ from relaleap.experiments.decision_report import (
     write_residual_support_width_validation_decision_report,
     write_residual_support_width_repeat_gate_report,
     write_residual_support_width_repeat_decision_report,
+    write_residual_support_width_promotion_gate_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -2559,6 +2561,83 @@ class ResidualSupportWidthRepeatDecisionReportTest(unittest.TestCase):
             )
 
 
+class ResidualSupportWidthPromotionGateReportTest(unittest.TestCase):
+    def test_passing_repeat_decision_defines_promotion_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            repeat_decision = _write_support_width_repeat_decision(
+                tmp_path,
+                status="pass",
+                decision=SATISFY_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE,
+                promote_support_width_default=False,
+            )
+
+            report = write_residual_support_width_promotion_gate_report(
+                repeat_decision,
+                tmp_path / "support_width_promotion_gate",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                DEFINE_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
+            )
+            self.assertEqual(
+                report["selected_next_direction"],
+                "support_width_seed3_promotion_gate_evidence",
+            )
+            self.assertFalse(report["promote_support_width_default"])
+            self.assertEqual(report["default_residual_objective"], "supervised_ce")
+            self.assertEqual(
+                report["default_support_stress_mitigation"],
+                "temporal_clipped_hep",
+            )
+            self.assertEqual(report["evidence"]["failures"], [])
+            self.assertEqual(len(report["evidence"]["required_evidence"]), 2)
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "support_width_promotion_gate"
+                    / "decision_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "support_width_promotion_gate"
+                    / "decision_report.md"
+                ).is_file()
+            )
+
+    def test_repeat_decision_that_promotes_default_blocks_gate_definition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            repeat_decision = _write_support_width_repeat_decision(
+                tmp_path,
+                status="pass",
+                decision=SATISFY_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE,
+                promote_support_width_default=True,
+            )
+
+            report = write_residual_support_width_promotion_gate_report(
+                repeat_decision,
+                tmp_path / "support_width_promotion_gate",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIsNone(report["selected_next_direction"])
+            self.assertIn(
+                {
+                    "field": "repeat_decision_report.promote_support_width_default",
+                    "expected": False,
+                    "actual": True,
+                    "path": str(repeat_decision),
+                },
+                report["evidence"]["failures"],
+            )
+
+
 def _write_support_width_validation_comparison(
     comparison_dir: Path,
     *,
@@ -2913,6 +2992,36 @@ def _write_support_width_validation_decision(
                 "promote_residual_learning_method": False,
                 "default_residual_objective": "supervised_ce",
                 "default_support_stress_mitigation": "temporal_clipped_hep",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return report_path
+
+
+def _write_support_width_repeat_decision(
+    tmp_path: Path,
+    *,
+    status: str,
+    decision: str,
+    promote_support_width_default: bool,
+) -> Path:
+    report_dir = tmp_path / "residual_support_width_repeat_decision"
+    report_dir.mkdir(parents=True)
+    report_path = report_dir / "decision_report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "status": status,
+                "decision": decision,
+                "promote_support_width_default": promote_support_width_default,
+                "evidence": {
+                    "backend_count": 2,
+                    "failures": [],
+                },
             },
             indent=2,
             sort_keys=True,
