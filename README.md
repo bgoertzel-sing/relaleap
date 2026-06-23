@@ -1185,6 +1185,24 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/validation_temporal_consistency_weight_sweep_temporal_clipped_objective_gate/artifact_check_local.json
 ```
 
+The next bounded local-only check repeats the same temporal-consistency weight
+sweep at the extended char objective-gate scale: sequence length `96`, hidden
+dimension `64`, `16` residual columns, `4` HEP settling steps, and `30`
+training steps.
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_extended_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_extended_temporal_consistency_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_extended_temporal_consistency_w005_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_extended_temporal_consistency_w010_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_extended_temporal_consistency_w020_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/extended_temporal_consistency_weight_sweep_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/extended_temporal_consistency_weight_sweep_temporal_clipped_objective_gate \
+  --out results/comparisons/extended_temporal_consistency_weight_sweep_temporal_clipped_objective_gate/artifact_check_local.json
+```
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
