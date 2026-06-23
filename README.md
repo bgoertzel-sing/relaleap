@@ -1339,6 +1339,21 @@ artifact trees pass, the run identities are seed-3, and top-k `2` improves
 ordinary alpha-0 and final supervised CE loss over top-k `1` at both
 larger-char and tokenized scales.
 
+After the support-width promotion gate is satisfied, the default larger-char
+and tokenized objective-gate configs use residual-column support top-k `2`.
+Verify the promoted default locally with a fresh command-driven comparison and
+artifact check:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_larger_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/token_larger_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/post_promotion_support_width_default_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/post_promotion_support_width_default_temporal_clipped_objective_gate \
+  --out results/comparisons/post_promotion_support_width_default_temporal_clipped_objective_gate/artifact_check_local.json
+```
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
