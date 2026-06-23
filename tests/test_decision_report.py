@@ -4332,6 +4332,41 @@ class SupportWidthDeconfoundingAuditReportTest(unittest.TestCase):
             self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
             self.assertEqual(report["evidence"]["failures"][0]["field"], "artifact_check.status")
 
+    def test_stale_support_width_audit_artifacts_fail_without_type_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "comparison"
+            artifact_check_path = tmp_path / "artifact_check.json"
+            _write_support_width_deconfounding_comparison(comparison_dir)
+            summary_path = comparison_dir / "summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            for run in summary["runs"]:
+                run.pop("num_columns")
+                run.pop("top_k")
+            summary_path.write_text(
+                json.dumps(summary, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            artifact_check_path.write_text(
+                json.dumps({"status": "pass"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_support_width_deconfounding_audit_report(
+                comparison_dir,
+                tmp_path / "report",
+                artifact_check_path=artifact_check_path,
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertTrue(
+                any(
+                    failure["field"].endswith(".matrix_cell")
+                    for failure in report["evidence"]["failures"]
+                )
+            )
+
 
 def _write_support_width_deconfounding_comparison(comparison_dir: Path) -> None:
     comparison_dir.mkdir(parents=True)

@@ -8761,8 +8761,8 @@ def _dedupe_failures(failures: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for failure in failures:
         key = (
             failure.get("field"),
-            failure.get("expected"),
-            failure.get("actual"),
+            _stable_failure_value(failure.get("expected")),
+            _stable_failure_value(failure.get("actual")),
             failure.get("path"),
         )
         if key in seen:
@@ -8770,6 +8770,12 @@ def _dedupe_failures(failures: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen.add(key)
         deduped.append(failure)
     return deduped
+
+
+def _stable_failure_value(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return value
+    return json.dumps(value, sort_keys=True)
 
 
 def _write_markdown(path: Path, report: dict[str, Any]) -> None:

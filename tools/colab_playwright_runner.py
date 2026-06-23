@@ -38,14 +38,15 @@ ARTIFACT_BUNDLE_BEGIN = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_BEGIN"
 ARTIFACT_BUNDLE_END = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_END"
 FOCUSED_TARGET_COMPARISON_DIR = (
     "results/comparisons/"
-    "colab_post_support_width_capacity_larger_token_objective_gate"
+    "colab_validation_residual_capacity_support_temporal_clipped_objective_gate"
 )
 FOCUSED_TARGET_MARKERS = (
     "cuda_available: True",
     '"status": "pass"',
     FOCUSED_TARGET_COMPARISON_DIR,
-    "char_larger_capacity_hep_temporal_clipped_objective_gate",
-    "token_larger_capacity_hep_temporal_clipped_objective_gate",
+    "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+    "char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate",
+    "Residual capacity/support validation comparison status: ok",
     COMPLETION_TEXT,
 )
 ERROR_MARKERS = (
