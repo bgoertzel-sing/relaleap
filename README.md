@@ -1354,6 +1354,27 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/post_promotion_support_width_default_temporal_clipped_objective_gate/artifact_check_local.json
 ```
 
+With top-k `2` promoted, the bounded train-time temporal-consistency
+regularizer retest compares the previous strongest local weight, `0.2`, against
+the current supervised CE defaults at the larger char and tokenized scales:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_larger_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_larger_temporal_consistency_w020_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/token_larger_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/token_larger_temporal_consistency_w020_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/post_support_width_temporal_consistency_w020_larger_token_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/post_support_width_temporal_consistency_w020_larger_token_objective_gate \
+  --out results/comparisons/post_support_width_temporal_consistency_w020_larger_token_objective_gate/artifact_check_local.json
+```
+
+The local evidence passes artifacts and invariants but keeps supervised CE as
+the better residual objective at both promoted scales: char supervised best HEP
+CE `3.14853334` beats temporal-consistency `3.15985703`, and tokenized
+supervised alpha-0 CE `3.48037004` beats temporal-consistency `3.59536052`.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
