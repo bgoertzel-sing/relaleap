@@ -1,0 +1,475 @@
+{
+  "loss_scale_note": "Residual objectives may use different loss scales; compare each trajectory against its own initial loss.",
+  "out_dir": "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2",
+  "runs": [
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "atoms_per_column": 4,
+      "base_loss": 3.6586458683013916,
+      "config_path": "configs/char_larger_hep_temporal_clipped_objective_gate_seed2.yaml",
+      "dataset": "tiny_shakespeare_char",
+      "error": null,
+      "experiment_id": "char_larger_hep_temporal_clipped_objective_gate_seed2",
+      "final_residual_loss": 3.36594748,
+      "hep_alpha_sweep": [
+        {
+          "alpha": 0.0,
+          "loss": 3.3659474849700928,
+          "max_logit_delta_from_ordinary": 0.0,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        },
+        {
+          "alpha": 0.25,
+          "loss": 3.3659422397613525,
+          "max_logit_delta_from_ordinary": 8.410215377807617e-05,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        },
+        {
+          "alpha": 0.5,
+          "loss": 3.365936517715454,
+          "max_logit_delta_from_ordinary": 0.00016826391220092773,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        },
+        {
+          "alpha": 1.0,
+          "loss": 3.365926742553711,
+          "max_logit_delta_from_ordinary": 0.00033658742904663086,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        }
+      ],
+      "hep_settling_objective": "temporal_consistency_gradient",
+      "hep_update_clip_norm": 0.01,
+      "initial_residual_loss": 3.65864587,
+      "invariants": {
+        "frozen_base_unchanged": true,
+        "hep_alpha_0_equivalence": true,
+        "residual_parameters_updated": true,
+        "zero_init_identity": true
+      },
+      "num_columns": 24,
+      "pinned_support": false,
+      "residual_loss_delta": -0.29269839,
+      "residual_loss_ratio": 0.9199981631455356,
+      "residual_objective": "supervised_ce",
+      "run_dir": "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2/runs/char_larger_hep_temporal_clipped_objective_gate_seed2",
+      "status": "ok",
+      "support_instability": {
+        "hep_alpha": 1.0,
+        "hep_update_clip_norm": 0.01,
+        "pc_steps": 4,
+        "pinned_vs_repicked_logit_delta": 0.0,
+        "support_change_fraction": 0.0,
+        "support_changed": false,
+        "support_changed_positions": 0,
+        "support_positions": 512,
+        "support_transition_count": 0
+      },
+      "support_stress": true,
+      "support_stress_preset": false,
+      "top_k": 1,
+      "training_steps": 50,
+      "zero_init_loss": 3.6586458683013916
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "atoms_per_column": 4,
+      "base_loss": 3.6586458683013916,
+      "config_path": "configs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml",
+      "dataset": "tiny_shakespeare_char",
+      "error": null,
+      "experiment_id": "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+      "final_residual_loss": 3.20794559,
+      "hep_alpha_sweep": [
+        {
+          "alpha": 0.0,
+          "loss": 3.2079455852508545,
+          "max_logit_delta_from_ordinary": 0.0,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.283203125,
+          "support_transition_count": 435.0
+        },
+        {
+          "alpha": 0.25,
+          "loss": 3.207946538925171,
+          "max_logit_delta_from_ordinary": 0.00011444091796875,
+          "pinned_vs_repicked_logit_delta": 7.227063179016113e-05,
+          "support_change_fraction": 0.283203125,
+          "support_transition_count": 435.0
+        },
+        {
+          "alpha": 0.5,
+          "loss": 3.2079474925994873,
+          "max_logit_delta_from_ordinary": 0.00022792816162109375,
+          "pinned_vs_repicked_logit_delta": 0.00014451146125793457,
+          "support_change_fraction": 0.283203125,
+          "support_transition_count": 435.0
+        },
+        {
+          "alpha": 1.0,
+          "loss": 3.20794939994812,
+          "max_logit_delta_from_ordinary": 0.0004570484161376953,
+          "pinned_vs_repicked_logit_delta": 0.0002895146608352661,
+          "support_change_fraction": 0.283203125,
+          "support_transition_count": 435.0
+        }
+      ],
+      "hep_settling_objective": "temporal_consistency_gradient",
+      "hep_update_clip_norm": 0.01,
+      "initial_residual_loss": 3.65864587,
+      "invariants": {
+        "frozen_base_unchanged": true,
+        "hep_alpha_0_equivalence": true,
+        "residual_parameters_updated": true,
+        "zero_init_identity": true
+      },
+      "num_columns": 24,
+      "pinned_support": false,
+      "residual_loss_delta": -0.45070027999999995,
+      "residual_loss_ratio": 0.8768122698904445,
+      "residual_objective": "supervised_ce",
+      "run_dir": "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2/runs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+      "status": "ok",
+      "support_instability": {
+        "hep_alpha": 1.0,
+        "hep_update_clip_norm": 0.01,
+        "pc_steps": 4,
+        "pinned_vs_repicked_logit_delta": 0.0002895146608352661,
+        "support_change_fraction": 0.283203125,
+        "support_changed": true,
+        "support_changed_positions": 145,
+        "support_positions": 512,
+        "support_transition_count": 435
+      },
+      "support_stress": true,
+      "support_stress_preset": false,
+      "top_k": 2,
+      "training_steps": 50,
+      "zero_init_loss": 3.6586458683013916
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "atoms_per_column": 4,
+      "base_loss": 4.230261325836182,
+      "config_path": "configs/token_larger_hep_temporal_clipped_objective_gate_seed2.yaml",
+      "dataset": "tiny_shakespeare_word",
+      "error": null,
+      "experiment_id": "token_larger_hep_temporal_clipped_objective_gate_seed2",
+      "final_residual_loss": 4.14451742,
+      "hep_alpha_sweep": [
+        {
+          "alpha": 0.0,
+          "loss": 4.144517421722412,
+          "max_logit_delta_from_ordinary": 0.0,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        },
+        {
+          "alpha": 0.25,
+          "loss": 4.144501686096191,
+          "max_logit_delta_from_ordinary": 0.00022989511489868164,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        },
+        {
+          "alpha": 0.5,
+          "loss": 4.144484996795654,
+          "max_logit_delta_from_ordinary": 0.00045943260192871094,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        },
+        {
+          "alpha": 1.0,
+          "loss": 4.144453048706055,
+          "max_logit_delta_from_ordinary": 0.0009188652038574219,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.0,
+          "support_transition_count": 0.0
+        }
+      ],
+      "hep_settling_objective": "temporal_consistency_gradient",
+      "hep_update_clip_norm": 0.01,
+      "initial_residual_loss": 4.23026133,
+      "invariants": {
+        "frozen_base_unchanged": true,
+        "hep_alpha_0_equivalence": true,
+        "residual_parameters_updated": true,
+        "zero_init_identity": true
+      },
+      "num_columns": 24,
+      "pinned_support": false,
+      "residual_loss_delta": -0.08574391000000059,
+      "residual_loss_ratio": 0.9797308243365663,
+      "residual_objective": "supervised_ce",
+      "run_dir": "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2/runs/token_larger_hep_temporal_clipped_objective_gate_seed2",
+      "status": "ok",
+      "support_instability": {
+        "hep_alpha": 1.0,
+        "hep_update_clip_norm": 0.01,
+        "pc_steps": 4,
+        "pinned_vs_repicked_logit_delta": 0.0,
+        "support_change_fraction": 0.0,
+        "support_changed": false,
+        "support_changed_positions": 0,
+        "support_positions": 256,
+        "support_transition_count": 0
+      },
+      "support_stress": true,
+      "support_stress_preset": false,
+      "top_k": 1,
+      "training_steps": 50,
+      "zero_init_loss": 4.230261325836182
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "atoms_per_column": 4,
+      "base_loss": 4.230261325836182,
+      "config_path": "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml",
+      "dataset": "tiny_shakespeare_word",
+      "error": null,
+      "experiment_id": "token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+      "final_residual_loss": 3.5810039,
+      "hep_alpha_sweep": [
+        {
+          "alpha": 0.0,
+          "loss": 3.5810039043426514,
+          "max_logit_delta_from_ordinary": 0.0,
+          "pinned_vs_repicked_logit_delta": 0.0,
+          "support_change_fraction": 0.61328125,
+          "support_transition_count": 471.0
+        },
+        {
+          "alpha": 0.25,
+          "loss": 3.5810155868530273,
+          "max_logit_delta_from_ordinary": 0.00033915042877197266,
+          "pinned_vs_repicked_logit_delta": 0.0030094385147094727,
+          "support_change_fraction": 0.61328125,
+          "support_transition_count": 471.0
+        },
+        {
+          "alpha": 0.5,
+          "loss": 3.5810282230377197,
+          "max_logit_delta_from_ordinary": 0.0006784945726394653,
+          "pinned_vs_repicked_logit_delta": 0.0060176849365234375,
+          "support_change_fraction": 0.61328125,
+          "support_transition_count": 471.0
+        },
+        {
+          "alpha": 1.0,
+          "loss": 3.5810532569885254,
+          "max_logit_delta_from_ordinary": 0.0013565942645072937,
+          "pinned_vs_repicked_logit_delta": 0.012028217315673828,
+          "support_change_fraction": 0.6171875,
+          "support_transition_count": 472.0
+        }
+      ],
+      "hep_settling_objective": "temporal_consistency_gradient",
+      "hep_update_clip_norm": 0.01,
+      "initial_residual_loss": 4.23026133,
+      "invariants": {
+        "frozen_base_unchanged": true,
+        "hep_alpha_0_equivalence": true,
+        "residual_parameters_updated": true,
+        "zero_init_identity": true
+      },
+      "num_columns": 24,
+      "pinned_support": false,
+      "residual_loss_delta": -0.6492574300000005,
+      "residual_loss_ratio": 0.8465207278340886,
+      "residual_objective": "supervised_ce",
+      "run_dir": "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2/runs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+      "status": "ok",
+      "support_instability": {
+        "hep_alpha": 1.0,
+        "hep_update_clip_norm": 0.01,
+        "pc_steps": 4,
+        "pinned_vs_repicked_logit_delta": 0.012028217315673828,
+        "support_change_fraction": 0.6171875,
+        "support_changed": true,
+        "support_changed_positions": 158,
+        "support_positions": 256,
+        "support_transition_count": 472
+      },
+      "support_stress": true,
+      "support_stress_preset": false,
+      "top_k": 2,
+      "training_steps": 50,
+      "zero_init_loss": 4.230261325836182
+    }
+  ],
+  "runtime_seconds": 8.4005,
+  "status": "ok",
+  "verdict": {
+    "artifact_invariant_count": 12,
+    "artifact_invariants_passed": true,
+    "best_hep_alpha_by_loss": {
+      "alpha": 0.0,
+      "experiment_id": "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+      "loss": 3.2079455852508545,
+      "max_logit_delta_from_ordinary": 0.0
+    },
+    "failed_artifact_invariants": [],
+    "failed_invariants": [],
+    "hep_alpha_acceptance": {
+      "accepted_alpha": {
+        "accepted": true,
+        "alpha": 1.0,
+        "alpha0_loss": 3.3659474849700928,
+        "experiment_id": "char_larger_hep_temporal_clipped_objective_gate_seed2",
+        "loss": 3.365926742553711,
+        "loss_improvement_from_alpha0": 2.0742416381835938e-05,
+        "max_logit_delta_from_ordinary": 0.00033658742904663086
+      },
+      "baseline_alpha0": {
+        "alpha": 0.0,
+        "experiment_id": "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+        "loss": 3.2079455852508545,
+        "max_logit_delta_from_ordinary": 0.0
+      },
+      "candidate_count": 12,
+      "candidates": [
+        {
+          "accepted": true,
+          "alpha": 0.25,
+          "alpha0_loss": 3.3659474849700928,
+          "experiment_id": "char_larger_hep_temporal_clipped_objective_gate_seed2",
+          "loss": 3.3659422397613525,
+          "loss_improvement_from_alpha0": 5.245208740234375e-06,
+          "max_logit_delta_from_ordinary": 8.410215377807617e-05
+        },
+        {
+          "accepted": true,
+          "alpha": 0.5,
+          "alpha0_loss": 3.3659474849700928,
+          "experiment_id": "char_larger_hep_temporal_clipped_objective_gate_seed2",
+          "loss": 3.365936517715454,
+          "loss_improvement_from_alpha0": 1.0967254638671875e-05,
+          "max_logit_delta_from_ordinary": 0.00016826391220092773
+        },
+        {
+          "accepted": true,
+          "alpha": 1.0,
+          "alpha0_loss": 3.3659474849700928,
+          "experiment_id": "char_larger_hep_temporal_clipped_objective_gate_seed2",
+          "loss": 3.365926742553711,
+          "loss_improvement_from_alpha0": 2.0742416381835938e-05,
+          "max_logit_delta_from_ordinary": 0.00033658742904663086
+        },
+        {
+          "accepted": false,
+          "alpha": 0.25,
+          "alpha0_loss": 3.2079455852508545,
+          "experiment_id": "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+          "loss": 3.207946538925171,
+          "loss_improvement_from_alpha0": -9.5367431640625e-07,
+          "max_logit_delta_from_ordinary": 0.00011444091796875
+        },
+        {
+          "accepted": false,
+          "alpha": 0.5,
+          "alpha0_loss": 3.2079455852508545,
+          "experiment_id": "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+          "loss": 3.2079474925994873,
+          "loss_improvement_from_alpha0": -1.9073486328125e-06,
+          "max_logit_delta_from_ordinary": 0.00022792816162109375
+        },
+        {
+          "accepted": false,
+          "alpha": 1.0,
+          "alpha0_loss": 3.2079455852508545,
+          "experiment_id": "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+          "loss": 3.20794939994812,
+          "loss_improvement_from_alpha0": -3.814697265625e-06,
+          "max_logit_delta_from_ordinary": 0.0004570484161376953
+        },
+        {
+          "accepted": true,
+          "alpha": 0.25,
+          "alpha0_loss": 4.144517421722412,
+          "experiment_id": "token_larger_hep_temporal_clipped_objective_gate_seed2",
+          "loss": 4.144501686096191,
+          "loss_improvement_from_alpha0": 1.5735626220703125e-05,
+          "max_logit_delta_from_ordinary": 0.00022989511489868164
+        },
+        {
+          "accepted": true,
+          "alpha": 0.5,
+          "alpha0_loss": 4.144517421722412,
+          "experiment_id": "token_larger_hep_temporal_clipped_objective_gate_seed2",
+          "loss": 4.144484996795654,
+          "loss_improvement_from_alpha0": 3.24249267578125e-05,
+          "max_logit_delta_from_ordinary": 0.00045943260192871094
+        },
+        {
+          "accepted": true,
+          "alpha": 1.0,
+          "alpha0_loss": 4.144517421722412,
+          "experiment_id": "token_larger_hep_temporal_clipped_objective_gate_seed2",
+          "loss": 4.144453048706055,
+          "loss_improvement_from_alpha0": 6.437301635742188e-05,
+          "max_logit_delta_from_ordinary": 0.0009188652038574219
+        },
+        {
+          "accepted": false,
+          "alpha": 0.25,
+          "alpha0_loss": 3.5810039043426514,
+          "experiment_id": "token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+          "loss": 3.5810155868530273,
+          "loss_improvement_from_alpha0": -1.1682510375976562e-05,
+          "max_logit_delta_from_ordinary": 0.00033915042877197266
+        },
+        {
+          "accepted": false,
+          "alpha": 0.5,
+          "alpha0_loss": 3.5810039043426514,
+          "experiment_id": "token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+          "loss": 3.5810282230377197,
+          "loss_improvement_from_alpha0": -2.4318695068359375e-05,
+          "max_logit_delta_from_ordinary": 0.0006784945726394653
+        },
+        {
+          "accepted": false,
+          "alpha": 1.0,
+          "alpha0_loss": 3.5810039043426514,
+          "experiment_id": "token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+          "loss": 3.5810532569885254,
+          "loss_improvement_from_alpha0": -4.935264587402344e-05,
+          "max_logit_delta_from_ordinary": 0.0013565942645072937
+        }
+      ],
+      "max_logit_delta_from_ordinary": 0.1,
+      "min_loss_improvement_from_alpha0": 0.0,
+      "rejected_count": 6,
+      "status": "accepted"
+    },
+    "invariant_count": 16,
+    "invariants_passed": true,
+    "status": "pass"
+  }
+}
