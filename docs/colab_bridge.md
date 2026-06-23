@@ -127,8 +127,10 @@ the extended temporal support-stress check under
 `results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep`,
 the larger-char promotion-gate support-stress check under
 `results/comparisons/colab_larger_support_stress_temporal_vs_entropy_guided_clipped_hep`,
-and the non-char tokenized promotion-gate support-stress check under
-`results/comparisons/colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep`.
+the non-char tokenized promotion-gate support-stress check under
+`results/comparisons/colab_token_larger_support_stress_temporal_vs_entropy_guided_clipped_hep`,
+and the residual capacity/support diagnostic validation under
+`results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate`.
 When that bundle is present in the rendered output, the helper extracts it
 under the local repo root so the normal after-the-fact checker can inspect the
 Colab artifact tree locally.

@@ -1262,6 +1262,25 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate/artifact_check_local.json
 ```
 
+After the local comparison and artifact check complete, decide whether the
+widened-support result merits matching Colab validation:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report residual-capacity-support-diagnostic-decision \
+  --comparison-dir results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate \
+  --artifact-check results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate/artifact_check_local.json \
+  --out results/reports/residual_capacity_support_diagnostic_decision
+```
+
+The report writes `decision_report.json` and `decision_report.md`. It fails
+closed unless the local comparison and artifact contract pass, all four
+capacity/support variants are present, and widened support is the best local
+variant with an accepted nonzero temporal-clipped HEP alpha inside the ordinary
+logit-delta budget. When it passes, the next step is the matching real-Chrome
+Colab bridge run that emits
+`results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate`.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 

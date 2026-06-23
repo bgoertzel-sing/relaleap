@@ -106,6 +106,18 @@ class ColabNotebookTest(unittest.TestCase):
             "configs/char_xxlarge_focal_hep_temporal_clipped_objective_gate_seed2.yaml",
             checkout_cell,
         )
+        self.assertIn(
+            "configs/char_validation_capacity_hep_temporal_clipped_objective_gate.yaml",
+            checkout_cell,
+        )
+        self.assertIn(
+            "configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            checkout_cell,
+        )
+        self.assertIn(
+            "configs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            checkout_cell,
+        )
 
     def test_run_cell_executes_token_larger_colab_path(self) -> None:
         notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
@@ -309,6 +321,44 @@ class ColabNotebookTest(unittest.TestCase):
         )
         self.assertIn(
             "char_validation_pc_hep_temporal_clipped_objective_gate",
+            evidence_cell,
+        )
+        self.assertIn("support_stress_preset'] is False", evidence_cell)
+
+    def test_run_cell_executes_capacity_support_diagnostic_colab_path(self) -> None:
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+        run_cells = [
+            source
+            for source in sources
+            if "colab_validation_residual_capacity_support_temporal_clipped_objective_gate"
+            in source
+        ]
+
+        self.assertEqual(len(run_cells), 2)
+        run_cell, evidence_cell = run_cells
+        self.assertIn(
+            "--config configs/char_validation_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/char_validation_capacity_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "Residual capacity/support validation comparison status:",
+            evidence_cell,
+        )
+        self.assertIn(
+            "char_validation_support_wide_hep_temporal_clipped_objective_gate",
             evidence_cell,
         )
         self.assertIn("support_stress_preset'] is False", evidence_cell)

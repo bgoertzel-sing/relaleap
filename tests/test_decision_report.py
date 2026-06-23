@@ -26,6 +26,7 @@ from relaleap.experiments.decision_report import (
     DEFINE_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE,
     SATISFY_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE,
     DEFINE_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE,
+    RUN_COLAB_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -44,6 +45,7 @@ from relaleap.experiments.decision_report import (
     write_temporal_consistency_residual_objective_decision_report,
     write_residual_learning_next_direction_report,
     write_residual_capacity_support_diagnostic_gate_report,
+    write_residual_capacity_support_diagnostic_decision_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -2076,6 +2078,185 @@ class ResidualCapacitySupportDiagnosticGateReportTest(unittest.TestCase):
                 },
                 report["evidence"]["failures"],
             )
+
+
+class ResidualCapacitySupportDiagnosticDecisionReportTest(unittest.TestCase):
+    def test_support_width_winner_selects_matching_colab_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "comparison"
+            _write_capacity_support_comparison(comparison_dir)
+            artifact_check = comparison_dir / "artifact_check_local.json"
+            artifact_check.write_text(
+                json.dumps({"status": "pass"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_residual_capacity_support_diagnostic_decision_report(
+                comparison_dir,
+                tmp_path / "capacity_support_decision",
+                artifact_check_path=artifact_check,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                RUN_COLAB_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC,
+            )
+            self.assertEqual(
+                report["selected_next_direction"],
+                "colab_residual_capacity_support_diagnostic",
+            )
+            self.assertFalse(report["promote_residual_learning_method"])
+            self.assertEqual(report["default_residual_objective"], "supervised_ce")
+            self.assertLess(
+                report["evidence"]["support_minus_baseline_best_hep_loss"],
+                0.0,
+            )
+            self.assertEqual(report["evidence"]["best_variant"]["variant"], "support_width")
+            self.assertEqual(report["evidence"]["accepted_support_width_alpha"]["alpha"], 1.0)
+            self.assertEqual(report["evidence"]["failures"], [])
+            self.assertTrue(
+                (tmp_path / "capacity_support_decision" / "decision_report.json").is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "capacity_support_decision" / "decision_report.md").is_file()
+            )
+
+    def test_failed_artifact_check_blocks_colab_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "comparison"
+            _write_capacity_support_comparison(comparison_dir)
+            artifact_check = comparison_dir / "artifact_check_local.json"
+            artifact_check.write_text(
+                json.dumps({"status": "fail"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_residual_capacity_support_diagnostic_decision_report(
+                comparison_dir,
+                tmp_path / "capacity_support_decision",
+                artifact_check_path=artifact_check,
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIsNone(report["selected_next_direction"])
+            self.assertIn(
+                {
+                    "field": "artifact_check.status",
+                    "expected": "pass",
+                    "actual": "fail",
+                    "path": str(comparison_dir),
+                },
+                report["evidence"]["failures"],
+            )
+
+
+def _write_capacity_support_comparison(comparison_dir: Path) -> None:
+    comparison_dir.mkdir(parents=True)
+    runs = [
+        _capacity_support_run(
+            "char_validation_hep_temporal_clipped_objective_gate",
+            "configs/char_validation_hep_temporal_clipped_objective_gate.yaml",
+            best_loss=3.58,
+            final_loss=3.59,
+            support_change=0.0,
+            pinned_delta=0.0,
+        ),
+        _capacity_support_run(
+            "char_validation_capacity_hep_temporal_clipped_objective_gate",
+            "configs/char_validation_capacity_hep_temporal_clipped_objective_gate.yaml",
+            best_loss=3.57,
+            final_loss=3.58,
+            support_change=0.0,
+            pinned_delta=0.0,
+        ),
+        _capacity_support_run(
+            "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+            "configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            best_loss=3.50,
+            final_loss=3.51,
+            support_change=0.37,
+            pinned_delta=0.005,
+        ),
+        _capacity_support_run(
+            "char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate",
+            "configs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            best_loss=3.52,
+            final_loss=3.53,
+            support_change=0.29,
+            pinned_delta=0.002,
+        ),
+    ]
+    (comparison_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "verdict": {
+                    "status": "pass",
+                    "phase0_invariants": {"passed": True},
+                    "artifact_invariants": {"passed": True},
+                },
+                "runs": runs,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _capacity_support_run(
+    experiment_id: str,
+    config_path: str,
+    *,
+    best_loss: float,
+    final_loss: float,
+    support_change: float,
+    pinned_delta: float,
+) -> dict[str, object]:
+    return {
+        "artifact_invariants": {
+            "metrics_csv": True,
+            "notes_md": True,
+            "summary_json": True,
+        },
+        "config_path": config_path,
+        "experiment_id": experiment_id,
+        "final_residual_loss": final_loss,
+        "hep_alpha_sweep": [
+            {
+                "alpha": 0.0,
+                "loss": best_loss + 0.01,
+                "max_logit_delta_from_ordinary": 0.0,
+                "pinned_vs_repicked_logit_delta": 0.0,
+                "support_change_fraction": support_change,
+            },
+            {
+                "alpha": 1.0,
+                "loss": best_loss,
+                "max_logit_delta_from_ordinary": 0.001,
+                "pinned_vs_repicked_logit_delta": pinned_delta,
+                "support_change_fraction": support_change,
+            },
+        ],
+        "hep_settling_objective": "temporal_consistency_gradient",
+        "hep_update_clip_norm": 0.01,
+        "invariants": {
+            "frozen_base_unchanged": True,
+            "hep_alpha_0_equivalence": True,
+            "residual_parameters_updated": True,
+            "zero_init_identity": True,
+        },
+        "residual_objective": "supervised_ce",
+        "status": "ok",
+        "support_stress": True,
+        "support_stress_preset": False,
+        "training_steps": 25,
+    }
 
 
 def _write_next_direction_report(tmp_path: Path, *, status: str) -> Path:
