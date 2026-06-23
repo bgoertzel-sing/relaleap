@@ -1,0 +1,272 @@
+{
+  "artifacts": {
+    "notes_md": "results/audits/validation_support_wide_exhaustive_support/notes.md",
+    "pairwise_synergy_csv": "results/audits/validation_support_wide_exhaustive_support/pairwise_synergy.csv",
+    "summary_json": "results/audits/validation_support_wide_exhaustive_support/summary.json",
+    "support_losses_csv": "results/audits/validation_support_wide_exhaustive_support/support_losses.csv"
+  },
+  "audit": {
+    "batch_size": 4,
+    "best_global_fixed_support": "0,3",
+    "best_global_fixed_support_loss": 3.55755615234375,
+    "best_one_swap_loss": 3.55755615234375,
+    "best_one_swap_recovers_oracle_gap_fraction": 1.0,
+    "best_one_swap_support": "0,3",
+    "dataset": "tiny_shakespeare_char",
+    "dominant_router_support": "0,1",
+    "dominant_router_support_count": 119,
+    "dominant_router_support_loss": 3.5632455348968506,
+    "dominant_router_support_regret": 0.005689382553100586,
+    "empty_loss": 3.728869676589966,
+    "loss_distribution": {
+      "max": 3.711411714553833,
+      "median": 3.6930547952651978,
+      "min": 3.55755615234375,
+      "p25": 3.6291585564613342,
+      "p75": 3.70261013507843
+    },
+    "num_columns": 12,
+    "oracle_loss": 3.4455456733703613,
+    "oracle_support_counts": {
+      "0,1": 32,
+      "0,10": 4,
+      "0,11": 2,
+      "0,2": 27,
+      "0,3": 9,
+      "0,4": 1,
+      "0,5": 4,
+      "0,6": 9,
+      "0,7": 18,
+      "1,11": 10,
+      "1,2": 45,
+      "1,3": 6,
+      "1,4": 6,
+      "1,5": 3,
+      "1,6": 5,
+      "1,7": 1,
+      "1,9": 2,
+      "2,3": 6,
+      "2,5": 4,
+      "2,6": 3,
+      "3,11": 3,
+      "3,5": 11,
+      "3,6": 14,
+      "4,11": 3,
+      "4,5": 7,
+      "5,10": 1,
+      "5,11": 3,
+      "5,9": 3,
+      "6,11": 5,
+      "7,11": 3,
+      "8,11": 1,
+      "9,11": 1
+    },
+    "oracle_support_regret": 0.05123724415898323,
+    "oracle_support_regret_positive_fraction": 0.9523809552192688,
+    "residual_objective": "supervised_ce",
+    "residual_parameter_delta": 361.22702407836914,
+    "router_loss": 3.4967830181121826,
+    "router_minus_best_global_fixed_support_loss": -0.06077313423156738,
+    "seq_len": 64,
+    "singleton_count": 12,
+    "support_audit": {
+      "column_counts": [
+        191,
+        161,
+        16,
+        43,
+        0,
+        9,
+        56,
+        0,
+        18,
+        0,
+        3,
+        15
+      ],
+      "dead_columns": 3,
+      "max_column_fraction": 0.373046875,
+      "num_columns": 12,
+      "support_positions": 256,
+      "support_set_counts": {
+        "0,1": 119,
+        "0,11": 15,
+        "0,2": 4,
+        "0,3": 11,
+        "0,5": 5,
+        "0,6": 25,
+        "0,8": 12,
+        "1,2": 1,
+        "1,3": 20,
+        "1,5": 4,
+        "1,6": 17,
+        "2,6": 11,
+        "3,10": 3,
+        "3,6": 3,
+        "3,8": 6
+      },
+      "top_k": 2,
+      "total_support_slots": 512,
+      "unique_support_sets": 15,
+      "used_columns": 9
+    },
+    "support_set_count": 66,
+    "top_k": 2,
+    "top_supports_by_loss": [
+      {
+        "delta_from_router": 0.06077313423156738,
+        "gain_from_empty": 0.17131352424621582,
+        "loss": 3.55755615234375,
+        "pairwise_synergy": 0.04036903381347656,
+        "support": "0,3"
+      },
+      {
+        "delta_from_router": 0.06646251678466797,
+        "gain_from_empty": 0.16562414169311523,
+        "loss": 3.5632455348968506,
+        "pairwise_synergy": -0.07733511924743652,
+        "support": "0,1"
+      },
+      {
+        "delta_from_router": 0.07590365409851074,
+        "gain_from_empty": 0.15618300437927246,
+        "loss": 3.5726866722106934,
+        "pairwise_synergy": 0.0005033016204833984,
+        "support": "0,6"
+      },
+      {
+        "delta_from_router": 0.07898139953613281,
+        "gain_from_empty": 0.1531052589416504,
+        "loss": 3.5757644176483154,
+        "pairwise_synergy": -0.03865551948547363,
+        "support": "0,2"
+      },
+      {
+        "delta_from_router": 0.0926218032836914,
+        "gain_from_empty": 0.1394648551940918,
+        "loss": 3.589404821395874,
+        "pairwise_synergy": -0.008221626281738281,
+        "support": "0,5"
+      },
+      {
+        "delta_from_router": 0.09523153305053711,
+        "gain_from_empty": 0.1368551254272461,
+        "loss": 3.5920145511627197,
+        "pairwise_synergy": -0.023192882537841797,
+        "support": "0,8"
+      },
+      {
+        "delta_from_router": 0.09537315368652344,
+        "gain_from_empty": 0.13671350479125977,
+        "loss": 3.592156171798706,
+        "pairwise_synergy": 0.03153562545776367,
+        "support": "1,3"
+      },
+      {
+        "delta_from_router": 0.09582757949829102,
+        "gain_from_empty": 0.1362590789794922,
+        "loss": 3.5926105976104736,
+        "pairwise_synergy": -0.0231931209564209,
+        "support": "0,10"
+      },
+      {
+        "delta_from_router": 0.09634160995483398,
+        "gain_from_empty": 0.13574504852294922,
+        "loss": 3.5931246280670166,
+        "pairwise_synergy": -0.02602076530456543,
+        "support": "0,7"
+      },
+      {
+        "delta_from_router": 0.09654688835144043,
+        "gain_from_empty": 0.13553977012634277,
+        "loss": 3.593329906463623,
+        "pairwise_synergy": -0.04022359848022461,
+        "support": "0,4"
+      }
+    ],
+    "top_supports_by_synergy": [
+      {
+        "delta_from_router": 0.06077313423156738,
+        "gain_from_empty": 0.17131352424621582,
+        "loss": 3.55755615234375,
+        "pairwise_synergy": 0.04036903381347656,
+        "support": "0,3"
+      },
+      {
+        "delta_from_router": 0.09537315368652344,
+        "gain_from_empty": 0.13671350479125977,
+        "loss": 3.592156171798706,
+        "pairwise_synergy": 0.03153562545776367,
+        "support": "1,3"
+      },
+      {
+        "delta_from_router": 0.19883012771606445,
+        "gain_from_empty": 0.03325653076171875,
+        "loss": 3.695613145828247,
+        "pairwise_synergy": 0.017339706420898438,
+        "support": "3,11"
+      },
+      {
+        "delta_from_router": 0.19512176513671875,
+        "gain_from_empty": 0.03696489334106445,
+        "loss": 3.6919047832489014,
+        "pairwise_synergy": 0.016035795211791992,
+        "support": "3,9"
+      },
+      {
+        "delta_from_router": 0.1978001594543457,
+        "gain_from_empty": 0.0342864990234375,
+        "loss": 3.6945831775665283,
+        "pairwise_synergy": 0.012615680694580078,
+        "support": "3,10"
+      },
+      {
+        "delta_from_router": 0.1974940299987793,
+        "gain_from_empty": 0.034592628479003906,
+        "loss": 3.694277048110962,
+        "pairwise_synergy": 0.01232600212097168,
+        "support": "3,8"
+      },
+      {
+        "delta_from_router": 0.19744348526000977,
+        "gain_from_empty": 0.03464317321777344,
+        "loss": 3.6942265033721924,
+        "pairwise_synergy": 0.010658740997314453,
+        "support": "3,7"
+      },
+      {
+        "delta_from_router": 0.2117013931274414,
+        "gain_from_empty": 0.020385265350341797,
+        "loss": 3.708484411239624,
+        "pairwise_synergy": 0.010480165481567383,
+        "support": "3,5"
+      },
+      {
+        "delta_from_router": 0.18601274490356445,
+        "gain_from_empty": 0.04607391357421875,
+        "loss": 3.682795763015747,
+        "pairwise_synergy": 0.008091926574707031,
+        "support": "3,4"
+      },
+      {
+        "delta_from_router": 0.21161437034606934,
+        "gain_from_empty": 0.020472288131713867,
+        "loss": 3.708397388458252,
+        "pairwise_synergy": 0.0025739669799804688,
+        "support": "3,6"
+      }
+    ],
+    "training_steps": 25,
+    "vocab_size": 34
+  },
+  "config_path": "configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml",
+  "cuda_available": false,
+  "device": "cpu",
+  "experiment_id": "char_validation_support_wide_hep_temporal_clipped_objective_gate_exhaustive_support_audit",
+  "out_dir": "results/audits/validation_support_wide_exhaustive_support",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "runtime_seconds": 0.8987,
+  "status": "ok",
+  "torch_available": true,
+  "torch_version": "2.2.2"
+}

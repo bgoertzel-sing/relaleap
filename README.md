@@ -1443,6 +1443,23 @@ as the next step. At this scale, top-k `2` improves best temporal-clipped HEP
 CE and expands support utilization from one used column to 11 used columns,
 while doubling columns at top-k `1` leaves the audit collapsed onto one column.
 
+After matching local and Colab support-width deconfounding matrices exist, run
+the first bounded exhaustive support audit for the validation-scale 12-column
+top-k `2` support-width config:
+
+```bash
+python -m relaleap.experiments.support_audit \
+  --config configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml \
+  --out results/audits/validation_support_wide_exhaustive_support
+```
+
+The audit retrains the configured residual adapter, evaluates all 12 singleton
+supports and all 66 two-column supports on the fixed in-repo validation batch,
+and writes `summary.json`, `support_losses.csv`, `pairwise_synergy.csv`, and
+`notes.md`. The summary reports per-token oracle-support regret, best global
+fixed support, dominant router support, one-swap recovery, support-loss
+distribution, pairwise synergy leaders, and the existing router support audit.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
