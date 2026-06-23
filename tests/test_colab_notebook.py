@@ -410,6 +410,10 @@ class ColabNotebookTest(unittest.TestCase):
             "Objective-gate validation PC-vs-supervised temporal clipped comparison status:",
             evidence_cell,
         )
+        self.assertIn(
+            "Path('results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate')",
+            evidence_cell,
+        )
 
     def test_run_cell_executes_larger_token_support_width_colab_path(self) -> None:
         notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
