@@ -62,6 +62,11 @@ outputs:
                 "holdout",
                 audit["router_oracle_target_diagnostic"],
             )
+            self.assertIn("router_oracle_target_nonlinear_diagnostic", audit)
+            self.assertIn(
+                "holdout",
+                audit["router_oracle_target_nonlinear_diagnostic"],
+            )
             self.assertEqual(audit["support_audit"]["top_k"], 2)
 
             saved = json.loads((tmp_path / "audit" / "summary.json").read_text())
@@ -70,6 +75,13 @@ outputs:
             self.assertTrue((tmp_path / "audit" / "pairwise_synergy.csv").is_file())
             self.assertTrue(
                 (tmp_path / "audit" / "router_target_diagnostic.csv").is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "audit"
+                    / "router_target_nonlinear_diagnostic.csv"
+                ).is_file()
             )
             self.assertTrue((tmp_path / "audit" / "notes.md").is_file())
 
@@ -88,6 +100,17 @@ outputs:
                 diagnostic_rows = list(csv.DictReader(handle))
             self.assertEqual(len(diagnostic_rows), 3)
             self.assertIn("oracle_gap_recovery_fraction", diagnostic_rows[0])
+
+            with (tmp_path / "audit" / "router_target_nonlinear_diagnostic.csv").open(
+                newline="",
+                encoding="utf-8",
+            ) as handle:
+                nonlinear_diagnostic_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(nonlinear_diagnostic_rows), 3)
+            self.assertIn(
+                "oracle_gap_recovery_fraction",
+                nonlinear_diagnostic_rows[0],
+            )
 
     def test_support_audit_requires_top_k_two(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

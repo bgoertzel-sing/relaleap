@@ -4391,6 +4391,12 @@ class ExhaustiveSupportAuditReportTest(unittest.TestCase):
             self.assertTrue(report["evidence"]["router_improvement_signal"])
             self.assertTrue(report["evidence"]["column_redundancy_signal"])
             self.assertTrue(report["evidence"]["pairwise_composition_signal"])
+            self.assertEqual(
+                report["evidence"][
+                    "best_router_target_holdout_oracle_gap_recovery_fraction"
+                ],
+                0.35,
+            )
             self.assertIn("fresh seed", report["next_step"])
             self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
             self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
@@ -4451,6 +4457,14 @@ def _write_exhaustive_support_audit(audit_dir: Path) -> None:
                     "selector_minus_router_loss": -0.025,
                 },
             },
+            "router_oracle_target_nonlinear_diagnostic": {
+                "selector": "mlp_hidden_to_oracle_pair",
+                "holdout": {
+                    "oracle_target_accuracy": 0.55,
+                    "oracle_gap_recovery_fraction": 0.35,
+                    "selector_minus_router_loss": -0.035,
+                },
+            },
             "top_supports_by_synergy": [
                 {
                     "support": "0,1",
@@ -4465,6 +4479,9 @@ def _write_exhaustive_support_audit(audit_dir: Path) -> None:
             "router_target_diagnostic_csv": str(
                 audit_dir / "router_target_diagnostic.csv"
             ),
+            "router_target_nonlinear_diagnostic_csv": str(
+                audit_dir / "router_target_nonlinear_diagnostic.csv"
+            ),
             "notes_md": str(audit_dir / "notes.md"),
         },
     }
@@ -4478,6 +4495,10 @@ def _write_exhaustive_support_audit(audit_dir: Path) -> None:
     )
     (audit_dir / "router_target_diagnostic.csv").write_text(
         "split,oracle_gap_recovery_fraction\nholdout_odd_positions,0.25\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "router_target_nonlinear_diagnostic.csv").write_text(
+        "split,oracle_gap_recovery_fraction\nholdout_odd_positions,0.35\n",
         encoding="utf-8",
     )
     (audit_dir / "notes.md").write_text("# audit\n", encoding="utf-8")

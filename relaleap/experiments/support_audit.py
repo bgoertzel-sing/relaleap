@@ -174,6 +174,10 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
         out_dir / "router_target_diagnostic.csv",
         router_target["splits"],
     )
+    _write_router_target_diagnostic(
+        out_dir / "router_target_nonlinear_diagnostic.csv",
+        router_target["nonlinear_splits"],
+    )
     summary = {
         "status": "ok",
         "experiment_id": f"{experiment_id}_exhaustive_support_audit",
@@ -225,6 +229,9 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
             "top_supports_by_loss": _top_supports(pair_rows, key="loss", reverse=False),
             "top_supports_by_synergy": _top_supports(pair_rows, key="pairwise_synergy", reverse=True),
             "router_oracle_target_diagnostic": router_target["summary"],
+            "router_oracle_target_nonlinear_diagnostic": router_target[
+                "nonlinear_summary"
+            ],
             "support_audit": _residual_support_audit(base, residual, inputs),
             "residual_parameter_delta": _state_dict_delta(before_residual, residual),
         },
@@ -233,6 +240,9 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
             "support_losses_csv": str(out_dir / "support_losses.csv"),
             "pairwise_synergy_csv": str(out_dir / "pairwise_synergy.csv"),
             "router_target_diagnostic_csv": str(out_dir / "router_target_diagnostic.csv"),
+            "router_target_nonlinear_diagnostic_csv": str(
+                out_dir / "router_target_nonlinear_diagnostic.csv"
+            ),
             "notes_md": str(out_dir / "notes.md"),
         },
     }
@@ -360,7 +370,7 @@ def _router_oracle_target_diagnostic(
     seed: int,
     steps: int = 200,
 ) -> dict[str, Any]:
-    """Train a tiny hidden-state probe to imitate per-token oracle supports."""
+    """Train tiny hidden-state probes to imitate per-token oracle supports."""
 
     import torch
     import torch.nn as nn
@@ -376,8 +386,87 @@ def _router_oracle_target_diagnostic(
     train_mask = position_ids.remainder(2) == 0
     holdout_mask = ~train_mask
 
-    selector = nn.Linear(features.shape[-1], len(rows), bias=True).to(features.device)
-    optimizer = torch.optim.AdamW(selector.parameters(), lr=0.05, weight_decay=1e-4)
+    linear = _train_router_target_probe(
+        nn.Linear(features.shape[-1], len(rows), bias=True).to(features.device),
+        features=features,
+        targets=targets,
+        train_mask=train_mask,
+        token_loss_matrix=token_loss_matrix,
+        router_losses=router_losses,
+        oracle_losses=oracle_losses,
+        rows=rows,
+        steps=steps,
+        learning_rate=0.05,
+        weight_decay=1e-4,
+    )
+    hidden_width = max(16, min(128, features.shape[-1] * 2))
+    nonlinear = _train_router_target_probe(
+        nn.Sequential(
+            nn.LayerNorm(features.shape[-1]),
+            nn.Linear(features.shape[-1], hidden_width),
+            nn.GELU(),
+            nn.Linear(hidden_width, len(rows)),
+        ).to(features.device),
+        features=features,
+        targets=targets,
+        train_mask=train_mask,
+        token_loss_matrix=token_loss_matrix,
+        router_losses=router_losses,
+        oracle_losses=oracle_losses,
+        rows=rows,
+        steps=steps,
+        learning_rate=0.01,
+        weight_decay=1e-3,
+    )
+    linear_by_name = {row["split"]: row for row in linear["splits"]}
+    nonlinear_by_name = {row["split"]: row for row in nonlinear["splits"]}
+    return {
+        "summary": {
+            "selector": "linear_hidden_to_oracle_pair",
+            "training_steps": steps,
+            "train_split": "even flattened token positions",
+            "holdout_split": "odd flattened token positions",
+            "selected_support_counts": linear["selected_support_counts"],
+            "all": linear_by_name["all"],
+            "holdout": linear_by_name["holdout_odd_positions"],
+        },
+        "splits": linear["splits"],
+        "nonlinear_summary": {
+            "selector": "mlp_hidden_to_oracle_pair",
+            "training_steps": steps,
+            "hidden_width": hidden_width,
+            "train_split": "even flattened token positions",
+            "holdout_split": "odd flattened token positions",
+            "selected_support_counts": nonlinear["selected_support_counts"],
+            "all": nonlinear_by_name["all"],
+            "holdout": nonlinear_by_name["holdout_odd_positions"],
+        },
+        "nonlinear_splits": nonlinear["splits"],
+    }
+
+
+def _train_router_target_probe(
+    selector: Any,
+    *,
+    features: Any,
+    targets: Any,
+    train_mask: Any,
+    token_loss_matrix: Any,
+    router_losses: Any,
+    oracle_losses: Any,
+    rows: list[dict[str, Any]],
+    steps: int,
+    learning_rate: float,
+    weight_decay: float,
+) -> dict[str, Any]:
+    import torch
+    import torch.nn.functional as F
+
+    optimizer = torch.optim.AdamW(
+        selector.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
+    )
     for _ in range(steps):
         optimizer.zero_grad(set_to_none=True)
         logits = selector(features[train_mask])
@@ -397,6 +486,7 @@ def _router_oracle_target_diagnostic(
             key = str(rows[int(index)]["support_key"])
             selected_counts[key] = selected_counts.get(key, 0) + 1
 
+    holdout_mask = ~train_mask
     splits = [
         _router_target_split(
             "all",
@@ -426,20 +516,11 @@ def _router_oracle_target_diagnostic(
             selected_losses=selected_losses,
         ),
     ]
-    by_name = {row["split"]: row for row in splits}
     return {
-        "summary": {
-            "selector": "linear_hidden_to_oracle_pair",
-            "training_steps": steps,
-            "train_split": "even flattened token positions",
-            "holdout_split": "odd flattened token positions",
-            "selected_support_counts": dict(
-                sorted(selected_counts.items(), key=lambda item: (-item[1], item[0]))
-            ),
-            "all": by_name["all"],
-            "holdout": by_name["holdout_odd_positions"],
-        },
         "splits": splits,
+        "selected_support_counts": dict(
+            sorted(selected_counts.items(), key=lambda item: (-item[1], item[0]))
+        ),
     }
 
 
@@ -646,6 +727,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
                 f"- Best one-swap support: `{audit['best_one_swap_support']}`",
                 "- Router-target holdout gap recovery: "
                 f"`{audit['router_oracle_target_diagnostic']['holdout']['oracle_gap_recovery_fraction']}`",
+                "- Router-target nonlinear holdout gap recovery: "
+                f"`{audit['router_oracle_target_nonlinear_diagnostic']['holdout']['oracle_gap_recovery_fraction']}`",
                 "",
             ]
         ),

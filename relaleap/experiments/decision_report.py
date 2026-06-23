@@ -6161,6 +6161,8 @@ def write_exhaustive_support_audit_report(
         "support_losses_csv": audit_dir / "support_losses.csv",
         "pairwise_synergy_csv": audit_dir / "pairwise_synergy.csv",
         "router_target_diagnostic_csv": audit_dir / "router_target_diagnostic.csv",
+        "router_target_nonlinear_diagnostic_csv": audit_dir
+        / "router_target_nonlinear_diagnostic.csv",
         "notes_md": audit_dir / "notes.md",
     }
     for key, default_path in required_artifacts.items():
@@ -6195,6 +6197,7 @@ def write_exhaustive_support_audit_report(
         "best_one_swap_support",
         "support_audit",
         "router_oracle_target_diagnostic",
+        "router_oracle_target_nonlinear_diagnostic",
         "top_supports_by_synergy",
     )
     for field in required_audit_fields:
@@ -6217,6 +6220,22 @@ def write_exhaustive_support_audit_report(
     router_target_holdout = router_target_diagnostic.get("holdout")
     router_target_holdout = (
         router_target_holdout if isinstance(router_target_holdout, dict) else {}
+    )
+    router_target_nonlinear_diagnostic = audit.get(
+        "router_oracle_target_nonlinear_diagnostic"
+    )
+    router_target_nonlinear_diagnostic = (
+        router_target_nonlinear_diagnostic
+        if isinstance(router_target_nonlinear_diagnostic, dict)
+        else {}
+    )
+    router_target_nonlinear_holdout = router_target_nonlinear_diagnostic.get(
+        "holdout"
+    )
+    router_target_nonlinear_holdout = (
+        router_target_nonlinear_holdout
+        if isinstance(router_target_nonlinear_holdout, dict)
+        else {}
     )
     top_synergy = audit.get("top_supports_by_synergy")
     top_synergy = top_synergy if isinstance(top_synergy, list) else []
@@ -6252,6 +6271,16 @@ def write_exhaustive_support_audit_report(
     )
     composition_signal = (
         strongest_synergy is not None and float(strongest_synergy) > 0.0
+    )
+    linear_recovery = _optional_float(
+        router_target_holdout.get("oracle_gap_recovery_fraction")
+    )
+    nonlinear_recovery = _optional_float(
+        router_target_nonlinear_holdout.get("oracle_gap_recovery_fraction")
+    )
+    best_router_target_recovery = _max_optional_float(
+        linear_recovery,
+        nonlinear_recovery,
     )
     if router_signal:
         selected_branch = "router_support_selection"
@@ -6298,6 +6327,9 @@ def write_exhaustive_support_audit_report(
             ),
             "support_audit": support_audit,
             "router_oracle_target_diagnostic": router_target_diagnostic,
+            "router_oracle_target_nonlinear_diagnostic": (
+                router_target_nonlinear_diagnostic
+            ),
             "router_target_holdout_oracle_gap_recovery_fraction": _optional_float(
                 router_target_holdout.get("oracle_gap_recovery_fraction")
             ),
@@ -6306,6 +6338,20 @@ def write_exhaustive_support_audit_report(
             ),
             "router_target_holdout_accuracy": _optional_float(
                 router_target_holdout.get("oracle_target_accuracy")
+            ),
+            "router_target_nonlinear_holdout_oracle_gap_recovery_fraction": (
+                nonlinear_recovery
+            ),
+            "router_target_nonlinear_holdout_selector_minus_router_loss": (
+                _optional_float(
+                    router_target_nonlinear_holdout.get("selector_minus_router_loss")
+                )
+            ),
+            "router_target_nonlinear_holdout_accuracy": _optional_float(
+                router_target_nonlinear_holdout.get("oracle_target_accuracy")
+            ),
+            "best_router_target_holdout_oracle_gap_recovery_fraction": (
+                best_router_target_recovery
             ),
             "strongest_pairwise_synergy": None
             if strongest_synergy is None
@@ -6334,6 +6380,7 @@ def write_exhaustive_support_audit_report(
             router_target_holdout_recovery=_optional_float(
                 router_target_holdout.get("oracle_gap_recovery_fraction")
             ),
+            nonlinear_router_target_holdout_recovery=nonlinear_recovery,
         ),
     }
 
@@ -6958,6 +7005,13 @@ def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def _max_optional_float(*values: float | None) -> float | None:
+    present = [value for value in values if value is not None]
+    if not present:
+        return None
+    return max(present)
 
 
 def _optional_int(value: Any) -> int | None:
@@ -11179,24 +11233,29 @@ def _exhaustive_support_audit_next_step(
     status: str,
     selected_branch: str,
     router_target_holdout_recovery: float | None,
+    nonlinear_router_target_holdout_recovery: float | None,
 ) -> str:
     if status != "pass":
         return "repair or rerun the exhaustive support audit artifacts"
     if selected_branch == "router_support_selection":
-        if router_target_holdout_recovery is None:
+        best_recovery = _max_optional_float(
+            router_target_holdout_recovery,
+            nonlinear_router_target_holdout_recovery,
+        )
+        if best_recovery is None:
             return (
                 "prototype a router-support improvement diagnostic that uses the "
                 "exhaustive audit as the oracle target"
             )
-        if router_target_holdout_recovery <= 0.0:
+        if best_recovery <= 0.0:
             return (
-                "prototype a contextual or nonlinear router-support diagnostic "
-                "because the linear oracle-target selector did not recover the "
-                "holdout oracle gap"
+                "prototype a contextual router-support diagnostic with token "
+                "position or sequence-neighborhood features because hidden-only "
+                "oracle-target selectors did not recover the holdout oracle gap"
             )
         return (
-            "repeat the router oracle-target selector on a fresh seed and larger "
-            "support-width setting"
+            "repeat the best router oracle-target selector on a fresh seed and "
+            "larger support-width setting"
         )
     if selected_branch == "column_redundancy":
         return (
@@ -11254,6 +11313,22 @@ def _write_exhaustive_support_audit_markdown(
         (
             "- Router-target holdout oracle-gap recovery: "
             f"`{_format_metric(evidence.get('router_target_holdout_oracle_gap_recovery_fraction'))}`"
+        ),
+        (
+            "- Router-target nonlinear holdout accuracy: "
+            f"`{_format_metric(evidence.get('router_target_nonlinear_holdout_accuracy'))}`"
+        ),
+        (
+            "- Router-target nonlinear holdout selector minus router loss: "
+            f"`{_format_metric(evidence.get('router_target_nonlinear_holdout_selector_minus_router_loss'))}`"
+        ),
+        (
+            "- Router-target nonlinear holdout oracle-gap recovery: "
+            f"`{_format_metric(evidence.get('router_target_nonlinear_holdout_oracle_gap_recovery_fraction'))}`"
+        ),
+        (
+            "- Best router-target holdout oracle-gap recovery: "
+            f"`{_format_metric(evidence.get('best_router_target_holdout_oracle_gap_recovery_fraction'))}`"
         ),
         f"- Used columns: `{support_audit.get('used_columns')}` of `{evidence.get('num_columns')}`",
         f"- Dead columns: `{support_audit.get('dead_columns')}`",
