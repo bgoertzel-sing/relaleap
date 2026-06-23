@@ -46,6 +46,9 @@ class Phase0Result:
     vocab_size: int
     seq_len: int
     batch_size: int
+    num_columns: int
+    atoms_per_column: int
+    top_k: int
     base_loss: float
     zero_init_loss: float
     initial_loss: float
@@ -78,6 +81,9 @@ class Phase0Result:
             "vocab_size": self.vocab_size,
             "seq_len": self.seq_len,
             "batch_size": self.batch_size,
+            "num_columns": self.num_columns,
+            "atoms_per_column": self.atoms_per_column,
+            "top_k": self.top_k,
             "base_loss": self.base_loss,
             "zero_init_loss": self.zero_init_loss,
             "initial_loss": self.initial_loss,
@@ -489,6 +495,9 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         vocab_size=vocab_size,
         seq_len=seq_len,
         batch_size=int(inputs.shape[0]),
+        num_columns=num_columns,
+        atoms_per_column=atoms_per_column,
+        top_k=top_k,
         base_loss=float(base_loss_tensor.detach().item()),
         zero_init_loss=float(zero_init_loss_tensor.detach().item()),
         initial_loss=float(initial_loss_tensor.detach().item()),

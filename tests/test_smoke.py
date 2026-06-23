@@ -932,6 +932,9 @@ class Phase0SmokeTest(unittest.TestCase):
             self.assertIn("post_step_loss", saved["phase0"])
             self.assertEqual(saved["phase0"]["residual_objective"], "supervised_ce")
             self.assertEqual(saved["phase0"]["training_steps"], 2)
+            self.assertEqual(saved["phase0"]["num_columns"], 8)
+            self.assertEqual(saved["phase0"]["atoms_per_column"], 4)
+            self.assertEqual(saved["phase0"]["top_k"], 1)
 
             with (tmp_path / "out" / "metrics.csv").open(newline="") as handle:
                 metric_rows = list(csv.DictReader(handle))

@@ -36,6 +36,9 @@ class ComparisonReportTest(unittest.TestCase):
             "phase0": {
                 "residual_objective": "supervised_ce",
                 "dataset": "tiny_shakespeare_word",
+                "num_columns": 24,
+                "atoms_per_column": 4,
+                "top_k": 2,
                 "training_steps": 2,
                 "base_loss": 3.0,
                 "zero_init_loss": 3.0,
@@ -58,6 +61,9 @@ class ComparisonReportTest(unittest.TestCase):
 
         self.assertEqual(entry["residual_objective"], "supervised_ce")
         self.assertEqual(entry["dataset"], "tiny_shakespeare_word")
+        self.assertEqual(entry["num_columns"], 24)
+        self.assertEqual(entry["atoms_per_column"], 4)
+        self.assertEqual(entry["top_k"], 2)
         self.assertFalse(entry["pinned_support"])
         self.assertFalse(entry["support_stress"])
         self.assertEqual(entry["support_instability"], {})
@@ -390,6 +396,9 @@ class ComparisonReportTest(unittest.TestCase):
                     "phase0": {
                         "residual_objective": objective,
                         "dataset": "tiny_shakespeare_word",
+                        "num_columns": 24 if experiment_id == "b" else 8,
+                        "atoms_per_column": 4,
+                        "top_k": 2 if experiment_id == "b" else 1,
                         "training_steps": 1,
                         "base_loss": 1.0,
                         "zero_init_loss": 1.0,
@@ -428,6 +437,9 @@ class ComparisonReportTest(unittest.TestCase):
             self.assertEqual(len(saved["runs"]), 2)
             self.assertEqual(saved["runs"][0]["residual_loss_delta"], -0.25)
             self.assertEqual(saved["runs"][1]["dataset"], "tiny_shakespeare_word")
+            self.assertEqual(saved["runs"][1]["num_columns"], 24)
+            self.assertEqual(saved["runs"][1]["atoms_per_column"], 4)
+            self.assertEqual(saved["runs"][1]["top_k"], 2)
             self.assertTrue(saved["runs"][1]["pinned_support"])
             self.assertTrue(saved["runs"][1]["support_stress"])
             self.assertEqual(
@@ -452,6 +464,10 @@ class ComparisonReportTest(unittest.TestCase):
             self.assertIn("max_hep_logit_delta_from_ordinary", rows[0])
             self.assertIn("dataset", rows[0])
             self.assertEqual(rows[-1]["dataset"], "tiny_shakespeare_word")
+            self.assertIn("num_columns", rows[0])
+            self.assertIn("atoms_per_column", rows[0])
+            self.assertIn("top_k", rows[0])
+            self.assertEqual(rows[-1]["top_k"], "2")
             self.assertIn("pinned_support", rows[0])
             self.assertIn("support_stress", rows[0])
             self.assertEqual(rows[-1]["loss_delta_from_initial"], "-0.25000000")
