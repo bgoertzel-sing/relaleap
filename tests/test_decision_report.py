@@ -4473,6 +4473,15 @@ def _write_exhaustive_support_audit(audit_dir: Path) -> None:
                     "selector_minus_router_loss": -0.045,
                 },
             },
+            "contextual_router_support_intervention": {
+                "selector": "mlp_contextual_hidden_to_oracle_pair",
+                "intervention": "per_token_predicted_support_indices",
+                "holdout": {
+                    "intervention_loss": 3.52,
+                    "intervention_minus_router_loss": -0.08,
+                    "oracle_gap_recovery_fraction": 0.8,
+                },
+            },
             "top_supports_by_synergy": [
                 {
                     "support": "0,1",
@@ -4492,6 +4501,9 @@ def _write_exhaustive_support_audit(audit_dir: Path) -> None:
             ),
             "router_target_contextual_diagnostic_csv": str(
                 audit_dir / "router_target_contextual_diagnostic.csv"
+            ),
+            "router_support_intervention_csv": str(
+                audit_dir / "router_support_intervention.csv"
             ),
             "notes_md": str(audit_dir / "notes.md"),
         },
@@ -4514,6 +4526,11 @@ def _write_exhaustive_support_audit(audit_dir: Path) -> None:
     )
     (audit_dir / "router_target_contextual_diagnostic.csv").write_text(
         "split,oracle_gap_recovery_fraction\nholdout_odd_positions,0.45\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "router_support_intervention.csv").write_text(
+        "split,intervention_loss,intervention_minus_router_loss,oracle_gap_recovery_fraction\n"
+        "holdout_odd_positions,3.52,-0.08,0.8\n",
         encoding="utf-8",
     )
     (audit_dir / "notes.md").write_text("# audit\n", encoding="utf-8")

@@ -6165,6 +6165,8 @@ def write_exhaustive_support_audit_report(
         / "router_target_nonlinear_diagnostic.csv",
         "router_target_contextual_diagnostic_csv": audit_dir
         / "router_target_contextual_diagnostic.csv",
+        "router_support_intervention_csv": audit_dir
+        / "router_support_intervention.csv",
         "notes_md": audit_dir / "notes.md",
     }
     for key, default_path in required_artifacts.items():
@@ -6201,6 +6203,7 @@ def write_exhaustive_support_audit_report(
         "router_oracle_target_diagnostic",
         "router_oracle_target_nonlinear_diagnostic",
         "router_oracle_target_contextual_diagnostic",
+        "contextual_router_support_intervention",
         "top_supports_by_synergy",
     )
     for field in required_audit_fields:
@@ -6254,6 +6257,18 @@ def write_exhaustive_support_audit_report(
     router_target_contextual_holdout = (
         router_target_contextual_holdout
         if isinstance(router_target_contextual_holdout, dict)
+        else {}
+    )
+    router_support_intervention = audit.get("contextual_router_support_intervention")
+    router_support_intervention = (
+        router_support_intervention
+        if isinstance(router_support_intervention, dict)
+        else {}
+    )
+    router_support_intervention_holdout = router_support_intervention.get("holdout")
+    router_support_intervention_holdout = (
+        router_support_intervention_holdout
+        if isinstance(router_support_intervention_holdout, dict)
         else {}
     )
     top_synergy = audit.get("top_supports_by_synergy")
@@ -6386,6 +6401,24 @@ def write_exhaustive_support_audit_report(
             ),
             "router_target_contextual_holdout_accuracy": _optional_float(
                 router_target_contextual_holdout.get("oracle_target_accuracy")
+            ),
+            "contextual_router_support_intervention": router_support_intervention,
+            "contextual_support_intervention_holdout_loss": _optional_float(
+                router_support_intervention_holdout.get("intervention_loss")
+            ),
+            "contextual_support_intervention_holdout_minus_router_loss": (
+                _optional_float(
+                    router_support_intervention_holdout.get(
+                        "intervention_minus_router_loss"
+                    )
+                )
+            ),
+            "contextual_support_intervention_holdout_oracle_gap_recovery_fraction": (
+                _optional_float(
+                    router_support_intervention_holdout.get(
+                        "oracle_gap_recovery_fraction"
+                    )
+                )
             ),
             "best_router_target_holdout_oracle_gap_recovery_fraction": (
                 best_router_target_recovery
@@ -11377,6 +11410,18 @@ def _write_exhaustive_support_audit_markdown(
         (
             "- Router-target contextual holdout oracle-gap recovery: "
             f"`{_format_metric(evidence.get('router_target_contextual_holdout_oracle_gap_recovery_fraction'))}`"
+        ),
+        (
+            "- Contextual support-intervention holdout loss: "
+            f"`{_format_metric(evidence.get('contextual_support_intervention_holdout_loss'))}`"
+        ),
+        (
+            "- Contextual support-intervention holdout minus router loss: "
+            f"`{_format_metric(evidence.get('contextual_support_intervention_holdout_minus_router_loss'))}`"
+        ),
+        (
+            "- Contextual support-intervention holdout oracle-gap recovery: "
+            f"`{_format_metric(evidence.get('contextual_support_intervention_holdout_oracle_gap_recovery_fraction'))}`"
         ),
         (
             "- Best router-target holdout oracle-gap recovery: "

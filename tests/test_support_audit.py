@@ -72,6 +72,11 @@ outputs:
                 "holdout",
                 audit["router_oracle_target_contextual_diagnostic"],
             )
+            self.assertIn("contextual_router_support_intervention", audit)
+            self.assertIn(
+                "holdout",
+                audit["contextual_router_support_intervention"],
+            )
             self.assertEqual(audit["support_audit"]["top_k"], 2)
 
             saved = json.loads((tmp_path / "audit" / "summary.json").read_text())
@@ -94,6 +99,9 @@ outputs:
                     / "audit"
                     / "router_target_contextual_diagnostic.csv"
                 ).is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "audit" / "router_support_intervention.csv").is_file()
             )
             self.assertTrue((tmp_path / "audit" / "notes.md").is_file())
 
@@ -134,6 +142,15 @@ outputs:
                 "oracle_gap_recovery_fraction",
                 contextual_diagnostic_rows[0],
             )
+
+            with (tmp_path / "audit" / "router_support_intervention.csv").open(
+                newline="",
+                encoding="utf-8",
+            ) as handle:
+                intervention_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(intervention_rows), 3)
+            self.assertIn("intervention_loss", intervention_rows[0])
+            self.assertIn("intervention_minus_router_loss", intervention_rows[0])
 
     def test_support_audit_requires_top_k_two(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

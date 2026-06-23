@@ -182,6 +182,21 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
         out_dir / "router_target_contextual_diagnostic.csv",
         router_target["contextual_splits"],
     )
+    contextual_intervention = _router_support_intervention(
+        base,
+        residual,
+        hidden,
+        targets,
+        vocab_size,
+        rows=pair_rows,
+        predicted_indices=router_target["_contextual_predicted_indices"],
+        train_mask=router_target["_train_mask"],
+        router_token_losses=router_token_losses,
+    )
+    _write_router_support_intervention(
+        out_dir / "router_support_intervention.csv",
+        contextual_intervention["splits"],
+    )
     summary = {
         "status": "ok",
         "experiment_id": f"{experiment_id}_exhaustive_support_audit",
@@ -239,6 +254,9 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
             "router_oracle_target_contextual_diagnostic": router_target[
                 "contextual_summary"
             ],
+            "contextual_router_support_intervention": contextual_intervention[
+                "summary"
+            ],
             "support_audit": _residual_support_audit(base, residual, inputs),
             "residual_parameter_delta": _state_dict_delta(before_residual, residual),
         },
@@ -252,6 +270,9 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
             ),
             "router_target_contextual_diagnostic_csv": str(
                 out_dir / "router_target_contextual_diagnostic.csv"
+            ),
+            "router_support_intervention_csv": str(
+                out_dir / "router_support_intervention.csv"
             ),
             "notes_md": str(out_dir / "notes.md"),
         },
@@ -494,6 +515,8 @@ def _router_oracle_target_diagnostic(
             "holdout": contextual_by_name["holdout_odd_positions"],
         },
         "contextual_splits": contextual["splits"],
+        "_contextual_predicted_indices": contextual["_predicted_indices"],
+        "_train_mask": train_mask,
     }
 
 
@@ -613,6 +636,123 @@ def _train_router_target_probe(
         "selected_support_counts": dict(
             sorted(selected_counts.items(), key=lambda item: (-item[1], item[0]))
         ),
+        "_predicted_indices": predicted_indices.detach(),
+    }
+
+
+def _router_support_intervention(
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    *,
+    rows: list[dict[str, Any]],
+    predicted_indices: Any,
+    train_mask: Any,
+    router_token_losses: Any,
+) -> dict[str, Any]:
+    """Evaluate contextual selector supports as an actual residual intervention."""
+
+    import torch
+
+    flat_supports = [
+        tuple(int(index) for index in rows[int(row_index)]["support"])
+        for row_index in predicted_indices.detach().cpu().tolist()
+    ]
+    top_k = len(flat_supports[0])
+    batch_size, seq_len = int(hidden.shape[0]), int(hidden.shape[1])
+    support_indices = torch.zeros(
+        batch_size,
+        seq_len,
+        top_k,
+        dtype=torch.long,
+        device=hidden.device,
+    )
+    selected = torch.tensor(
+        flat_supports,
+        dtype=torch.long,
+        device=hidden.device,
+    ).view(batch_size, seq_len - 1, top_k)
+    support_indices[:, :-1, :] = selected
+    support_indices[:, -1:, :] = selected[:, -1:, :]
+    logits = base.decode(residual(hidden, support_indices=support_indices))
+    token_losses = _token_losses(logits, targets).reshape(-1).detach()
+    router_losses = router_token_losses.reshape(-1).detach()
+    token_loss_matrix = torch.stack([row["_token_losses"] for row in rows], dim=1)
+    oracle_losses = token_loss_matrix.min(dim=1).values.detach()
+    router_loss = float(router_losses.mean().item())
+    oracle_loss = float(oracle_losses.mean().item())
+    router_gap = router_loss - oracle_loss
+    all_mask = torch.ones_like(train_mask, dtype=torch.bool)
+    splits = [
+        _router_support_intervention_split(
+            "all",
+            all_mask,
+            token_losses=token_losses,
+            router_losses=router_losses,
+            oracle_losses=oracle_losses,
+        ),
+        _router_support_intervention_split(
+            "train_even_positions",
+            train_mask,
+            token_losses=token_losses,
+            router_losses=router_losses,
+            oracle_losses=oracle_losses,
+        ),
+        _router_support_intervention_split(
+            "holdout_odd_positions",
+            ~train_mask,
+            token_losses=token_losses,
+            router_losses=router_losses,
+            oracle_losses=oracle_losses,
+        ),
+    ]
+    by_name = {row["split"]: row for row in splits}
+    return {
+        "summary": {
+            "selector": "mlp_contextual_hidden_to_oracle_pair",
+            "intervention": "per_token_predicted_support_indices",
+            "router_loss": router_loss,
+            "oracle_loss": oracle_loss,
+            "router_oracle_gap": router_gap,
+            "all": by_name["all"],
+            "holdout": by_name["holdout_odd_positions"],
+        },
+        "splits": splits,
+    }
+
+
+def _router_support_intervention_split(
+    split: str,
+    mask: Any,
+    *,
+    token_losses: Any,
+    router_losses: Any,
+    oracle_losses: Any,
+) -> dict[str, Any]:
+    positions = int(mask.sum().item())
+    if positions == 0:
+        return {
+            "split": split,
+            "positions": 0,
+            "intervention_loss": None,
+            "intervention_minus_router_loss": None,
+            "intervention_oracle_regret": None,
+            "oracle_gap_recovery_fraction": None,
+        }
+    router_loss = float(router_losses[mask].mean().item())
+    oracle_loss = float(oracle_losses[mask].mean().item())
+    intervention_loss = float(token_losses[mask].mean().item())
+    gap = router_loss - oracle_loss
+    recovery = None if abs(gap) <= 1e-12 else (router_loss - intervention_loss) / gap
+    return {
+        "split": split,
+        "positions": positions,
+        "intervention_loss": intervention_loss,
+        "intervention_minus_router_loss": intervention_loss - router_loss,
+        "intervention_oracle_regret": intervention_loss - oracle_loss,
+        "oracle_gap_recovery_fraction": recovery,
     }
 
 
@@ -793,6 +933,21 @@ def _write_router_target_diagnostic(path: Path, rows: list[dict[str, Any]]) -> N
     )
 
 
+def _write_router_support_intervention(path: Path, rows: list[dict[str, Any]]) -> None:
+    _write_csv(
+        path,
+        rows,
+        [
+            "split",
+            "positions",
+            "intervention_loss",
+            "intervention_minus_router_loss",
+            "intervention_oracle_regret",
+            "oracle_gap_recovery_fraction",
+        ],
+    )
+
+
 def _write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -823,6 +978,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
                 f"`{audit['router_oracle_target_nonlinear_diagnostic']['holdout']['oracle_gap_recovery_fraction']}`",
                 "- Router-target contextual holdout gap recovery: "
                 f"`{audit['router_oracle_target_contextual_diagnostic']['holdout']['oracle_gap_recovery_fraction']}`",
+                "- Contextual support-intervention holdout gap recovery: "
+                f"`{audit['contextual_router_support_intervention']['holdout']['oracle_gap_recovery_fraction']}`",
                 "",
             ]
         ),
