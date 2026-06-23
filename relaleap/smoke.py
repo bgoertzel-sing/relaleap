@@ -62,6 +62,7 @@ class Phase0Result:
     support_stress: bool
     support_stress_preset: bool
     support_instability: dict[str, float | int | bool]
+    support_audit: dict[str, Any]
     hep_update_clip_norm: float | None
     hep_settling_objective: str
     hep_alpha_sweep: list[dict[str, float]]
@@ -96,6 +97,7 @@ class Phase0Result:
             "support_stress": self.support_stress,
             "support_stress_preset": self.support_stress_preset,
             "support_instability": self.support_instability,
+            "support_audit": self.support_audit,
             "hep_update_clip_norm": self.hep_update_clip_norm,
             "hep_settling_objective": self.hep_settling_objective,
             "hep_alpha_sweep": self.hep_alpha_sweep,
@@ -437,6 +439,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         hep_alpha=1.0,
         hep_update_clip_norm=hep_update_clip_norm,
     )
+    support_audit = _residual_support_audit(base, residual, inputs)
     hep_sweep_rows = _evaluate_hep_alpha_sweep(
         base,
         residual,
@@ -511,6 +514,7 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         support_stress=support_stress,
         support_stress_preset=support_stress_preset,
         support_instability=support_instability,
+        support_audit=support_audit,
         hep_update_clip_norm=hep_update_clip_norm,
         hep_settling_objective=hep_settling_objective,
         hep_alpha_sweep=hep_sweep_rows,
@@ -1059,6 +1063,45 @@ def _hep_support_instability(
             ),
             "support_changed": changed_position_count > 0,
         }
+
+
+def _residual_support_audit(base: Any, residual: Any, inputs: Any) -> dict[str, Any]:
+    """Enumerate residual-column support selected by every batch position."""
+
+    with _torch_no_grad():
+        hidden = base.encode(inputs)
+        _, support = residual(hidden, return_support=True)
+
+    support_rows = support.reshape(-1, support.shape[-1]).detach().cpu()
+    total_positions = int(support_rows.shape[0])
+    top_k = int(support_rows.shape[-1])
+    num_columns = int(residual.column_scores.out_features)
+    column_counts = [0 for _ in range(num_columns)]
+    support_set_counts: dict[str, int] = {}
+    for row in support_rows.tolist():
+        normalized = tuple(sorted(int(index) for index in row))
+        key = ",".join(str(index) for index in normalized)
+        support_set_counts[key] = support_set_counts.get(key, 0) + 1
+        for index in normalized:
+            column_counts[index] += 1
+
+    used_columns = sum(1 for count in column_counts if count > 0)
+    total_slots = total_positions * top_k
+    max_column_count = max(column_counts, default=0)
+    return {
+        "support_positions": total_positions,
+        "top_k": top_k,
+        "num_columns": num_columns,
+        "total_support_slots": total_slots,
+        "used_columns": used_columns,
+        "dead_columns": num_columns - used_columns,
+        "column_counts": column_counts,
+        "unique_support_sets": len(support_set_counts),
+        "support_set_counts": dict(sorted(support_set_counts.items())),
+        "max_column_fraction": (
+            max_column_count / total_slots if total_slots else 0.0
+        ),
+    }
 
 
 def _max_hep_delta_from_ordinary(

@@ -375,6 +375,7 @@ def _comparison_entry(
             "residual_adapter",
         ),
         "support_instability": phase0.get("support_instability") or {},
+        "support_audit": phase0.get("support_audit") or {},
         "hep_alpha_sweep": phase0.get("hep_alpha_sweep") or [],
         "invariants": phase0.get("invariants") or {},
         "artifact_invariants": summary.get("artifact_invariants") or {},

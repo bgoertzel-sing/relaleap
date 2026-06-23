@@ -67,6 +67,19 @@ class Phase0SmokeTest(unittest.TestCase):
             all(row["phase"] == "residual_update" for row in result.to_metric_rows()[1:])
         )
         self.assertEqual(result.to_metric_rows()[-1]["residual_loss"], result.post_step_loss)
+        self.assertEqual(result.support_audit["support_positions"], 4 * 32)
+        self.assertEqual(result.support_audit["top_k"], 1)
+        self.assertEqual(result.support_audit["num_columns"], 8)
+        self.assertEqual(result.support_audit["total_support_slots"], 4 * 32)
+        self.assertEqual(
+            sum(result.support_audit["column_counts"]),
+            result.support_audit["total_support_slots"],
+        )
+        self.assertEqual(
+            sum(result.support_audit["support_set_counts"].values()),
+            result.support_audit["support_positions"],
+        )
+        self.assertIn("support_audit", result.to_summary())
 
     def test_residual_columns_break_zero_score_ties_deterministically(self) -> None:
         try:
@@ -935,6 +948,9 @@ class Phase0SmokeTest(unittest.TestCase):
             self.assertEqual(saved["phase0"]["num_columns"], 8)
             self.assertEqual(saved["phase0"]["atoms_per_column"], 4)
             self.assertEqual(saved["phase0"]["top_k"], 1)
+            self.assertEqual(saved["phase0"]["support_audit"]["support_positions"], 128)
+            self.assertEqual(saved["phase0"]["support_audit"]["top_k"], 1)
+            self.assertEqual(saved["phase0"]["support_audit"]["num_columns"], 8)
 
             with (tmp_path / "out" / "metrics.csv").open(newline="") as handle:
                 metric_rows = list(csv.DictReader(handle))
