@@ -33,6 +33,7 @@ from relaleap.experiments.decision_report import (
     DEFINE_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE,
     SATISFY_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE,
     DEFINE_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
+    SATISFY_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -58,6 +59,7 @@ from relaleap.experiments.decision_report import (
     write_residual_support_width_repeat_gate_report,
     write_residual_support_width_repeat_decision_report,
     write_residual_support_width_promotion_gate_report,
+    write_residual_support_width_promotion_gate_satisfaction_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -2638,6 +2640,108 @@ class ResidualSupportWidthPromotionGateReportTest(unittest.TestCase):
             )
 
 
+class ResidualSupportWidthPromotionGateSatisfactionReportTest(unittest.TestCase):
+    def test_matching_seed3_local_colab_evidence_satisfies_promotion_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            promotion_gate = _write_support_width_promotion_gate(
+                tmp_path,
+                status="pass",
+                decision=DEFINE_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
+            )
+            local_dir = tmp_path / "local"
+            colab_dir = tmp_path / "colab"
+            _write_support_width_validation_comparison(local_dir, seed=3)
+            _write_support_width_validation_comparison(colab_dir, seed=3)
+
+            report = write_residual_support_width_promotion_gate_satisfaction_report(
+                promotion_gate,
+                (local_dir, colab_dir),
+                tmp_path / "support_width_promotion_gate_satisfaction",
+                artifact_check_paths=(
+                    local_dir / "artifact_check_local.json",
+                    colab_dir / "artifact_check_local.json",
+                ),
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                SATISFY_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
+            )
+            self.assertTrue(report["promotion_gate_satisfied"])
+            self.assertTrue(report["promote_support_width_default"])
+            self.assertEqual(report["selected_support_width_top_k"], 2)
+            self.assertEqual(
+                report["selected_next_direction"],
+                "promote_default_residual_support_width_top_k_2",
+            )
+            self.assertEqual(report["evidence"]["backend_count"], 2)
+            self.assertEqual(report["evidence"]["failures"], [])
+            for backend in report["evidence"]["backends"]:
+                for scale in ("larger_char", "tokenized"):
+                    self.assertTrue(
+                        backend["scales"][scale][
+                            "support_beats_baseline_alpha0_loss"
+                        ]
+                    )
+                    self.assertTrue(
+                        backend["scales"][scale][
+                            "support_beats_baseline_final_loss"
+                        ]
+                    )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "support_width_promotion_gate_satisfaction"
+                    / "decision_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "support_width_promotion_gate_satisfaction"
+                    / "decision_report.md"
+                ).is_file()
+            )
+
+    def test_non_seed3_identity_blocks_promotion_gate_satisfaction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            promotion_gate = _write_support_width_promotion_gate(
+                tmp_path,
+                status="pass",
+                decision=DEFINE_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
+            )
+            local_dir = tmp_path / "local"
+            colab_dir = tmp_path / "colab"
+            _write_support_width_validation_comparison(local_dir, seed=2)
+            _write_support_width_validation_comparison(colab_dir, seed=3)
+
+            report = write_residual_support_width_promotion_gate_satisfaction_report(
+                promotion_gate,
+                (local_dir, colab_dir),
+                tmp_path / "support_width_promotion_gate_satisfaction",
+                artifact_check_paths=(
+                    local_dir / "artifact_check_local.json",
+                    colab_dir / "artifact_check_local.json",
+                ),
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(report["promotion_gate_satisfied"])
+            self.assertFalse(report["promote_support_width_default"])
+            self.assertIsNone(report["selected_next_direction"])
+            self.assertTrue(
+                any(
+                    failure["field"].startswith("local.")
+                    and failure["field"].endswith(".seed")
+                    for failure in report["evidence"]["failures"]
+                )
+            )
+
+
 def _write_support_width_validation_comparison(
     comparison_dir: Path,
     *,
@@ -3020,6 +3124,39 @@ def _write_support_width_repeat_decision(
                 "promote_support_width_default": promote_support_width_default,
                 "evidence": {
                     "backend_count": 2,
+                    "failures": [],
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return report_path
+
+
+def _write_support_width_promotion_gate(
+    tmp_path: Path,
+    *,
+    status: str,
+    decision: str,
+) -> Path:
+    report_dir = tmp_path / "residual_support_width_promotion_gate"
+    report_dir.mkdir(parents=True)
+    report_path = report_dir / "decision_report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "status": status,
+                "decision": decision,
+                "selected_next_direction": (
+                    "support_width_seed3_promotion_gate_evidence"
+                    if decision == DEFINE_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE
+                    else None
+                ),
+                "promote_support_width_default": False,
+                "evidence": {
                     "failures": [],
                 },
             },

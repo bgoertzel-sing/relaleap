@@ -1323,6 +1323,22 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate/artifact_check_local.json
 ```
 
+After seed-2 repeat evidence and seed-3 local/Colab promotion-gate artifacts
+exist, write the command-driven support-width promotion-gate satisfaction report
+without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report residual-support-width-promotion-gate-satisfaction \
+  --out results/reports/residual_support_width_promotion_gate_satisfaction
+```
+
+The report writes `decision_report.json` and `decision_report.md`. It fails
+closed unless the promotion-gate definition passes, both seed-3 local and Colab
+artifact trees pass, the run identities are seed-3, and top-k `2` improves
+ordinary alpha-0 and final supervised CE loss over top-k `1` at both
+larger-char and tokenized scales.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 

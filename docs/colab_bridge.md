@@ -260,6 +260,19 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed3/artifact_check.json
 ```
 
+After extracting the seed-3 Colab artifact bundle locally, inspect the local and
+Colab seed-3 artifact trees and write the support-width promotion-gate
+satisfaction report without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed3 \
+  --out results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed3/artifact_check_local.json
+python -m relaleap.experiments.decision_report \
+  --report residual-support-width-promotion-gate-satisfaction \
+  --out results/reports/residual_support_width_promotion_gate_satisfaction
+```
+
 After extracting a completed guided clipped artifact bundle locally, write the
 oracle decision report without rerunning Colab:
 
