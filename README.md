@@ -1168,6 +1168,23 @@ the temporal-consistency training regularizer is not discriminative at this
 scale: its best temporal-clipped HEP supervised CE loss ties the supervised CE
 baseline within the current deterministic precision.
 
+A stronger local-only train-time temporal-consistency sweep keeps the same
+validation objective-gate setting and compares the original `0.01` weight with
+`0.05`, `0.1`, and `0.2` before spending Colab time:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_temporal_consistency_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_temporal_consistency_w005_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_temporal_consistency_w010_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_temporal_consistency_w020_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/validation_temporal_consistency_weight_sweep_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/validation_temporal_consistency_weight_sweep_temporal_clipped_objective_gate \
+  --out results/comparisons/validation_temporal_consistency_weight_sweep_temporal_clipped_objective_gate/artifact_check_local.json
+```
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
