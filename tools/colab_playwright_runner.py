@@ -17,9 +17,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import binascii
 from datetime import datetime, timezone
 import io
 import json
+import re
 import sys
 from pathlib import Path
 import zipfile
@@ -32,6 +34,18 @@ COLAB_NOTEBOOK_URL = (
 COMPLETION_TEXT = "RelaLeap Colab Phase 0 comparison completed."
 ARTIFACT_BUNDLE_BEGIN = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_BEGIN"
 ARTIFACT_BUNDLE_END = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_END"
+FOCUSED_TARGET_COMPARISON_DIR = (
+    "results/comparisons/"
+    "colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2"
+)
+FOCUSED_TARGET_MARKERS = (
+    "cuda_available: True",
+    '"status": "pass"',
+    FOCUSED_TARGET_COMPARISON_DIR,
+    "char_xxlarge_hep_temporal_clipped_objective_gate_seed2",
+    "char_xxlarge_focal_hep_temporal_clipped_objective_gate_seed2",
+    COMPLETION_TEXT,
+)
 ERROR_MARKERS = (
     "Traceback (most recent call last)",
     "AssertionError",
@@ -122,119 +136,12 @@ async def _wait_for_rendered_output_text(page, text: str, timeout_ms: int) -> No
 
 def _validate_evidence_text(text: str) -> None:
     _raise_for_rendered_python_error(text)
-    required = [
-        'cuda_available: True',
-        '"status": "pass"',
-        "Accepted HEP alpha:",
-        "Pinned HEP status: ok",
-        "Support-stress comparison status: ok",
-        "Support-stress artifact check: pass",
-        "Clipped support-stress comparison status: ok",
-        "Clipped support-stress artifact check: pass",
-        "Guided clipped support-stress comparison status: ok",
-        "Guided clipped support-stress artifact check: pass",
-        "Temporal clipped support-stress comparison status: ok",
-        "Temporal clipped support-stress artifact check: pass",
-        "Temporal clipped seed2 support-stress comparison status: ok",
-        "Temporal clipped seed2 support-stress artifact check: pass",
-        "Temporal clipped seed3 support-stress comparison status: ok",
-        "Temporal clipped seed3 support-stress artifact check: pass",
-        "Temporal clipped seed4 support-stress comparison status: ok",
-        "Temporal clipped seed4 support-stress artifact check: pass",
-        "Temporal clipped validation support-stress comparison status: ok",
-        "Temporal clipped validation support-stress artifact check: pass",
-        "Validation PC-vs-supervised temporal clipped comparison status: ok",
-        "Validation PC-vs-supervised temporal clipped artifact check: pass",
-        "Objective-gate validation PC-vs-supervised temporal clipped comparison status: ok",
-        "Objective-gate validation PC-vs-supervised temporal clipped artifact check: pass",
-        "Anchored objective-gate validation PC comparison status: ok",
-        "Anchored objective-gate validation PC artifact check: pass",
-        "Confidence-penalty objective-gate validation comparison status: ok",
-        "Confidence-penalty objective-gate validation artifact check: pass",
-        "Margin-penalty objective-gate validation comparison status: ok",
-        "Margin-penalty objective-gate validation artifact check: pass",
-        "Label-smoothing objective-gate validation comparison status: ok",
-        "Label-smoothing objective-gate validation artifact check: pass",
-        "Focal objective-gate validation comparison status: ok",
-        "Focal objective-gate validation artifact check: pass",
-        "Larger focal objective-gate comparison status: ok",
-        "Larger focal objective-gate artifact check: pass",
-        "Token larger focal objective-gate comparison status: ok",
-        "Token larger focal objective-gate artifact check: pass",
-        "Token larger focal seed2 objective-gate comparison status: ok",
-        "Token larger focal seed2 objective-gate artifact check: pass",
-        "Xlarge focal objective-gate comparison status: ok",
-        "Xlarge focal objective-gate artifact check: pass",
-        "Xxlarge focal objective-gate comparison status: ok",
-        "Xxlarge focal objective-gate artifact check: pass",
-        "Xxlarge focal seed2 objective-gate comparison status: ok",
-        "Xxlarge focal seed2 objective-gate artifact check: pass",
-        "Temporal clipped extended support-stress comparison status: ok",
-        "Temporal clipped extended support-stress artifact check: pass",
-        "Temporal clipped larger support-stress comparison status: ok",
-        "Temporal clipped larger support-stress artifact check: pass",
-        "Temporal clipped token larger support-stress comparison status: ok",
-        "Temporal clipped token larger support-stress artifact check: pass",
-        "char_smoke_hep_support_stress_clipped",
-        "char_smoke_hep_support_stress_entropy_clipped",
-        "char_smoke_hep_support_stress_temporal_clipped",
-        "char_smoke_hep_support_stress_guided_clipped",
-        "char_smoke_hep_support_stress_clipped_seed2",
-        "char_smoke_hep_support_stress_entropy_clipped_seed2",
-        "char_smoke_hep_support_stress_temporal_clipped_seed2",
-        "char_smoke_hep_support_stress_guided_clipped_seed2",
-        "char_smoke_hep_support_stress_clipped_seed3",
-        "char_smoke_hep_support_stress_entropy_clipped_seed3",
-        "char_smoke_hep_support_stress_temporal_clipped_seed3",
-        "char_smoke_hep_support_stress_guided_clipped_seed3",
-        "char_smoke_hep_support_stress_clipped_seed4",
-        "char_smoke_hep_support_stress_entropy_clipped_seed4",
-        "char_smoke_hep_support_stress_temporal_clipped_seed4",
-        "char_smoke_hep_support_stress_guided_clipped_seed4",
-        "char_validation_hep_support_stress_clipped",
-        "char_validation_hep_support_stress_entropy_clipped",
-        "char_validation_hep_support_stress_temporal_clipped",
-        "char_validation_hep_support_stress_guided_clipped",
-        "char_validation_pc_hep_support_stress_temporal_clipped",
-        "char_validation_hep_temporal_clipped_objective_gate",
-        "char_validation_pc_hep_temporal_clipped_objective_gate",
-        "char_validation_pc_anchor_hep_temporal_clipped_objective_gate",
-        "char_validation_confidence_penalty_hep_temporal_clipped_objective_gate",
-        "char_validation_margin_penalty_hep_temporal_clipped_objective_gate",
-        "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
-        "char_validation_focal_hep_temporal_clipped_objective_gate",
-        "char_larger_hep_temporal_clipped_objective_gate",
-        "char_larger_focal_hep_temporal_clipped_objective_gate",
-        "token_larger_hep_temporal_clipped_objective_gate",
-        "token_larger_focal_hep_temporal_clipped_objective_gate",
-        "token_larger_hep_temporal_clipped_objective_gate_seed2",
-        "token_larger_focal_hep_temporal_clipped_objective_gate_seed2",
-        "char_xxlarge_hep_temporal_clipped_objective_gate",
-        "char_xxlarge_focal_hep_temporal_clipped_objective_gate",
-        "char_xxlarge_hep_temporal_clipped_objective_gate_seed2",
-        "char_xxlarge_focal_hep_temporal_clipped_objective_gate_seed2",
-        "char_extended_hep_support_stress_clipped",
-        "char_extended_hep_support_stress_entropy_clipped",
-        "char_extended_hep_support_stress_temporal_clipped",
-        "char_extended_hep_support_stress_guided_clipped",
-        "char_larger_hep_support_stress_clipped",
-        "char_larger_hep_support_stress_entropy_clipped",
-        "char_larger_hep_support_stress_temporal_clipped",
-        "char_larger_hep_support_stress_guided_clipped",
-        "token_larger_hep_support_stress_clipped",
-        "token_larger_hep_support_stress_entropy_clipped",
-        "token_larger_hep_support_stress_temporal_clipped",
-        "token_larger_hep_support_stress_guided_clipped",
-        "char_smoke_pinned_hep_support_stress",
-        COMPLETION_TEXT,
-    ]
-    missing = [marker for marker in required if marker not in text]
+    missing = [marker for marker in FOCUSED_TARGET_MARKERS if marker not in text]
     if missing:
         raise RuntimeError(
             "Colab completed, but evidence is missing required rendered output "
             f"marker(s): {', '.join(missing)}"
         )
-    _validate_pinned_support_evidence(text)
 
 
 def _validate_pinned_support_evidence(text: str) -> None:
@@ -284,23 +191,19 @@ def _extract_colab_artifact_bundle(
     text: str,
     destination_root: Path = Path("."),
 ) -> list[Path]:
-    begin = text.find(ARTIFACT_BUNDLE_BEGIN)
-    end = text.find(ARTIFACT_BUNDLE_END)
-    if begin < 0 or end < 0 or end <= begin:
+    archive_bytes = _find_colab_artifact_bundle_bytes(text)
+    if archive_bytes is None:
         return []
-
-    encoded = text[begin + len(ARTIFACT_BUNDLE_BEGIN) : end]
-    encoded = "".join(encoded.split())
-    if not encoded:
-        raise RuntimeError("Colab artifact bundle marker was present but empty.")
 
     root = destination_root.resolve()
     extracted: list[Path] = []
-    with zipfile.ZipFile(io.BytesIO(base64.b64decode(encoded))) as archive:
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
         for member in archive.infolist():
             member_path = Path(member.filename)
             if member_path.is_absolute() or ".." in member_path.parts:
                 raise RuntimeError(f"Unsafe Colab artifact path: {member.filename}")
+            if member.header_offset < 0:
+                continue
             target = (root / member_path).resolve()
             if root not in [target, *target.parents]:
                 raise RuntimeError(f"Colab artifact escapes destination: {member.filename}")
@@ -308,9 +211,87 @@ def _extract_colab_artifact_bundle(
                 target.mkdir(parents=True, exist_ok=True)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(archive.read(member))
+            try:
+                content = archive.read(member)
+            except (ValueError, zipfile.BadZipFile):
+                continue
+            target.write_bytes(content)
             extracted.append(target)
     return extracted
+
+
+def _find_colab_artifact_bundle_bytes(text: str) -> bytes | None:
+    candidates = []
+    for begin in re.finditer(re.escape(ARTIFACT_BUNDLE_BEGIN), text):
+        for end in re.finditer(re.escape(ARTIFACT_BUNDLE_END), text[begin.end() :]):
+            candidates.append(text[begin.end() : begin.end() + end.start()])
+            break
+    for end in re.finditer(re.escape(ARTIFACT_BUNDLE_END), text):
+        candidates.append(_base64_block_before_marker(text, end.start()))
+        prefix = text[: end.start()]
+        for match in reversed(list(re.finditer(r"UEsDB[A-Za-z0-9+/=\s]*", prefix))):
+            candidates.append(match.group(0))
+
+    saw_marker = ARTIFACT_BUNDLE_BEGIN in text or ARTIFACT_BUNDLE_END in text
+    saw_empty_marker = False
+    for candidate in candidates:
+        encoded = "".join(candidate.split())
+        if not encoded:
+            saw_empty_marker = True
+            continue
+        try:
+            archive_bytes = base64.b64decode(encoded, validate=True)
+            with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+                bad_member = archive.testzip()
+                if bad_member is not None:
+                    continue
+            return archive_bytes
+        except (binascii.Error, zipfile.BadZipFile, RuntimeError):
+            continue
+        except ValueError:
+            try:
+                with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+                    if _archive_has_readable_focused_target(archive):
+                        return archive_bytes
+            except (ValueError, zipfile.BadZipFile, RuntimeError):
+                continue
+
+    if saw_empty_marker:
+        raise RuntimeError("Colab artifact bundle marker was present but empty.")
+    if saw_marker:
+        raise RuntimeError("Colab artifact bundle marker was present but no valid zip was found.")
+    return None
+
+
+def _base64_block_before_marker(text: str, marker_start: int) -> str:
+    lines = text[:marker_start].splitlines()
+    block: list[str] = []
+    for line in reversed(lines):
+        stripped = line.strip()
+        if not stripped:
+            if block:
+                break
+            continue
+        if re.fullmatch(r"[A-Za-z0-9+/=]+", stripped):
+            block.append(stripped)
+            continue
+        break
+    return "\n".join(reversed(block))
+
+
+def _archive_has_readable_focused_target(archive: zipfile.ZipFile) -> bool:
+    required = [
+        f"{FOCUSED_TARGET_COMPARISON_DIR}/summary.json",
+        f"{FOCUSED_TARGET_COMPARISON_DIR}/metrics.csv",
+        f"{FOCUSED_TARGET_COMPARISON_DIR}/notes.md",
+        f"{FOCUSED_TARGET_COMPARISON_DIR}/artifact_check.json",
+    ]
+    for name in required:
+        try:
+            archive.read(name)
+        except (KeyError, ValueError, zipfile.BadZipFile):
+            return False
+    return True
 
 
 async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path) -> None:

@@ -72,6 +72,7 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "Xxlarge focal objective-gate artifact check: pass",
                     "Xxlarge focal seed2 objective-gate comparison status: ok",
                     "Xxlarge focal seed2 objective-gate artifact check: pass",
+                    "results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2",
                     "Temporal clipped extended support-stress comparison status: ok",
                     "Temporal clipped extended support-stress artifact check: pass",
                     "Temporal clipped larger support-stress comparison status: ok",
@@ -205,6 +206,33 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                 (Path(tmpdir) / "results/comparisons/colab_phase0/summary.json")
                 .read_text(encoding="utf-8"),
                 "{}\n",
+            )
+
+    def test_extract_colab_artifact_bundle_accepts_later_valid_bundle(self) -> None:
+        bundle = _zip_base64(
+            {
+                "results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2/summary.json": "{}\n",
+            }
+        )
+        evidence = "\n".join(
+            [
+                "truncated-base64-fragment",
+                ARTIFACT_BUNDLE_END,
+                ARTIFACT_BUNDLE_BEGIN,
+                bundle,
+                ARTIFACT_BUNDLE_END,
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            extracted = _extract_colab_artifact_bundle(evidence, Path(tmpdir))
+
+            self.assertEqual(len(extracted), 1)
+            self.assertTrue(
+                (
+                    Path(tmpdir)
+                    / "results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2/summary.json"
+                ).is_file()
             )
 
     def test_extract_colab_artifact_bundle_rejects_unsafe_paths(self) -> None:

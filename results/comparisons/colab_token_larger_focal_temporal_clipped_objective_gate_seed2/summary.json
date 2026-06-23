@@ -157,7 +157,7 @@
       "zero_init_loss": 4.230261325836182
     }
   ],
-  "runtime_seconds": 5.3636,
+  "runtime_seconds": 5.0066,
   "status": "ok",
   "verdict": {
     "artifact_invariant_count": 6,
