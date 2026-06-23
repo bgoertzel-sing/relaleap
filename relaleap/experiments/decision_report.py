@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from relaleap.experiments.check_artifacts import check_comparison_artifacts
 
 
@@ -272,6 +274,24 @@ DEFAULT_RESIDUAL_LEARNING_NEXT_DIRECTION_REPORTS = (
 )
 DEFAULT_RESIDUAL_LEARNING_NEXT_DIRECTION_OUT_DIR = Path(
     "results/reports/residual_learning_next_direction"
+)
+DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE_REPORT = (
+    DEFAULT_RESIDUAL_LEARNING_NEXT_DIRECTION_OUT_DIR / "decision_report.json"
+)
+DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE_CONFIGS = (
+    Path("configs/char_validation_hep_temporal_clipped_objective_gate.yaml"),
+    Path(
+        "configs/char_validation_capacity_hep_temporal_clipped_objective_gate.yaml"
+    ),
+    Path(
+        "configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml"
+    ),
+    Path(
+        "configs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.yaml"
+    ),
+)
+DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE_OUT_DIR = Path(
+    "results/reports/residual_capacity_support_diagnostic_gate"
 )
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
@@ -3857,6 +3877,175 @@ def write_residual_learning_next_direction_report(
     return report
 
 
+def write_residual_capacity_support_diagnostic_gate_report(
+    next_direction_report_path: Path = (
+        DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE_REPORT
+    ),
+    config_paths: list[Path] | tuple[Path, ...] = (
+        DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE_CONFIGS
+    ),
+    out_dir: Path = DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE_OUT_DIR,
+) -> dict[str, Any]:
+    """Define the local residual capacity/support diagnostic gate."""
+
+    failures = []
+    next_direction = (
+        _read_json_object(next_direction_report_path)
+        if Path(next_direction_report_path).is_file()
+        else None
+    )
+    if next_direction is None:
+        failures.append(
+            {
+                "field": "next_direction_report",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(next_direction_report_path),
+            }
+        )
+    else:
+        if next_direction.get("status") != "pass":
+            failures.append(
+                {
+                    "field": "next_direction_report.status",
+                    "expected": "pass",
+                    "actual": next_direction.get("status"),
+                    "path": str(next_direction_report_path),
+                }
+            )
+        if (
+            next_direction.get("decision")
+            != DEFINE_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE
+        ):
+            failures.append(
+                {
+                    "field": "next_direction_report.decision",
+                    "expected": DEFINE_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE,
+                    "actual": next_direction.get("decision"),
+                    "path": str(next_direction_report_path),
+                }
+            )
+
+    config_entries = []
+    for path in config_paths:
+        path = Path(path)
+        if not path.is_file():
+            failures.append(
+                {
+                    "field": "config",
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(path),
+                }
+            )
+            config_entries.append({"path": str(path), "status": "missing"})
+            continue
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
+            config = {}
+        entry = _residual_capacity_support_config_entry(path, config)
+        config_entries.append(entry)
+        failures.extend(entry["failures"])
+
+    baseline = config_entries[0] if config_entries else None
+    matrix_failures = _residual_capacity_support_matrix_failures(config_entries)
+    failures.extend(matrix_failures)
+
+    status = "fail" if failures else "pass"
+    comparison_dir = (
+        "results/comparisons/"
+        "validation_residual_capacity_support_temporal_clipped_objective_gate"
+    )
+    compare_command = " ".join(
+        [
+            "python -m relaleap.experiments.compare",
+            *[f"--config {path}" for path in config_paths],
+            f"--out {comparison_dir}",
+        ]
+    )
+    check_command = " ".join(
+        [
+            "python -m relaleap.experiments.check_artifacts",
+            f"--comparison-dir {comparison_dir}",
+            f"--out {comparison_dir}/artifact_check_local.json",
+        ]
+    )
+    report = {
+        "status": status,
+        "decision": (
+            DEFINE_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE
+            if status == "pass"
+            else INSUFFICIENT_EVIDENCE
+        ),
+        "selected_next_direction": (
+            "residual_capacity_support_diagnostic" if status == "pass" else None
+        ),
+        "promote_residual_learning_method": False,
+        "default_residual_objective": "supervised_ce",
+        "policy": {
+            "requires_passing_next_direction_report": True,
+            "requires_supervised_ce_objective": True,
+            "requires_temporal_clipped_hep": True,
+            "requires_support_stress_preset_disabled": True,
+            "requires_baseline_capacity_width_control": True,
+            "requires_increased_column_capacity_variant": True,
+            "requires_wider_top_k_support_variant": True,
+            "requires_combined_capacity_and_support_variant": True,
+            "diagnostic_gate_only": True,
+            "allows_residual_objective_promotion": False,
+        },
+        "evidence": {
+            "next_direction_report_path": str(next_direction_report_path),
+            "next_direction_report_status": None
+            if next_direction is None
+            else next_direction.get("status"),
+            "next_direction_report_decision": None
+            if next_direction is None
+            else next_direction.get("decision"),
+            "baseline_config": None if baseline is None else baseline.get("path"),
+            "config_paths": [str(path) for path in config_paths],
+            "config_count": len(config_entries),
+            "configs": config_entries,
+            "failures": failures,
+        },
+        "commands": {
+            "compare": compare_command,
+            "check_artifacts": check_command,
+        },
+        "rationale": (
+            "The completed residual-objective stop gates selected a capacity and "
+            "support diagnostic rather than another CE-adjacent objective. This "
+            "gate keeps the promoted temporal-clipped supervised CE path fixed "
+            "and varies only residual column capacity and top-k support width, "
+            "so the next local evidence can distinguish under-capacity from "
+            "sparse-support bottlenecks."
+            if status == "pass"
+            else (
+                "The residual capacity/support diagnostic gate is not ready "
+                "until the next-direction report passes and every diagnostic "
+                "config preserves the promoted temporal-clipped supervised CE "
+                "harness."
+            )
+        ),
+        "next_step": (
+            "run the local residual capacity/support diagnostic comparison and artifact check recorded in commands.compare and commands.check_artifacts"
+            if status == "pass"
+            else "repair the missing or drifting next-direction report/config matrix, then regenerate this gate report"
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_residual_capacity_support_diagnostic_gate_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def _focal_residual_objective_entry(
     comparison_dir: Path,
     *,
@@ -5004,6 +5193,156 @@ def _read_config_object(path: Path) -> dict[str, Any]:
     if not isinstance(loaded, dict):
         raise ValueError(f"{path} must contain a config object")
     return loaded
+
+
+def _residual_capacity_support_config_entry(
+    path: Path,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    run = config.get("run") if isinstance(config.get("run"), dict) else {}
+    data = config.get("data") if isinstance(config.get("data"), dict) else {}
+    training = (
+        config.get("training") if isinstance(config.get("training"), dict) else {}
+    )
+    model = config.get("model") if isinstance(config.get("model"), dict) else {}
+    base = model.get("base") if isinstance(model.get("base"), dict) else {}
+    columns = (
+        model.get("columns") if isinstance(model.get("columns"), dict) else {}
+    )
+    inference = (
+        config.get("inference") if isinstance(config.get("inference"), dict) else {}
+    )
+    outputs = config.get("outputs") if isinstance(config.get("outputs"), dict) else {}
+    entry = {
+        "path": str(path),
+        "experiment_id": run.get("experiment_id"),
+        "dataset": data.get("dataset"),
+        "seq_len": data.get("seq_len"),
+        "max_steps": run.get("max_steps"),
+        "residual_objective": training.get("residual_objective"),
+        "hidden_dim": base.get("hidden_dim"),
+        "num_columns": columns.get("num_columns"),
+        "atoms_per_column": columns.get("atoms_per_column"),
+        "top_k": columns.get("top_k"),
+        "support_stress": columns.get("support_stress"),
+        "support_stress_preset": columns.get("support_stress_preset"),
+        "hep_update_clip_norm": inference.get("hep_update_clip_norm"),
+        "hep_settling_objective": inference.get("hep_settling_objective"),
+        "hep_alpha_sweep": inference.get("hep_alpha_sweep"),
+        "require_summary_json": outputs.get("require_summary_json"),
+        "require_metrics_csv": outputs.get("require_metrics_csv"),
+        "require_notes_md": outputs.get("require_notes_md"),
+        "failures": [],
+    }
+    required_values = {
+        "dataset": "tiny_shakespeare_char",
+        "seq_len": 64,
+        "max_steps": 25,
+        "residual_objective": "supervised_ce",
+        "hidden_dim": 64,
+        "atoms_per_column": 4,
+        "support_stress": True,
+        "support_stress_preset": False,
+        "hep_update_clip_norm": 0.01,
+        "hep_settling_objective": "temporal_consistency_gradient",
+        "hep_alpha_sweep": "0.0,0.25,0.5,1.0",
+        "require_summary_json": True,
+        "require_metrics_csv": True,
+        "require_notes_md": True,
+    }
+    for field, expected in required_values.items():
+        if entry.get(field) != expected:
+            entry["failures"].append(
+                {
+                    "field": f"config.{field}",
+                    "expected": expected,
+                    "actual": entry.get(field),
+                    "path": str(path),
+                }
+            )
+    if not isinstance(entry["num_columns"], int) or entry["num_columns"] <= 0:
+        entry["failures"].append(
+            {
+                "field": "config.num_columns",
+                "expected": "positive integer",
+                "actual": entry["num_columns"],
+                "path": str(path),
+            }
+        )
+    if not isinstance(entry["top_k"], int) or entry["top_k"] <= 0:
+        entry["failures"].append(
+            {
+                "field": "config.top_k",
+                "expected": "positive integer",
+                "actual": entry["top_k"],
+                "path": str(path),
+            }
+        )
+    return entry
+
+
+def _residual_capacity_support_matrix_failures(
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    if len(entries) != 4:
+        return [
+            {
+                "field": "config_matrix.count",
+                "expected": 4,
+                "actual": len(entries),
+            }
+        ]
+    if any(entry.get("failures") for entry in entries):
+        return failures
+    baseline, capacity, support, combined = entries
+    baseline_columns = baseline.get("num_columns")
+    baseline_top_k = baseline.get("top_k")
+    specs = [
+        ("capacity_variant", capacity, "num_columns"),
+        ("support_width_variant", support, "top_k"),
+        ("capacity_support_width_variant", combined, "both"),
+    ]
+    for name, entry, variant in specs:
+        columns = entry.get("num_columns")
+        top_k = entry.get("top_k")
+        if variant in ("num_columns", "both") and not columns > baseline_columns:
+            failures.append(
+                {
+                    "field": f"config_matrix.{name}.num_columns",
+                    "expected": f"> {baseline_columns}",
+                    "actual": columns,
+                    "path": entry.get("path"),
+                }
+            )
+        if variant == "top_k" and columns != baseline_columns:
+            failures.append(
+                {
+                    "field": f"config_matrix.{name}.num_columns",
+                    "expected": baseline_columns,
+                    "actual": columns,
+                    "path": entry.get("path"),
+                }
+            )
+        if variant in ("top_k", "both") and not top_k > baseline_top_k:
+            failures.append(
+                {
+                    "field": f"config_matrix.{name}.top_k",
+                    "expected": f"> {baseline_top_k}",
+                    "actual": top_k,
+                    "path": entry.get("path"),
+                }
+            )
+        if variant == "num_columns" and top_k != baseline_top_k:
+            failures.append(
+                {
+                    "field": f"config_matrix.{name}.top_k",
+                    "expected": baseline_top_k,
+                    "actual": top_k,
+                    "path": entry.get("path"),
+                }
+            )
+    return failures
 
 
 def _write_markdown(path: Path, report: dict[str, Any]) -> None:
@@ -6226,6 +6565,65 @@ def _write_residual_learning_next_direction_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_residual_capacity_support_diagnostic_gate_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Residual Capacity Support Diagnostic Gate",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        f"- Selected direction: `{report['selected_next_direction']}`",
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        (
+            "- Promote residual learning method: "
+            f"`{report['promote_residual_learning_method']}`"
+        ),
+        f"- Config count: `{evidence['config_count']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Commands",
+        "",
+        "```bash",
+        report["commands"]["compare"],
+        report["commands"]["check_artifacts"],
+        "```",
+        "",
+        "## Config Matrix",
+        "",
+        "| Config | Columns | Top-k | Objective | HEP objective | Failures |",
+        "| --- | ---: | ---: | --- | --- | ---: |",
+    ]
+    for entry in evidence["configs"]:
+        lines.append(
+            (
+                f"| `{entry.get('path')}` "
+                f"| {entry.get('num_columns') or ''} "
+                f"| {entry.get('top_k') or ''} "
+                f"| {entry.get('residual_objective') or ''} "
+                f"| {entry.get('hep_settling_objective') or ''} "
+                f"| {len(entry.get('failures') or [])} |"
+            )
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _write_focal_promotion_gate_markdown(
     path: Path,
     report: dict[str, Any],
@@ -6402,6 +6800,7 @@ def main() -> None:
             "focal-residual-objective-promotion-gate-satisfaction",
             "temporal-consistency-residual-objective-decision",
             "residual-learning-next-direction",
+            "residual-capacity-support-diagnostic-gate",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -6639,6 +7038,16 @@ def main() -> None:
             if args.decision_report
             else DEFAULT_RESIDUAL_LEARNING_NEXT_DIRECTION_REPORTS,
             args.out or DEFAULT_RESIDUAL_LEARNING_NEXT_DIRECTION_OUT_DIR,
+        )
+    elif args.report == "residual-capacity-support-diagnostic-gate":
+        report = write_residual_capacity_support_diagnostic_gate_report(
+            args.decision_report[0]
+            if args.decision_report
+            else DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE_REPORT,
+            tuple(args.decision_report[1:])
+            if args.decision_report and len(args.decision_report) > 1
+            else DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE_CONFIGS,
+            args.out or DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE_OUT_DIR,
         )
     else:
         report = write_pinned_support_decision_report(

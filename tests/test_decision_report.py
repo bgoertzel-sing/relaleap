@@ -43,6 +43,7 @@ from relaleap.experiments.decision_report import (
     write_focal_residual_objective_promotion_gate_satisfaction_report,
     write_temporal_consistency_residual_objective_decision_report,
     write_residual_learning_next_direction_report,
+    write_residual_capacity_support_diagnostic_gate_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -2011,6 +2012,145 @@ class ResidualLearningNextDirectionReportTest(unittest.TestCase):
                 },
                 report["evidence"]["failures"],
             )
+
+
+class ResidualCapacitySupportDiagnosticGateReportTest(unittest.TestCase):
+    def test_valid_config_matrix_defines_local_diagnostic_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            next_direction = _write_next_direction_report(tmp_path, status="pass")
+            configs = _write_capacity_support_configs(tmp_path)
+
+            report = write_residual_capacity_support_diagnostic_gate_report(
+                next_direction,
+                configs,
+                tmp_path / "capacity_support_gate",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                DEFINE_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE,
+            )
+            self.assertEqual(
+                report["selected_next_direction"],
+                "residual_capacity_support_diagnostic",
+            )
+            self.assertFalse(report["promote_residual_learning_method"])
+            self.assertEqual(report["default_residual_objective"], "supervised_ce")
+            self.assertEqual(report["evidence"]["config_count"], 4)
+            self.assertEqual(report["evidence"]["failures"], [])
+            self.assertIn("relaleap.experiments.compare", report["commands"]["compare"])
+            self.assertIn(
+                "relaleap.experiments.check_artifacts",
+                report["commands"]["check_artifacts"],
+            )
+            self.assertTrue(
+                (tmp_path / "capacity_support_gate" / "decision_report.json").is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "capacity_support_gate" / "decision_report.md").is_file()
+            )
+
+    def test_failed_next_direction_report_blocks_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            next_direction = _write_next_direction_report(tmp_path, status="fail")
+            configs = _write_capacity_support_configs(tmp_path)
+
+            report = write_residual_capacity_support_diagnostic_gate_report(
+                next_direction,
+                configs,
+                tmp_path / "capacity_support_gate",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIsNone(report["selected_next_direction"])
+            self.assertIn(
+                {
+                    "field": "next_direction_report.status",
+                    "expected": "pass",
+                    "actual": "fail",
+                    "path": str(next_direction),
+                },
+                report["evidence"]["failures"],
+            )
+
+
+def _write_next_direction_report(tmp_path: Path, *, status: str) -> Path:
+    report_dir = tmp_path / "residual_learning_next_direction"
+    report_dir.mkdir(parents=True)
+    report_path = report_dir / "decision_report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "status": status,
+                "decision": DEFINE_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE,
+                "selected_next_direction": "residual_capacity_support_diagnostic",
+                "promote_residual_learning_method": False,
+                "default_residual_objective": "supervised_ce",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return report_path
+
+
+def _write_capacity_support_configs(tmp_path: Path) -> list[Path]:
+    specs = [
+        ("baseline.yaml", "baseline", 12, 1),
+        ("capacity.yaml", "capacity", 24, 1),
+        ("support.yaml", "support", 12, 2),
+        ("capacity_support.yaml", "capacity_support", 24, 2),
+    ]
+    paths = []
+    for filename, suffix, num_columns, top_k in specs:
+        path = tmp_path / filename
+        path.write_text(
+            f"""run:
+  experiment_id: char_validation_{suffix}_hep_temporal_clipped_objective_gate
+  seed: 1
+  max_steps: 25
+
+data:
+  dataset: tiny_shakespeare_char
+  seq_len: 64
+
+training:
+  residual_objective: supervised_ce
+
+model:
+  base:
+    layers: 2
+    hidden_dim: 64
+  columns:
+    num_columns: {num_columns}
+    atoms_per_column: 4
+    top_k: {top_k}
+    insertion_sites: 1
+    support_stress: true
+    support_stress_preset: false
+
+inference:
+  pc_steps: 3
+  hep_alpha: 0.0
+  hep_alpha_sweep: "0.0,0.25,0.5,1.0"
+  hep_update_clip_norm: 0.01
+  hep_settling_objective: temporal_consistency_gradient
+
+outputs:
+  require_summary_json: true
+  require_metrics_csv: true
+  require_notes_md: true
+""",
+            encoding="utf-8",
+        )
+        paths.append(path)
+    return paths
 
 
 def _write_stopped_residual_objective_reports(tmp_path: Path) -> list[Path]:

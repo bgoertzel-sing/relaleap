@@ -1236,6 +1236,32 @@ When it passes, it keeps supervised CE as the default residual objective and
 selects a residual capacity/support diagnostic as the next bounded research
 direction rather than another CE-adjacent objective variant.
 
+Define that diagnostic as a local-only gate before spending Colab time:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report residual-capacity-support-diagnostic-gate \
+  --out results/reports/residual_capacity_support_diagnostic_gate
+```
+
+The report writes `decision_report.json` and `decision_report.md`. It fails
+closed unless the residual-learning next-direction report passes and the config
+matrix keeps the promoted temporal-clipped supervised CE validation harness
+fixed while varying only residual column capacity and top-k support width.
+When the gate passes, run the local diagnostic comparison:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_capacity_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate \
+  --out results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate/artifact_check_local.json
+```
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
