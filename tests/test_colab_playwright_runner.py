@@ -85,6 +85,9 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "Support-width seed2 larger char/token comparison status: ok",
                     "Support-width seed2 larger char/token artifact check: pass",
                     "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2",
+                    "Post-support-width capacity larger char/token comparison status: ok",
+                    "Post-support-width capacity larger char/token artifact check: pass",
+                    "results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate",
                     "char_smoke_hep_support_stress_clipped",
                     "char_smoke_hep_support_stress_entropy_clipped",
                     "char_smoke_hep_support_stress_temporal_clipped",
@@ -115,11 +118,13 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "char_validation_focal_hep_temporal_clipped_objective_gate",
                     "char_larger_hep_temporal_clipped_objective_gate",
                     "char_larger_support_wide_hep_temporal_clipped_objective_gate",
+                    "char_larger_capacity_hep_temporal_clipped_objective_gate",
                     "char_larger_hep_temporal_clipped_objective_gate_seed2",
                     "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
                     "char_larger_focal_hep_temporal_clipped_objective_gate",
                     "token_larger_hep_temporal_clipped_objective_gate",
                     "token_larger_support_wide_hep_temporal_clipped_objective_gate",
+                    "token_larger_capacity_hep_temporal_clipped_objective_gate",
                     "token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
                     "token_larger_focal_hep_temporal_clipped_objective_gate",
                     "token_larger_hep_temporal_clipped_objective_gate_seed2",
@@ -223,10 +228,10 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
         bundle = _zip_base64(
             {
                 "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate/summary.json": "{}\n",
-                "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2/summary.json": "{}\n",
-                "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2/metrics.csv": "step,loss\n",
-                "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2/notes.md": "# Notes\n",
-                "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2/artifact_check.json": "{}\n",
+                "results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate/summary.json": "{}\n",
+                "results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate/metrics.csv": "step,loss\n",
+                "results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate/notes.md": "# Notes\n",
+                "results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate/artifact_check.json": "{}\n",
             }
         )
         evidence = "\n".join(
@@ -246,7 +251,7 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
             self.assertTrue(
                 (
                     Path(tmpdir)
-                    / "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2/summary.json"
+                    / "results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate/summary.json"
                 ).is_file()
             )
 

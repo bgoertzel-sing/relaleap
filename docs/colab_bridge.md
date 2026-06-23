@@ -135,8 +135,10 @@ the larger-char/tokenized support-width validation under
 `results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate`,
 the seed-2 larger-char/tokenized support-width repeat under
 `results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2`,
-and the seed-3 larger-char/tokenized support-width promotion-gate evidence under
-`results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed3`.
+the seed-3 larger-char/tokenized support-width promotion-gate evidence under
+`results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed3`,
+and the post-support-width residual-capacity larger-char/tokenized check under
+`results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate`.
 When that bundle is present in the rendered output, the helper extracts it
 under the local repo root so the normal after-the-fact checker can inspect the
 Colab artifact tree locally.
@@ -258,6 +260,21 @@ python -m relaleap.experiments.compare \
 python -m relaleap.experiments.check_artifacts \
   --comparison-dir results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed3 \
   --out results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed3/artifact_check.json
+```
+
+The current post-support-width bridge target also runs the residual-capacity
+comparison selected by `AUTOMATION_STATUS.md`:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_larger_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_larger_capacity_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/token_larger_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/token_larger_capacity_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate \
+  --out results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate/artifact_check.json
 ```
 
 After extracting the seed-3 Colab artifact bundle locally, inspect the local and

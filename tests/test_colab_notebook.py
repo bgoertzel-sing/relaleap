@@ -123,7 +123,15 @@ class ColabNotebookTest(unittest.TestCase):
             checkout_cell,
         )
         self.assertIn(
+            "configs/char_larger_capacity_hep_temporal_clipped_objective_gate.yaml",
+            checkout_cell,
+        )
+        self.assertIn(
             "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            checkout_cell,
+        )
+        self.assertIn(
+            "configs/token_larger_capacity_hep_temporal_clipped_objective_gate.yaml",
             checkout_cell,
         )
         self.assertIn(
@@ -531,6 +539,49 @@ class ColabNotebookTest(unittest.TestCase):
         )
         self.assertIn("tiny_shakespeare_word", evidence_cell)
         self.assertIn("support_width_seed3_check['status'] == 'pass'", evidence_cell)
+
+    def test_run_cell_executes_post_support_width_capacity_colab_path(self) -> None:
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+        run_cells = [
+            source
+            for source in sources
+            if "colab_post_support_width_capacity_larger_token_objective_gate"
+            in source
+        ]
+
+        self.assertEqual(len(run_cells), 2)
+        run_cell, evidence_cell = run_cells
+        self.assertIn(
+            "--config configs/char_larger_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/char_larger_capacity_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/token_larger_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/token_larger_capacity_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "Post-support-width capacity larger char/token comparison status:",
+            evidence_cell,
+        )
+        self.assertIn(
+            "char_larger_capacity_hep_temporal_clipped_objective_gate",
+            evidence_cell,
+        )
+        self.assertIn(
+            "token_larger_capacity_hep_temporal_clipped_objective_gate",
+            evidence_cell,
+        )
+        self.assertIn("num_columns'] == 48", evidence_cell)
+        self.assertIn("support_stress_preset'] is False", evidence_cell)
 
     def test_run_cell_executes_anchored_objective_gate_colab_path(self) -> None:
         notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
