@@ -1219,6 +1219,23 @@ continues if every regularized sweep run beats the supervised CE baseline by a
 material best temporal-clipped HEP supervised CE-loss margin. Tiny deterministic
 margins stop the variant before spending Colab time.
 
+After the residual-objective gate, anchored-PC, confidence-penalty,
+margin-penalty, label-smoothing, focal promotion/stop gate, and train-time
+temporal-consistency reports have all stopped under their current policies,
+select the next residual-learning direction without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report residual-learning-next-direction \
+  --out results/reports/residual_learning_next_direction
+```
+
+The report writes `decision_report.json` and `decision_report.md`. It fails
+closed unless the expected completed decision reports are present and passing.
+When it passes, it keeps supervised CE as the default residual objective and
+selects a residual capacity/support diagnostic as the next bounded research
+direction rather than another CE-adjacent objective variant.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 

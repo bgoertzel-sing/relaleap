@@ -25,6 +25,7 @@ from relaleap.experiments.decision_report import (
     CONTINUE_FOCAL_RESIDUAL_OBJECTIVE_VALIDATION,
     DEFINE_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE,
     SATISFY_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE,
+    DEFINE_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -41,6 +42,7 @@ from relaleap.experiments.decision_report import (
     write_focal_residual_objective_promotion_gate_report,
     write_focal_residual_objective_promotion_gate_satisfaction_report,
     write_temporal_consistency_residual_objective_decision_report,
+    write_residual_learning_next_direction_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -1958,6 +1960,112 @@ class TemporalConsistencyResidualObjectiveDecisionReportTest(unittest.TestCase):
                 report["selected_residual_objective_variant"],
                 "supervised_ce_temporal_consistency",
             )
+
+
+class ResidualLearningNextDirectionReportTest(unittest.TestCase):
+    def test_stopped_objective_reports_select_capacity_support_diagnostic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            reports = _write_stopped_residual_objective_reports(tmp_path)
+
+            report = write_residual_learning_next_direction_report(
+                reports,
+                tmp_path / "next_direction",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                DEFINE_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE,
+            )
+            self.assertEqual(
+                report["selected_next_direction"],
+                "residual_capacity_support_diagnostic",
+            )
+            self.assertFalse(report["promote_residual_learning_method"])
+            self.assertEqual(report["default_residual_objective"], "supervised_ce")
+            self.assertEqual(report["evidence"]["report_count"], 7)
+            self.assertEqual(report["evidence"]["failures"], [])
+            self.assertTrue((tmp_path / "next_direction" / "decision_report.json").is_file())
+            self.assertTrue((tmp_path / "next_direction" / "decision_report.md").is_file())
+
+    def test_missing_stop_report_blocks_direction_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            reports = _write_stopped_residual_objective_reports(tmp_path)
+            reports = reports[:-1]
+
+            report = write_residual_learning_next_direction_report(
+                reports,
+                tmp_path / "next_direction",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIsNone(report["selected_next_direction"])
+            self.assertIn(
+                {
+                    "field": "decision_report.kind",
+                    "expected": "temporal_consistency_residual_objective_decision",
+                    "actual": "missing",
+                },
+                report["evidence"]["failures"],
+            )
+
+
+def _write_stopped_residual_objective_reports(tmp_path: Path) -> list[Path]:
+    specs = [
+        (
+            "residual_objective_gate_decision",
+            KEEP_SUPERVISED_CE_RESIDUAL_OBJECTIVE_DEFAULT,
+        ),
+        (
+            "anchored_pc_residual_objective_decision",
+            STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
+        ),
+        (
+            "confidence_penalty_residual_objective_decision",
+            STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
+        ),
+        (
+            "margin_penalty_residual_objective_decision",
+            STOP_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
+        ),
+        (
+            "label_smoothing_residual_objective_decision",
+            STOP_LABEL_SMOOTHING_RESIDUAL_OBJECTIVE_VALIDATION,
+        ),
+        (
+            "focal_residual_objective_promotion_gate_satisfaction",
+            STOP_FOCAL_RESIDUAL_OBJECTIVE_VALIDATION,
+        ),
+        (
+            "temporal_consistency_residual_objective_decision",
+            STOP_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_VALIDATION,
+        ),
+    ]
+    paths = []
+    for dirname, decision in specs:
+        report_dir = tmp_path / dirname
+        report_dir.mkdir(parents=True)
+        report_path = report_dir / "decision_report.json"
+        report_path.write_text(
+            json.dumps(
+                {
+                    "status": "pass",
+                    "decision": decision,
+                    "promote_residual_learning_method": False,
+                    "default_residual_objective": "supervised_ce",
+                    "next_step": "placeholder",
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        paths.append(report_path)
+    return paths
 
 
 def _write_passing_focal_promotion_gate(tmp_path: Path) -> Path:

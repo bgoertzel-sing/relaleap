@@ -253,6 +253,26 @@ DEFAULT_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
 DEFAULT_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_OUT_DIR = Path(
     "results/reports/temporal_consistency_residual_objective_decision"
 )
+DEFAULT_RESIDUAL_LEARNING_NEXT_DIRECTION_REPORTS = (
+    Path("results/reports/residual_objective_gate_decision/decision_report.json"),
+    Path("results/reports/anchored_pc_residual_objective_decision/decision_report.json"),
+    Path(
+        "results/reports/confidence_penalty_residual_objective_decision/decision_report.json"
+    ),
+    Path("results/reports/margin_penalty_residual_objective_decision/decision_report.json"),
+    Path(
+        "results/reports/label_smoothing_residual_objective_decision/decision_report.json"
+    ),
+    Path(
+        "results/reports/focal_residual_objective_promotion_gate_satisfaction/decision_report.json"
+    ),
+    Path(
+        "results/reports/temporal_consistency_residual_objective_decision/decision_report.json"
+    ),
+)
+DEFAULT_RESIDUAL_LEARNING_NEXT_DIRECTION_OUT_DIR = Path(
+    "results/reports/residual_learning_next_direction"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -315,6 +335,9 @@ STOP_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_VALIDATION = (
 )
 CONTINUE_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_VALIDATION = (
     "continue_temporal_consistency_residual_objective_validation"
+)
+DEFINE_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE = (
+    "define_residual_capacity_support_diagnostic_gate"
 )
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -3676,6 +3699,164 @@ def write_temporal_consistency_residual_objective_decision_report(
     return report
 
 
+def write_residual_learning_next_direction_report(
+    decision_report_paths: list[Path] | tuple[Path, ...] = (
+        DEFAULT_RESIDUAL_LEARNING_NEXT_DIRECTION_REPORTS
+    ),
+    out_dir: Path = DEFAULT_RESIDUAL_LEARNING_NEXT_DIRECTION_OUT_DIR,
+) -> dict[str, Any]:
+    """Select the next residual-learning direction from completed stop gates."""
+
+    expected_decisions = {
+        "residual_objective_gate_decision": KEEP_SUPERVISED_CE_RESIDUAL_OBJECTIVE_DEFAULT,
+        "anchored_pc_residual_objective_decision": STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
+        "confidence_penalty_residual_objective_decision": STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
+        "margin_penalty_residual_objective_decision": STOP_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
+        "label_smoothing_residual_objective_decision": STOP_LABEL_SMOOTHING_RESIDUAL_OBJECTIVE_VALIDATION,
+        "focal_residual_objective_promotion_gate_satisfaction": STOP_FOCAL_RESIDUAL_OBJECTIVE_VALIDATION,
+        "temporal_consistency_residual_objective_decision": STOP_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_VALIDATION,
+    }
+    entries = []
+    failures = []
+    seen_keys = set()
+    for path in decision_report_paths:
+        path = Path(path)
+        key = path.parent.name
+        expected_decision = expected_decisions.get(key)
+        if expected_decision is None:
+            failures.append(
+                {
+                    "field": "decision_report.kind",
+                    "expected": sorted(expected_decisions),
+                    "actual": key,
+                    "path": str(path),
+                }
+            )
+            continue
+        seen_keys.add(key)
+        if not path.is_file():
+            failures.append(
+                {
+                    "field": "decision_report",
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(path),
+                }
+            )
+            entries.append(
+                {
+                    "key": key,
+                    "path": str(path),
+                    "status": None,
+                    "decision": None,
+                    "expected_decision": expected_decision,
+                }
+            )
+            continue
+        report = _read_json_object(path)
+        entry = {
+            "key": key,
+            "path": str(path),
+            "status": report.get("status"),
+            "decision": report.get("decision"),
+            "expected_decision": expected_decision,
+            "promote_residual_learning_method": report.get(
+                "promote_residual_learning_method"
+            ),
+            "default_residual_objective": report.get("default_residual_objective"),
+            "next_step": report.get("next_step"),
+        }
+        entries.append(entry)
+        if report.get("status") != "pass":
+            failures.append(
+                {
+                    "field": "decision_report.status",
+                    "expected": "pass",
+                    "actual": report.get("status"),
+                    "path": str(path),
+                }
+            )
+        if report.get("decision") != expected_decision:
+            failures.append(
+                {
+                    "field": "decision_report.decision",
+                    "expected": expected_decision,
+                    "actual": report.get("decision"),
+                    "path": str(path),
+                }
+            )
+
+    for key in sorted(set(expected_decisions) - seen_keys):
+        failures.append(
+            {
+                "field": "decision_report.kind",
+                "expected": key,
+                "actual": "missing",
+            }
+        )
+
+    status = "fail" if failures else "pass"
+    report = {
+        "status": status,
+        "decision": (
+            DEFINE_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE
+            if status == "pass"
+            else INSUFFICIENT_EVIDENCE
+        ),
+        "selected_next_direction": (
+            "residual_capacity_support_diagnostic" if status == "pass" else None
+        ),
+        "promote_residual_learning_method": False,
+        "default_residual_objective": "supervised_ce",
+        "policy": {
+            "requires_completed_residual_objective_gate": True,
+            "requires_stopped_pc_and_non_pc_objective_variants": True,
+            "requires_stopped_focal_promotion_gate": True,
+            "requires_stopped_train_time_temporal_consistency_variant": True,
+            "allows_residual_objective_promotion": False,
+            "diagnostic_gate_only": True,
+        },
+        "evidence": {
+            "decision_report_paths": [str(path) for path in decision_report_paths],
+            "report_count": len(entries),
+            "expected_report_count": len(expected_decisions),
+            "entries": entries,
+            "failures": failures,
+        },
+        "rationale": (
+            "Completed objective-gate reports keep supervised CE as the default "
+            "and stop the PC, anchored-PC, confidence-penalty, margin-penalty, "
+            "label-smoothing, focal, and train-time temporal-consistency "
+            "branches under their current gates. The next bounded residual-layer "
+            "learning direction should therefore test whether residual capacity "
+            "and sparse-support behavior, rather than another CE-adjacent loss "
+            "variant, is limiting learned residual improvements."
+            if status == "pass"
+            else (
+                "The next residual-learning direction cannot be selected until "
+                "the completed residual-objective reports are present, passing, "
+                "and stopped under their expected decisions."
+            )
+        ),
+        "next_step": (
+            "define a local residual capacity/support diagnostic gate that compares the supervised CE objective across increased column capacity, top-k support width, and temporal-clipped HEP artifacts"
+            if status == "pass"
+            else "repair or regenerate the missing or unexpected residual-objective decision reports"
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_residual_learning_next_direction_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def _focal_residual_objective_entry(
     comparison_dir: Path,
     *,
@@ -5994,6 +6175,57 @@ def _write_temporal_consistency_residual_objective_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_residual_learning_next_direction_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Residual Learning Next Direction",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        f"- Selected direction: `{report['selected_next_direction']}`",
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        (
+            "- Promote residual learning method: "
+            f"`{report['promote_residual_learning_method']}`"
+        ),
+        f"- Report count: `{evidence['report_count']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        "| Report | Status | Decision | Expected decision | Source |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for entry in evidence["entries"]:
+        lines.append(
+            (
+                f"| {entry.get('key') or ''} "
+                f"| {entry.get('status') or ''} "
+                f"| {entry.get('decision') or ''} "
+                f"| {entry.get('expected_decision') or ''} "
+                f"| `{entry.get('path')}` |"
+            )
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _write_focal_promotion_gate_markdown(
     path: Path,
     report: dict[str, Any],
@@ -6169,6 +6401,7 @@ def main() -> None:
             "focal-residual-objective-promotion-gate",
             "focal-residual-objective-promotion-gate-satisfaction",
             "temporal-consistency-residual-objective-decision",
+            "residual-learning-next-direction",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -6399,6 +6632,13 @@ def main() -> None:
             if not args.artifact_check
             else (args.artifact_check,),
             max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "residual-learning-next-direction":
+        report = write_residual_learning_next_direction_report(
+            tuple(args.decision_report)
+            if args.decision_report
+            else DEFAULT_RESIDUAL_LEARNING_NEXT_DIRECTION_REPORTS,
+            args.out or DEFAULT_RESIDUAL_LEARNING_NEXT_DIRECTION_OUT_DIR,
         )
     else:
         report = write_pinned_support_decision_report(
