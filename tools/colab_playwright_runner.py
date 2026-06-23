@@ -40,6 +40,24 @@ FOCUSED_TARGET_COMPARISON_DIR = (
     "results/comparisons/"
     "colab_validation_residual_capacity_support_temporal_clipped_objective_gate"
 )
+FOCUSED_TARGET_RUN_SCHEMA = {
+    "char_validation_hep_temporal_clipped_objective_gate": {
+        "num_columns": 12,
+        "top_k": 1,
+    },
+    "char_validation_capacity_hep_temporal_clipped_objective_gate": {
+        "num_columns": 24,
+        "top_k": 1,
+    },
+    "char_validation_support_wide_hep_temporal_clipped_objective_gate": {
+        "num_columns": 12,
+        "top_k": 2,
+    },
+    "char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate": {
+        "num_columns": 24,
+        "top_k": 2,
+    },
+}
 FOCUSED_TARGET_MARKERS = (
     "cuda_available: True",
     '"status": "pass"',
@@ -198,6 +216,95 @@ def _validate_pinned_support_evidence(text: str) -> None:
         raise RuntimeError(
             "Colab completed, but pinned-support summary did not report "
             "phase0.pinned_support true."
+        )
+
+
+def _validate_focused_target_artifact_bundle(text: str) -> None:
+    archive_bytes = _find_colab_artifact_bundle_bytes(text)
+    if archive_bytes is None:
+        raise RuntimeError(
+            "Colab completed, but no focused artifact bundle was found."
+        )
+
+    summary_name = f"{FOCUSED_TARGET_COMPARISON_DIR}/summary.json"
+    check_name = f"{FOCUSED_TARGET_COMPARISON_DIR}/artifact_check.json"
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+        try:
+            summary = json.loads(archive.read(summary_name))
+        except KeyError as exc:
+            raise RuntimeError(
+                "Colab completed, but artifact bundle is missing required "
+                f"focused summary: {summary_name}"
+            ) from exc
+        try:
+            artifact_check = json.loads(archive.read(check_name))
+        except KeyError as exc:
+            raise RuntimeError(
+                "Colab completed, but artifact bundle is missing required "
+                f"focused artifact check: {check_name}"
+            ) from exc
+
+    _validate_focused_target_summary(summary, artifact_check)
+
+
+def _validate_focused_target_summary(
+    summary: dict[str, object],
+    artifact_check: dict[str, object],
+) -> None:
+    failures: list[str] = []
+    if summary.get("status") != "ok":
+        failures.append(f"summary.status={summary.get('status')!r}")
+    verdict = summary.get("verdict") if isinstance(summary.get("verdict"), dict) else {}
+    if verdict.get("status") != "pass":
+        failures.append(f"summary.verdict.status={verdict.get('status')!r}")
+    if artifact_check.get("status") != "pass":
+        failures.append(f"artifact_check.status={artifact_check.get('status')!r}")
+
+    runs = summary.get("runs") if isinstance(summary.get("runs"), list) else []
+    by_experiment = {
+        run.get("experiment_id"): run for run in runs if isinstance(run, dict)
+    }
+    missing = sorted(set(FOCUSED_TARGET_RUN_SCHEMA) - set(by_experiment))
+    if missing:
+        failures.append(f"missing focused run(s): {', '.join(missing)}")
+
+    for experiment_id, expected in FOCUSED_TARGET_RUN_SCHEMA.items():
+        run = by_experiment.get(experiment_id)
+        if not isinstance(run, dict):
+            continue
+        for field, expected_value in expected.items():
+            if run.get(field) != expected_value:
+                failures.append(
+                    f"{experiment_id}.{field}={run.get(field)!r}, "
+                    f"expected {expected_value!r}"
+                )
+        support_audit = run.get("support_audit")
+        if not isinstance(support_audit, dict):
+            failures.append(f"{experiment_id}.support_audit=missing")
+            continue
+        for field in (
+            "used_columns",
+            "dead_columns",
+            "unique_support_sets",
+            "total_support_slots",
+            "support_positions",
+        ):
+            if support_audit.get(field) is None:
+                failures.append(f"{experiment_id}.support_audit.{field}=missing")
+        for field, expected_value in expected.items():
+            if support_audit.get(field) != expected_value:
+                failures.append(
+                    f"{experiment_id}.support_audit.{field}="
+                    f"{support_audit.get(field)!r}, expected {expected_value!r}"
+                )
+
+    if failures:
+        preview = "; ".join(failures[:8])
+        if len(failures) > 8:
+            preview = f"{preview}; ... ({len(failures)} total)"
+        raise RuntimeError(
+            "Colab completed, but focused support-width artifact schema is "
+            f"stale or invalid: {preview}"
         )
 
 
@@ -365,6 +472,7 @@ async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path)
     await _write_evidence(page, evidence_out)
     text = evidence_out.read_text()
     _validate_evidence_text(text)
+    _validate_focused_target_artifact_bundle(text)
     extracted = _extract_colab_artifact_bundle(text)
     if extracted:
         print(f"extracted {len(extracted)} Colab artifact file(s) from rendered bundle.")

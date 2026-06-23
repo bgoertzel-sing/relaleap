@@ -13,10 +13,12 @@ from tools.colab_playwright_runner import (
     ARTIFACT_BUNDLE_END,
     COLAB_NOTEBOOK_URL,
     COMPLETION_TEXT,
+    FOCUSED_TARGET_COMPARISON_DIR,
     _colab_notebook_url,
     _confirm_run_modals,
     _extract_colab_artifact_bundle,
     _validate_evidence_text,
+    _validate_focused_target_artifact_bundle,
     _validate_pinned_support_evidence,
     _wait_for_completion,
 )
@@ -277,6 +279,43 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Unsafe Colab artifact path"):
                 _extract_colab_artifact_bundle(evidence, Path(tmpdir))
 
+    def test_focused_target_bundle_rejects_stale_support_schema(self) -> None:
+        summary = _focused_summary(include_support_schema=False)
+        bundle = _zip_base64(
+            {
+                f"{FOCUSED_TARGET_COMPARISON_DIR}/summary.json": (
+                    json_dumps(summary)
+                ),
+                f"{FOCUSED_TARGET_COMPARISON_DIR}/artifact_check.json": (
+                    '{"status": "pass"}\n'
+                ),
+                f"{FOCUSED_TARGET_COMPARISON_DIR}/metrics.csv": "step,loss\n",
+                f"{FOCUSED_TARGET_COMPARISON_DIR}/notes.md": "# Notes\n",
+            }
+        )
+        evidence = "\n".join([ARTIFACT_BUNDLE_BEGIN, bundle, ARTIFACT_BUNDLE_END])
+
+        with self.assertRaisesRegex(RuntimeError, "focused support-width artifact schema"):
+            _validate_focused_target_artifact_bundle(evidence)
+
+    def test_focused_target_bundle_accepts_support_width_schema(self) -> None:
+        summary = _focused_summary(include_support_schema=True)
+        bundle = _zip_base64(
+            {
+                f"{FOCUSED_TARGET_COMPARISON_DIR}/summary.json": (
+                    json_dumps(summary)
+                ),
+                f"{FOCUSED_TARGET_COMPARISON_DIR}/artifact_check.json": (
+                    '{"status": "pass"}\n'
+                ),
+                f"{FOCUSED_TARGET_COMPARISON_DIR}/metrics.csv": "step,loss\n",
+                f"{FOCUSED_TARGET_COMPARISON_DIR}/notes.md": "# Notes\n",
+            }
+        )
+        evidence = "\n".join([ARTIFACT_BUNDLE_BEGIN, bundle, ARTIFACT_BUNDLE_END])
+
+        _validate_focused_target_artifact_bundle(evidence)
+
 
 class ConfirmRunModalsTest(unittest.IsolatedAsyncioTestCase):
     async def test_completion_wait_can_skip_run_all_prompts(self) -> None:
@@ -418,6 +457,55 @@ def _zip_base64(files: dict[str, str]) -> str:
         for name, content in files.items():
             archive.writestr(name, content)
     return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def json_dumps(value) -> str:
+    import json
+
+    return json.dumps(value, indent=2, sort_keys=True) + "\n"
+
+
+def _focused_summary(*, include_support_schema: bool) -> dict:
+    specs = [
+        ("char_validation_hep_temporal_clipped_objective_gate", 12, 1),
+        ("char_validation_capacity_hep_temporal_clipped_objective_gate", 24, 1),
+        ("char_validation_support_wide_hep_temporal_clipped_objective_gate", 12, 2),
+        (
+            "char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate",
+            24,
+            2,
+        ),
+    ]
+    runs = []
+    for experiment_id, num_columns, top_k in specs:
+        run = {
+            "experiment_id": experiment_id,
+            "status": "ok",
+            "config_path": f"configs/{experiment_id}.yaml",
+        }
+        if include_support_schema:
+            run.update(
+                {
+                    "num_columns": num_columns,
+                    "top_k": top_k,
+                    "support_audit": {
+                        "num_columns": num_columns,
+                        "top_k": top_k,
+                        "used_columns": 1 if top_k == 1 else 8,
+                        "dead_columns": num_columns - (1 if top_k == 1 else 8),
+                        "unique_support_sets": 1 if top_k == 1 else 12,
+                        "total_support_slots": 256 * top_k,
+                        "support_positions": 256,
+                    },
+                }
+            )
+        return_run = run
+        runs.append(return_run)
+    return {
+        "status": "ok",
+        "verdict": {"status": "pass"},
+        "runs": runs,
+    }
 
 
 if __name__ == "__main__":
