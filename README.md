@@ -1451,6 +1451,10 @@ top-k `2` support-width config:
 python -m relaleap.experiments.support_audit \
   --config configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml \
   --out results/audits/validation_support_wide_exhaustive_support
+python -m relaleap.experiments.decision_report \
+  --report exhaustive-support-audit \
+  --comparison-dir results/audits/validation_support_wide_exhaustive_support \
+  --out results/reports/validation_support_wide_exhaustive_support_audit
 ```
 
 The audit retrains the configured residual adapter, evaluates all 12 singleton
@@ -1459,6 +1463,9 @@ and writes `summary.json`, `support_losses.csv`, `pairwise_synergy.csv`, and
 `notes.md`. The summary reports per-token oracle-support regret, best global
 fixed support, dominant router support, one-swap recovery, support-loss
 distribution, pairwise synergy leaders, and the existing router support audit.
+The decision report fails closed on missing audit artifacts and selects whether
+the next branch should target router support selection, column redundancy, or
+pairwise composition.
 
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:

@@ -448,6 +448,12 @@ DEFAULT_SUPPORT_WIDTH_DECONFOUNDING_AUDIT_ARTIFACT_CHECK = (
 DEFAULT_SUPPORT_WIDTH_DECONFOUNDING_AUDIT_OUT_DIR = Path(
     "results/reports/support_width_deconfounding_validation_audit"
 )
+DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_DIR = Path(
+    "results/audits/validation_support_wide_exhaustive_support"
+)
+DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_OUT_DIR = Path(
+    "results/reports/validation_support_wide_exhaustive_support_audit"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -546,6 +552,7 @@ DEFINE_RESIDUAL_CAPACITY_REPEAT_GATE = "define_residual_capacity_repeat_gate"
 RUN_COLAB_SUPPORT_WIDTH_DECONFOUNDING_AUDIT = (
     "run_colab_support_width_deconfounding_audit"
 )
+DIAGNOSE_EXHAUSTIVE_SUPPORT_AUDIT = "diagnose_exhaustive_support_audit"
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
@@ -6115,6 +6122,220 @@ def write_support_width_deconfounding_audit_report(
     return report
 
 
+def write_exhaustive_support_audit_report(
+    audit_dir: Path = DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_DIR,
+    out_dir: Path = DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_OUT_DIR,
+) -> dict[str, Any]:
+    """Summarize one exhaustive fixed-support audit artifact bundle."""
+
+    failures: list[dict[str, Any]] = []
+    summary_path = audit_dir / "summary.json"
+    summary: dict[str, Any] | None = None
+    if summary_path.is_file():
+        summary = _read_json_object(summary_path)
+    else:
+        failures.append(
+            {
+                "field": "audit.summary_json",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(summary_path),
+            }
+        )
+
+    audit = summary.get("audit") if isinstance(summary, dict) else None
+    audit = audit if isinstance(audit, dict) else {}
+    artifacts = summary.get("artifacts") if isinstance(summary, dict) else None
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    if summary is None or summary.get("status") != "ok":
+        failures.append(
+            {
+                "field": "audit.status",
+                "expected": "ok",
+                "actual": None if summary is None else summary.get("status"),
+                "path": str(summary_path),
+            }
+        )
+    required_artifacts = {
+        "summary_json": summary_path,
+        "support_losses_csv": audit_dir / "support_losses.csv",
+        "pairwise_synergy_csv": audit_dir / "pairwise_synergy.csv",
+        "notes_md": audit_dir / "notes.md",
+    }
+    for key, default_path in required_artifacts.items():
+        artifact_path = Path(str(artifacts.get(key) or default_path))
+        if not artifact_path.is_file():
+            failures.append(
+                {
+                    "field": f"artifacts.{key}",
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(artifact_path),
+                }
+            )
+        elif artifact_path.stat().st_size <= 0:
+            failures.append(
+                {
+                    "field": f"artifacts.{key}",
+                    "expected": "nonempty file",
+                    "actual": "empty",
+                    "path": str(artifact_path),
+                }
+            )
+
+    required_audit_fields = (
+        "router_loss",
+        "oracle_loss",
+        "oracle_support_regret",
+        "oracle_support_regret_positive_fraction",
+        "best_global_fixed_support",
+        "router_minus_best_global_fixed_support_loss",
+        "dominant_router_support",
+        "best_one_swap_support",
+        "support_audit",
+        "top_supports_by_synergy",
+    )
+    for field in required_audit_fields:
+        if field not in audit:
+            failures.append(
+                {
+                    "field": f"audit.{field}",
+                    "expected": "present",
+                    "actual": "missing",
+                    "path": str(summary_path),
+                }
+            )
+
+    support_audit = audit.get("support_audit")
+    support_audit = support_audit if isinstance(support_audit, dict) else {}
+    top_synergy = audit.get("top_supports_by_synergy")
+    top_synergy = top_synergy if isinstance(top_synergy, list) else []
+    strongest_synergy = (
+        top_synergy[0].get("pairwise_synergy")
+        if top_synergy and isinstance(top_synergy[0], dict)
+        else None
+    )
+    oracle_regret = _optional_float(audit.get("oracle_support_regret"))
+    oracle_positive_fraction = _optional_float(
+        audit.get("oracle_support_regret_positive_fraction")
+    )
+    dead_columns = _optional_int(support_audit.get("dead_columns"))
+    used_columns = _optional_int(support_audit.get("used_columns"))
+    num_columns = _optional_int(audit.get("num_columns"))
+    fixed_support_gap = _optional_float(
+        audit.get("router_minus_best_global_fixed_support_loss")
+    )
+    router_signal = (
+        oracle_regret is not None
+        and oracle_regret > 0.01
+        and oracle_positive_fraction is not None
+        and oracle_positive_fraction > 0.5
+    )
+    redundancy_signal = (
+        dead_columns is not None
+        and dead_columns > 0
+        or (
+            used_columns is not None
+            and num_columns is not None
+            and used_columns < num_columns
+        )
+    )
+    composition_signal = (
+        strongest_synergy is not None and float(strongest_synergy) > 0.0
+    )
+    if router_signal:
+        selected_branch = "router_support_selection"
+    elif redundancy_signal:
+        selected_branch = "column_redundancy"
+    elif composition_signal:
+        selected_branch = "pairwise_composition"
+    else:
+        selected_branch = "broader_support_audit_evidence"
+
+    status = "pass" if not failures else "fail"
+    report = {
+        "status": status,
+        "decision": DIAGNOSE_EXHAUSTIVE_SUPPORT_AUDIT
+        if status == "pass"
+        else INSUFFICIENT_EVIDENCE,
+        "selected_next_direction": selected_branch if status == "pass" else None,
+        "audit_dir": str(audit_dir),
+        "summary_path": str(summary_path),
+        "default_residual_objective": "supervised_ce",
+        "default_support_stress_mitigation": "temporal_clipped_hep",
+        "evidence": {
+            "experiment_id": None if summary is None else summary.get("experiment_id"),
+            "config_path": None if summary is None else summary.get("config_path"),
+            "num_columns": num_columns,
+            "top_k": _optional_int(audit.get("top_k")),
+            "support_set_count": _optional_int(audit.get("support_set_count")),
+            "router_loss": _optional_float(audit.get("router_loss")),
+            "oracle_loss": _optional_float(audit.get("oracle_loss")),
+            "oracle_support_regret": oracle_regret,
+            "oracle_support_regret_positive_fraction": oracle_positive_fraction,
+            "best_global_fixed_support": audit.get("best_global_fixed_support"),
+            "best_global_fixed_support_loss": _optional_float(
+                audit.get("best_global_fixed_support_loss")
+            ),
+            "router_minus_best_global_fixed_support_loss": fixed_support_gap,
+            "dominant_router_support": audit.get("dominant_router_support"),
+            "dominant_router_support_count": _optional_int(
+                audit.get("dominant_router_support_count")
+            ),
+            "best_one_swap_support": audit.get("best_one_swap_support"),
+            "best_one_swap_recovers_oracle_gap_fraction": _optional_float(
+                audit.get("best_one_swap_recovers_oracle_gap_fraction")
+            ),
+            "support_audit": support_audit,
+            "strongest_pairwise_synergy": None
+            if strongest_synergy is None
+            else float(strongest_synergy),
+            "router_improvement_signal": router_signal,
+            "column_redundancy_signal": redundancy_signal,
+            "pairwise_composition_signal": composition_signal,
+            "failures": _dedupe_failures(failures),
+        },
+        "rationale": _exhaustive_support_audit_rationale(
+            status=status,
+            selected_branch=selected_branch,
+            oracle_regret=oracle_regret,
+            oracle_positive_fraction=oracle_positive_fraction,
+            fixed_support_gap=fixed_support_gap,
+            dead_columns=dead_columns,
+            used_columns=used_columns,
+            num_columns=num_columns,
+            strongest_synergy=None
+            if strongest_synergy is None
+            else float(strongest_synergy),
+        ),
+        "next_step": (
+            "prototype a router-support improvement diagnostic that uses the exhaustive audit as the oracle target"
+            if status == "pass" and selected_branch == "router_support_selection"
+            else (
+                "prototype a column redundancy/load-balancing diagnostic on the same support-width setting"
+                if status == "pass" and selected_branch == "column_redundancy"
+                else (
+                    "prototype a pairwise composition diagnostic using the top synergy supports"
+                    if status == "pass" and selected_branch == "pairwise_composition"
+                    else (
+                        "collect a broader exhaustive support audit before branching"
+                        if status == "pass"
+                        else "repair or rerun the exhaustive support audit artifacts"
+                    )
+                )
+            )
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_exhaustive_support_audit_markdown(out_dir / "decision_report.md", report)
+    return report
+
+
 def _support_width_deconfounding_run_entry(
     run: dict[str, Any],
     *,
@@ -6727,6 +6948,12 @@ def _optional_float(value: Any) -> float | None:
     if value is None:
         return None
     return float(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)
 
 
 def _decision(evidence: dict[str, Any], *, max_logit_delta: float) -> dict[str, Any]:
@@ -10889,6 +11116,117 @@ def _write_support_width_deconfounding_audit_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _exhaustive_support_audit_rationale(
+    *,
+    status: str,
+    selected_branch: str,
+    oracle_regret: float | None,
+    oracle_positive_fraction: float | None,
+    fixed_support_gap: float | None,
+    dead_columns: int | None,
+    used_columns: int | None,
+    num_columns: int | None,
+    strongest_synergy: float | None,
+) -> str:
+    if status != "pass":
+        return (
+            "The exhaustive support audit cannot be trusted until summary, "
+            "support-loss, pairwise-synergy, and notes artifacts are present and "
+            "the summary reports ok."
+        )
+    if selected_branch == "router_support_selection":
+        return (
+            "The per-token oracle beats the learned router on most evaluated "
+            "positions, so the strongest signal is router support-selection "
+            f"headroom: regret={_format_metric(oracle_regret)}, positive_fraction="
+            f"{_format_metric(oracle_positive_fraction)}. The learned router still "
+            f"beats the best single global fixed pair by {_format_metric(-fixed_support_gap if fixed_support_gap is not None else None)}, "
+            "which points to improving token-conditioned routing rather than "
+            "replacing it with one fixed support."
+        )
+    if selected_branch == "column_redundancy":
+        return (
+            "The audit does not show dominant oracle-router regret, but support "
+            f"utilization is incomplete: used_columns={used_columns}, "
+            f"num_columns={num_columns}, dead_columns={dead_columns}. The next "
+            "branch should separate redundancy from routing load balance."
+        )
+    if selected_branch == "pairwise_composition":
+        return (
+            "The strongest remaining signal is positive pairwise composition: "
+            f"top_pairwise_synergy={_format_metric(strongest_synergy)}. The next "
+            "branch should test whether column pairs compose beyond singleton "
+            "effects."
+        )
+    return (
+        "The current audit is artifact-backed but does not isolate one branch. "
+        "Collect broader exhaustive support evidence before adding new mechanisms."
+    )
+
+
+def _write_exhaustive_support_audit_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    support_audit = evidence.get("support_audit") or {}
+    lines = [
+        "# Exhaustive Support Audit Decision",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        f"- Selected next direction: `{report['selected_next_direction']}`",
+        f"- Audit: `{report['audit_dir']}`",
+        f"- Summary: `{report['summary_path']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        f"- Router loss: `{_format_metric(evidence.get('router_loss'))}`",
+        f"- Per-token oracle loss: `{_format_metric(evidence.get('oracle_loss'))}`",
+        f"- Oracle-support regret: `{_format_metric(evidence.get('oracle_support_regret'))}`",
+        (
+            "- Oracle-support positive fraction: "
+            f"`{_format_metric(evidence.get('oracle_support_regret_positive_fraction'))}`"
+        ),
+        (
+            "- Router minus best global fixed support loss: "
+            f"`{_format_metric(evidence.get('router_minus_best_global_fixed_support_loss'))}`"
+        ),
+        f"- Best global fixed support: `{evidence.get('best_global_fixed_support')}`",
+        f"- Dominant router support: `{evidence.get('dominant_router_support')}`",
+        f"- Best one-swap support: `{evidence.get('best_one_swap_support')}`",
+        f"- Used columns: `{support_audit.get('used_columns')}` of `{evidence.get('num_columns')}`",
+        f"- Dead columns: `{support_audit.get('dead_columns')}`",
+        f"- Unique router support sets: `{support_audit.get('unique_support_sets')}`",
+        (
+            "- Strongest pairwise synergy: "
+            f"`{_format_metric(evidence.get('strongest_pairwise_synergy'))}`"
+        ),
+        "",
+        "## Signals",
+        "",
+        f"- Router improvement: `{evidence.get('router_improvement_signal')}`",
+        f"- Column redundancy: `{evidence.get('column_redundancy_signal')}`",
+        f"- Pairwise composition: `{evidence.get('pairwise_composition_signal')}`",
+    ]
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -10934,6 +11272,7 @@ def main() -> None:
             "post-support-width-residual-learning-gate",
             "post-support-width-residual-capacity-decision",
             "support-width-deconfounding-audit",
+            "exhaustive-support-audit",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -11300,6 +11639,11 @@ def main() -> None:
             artifact_check_path=args.artifact_check
             or DEFAULT_SUPPORT_WIDTH_DECONFOUNDING_AUDIT_ARTIFACT_CHECK,
             max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "exhaustive-support-audit":
+        report = write_exhaustive_support_audit_report(
+            args.comparison_dir or DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_DIR,
+            args.out or DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_OUT_DIR,
         )
     else:
         report = write_pinned_support_decision_report(

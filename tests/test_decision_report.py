@@ -38,6 +38,7 @@ from relaleap.experiments.decision_report import (
     DEFINE_RESIDUAL_CAPACITY_REPEAT_GATE,
     STOP_RESIDUAL_CAPACITY_VALIDATION,
     RUN_COLAB_SUPPORT_WIDTH_DECONFOUNDING_AUDIT,
+    DIAGNOSE_EXHAUSTIVE_SUPPORT_AUDIT,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -67,6 +68,7 @@ from relaleap.experiments.decision_report import (
     write_post_support_width_residual_learning_gate_report,
     write_post_support_width_residual_capacity_decision_report,
     write_support_width_deconfounding_audit_report,
+    write_exhaustive_support_audit_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -4366,6 +4368,103 @@ class SupportWidthDeconfoundingAuditReportTest(unittest.TestCase):
                     for failure in report["evidence"]["failures"]
                 )
             )
+
+
+class ExhaustiveSupportAuditReportTest(unittest.TestCase):
+    def test_valid_audit_selects_router_support_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            audit_dir = tmp_path / "audit"
+            _write_exhaustive_support_audit(audit_dir)
+
+            report = write_exhaustive_support_audit_report(
+                audit_dir,
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["decision"], DIAGNOSE_EXHAUSTIVE_SUPPORT_AUDIT)
+            self.assertEqual(
+                report["selected_next_direction"],
+                "router_support_selection",
+            )
+            self.assertTrue(report["evidence"]["router_improvement_signal"])
+            self.assertTrue(report["evidence"]["column_redundancy_signal"])
+            self.assertTrue(report["evidence"]["pairwise_composition_signal"])
+            self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
+            self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
+
+    def test_missing_audit_artifact_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            audit_dir = tmp_path / "audit"
+            _write_exhaustive_support_audit(audit_dir)
+            (audit_dir / "pairwise_synergy.csv").unlink()
+
+            report = write_exhaustive_support_audit_report(
+                audit_dir,
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertTrue(
+                any(
+                    failure["field"] == "artifacts.pairwise_synergy_csv"
+                    for failure in report["evidence"]["failures"]
+                )
+            )
+
+
+def _write_exhaustive_support_audit(audit_dir: Path) -> None:
+    audit_dir.mkdir(parents=True)
+    summary = {
+        "status": "ok",
+        "experiment_id": "test_exhaustive_support_audit",
+        "config_path": "configs/test.yaml",
+        "audit": {
+            "num_columns": 4,
+            "top_k": 2,
+            "support_set_count": 6,
+            "router_loss": 3.5,
+            "oracle_loss": 3.4,
+            "oracle_support_regret": 0.1,
+            "oracle_support_regret_positive_fraction": 0.75,
+            "best_global_fixed_support": "0,1",
+            "best_global_fixed_support_loss": 3.55,
+            "router_minus_best_global_fixed_support_loss": -0.05,
+            "dominant_router_support": "0,2",
+            "dominant_router_support_count": 10,
+            "best_one_swap_support": "0,1",
+            "best_one_swap_recovers_oracle_gap_fraction": 1.0,
+            "support_audit": {
+                "used_columns": 3,
+                "dead_columns": 1,
+                "unique_support_sets": 4,
+            },
+            "top_supports_by_synergy": [
+                {
+                    "support": "0,1",
+                    "pairwise_synergy": 0.02,
+                }
+            ],
+        },
+        "artifacts": {
+            "summary_json": str(audit_dir / "summary.json"),
+            "support_losses_csv": str(audit_dir / "support_losses.csv"),
+            "pairwise_synergy_csv": str(audit_dir / "pairwise_synergy.csv"),
+            "notes_md": str(audit_dir / "notes.md"),
+        },
+    }
+    (audit_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "support_losses.csv").write_text("support_key,loss\n0,3.5\n")
+    (audit_dir / "pairwise_synergy.csv").write_text(
+        "support_key,pairwise_synergy\n0,1,0.02\n"
+    )
+    (audit_dir / "notes.md").write_text("# audit\n", encoding="utf-8")
 
 
 def _write_support_width_deconfounding_comparison(comparison_dir: Path) -> None:
