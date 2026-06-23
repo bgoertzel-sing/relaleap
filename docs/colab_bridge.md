@@ -121,6 +121,8 @@ the xxlarge char focal objective-gate comparison under
 `results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate`,
 the seed-2 tokenized larger focal-repeat objective-gate comparison under
 `results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate_seed2`,
+the seed-2 xxlarge char focal-repeat objective-gate comparison under
+`results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2`,
 the extended temporal support-stress check under
 `results/comparisons/colab_extended_support_stress_temporal_vs_entropy_guided_clipped_hep`,
 the larger-char promotion-gate support-stress check under
@@ -520,6 +522,19 @@ python -m relaleap.experiments.compare \
 python -m relaleap.experiments.check_artifacts \
   --comparison-dir results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate \
   --out results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate/artifact_check.json
+```
+
+The seed-2 xxlarge char focal-repeat objective-gate check is the matching
+Colab repeat for the local seed-2 xxlarge-char focal evidence:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_xxlarge_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --config configs/char_xxlarge_focal_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --out results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2 \
+  --out results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2/artifact_check.json
 ```
 
 The extended label-free temporal check moves outside the current char

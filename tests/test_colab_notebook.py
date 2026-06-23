@@ -98,6 +98,14 @@ class ColabNotebookTest(unittest.TestCase):
             "configs/char_xxlarge_focal_hep_temporal_clipped_objective_gate.yaml",
             checkout_cell,
         )
+        self.assertIn(
+            "configs/char_xxlarge_hep_temporal_clipped_objective_gate_seed2.yaml",
+            checkout_cell,
+        )
+        self.assertIn(
+            "configs/char_xxlarge_focal_hep_temporal_clipped_objective_gate_seed2.yaml",
+            checkout_cell,
+        )
 
     def test_run_cell_executes_token_larger_colab_path(self) -> None:
         notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
@@ -201,6 +209,44 @@ class ColabNotebookTest(unittest.TestCase):
         )
         self.assertIn(
             "Token larger focal seed2 objective-gate artifact check:",
+            evidence_cell,
+        )
+        self.assertIn("support_stress_preset'] is False", evidence_cell)
+
+    def test_run_cell_executes_xxlarge_seed2_focal_colab_path(self) -> None:
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+        run_cells = [
+            source
+            for source in sources
+            if "colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2"
+            in source
+        ]
+
+        self.assertEqual(len(run_cells), 2)
+        run_cell, evidence_cell = run_cells
+        self.assertIn(
+            "--config configs/char_xxlarge_hep_temporal_clipped_objective_gate_seed2.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/char_xxlarge_focal_hep_temporal_clipped_objective_gate_seed2.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "char_xxlarge_hep_temporal_clipped_objective_gate_seed2",
+            evidence_cell,
+        )
+        self.assertIn(
+            "char_xxlarge_focal_hep_temporal_clipped_objective_gate_seed2",
+            evidence_cell,
+        )
+        self.assertIn(
+            "Xxlarge focal seed2 objective-gate comparison status:",
+            evidence_cell,
+        )
+        self.assertIn(
+            "Xxlarge focal seed2 objective-gate artifact check:",
             evidence_cell,
         )
         self.assertIn("support_stress_preset'] is False", evidence_cell)
