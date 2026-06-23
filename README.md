@@ -1375,6 +1375,34 @@ the better residual objective at both promoted scales: char supervised best HEP
 CE `3.14853334` beats temporal-consistency `3.15985703`, and tokenized
 supervised alpha-0 CE `3.48037004` beats temporal-consistency `3.59536052`.
 
+After the post-support-width temporal-consistency retest stops, define the next
+non-CE-adjacent residual-learning gate under the promoted supervised CE,
+temporal-clipped HEP, and top-k `2` support defaults:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report post-support-width-residual-learning-gate \
+  --out results/reports/post_support_width_residual_learning_gate
+```
+
+The report writes `decision_report.json` and `decision_report.md`. It fails
+closed unless the support-width promotion report passes with selected top-k `2`
+and the focused larger-char/tokenized config matrix keeps supervised CE,
+temporal-clipped HEP, `support_stress_preset: false`, and `top_k: 2` fixed.
+When it passes, run its recorded local residual-capacity comparison:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_larger_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_larger_capacity_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/token_larger_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/token_larger_capacity_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/post_support_width_capacity_larger_token_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/post_support_width_capacity_larger_token_objective_gate \
+  --out results/comparisons/post_support_width_capacity_larger_token_objective_gate/artifact_check_local.json
+```
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 

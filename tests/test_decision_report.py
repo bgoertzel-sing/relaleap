@@ -34,6 +34,7 @@ from relaleap.experiments.decision_report import (
     SATISFY_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE,
     DEFINE_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
     SATISFY_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
+    DEFINE_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -60,6 +61,7 @@ from relaleap.experiments.decision_report import (
     write_residual_support_width_repeat_decision_report,
     write_residual_support_width_promotion_gate_report,
     write_residual_support_width_promotion_gate_satisfaction_report,
+    write_post_support_width_residual_learning_gate_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -2742,6 +2744,78 @@ class ResidualSupportWidthPromotionGateSatisfactionReportTest(unittest.TestCase)
             )
 
 
+class PostSupportWidthResidualLearningGateReportTest(unittest.TestCase):
+    def test_promoted_top_k2_capacity_matrix_defines_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            promotion_report = _write_support_width_promotion_satisfaction(
+                tmp_path,
+                status="pass",
+                decision=SATISFY_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
+                selected_top_k=2,
+            )
+            configs = _write_post_support_width_capacity_configs(tmp_path)
+
+            report = write_post_support_width_residual_learning_gate_report(
+                promotion_report,
+                configs,
+                tmp_path / "post_support_width_gate",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                DEFINE_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE,
+            )
+            self.assertEqual(
+                report["selected_next_direction"],
+                "residual_capacity_under_top_k2_validation",
+            )
+            self.assertEqual(report["default_support_width_top_k"], 2)
+            self.assertEqual(report["evidence"]["config_count"], 4)
+            self.assertEqual(report["evidence"]["failures"], [])
+            self.assertIn("relaleap.experiments.compare", report["commands"]["compare"])
+            self.assertTrue(
+                (tmp_path / "post_support_width_gate" / "decision_report.json").is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "post_support_width_gate" / "decision_report.md").is_file()
+            )
+
+    def test_top_k_drift_blocks_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            promotion_report = _write_support_width_promotion_satisfaction(
+                tmp_path,
+                status="pass",
+                decision=SATISFY_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
+                selected_top_k=2,
+            )
+            configs = _write_post_support_width_capacity_configs(
+                tmp_path,
+                baseline_top_k=1,
+            )
+
+            report = write_post_support_width_residual_learning_gate_report(
+                promotion_report,
+                configs,
+                tmp_path / "post_support_width_gate",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIsNone(report["selected_next_direction"])
+            self.assertIn(
+                {
+                    "field": "config.top_k",
+                    "expected": 2,
+                    "actual": 1,
+                    "path": str(configs[0]),
+                },
+                report["evidence"]["failures"],
+            )
+
+
 def _write_support_width_validation_comparison(
     comparison_dir: Path,
     *,
@@ -3167,6 +3241,122 @@ def _write_support_width_promotion_gate(
         encoding="utf-8",
     )
     return report_path
+
+
+def _write_support_width_promotion_satisfaction(
+    tmp_path: Path,
+    *,
+    status: str,
+    decision: str,
+    selected_top_k: int | None,
+) -> Path:
+    report_dir = tmp_path / "residual_support_width_promotion_gate_satisfaction"
+    report_dir.mkdir(parents=True)
+    report_path = report_dir / "decision_report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "status": status,
+                "decision": decision,
+                "selected_support_width_top_k": selected_top_k,
+                "promotion_gate_satisfied": status == "pass",
+                "promote_support_width_default": status == "pass",
+                "evidence": {
+                    "failures": [],
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return report_path
+
+
+def _write_post_support_width_capacity_configs(
+    tmp_path: Path,
+    *,
+    baseline_top_k: int = 2,
+) -> list[Path]:
+    specs = [
+        (
+            "char_larger.yaml",
+            "char_larger_hep_temporal_clipped_objective_gate",
+            "tiny_shakespeare_char",
+            128,
+            24,
+            baseline_top_k,
+        ),
+        (
+            "char_larger_capacity.yaml",
+            "char_larger_capacity_hep_temporal_clipped_objective_gate",
+            "tiny_shakespeare_char",
+            128,
+            48,
+            2,
+        ),
+        (
+            "token_larger.yaml",
+            "token_larger_hep_temporal_clipped_objective_gate",
+            "tiny_shakespeare_word",
+            64,
+            24,
+            baseline_top_k,
+        ),
+        (
+            "token_larger_capacity.yaml",
+            "token_larger_capacity_hep_temporal_clipped_objective_gate",
+            "tiny_shakespeare_word",
+            64,
+            48,
+            2,
+        ),
+    ]
+    paths = []
+    for filename, experiment_id, dataset, seq_len, num_columns, top_k in specs:
+        path = tmp_path / filename
+        path.write_text(
+            f"""run:
+  experiment_id: {experiment_id}
+  seed: 1
+  max_steps: 50
+
+data:
+  dataset: {dataset}
+  seq_len: {seq_len}
+
+training:
+  residual_objective: supervised_ce
+
+model:
+  base:
+    layers: 2
+    hidden_dim: 96
+  columns:
+    num_columns: {num_columns}
+    atoms_per_column: 4
+    top_k: {top_k}
+    insertion_sites: 1
+    support_stress: true
+    support_stress_preset: false
+
+inference:
+  pc_steps: 4
+  hep_alpha: 0.0
+  hep_alpha_sweep: "0.0,0.25,0.5,1.0"
+  hep_update_clip_norm: 0.01
+  hep_settling_objective: temporal_consistency_gradient
+
+outputs:
+  require_summary_json: true
+  require_metrics_csv: true
+  require_notes_md: true
+""",
+            encoding="utf-8",
+        )
+        paths.append(path)
+    return paths
 
 
 def _write_support_width_validation_configs_with_seed(

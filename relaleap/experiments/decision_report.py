@@ -410,6 +410,19 @@ DEFAULT_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE_SATISFACTION_ARTIFACT_CHECKS = (
 DEFAULT_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE_SATISFACTION_OUT_DIR = Path(
     "results/reports/residual_support_width_promotion_gate_satisfaction"
 )
+DEFAULT_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE_REPORT = (
+    DEFAULT_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE_SATISFACTION_OUT_DIR
+    / "decision_report.json"
+)
+DEFAULT_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE_CONFIGS = (
+    Path("configs/char_larger_hep_temporal_clipped_objective_gate.yaml"),
+    Path("configs/char_larger_capacity_hep_temporal_clipped_objective_gate.yaml"),
+    Path("configs/token_larger_hep_temporal_clipped_objective_gate.yaml"),
+    Path("configs/token_larger_capacity_hep_temporal_clipped_objective_gate.yaml"),
+)
+DEFAULT_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE_OUT_DIR = Path(
+    "results/reports/post_support_width_residual_learning_gate"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -499,6 +512,9 @@ DEFINE_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE = (
 )
 SATISFY_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE = (
     "satisfy_residual_support_width_promotion_gate"
+)
+DEFINE_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE = (
+    "define_post_support_width_residual_learning_gate"
 )
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -5552,6 +5568,184 @@ def write_residual_support_width_promotion_gate_satisfaction_report(
     return report
 
 
+def write_post_support_width_residual_learning_gate_report(
+    support_width_promotion_report_path: Path = (
+        DEFAULT_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE_REPORT
+    ),
+    config_paths: list[Path] | tuple[Path, ...] = (
+        DEFAULT_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE_CONFIGS
+    ),
+    out_dir: Path = DEFAULT_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE_OUT_DIR,
+) -> dict[str, Any]:
+    """Define the next residual-learning gate after top-k 2 support promotion."""
+
+    failures: list[dict[str, Any]] = []
+    promotion_report = (
+        _read_json_object(support_width_promotion_report_path)
+        if Path(support_width_promotion_report_path).is_file()
+        else None
+    )
+    if promotion_report is None:
+        failures.append(
+            {
+                "field": "support_width_promotion_report",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(support_width_promotion_report_path),
+            }
+        )
+    else:
+        if promotion_report.get("status") != "pass":
+            failures.append(
+                {
+                    "field": "support_width_promotion_report.status",
+                    "expected": "pass",
+                    "actual": promotion_report.get("status"),
+                    "path": str(support_width_promotion_report_path),
+                }
+            )
+        if promotion_report.get("decision") != SATISFY_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE:
+            failures.append(
+                {
+                    "field": "support_width_promotion_report.decision",
+                    "expected": SATISFY_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
+                    "actual": promotion_report.get("decision"),
+                    "path": str(support_width_promotion_report_path),
+                }
+            )
+        if promotion_report.get("selected_support_width_top_k") != 2:
+            failures.append(
+                {
+                    "field": "support_width_promotion_report.selected_support_width_top_k",
+                    "expected": 2,
+                    "actual": promotion_report.get("selected_support_width_top_k"),
+                    "path": str(support_width_promotion_report_path),
+                }
+            )
+
+    config_entries = []
+    for path in config_paths:
+        path = Path(path)
+        if not path.is_file():
+            failures.append(
+                {
+                    "field": "config",
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(path),
+                }
+            )
+            config_entries.append({"path": str(path), "status": "missing"})
+            continue
+        entry = _post_support_width_capacity_config_entry(
+            path,
+            _read_config_object(path),
+        )
+        config_entries.append(entry)
+        failures.extend(entry["failures"])
+    failures.extend(_post_support_width_capacity_matrix_failures(config_entries))
+
+    status = "fail" if failures else "pass"
+    comparison_dir = (
+        "results/comparisons/"
+        "post_support_width_capacity_larger_token_objective_gate"
+    )
+    compare_command = " ".join(
+        [
+            "python -m relaleap.experiments.compare",
+            *[f"--config {path}" for path in config_paths],
+            f"--out {comparison_dir}",
+        ]
+    )
+    check_command = " ".join(
+        [
+            "python -m relaleap.experiments.check_artifacts",
+            f"--comparison-dir {comparison_dir}",
+            f"--out {comparison_dir}/artifact_check_local.json",
+        ]
+    )
+    report = {
+        "status": status,
+        "decision": (
+            DEFINE_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE
+            if status == "pass"
+            else INSUFFICIENT_EVIDENCE
+        ),
+        "selected_next_direction": (
+            "residual_capacity_under_top_k2_validation" if status == "pass" else None
+        ),
+        "promote_residual_learning_method": False,
+        "default_residual_objective": "supervised_ce",
+        "default_support_stress_mitigation": "temporal_clipped_hep",
+        "default_support_width_top_k": 2 if status == "pass" else None,
+        "policy": {
+            "requires_support_width_promotion_gate_satisfied": True,
+            "requires_promoted_top_k_2_configs": True,
+            "requires_supervised_ce_objective": True,
+            "requires_temporal_clipped_hep": True,
+            "requires_support_stress_preset_disabled": True,
+            "requires_larger_char_baseline_and_capacity_variant": True,
+            "requires_tokenized_baseline_and_capacity_variant": True,
+            "requires_capacity_num_columns_increase_only": True,
+            "allows_residual_objective_promotion": False,
+            "diagnostic_gate_only": True,
+        },
+        "evidence": {
+            "support_width_promotion_report_path": str(
+                support_width_promotion_report_path
+            ),
+            "support_width_promotion_status": None
+            if promotion_report is None
+            else promotion_report.get("status"),
+            "support_width_promotion_decision": None
+            if promotion_report is None
+            else promotion_report.get("decision"),
+            "selected_support_width_top_k": None
+            if promotion_report is None
+            else promotion_report.get("selected_support_width_top_k"),
+            "config_paths": [str(path) for path in config_paths],
+            "config_count": len(config_entries),
+            "configs": config_entries,
+            "failures": failures,
+        },
+        "commands": {
+            "compare": compare_command,
+            "check_artifacts": check_command,
+        },
+        "rationale": (
+            "Support width top-k 2 is now the promoted focused default, and the "
+            "CE-adjacent objective variants have stopped under their gates. The "
+            "next bounded non-CE-adjacent step should keep supervised CE, "
+            "temporal-clipped HEP, and top-k 2 fixed while testing whether "
+            "additional residual column capacity improves the larger-char and "
+            "tokenized objective-gate scales."
+            if status == "pass"
+            else (
+                "The post-support-width residual-learning gate cannot be defined "
+                "until the support-width promotion report passes and the focused "
+                "char/token config matrix preserves supervised CE, temporal "
+                "clipped HEP, support-stress settings, and top-k 2."
+            )
+        ),
+        "next_step": (
+            "run the local post-support-width residual capacity comparison and artifact check recorded in commands.compare and commands.check_artifacts"
+            if status == "pass"
+            else "repair the missing or drifting support-width promotion report/config matrix, then regenerate this gate report"
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_post_support_width_residual_learning_gate_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def _focal_residual_objective_entry(
     comparison_dir: Path,
     *,
@@ -6968,6 +7162,180 @@ def _residual_support_width_validation_config_entry(
             }
         )
     return entry
+
+
+def _post_support_width_capacity_config_entry(
+    path: Path,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    run = config.get("run", {}) if isinstance(config.get("run"), dict) else {}
+    data = config.get("data", {}) if isinstance(config.get("data"), dict) else {}
+    training = (
+        config.get("training", {}) if isinstance(config.get("training"), dict) else {}
+    )
+    model = config.get("model", {}) if isinstance(config.get("model"), dict) else {}
+    base = model.get("base", {}) if isinstance(model.get("base"), dict) else {}
+    columns = (
+        model.get("columns", {}) if isinstance(model.get("columns"), dict) else {}
+    )
+    inference = (
+        config.get("inference", {}) if isinstance(config.get("inference"), dict) else {}
+    )
+    outputs = (
+        config.get("outputs", {}) if isinstance(config.get("outputs"), dict) else {}
+    )
+    dataset = data.get("dataset")
+    entry = {
+        "path": str(path),
+        "experiment_id": run.get("experiment_id"),
+        "seed": run.get("seed"),
+        "max_steps": run.get("max_steps"),
+        "dataset": dataset,
+        "scale": "tokenized" if dataset == "tiny_shakespeare_word" else "larger_char",
+        "seq_len": data.get("seq_len"),
+        "residual_objective": training.get("residual_objective"),
+        "hidden_dim": base.get("hidden_dim"),
+        "num_columns": columns.get("num_columns"),
+        "atoms_per_column": columns.get("atoms_per_column"),
+        "top_k": columns.get("top_k"),
+        "support_stress": columns.get("support_stress"),
+        "support_stress_preset": columns.get("support_stress_preset"),
+        "hep_update_clip_norm": inference.get("hep_update_clip_norm"),
+        "hep_settling_objective": inference.get("hep_settling_objective"),
+        "hep_alpha_sweep": inference.get("hep_alpha_sweep"),
+        "pc_steps": inference.get("pc_steps"),
+        "require_summary_json": outputs.get("require_summary_json"),
+        "require_metrics_csv": outputs.get("require_metrics_csv"),
+        "require_notes_md": outputs.get("require_notes_md"),
+        "failures": [],
+    }
+    expected_by_scale = {
+        "tiny_shakespeare_char": {"seq_len": 128},
+        "tiny_shakespeare_word": {"seq_len": 64},
+    }
+    required_values = {
+        "seed": 1,
+        "max_steps": 50,
+        "residual_objective": "supervised_ce",
+        "hidden_dim": 96,
+        "atoms_per_column": 4,
+        "top_k": 2,
+        "support_stress": True,
+        "support_stress_preset": False,
+        "hep_update_clip_norm": 0.01,
+        "hep_settling_objective": "temporal_consistency_gradient",
+        "hep_alpha_sweep": "0.0,0.25,0.5,1.0",
+        "pc_steps": 4,
+        "require_summary_json": True,
+        "require_metrics_csv": True,
+        "require_notes_md": True,
+    }
+    for field, expected in required_values.items():
+        if entry.get(field) != expected:
+            entry["failures"].append(
+                {
+                    "field": f"config.{field}",
+                    "expected": expected,
+                    "actual": entry.get(field),
+                    "path": str(path),
+                }
+            )
+    if dataset not in expected_by_scale:
+        entry["failures"].append(
+            {
+                "field": "config.dataset",
+                "expected": sorted(expected_by_scale),
+                "actual": dataset,
+                "path": str(path),
+            }
+        )
+    else:
+        for field, expected in expected_by_scale[dataset].items():
+            if entry.get(field) != expected:
+                entry["failures"].append(
+                    {
+                        "field": f"config.{field}",
+                        "expected": expected,
+                        "actual": entry.get(field),
+                        "path": str(path),
+                    }
+                )
+    if not isinstance(entry["num_columns"], int) or entry["num_columns"] <= 0:
+        entry["failures"].append(
+            {
+                "field": "config.num_columns",
+                "expected": "positive integer",
+                "actual": entry["num_columns"],
+                "path": str(path),
+            }
+        )
+    return entry
+
+
+def _post_support_width_capacity_matrix_failures(
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    if len(entries) != 4:
+        return [
+            {
+                "field": "config_matrix.count",
+                "expected": 4,
+                "actual": len(entries),
+            }
+        ]
+    if any(entry.get("failures") for entry in entries):
+        return failures
+    by_scale: dict[str, list[dict[str, Any]]] = {"larger_char": [], "tokenized": []}
+    for entry in entries:
+        if entry.get("scale") in by_scale:
+            by_scale[entry["scale"]].append(entry)
+    for scale, scale_entries in by_scale.items():
+        if len(scale_entries) != 2:
+            failures.append(
+                {
+                    "field": f"config_matrix.{scale}",
+                    "expected": "baseline and capacity variant",
+                    "actual": len(scale_entries),
+                }
+            )
+            continue
+        ordered = sorted(scale_entries, key=lambda entry: entry["num_columns"])
+        baseline, capacity = ordered
+        for field in (
+            "dataset",
+            "seq_len",
+            "max_steps",
+            "residual_objective",
+            "hidden_dim",
+            "atoms_per_column",
+            "top_k",
+            "support_stress",
+            "support_stress_preset",
+            "hep_update_clip_norm",
+            "hep_settling_objective",
+            "hep_alpha_sweep",
+            "pc_steps",
+        ):
+            if capacity.get(field) != baseline.get(field):
+                failures.append(
+                    {
+                        "field": f"config_matrix.{scale}.{field}",
+                        "expected": baseline.get(field),
+                        "actual": capacity.get(field),
+                        "path": capacity.get("path"),
+                    }
+                )
+        if capacity.get("num_columns") <= baseline.get("num_columns"):
+            failures.append(
+                {
+                    "field": f"config_matrix.{scale}.num_columns",
+                    "expected": f"> {baseline.get('num_columns')}",
+                    "actual": capacity.get("num_columns"),
+                    "path": capacity.get("path"),
+                }
+            )
+    return failures
 
 
 def _support_width_validation_scale(experiment_id: Any, path: Path) -> str | None:
@@ -9524,6 +9892,63 @@ def _write_residual_support_width_promotion_gate_satisfaction_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_post_support_width_residual_learning_gate_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Post Support Width Residual Learning Gate",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        f"- Selected direction: `{report['selected_next_direction']}`",
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        f"- Default support-stress mitigation: `{report['default_support_stress_mitigation']}`",
+        f"- Default support width top-k: `{report['default_support_width_top_k']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Commands",
+        "",
+        "```bash",
+        report["commands"]["compare"],
+        report["commands"]["check_artifacts"],
+        "```",
+        "",
+        "## Config Matrix",
+        "",
+        "| Config | Scale | Columns | Top-k | Objective | HEP objective | Failures |",
+        "| --- | --- | ---: | ---: | --- | --- | ---: |",
+    ]
+    for entry in evidence["configs"]:
+        lines.append(
+            (
+                f"| `{entry.get('path')}` "
+                f"| {entry.get('scale') or ''} "
+                f"| {entry.get('num_columns') or ''} "
+                f"| {entry.get('top_k') or ''} "
+                f"| {entry.get('residual_objective') or ''} "
+                f"| {entry.get('hep_settling_objective') or ''} "
+                f"| {len(entry.get('failures') or [])} |"
+            )
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -9566,6 +9991,7 @@ def main() -> None:
             "residual-support-width-repeat-decision",
             "residual-support-width-promotion-gate",
             "residual-support-width-promotion-gate-satisfaction",
+            "post-support-width-residual-learning-gate",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -9902,6 +10328,16 @@ def main() -> None:
             if not args.artifact_check
             else (args.artifact_check,),
             max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "post-support-width-residual-learning-gate":
+        report = write_post_support_width_residual_learning_gate_report(
+            args.decision_report[0]
+            if args.decision_report
+            else DEFAULT_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE_REPORT,
+            tuple(args.decision_report[1:])
+            if args.decision_report and len(args.decision_report) > 1
+            else DEFAULT_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE_CONFIGS,
+            args.out or DEFAULT_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE_OUT_DIR,
         )
     else:
         report = write_pinned_support_decision_report(
