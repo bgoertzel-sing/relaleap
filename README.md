@@ -11,6 +11,17 @@ The first goal is not frontier-scale performance. The first goal is a reproducib
 - windowed settling and pinned support;
 - later causal-coding audits and simple symbolic heads.
 
+## Current Scientific Pivot
+
+As of 2026-06-23, the research loop should treat CE/perplexity as guardrails
+rather than the main success signal. The central question is now whether
+residual columns learn causally separable, reusable corrections with less
+interference than matched dense or sparse alternatives. The next experiments
+should prioritize support-width deconfounding, oracle-support regret,
+functional churn, causal intervention fingerprints, task-free continual
+learning, finite-update commutators, and dense-teacher residual distillation.
+See `docs/research_pivot_2026_06_23.md`.
+
 ## Initial Mission
 
 Validate a minimal experimental harness on char-level Tiny Shakespeare before moving to larger GPU experiments.
