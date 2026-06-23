@@ -1,0 +1,230 @@
+{
+  "artifact_invariants": {
+    "count": 12,
+    "failed_count": 0,
+    "passed": true
+  },
+  "artifacts": [
+    {
+      "exists": true,
+      "label": "comparison.summary.json",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "comparison.metrics.csv",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "comparison.notes.md",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_temporal_clipped_objective_gate_seed3.summary.json",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_hep_temporal_clipped_objective_gate_seed3/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_temporal_clipped_objective_gate_seed3.metrics.csv",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_hep_temporal_clipped_objective_gate_seed3/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_hep_temporal_clipped_objective_gate_seed3.notes.md",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_hep_temporal_clipped_objective_gate_seed3/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.summary.json",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.metrics.csv",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.notes.md",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.token_larger_hep_temporal_clipped_objective_gate_seed3.summary.json",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_hep_temporal_clipped_objective_gate_seed3/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.token_larger_hep_temporal_clipped_objective_gate_seed3.metrics.csv",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_hep_temporal_clipped_objective_gate_seed3/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.token_larger_hep_temporal_clipped_objective_gate_seed3.notes.md",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_hep_temporal_clipped_objective_gate_seed3/notes.md"
+    },
+    {
+      "exists": true,
+      "label": "run.token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.summary.json",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3/summary.json"
+    },
+    {
+      "exists": true,
+      "label": "run.token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.metrics.csv",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3/metrics.csv"
+    },
+    {
+      "exists": true,
+      "label": "run.token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.notes.md",
+      "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3/notes.md"
+    }
+  ],
+  "baseline_comparison": {
+    "mismatch_count": null,
+    "present": false,
+    "status": null
+  },
+  "baseline_reference_comparison": {
+    "mismatch_count": null,
+    "present": false,
+    "status": null
+  },
+  "comparison_dir": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3",
+  "failures": [],
+  "hep_alpha_acceptance": {
+    "accepted_alpha": {
+      "accepted": true,
+      "alpha": 1.0,
+      "alpha0_loss": 3.508025884628296,
+      "experiment_id": "char_larger_hep_temporal_clipped_objective_gate_seed3",
+      "loss": 3.5079963207244873,
+      "loss_improvement_from_alpha0": 2.956390380859375e-05,
+      "max_logit_delta_from_ordinary": 0.0007106959819793701
+    },
+    "status": "accepted"
+  },
+  "phase0_invariants": {
+    "count": 16,
+    "failed_count": 0,
+    "passed": true
+  },
+  "runs": [
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_temporal_clipped_objective_gate_seed3.summary.json",
+          "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_hep_temporal_clipped_objective_gate_seed3/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_temporal_clipped_objective_gate_seed3.metrics.csv",
+          "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_hep_temporal_clipped_objective_gate_seed3/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.char_larger_hep_temporal_clipped_objective_gate_seed3.notes.md",
+          "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_hep_temporal_clipped_objective_gate_seed3/notes.md"
+        }
+      ],
+      "experiment_id": "char_larger_hep_temporal_clipped_objective_gate_seed3",
+      "run_dir": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_hep_temporal_clipped_objective_gate_seed3",
+      "summary_failures": [],
+      "summary_status": "ok"
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.summary.json",
+          "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.metrics.csv",
+          "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.notes.md",
+          "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3/notes.md"
+        }
+      ],
+      "experiment_id": "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3",
+      "run_dir": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3",
+      "summary_failures": [],
+      "summary_status": "ok"
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.token_larger_hep_temporal_clipped_objective_gate_seed3.summary.json",
+          "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_hep_temporal_clipped_objective_gate_seed3/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.token_larger_hep_temporal_clipped_objective_gate_seed3.metrics.csv",
+          "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_hep_temporal_clipped_objective_gate_seed3/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.token_larger_hep_temporal_clipped_objective_gate_seed3.notes.md",
+          "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_hep_temporal_clipped_objective_gate_seed3/notes.md"
+        }
+      ],
+      "experiment_id": "token_larger_hep_temporal_clipped_objective_gate_seed3",
+      "run_dir": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_hep_temporal_clipped_objective_gate_seed3",
+      "summary_failures": [],
+      "summary_status": "ok"
+    },
+    {
+      "artifact_invariants": {
+        "metrics_csv": true,
+        "notes_md": true,
+        "summary_json": true
+      },
+      "artifacts": [
+        {
+          "exists": true,
+          "label": "run.token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.summary.json",
+          "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3/summary.json"
+        },
+        {
+          "exists": true,
+          "label": "run.token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.metrics.csv",
+          "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3/metrics.csv"
+        },
+        {
+          "exists": true,
+          "label": "run.token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.notes.md",
+          "path": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3/notes.md"
+        }
+      ],
+      "experiment_id": "token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3",
+      "run_dir": "results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate_seed3/runs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3",
+      "summary_failures": [],
+      "summary_status": "ok"
+    }
+  ],
+  "status": "pass",
+  "summary_status": "ok",
+  "verdict_status": "pass"
+}

@@ -133,8 +133,10 @@ the residual capacity/support diagnostic validation under
 `results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate`,
 the larger-char/tokenized support-width validation under
 `results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate`,
-and the seed-2 larger-char/tokenized support-width repeat under
-`results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2`.
+the seed-2 larger-char/tokenized support-width repeat under
+`results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2`,
+and the seed-3 larger-char/tokenized support-width promotion-gate evidence under
+`results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed3`.
 When that bundle is present in the rendered output, the helper extracts it
 under the local repo root so the normal after-the-fact checker can inspect the
 Colab artifact tree locally.
@@ -241,6 +243,21 @@ python -m relaleap.experiments.compare \
 python -m relaleap.experiments.check_artifacts \
   --comparison-dir results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2 \
   --out results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed2/artifact_check.json
+```
+
+The current promotion-gate bridge target also runs the seed-3 support-width
+comparison selected by `AUTOMATION_STATUS.md`:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_larger_hep_temporal_clipped_objective_gate_seed3.yaml \
+  --config configs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.yaml \
+  --config configs/token_larger_hep_temporal_clipped_objective_gate_seed3.yaml \
+  --config configs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.yaml \
+  --out results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed3
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed3 \
+  --out results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed3/artifact_check.json
 ```
 
 After extracting a completed guided clipped artifact bundle locally, write the
