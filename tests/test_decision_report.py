@@ -4397,7 +4397,13 @@ class ExhaustiveSupportAuditReportTest(unittest.TestCase):
                 ],
                 0.45,
             )
-            self.assertIn("fresh seed", report["next_step"])
+            self.assertEqual(
+                report["evidence"][
+                    "contextual_support_head_holdout_oracle_gap_recovery_fraction"
+                ],
+                0.7,
+            )
+            self.assertIn("contextual support-head", report["next_step"])
             self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
             self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
 
@@ -4482,6 +4488,15 @@ def _write_exhaustive_support_audit(audit_dir: Path) -> None:
                     "oracle_gap_recovery_fraction": 0.8,
                 },
             },
+            "contextual_router_support_head": {
+                "selector": "mlp_contextual_support_head_ce_minimizer",
+                "intervention": "per_token_predicted_support_indices",
+                "holdout": {
+                    "intervention_loss": 3.53,
+                    "intervention_minus_router_loss": -0.07,
+                    "oracle_gap_recovery_fraction": 0.7,
+                },
+            },
             "top_supports_by_synergy": [
                 {
                     "support": "0,1",
@@ -4504,6 +4519,9 @@ def _write_exhaustive_support_audit(audit_dir: Path) -> None:
             ),
             "router_support_intervention_csv": str(
                 audit_dir / "router_support_intervention.csv"
+            ),
+            "contextual_router_support_head_csv": str(
+                audit_dir / "contextual_router_support_head.csv"
             ),
             "notes_md": str(audit_dir / "notes.md"),
         },
@@ -4531,6 +4549,11 @@ def _write_exhaustive_support_audit(audit_dir: Path) -> None:
     (audit_dir / "router_support_intervention.csv").write_text(
         "split,intervention_loss,intervention_minus_router_loss,oracle_gap_recovery_fraction\n"
         "holdout_odd_positions,3.52,-0.08,0.8\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "contextual_router_support_head.csv").write_text(
+        "split,intervention_loss,intervention_minus_router_loss,oracle_gap_recovery_fraction\n"
+        "holdout_odd_positions,3.53,-0.07,0.7\n",
         encoding="utf-8",
     )
     (audit_dir / "notes.md").write_text("# audit\n", encoding="utf-8")

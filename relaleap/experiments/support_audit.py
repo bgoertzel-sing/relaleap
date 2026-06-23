@@ -193,9 +193,24 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
         train_mask=router_target["_train_mask"],
         router_token_losses=router_token_losses,
     )
+    contextual_head = _contextual_router_support_head(
+        base,
+        residual,
+        hidden,
+        targets,
+        vocab_size,
+        rows=pair_rows,
+        train_mask=router_target["_train_mask"],
+        router_token_losses=router_token_losses,
+        seed=seed,
+    )
     _write_router_support_intervention(
         out_dir / "router_support_intervention.csv",
         contextual_intervention["splits"],
+    )
+    _write_router_support_intervention(
+        out_dir / "contextual_router_support_head.csv",
+        contextual_head["splits"],
     )
     summary = {
         "status": "ok",
@@ -257,6 +272,7 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
             "contextual_router_support_intervention": contextual_intervention[
                 "summary"
             ],
+            "contextual_router_support_head": contextual_head["summary"],
             "support_audit": _residual_support_audit(base, residual, inputs),
             "residual_parameter_delta": _state_dict_delta(before_residual, residual),
         },
@@ -273,6 +289,9 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
             ),
             "router_support_intervention_csv": str(
                 out_dir / "router_support_intervention.csv"
+            ),
+            "contextual_router_support_head_csv": str(
+                out_dir / "contextual_router_support_head.csv"
             ),
             "notes_md": str(out_dir / "notes.md"),
         },
@@ -723,6 +742,81 @@ def _router_support_intervention(
     }
 
 
+def _contextual_router_support_head(
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    *,
+    rows: list[dict[str, Any]],
+    train_mask: Any,
+    router_token_losses: Any,
+    seed: int,
+    steps: int = 200,
+) -> dict[str, Any]:
+    """Train a contextual support head against fixed-batch support CE losses."""
+
+    import torch
+    import torch.nn as nn
+
+    torch.manual_seed(seed + 2027)
+    features = _contextual_router_features(hidden)
+    token_loss_matrix = torch.stack([row["_token_losses"] for row in rows], dim=1)
+    width = max(16, min(128, features.shape[-1]))
+    selector = nn.Sequential(
+        nn.LayerNorm(features.shape[-1]),
+        nn.Linear(features.shape[-1], width),
+        nn.GELU(),
+        nn.Linear(width, len(rows)),
+    ).to(features.device)
+    optimizer = torch.optim.AdamW(selector.parameters(), lr=0.01, weight_decay=1e-3)
+    temperature = 0.25
+    for _ in range(steps):
+        optimizer.zero_grad(set_to_none=True)
+        support_probs = torch.softmax(
+            selector(features[train_mask]) / temperature,
+            dim=-1,
+        )
+        expected_loss = (
+            support_probs * token_loss_matrix[train_mask].detach()
+        ).sum(dim=-1).mean()
+        expected_loss.backward()
+        optimizer.step()
+
+    with torch.no_grad():
+        predicted_indices = selector(features).argmax(dim=-1).detach()
+    intervention = _router_support_intervention(
+        base,
+        residual,
+        hidden,
+        targets,
+        vocab_size,
+        rows=rows,
+        predicted_indices=predicted_indices,
+        train_mask=train_mask,
+        router_token_losses=router_token_losses,
+    )
+    selected_counts: dict[str, int] = {}
+    for index in predicted_indices.detach().cpu().tolist():
+        key = str(rows[int(index)]["support_key"])
+        selected_counts[key] = selected_counts.get(key, 0) + 1
+    intervention["summary"] = {
+        **intervention["summary"],
+        "selector": "mlp_contextual_support_head_ce_minimizer",
+        "training_steps": steps,
+        "training_objective": "expected_fixed_batch_support_ce",
+        "temperature": temperature,
+        "hidden_width": width,
+        "train_split": "even flattened token positions",
+        "holdout_split": "odd flattened token positions",
+        "selected_support_counts": dict(
+            sorted(selected_counts.items(), key=lambda item: (-item[1], item[0]))
+        ),
+    }
+    return intervention
+
+
 def _router_support_intervention_split(
     split: str,
     mask: Any,
@@ -980,6 +1074,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
                 f"`{audit['router_oracle_target_contextual_diagnostic']['holdout']['oracle_gap_recovery_fraction']}`",
                 "- Contextual support-intervention holdout gap recovery: "
                 f"`{audit['contextual_router_support_intervention']['holdout']['oracle_gap_recovery_fraction']}`",
+                "- Contextual support-head holdout gap recovery: "
+                f"`{audit['contextual_router_support_head']['holdout']['oracle_gap_recovery_fraction']}`",
                 "",
             ]
         ),

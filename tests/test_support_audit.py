@@ -77,6 +77,11 @@ outputs:
                 "holdout",
                 audit["contextual_router_support_intervention"],
             )
+            self.assertIn("contextual_router_support_head", audit)
+            self.assertIn(
+                "holdout",
+                audit["contextual_router_support_head"],
+            )
             self.assertEqual(audit["support_audit"]["top_k"], 2)
 
             saved = json.loads((tmp_path / "audit" / "summary.json").read_text())
@@ -102,6 +107,9 @@ outputs:
             )
             self.assertTrue(
                 (tmp_path / "audit" / "router_support_intervention.csv").is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "audit" / "contextual_router_support_head.csv").is_file()
             )
             self.assertTrue((tmp_path / "audit" / "notes.md").is_file())
 
@@ -151,6 +159,15 @@ outputs:
             self.assertEqual(len(intervention_rows), 3)
             self.assertIn("intervention_loss", intervention_rows[0])
             self.assertIn("intervention_minus_router_loss", intervention_rows[0])
+
+            with (tmp_path / "audit" / "contextual_router_support_head.csv").open(
+                newline="",
+                encoding="utf-8",
+            ) as handle:
+                support_head_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(support_head_rows), 3)
+            self.assertIn("intervention_loss", support_head_rows[0])
+            self.assertIn("intervention_minus_router_loss", support_head_rows[0])
 
     def test_support_audit_requires_top_k_two(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
