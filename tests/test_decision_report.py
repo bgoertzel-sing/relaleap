@@ -35,6 +35,8 @@ from relaleap.experiments.decision_report import (
     DEFINE_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
     SATISFY_RESIDUAL_SUPPORT_WIDTH_PROMOTION_GATE,
     DEFINE_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE,
+    DEFINE_RESIDUAL_CAPACITY_REPEAT_GATE,
+    STOP_RESIDUAL_CAPACITY_VALIDATION,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -62,6 +64,7 @@ from relaleap.experiments.decision_report import (
     write_residual_support_width_promotion_gate_report,
     write_residual_support_width_promotion_gate_satisfaction_report,
     write_post_support_width_residual_learning_gate_report,
+    write_post_support_width_residual_capacity_decision_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -2816,6 +2819,82 @@ class PostSupportWidthResidualLearningGateReportTest(unittest.TestCase):
             )
 
 
+class PostSupportWidthResidualCapacityDecisionReportTest(unittest.TestCase):
+    def test_mixed_capacity_evidence_stops_capacity_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            local_dir = tmp_path / "local_capacity"
+            colab_dir = tmp_path / "colab_capacity"
+            _write_post_support_width_capacity_comparison(
+                local_dir,
+                char_capacity_delta=-0.03,
+                token_capacity_delta=0.01,
+            )
+            _write_post_support_width_capacity_comparison(
+                colab_dir,
+                char_capacity_delta=0.01,
+                token_capacity_delta=-0.02,
+            )
+
+            report = write_post_support_width_residual_capacity_decision_report(
+                (local_dir, colab_dir),
+                tmp_path / "capacity_decision",
+                artifact_check_paths=(
+                    local_dir / "artifact_check_local.json",
+                    colab_dir / "artifact_check_local.json",
+                ),
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["decision"], STOP_RESIDUAL_CAPACITY_VALIDATION)
+            self.assertEqual(
+                report["selected_next_direction"],
+                "support_width_deconfounding_matrix_and_exhaustive_support_audit",
+            )
+            self.assertFalse(report["promote_residual_capacity_default"])
+            self.assertEqual(report["evidence"]["failures"], [])
+            self.assertEqual(len(report["evidence"]["capacity_failures"]), 2)
+            self.assertTrue(
+                (tmp_path / "capacity_decision" / "decision_report.json").is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "capacity_decision" / "decision_report.md").is_file()
+            )
+
+    def test_consistent_capacity_wins_define_one_repeat_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            local_dir = tmp_path / "local_capacity"
+            colab_dir = tmp_path / "colab_capacity"
+            _write_post_support_width_capacity_comparison(
+                local_dir,
+                char_capacity_delta=-0.03,
+                token_capacity_delta=-0.01,
+            )
+            _write_post_support_width_capacity_comparison(
+                colab_dir,
+                char_capacity_delta=-0.02,
+                token_capacity_delta=-0.02,
+            )
+
+            report = write_post_support_width_residual_capacity_decision_report(
+                (local_dir, colab_dir),
+                tmp_path / "capacity_decision",
+                artifact_check_paths=(
+                    local_dir / "artifact_check_local.json",
+                    colab_dir / "artifact_check_local.json",
+                ),
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["decision"], DEFINE_RESIDUAL_CAPACITY_REPEAT_GATE)
+            self.assertEqual(
+                report["selected_next_direction"],
+                "residual_capacity_seed2_repeat",
+            )
+            self.assertEqual(report["evidence"]["capacity_failures"], [])
+
+
 def _write_support_width_validation_comparison(
     comparison_dir: Path,
     *,
@@ -2859,6 +2938,76 @@ def _write_support_width_validation_comparison(
             alpha0_loss=3.53,
             final_loss=3.53,
             best_loss=3.531,
+        ),
+    ]
+    (comparison_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "verdict": {
+                    "status": "pass",
+                    "phase0_invariants": {"passed": True},
+                    "artifact_invariants": {"passed": True},
+                },
+                "runs": runs,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (comparison_dir / "artifact_check_local.json").write_text(
+        json.dumps({"status": "pass"}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_post_support_width_capacity_comparison(
+    comparison_dir: Path,
+    *,
+    char_capacity_delta: float,
+    token_capacity_delta: float,
+) -> None:
+    comparison_dir.mkdir(parents=True)
+    char_baseline_loss = 3.10
+    token_baseline_loss = 3.55
+    runs = [
+        _support_width_validation_run(
+            "char_larger_hep_temporal_clipped_objective_gate",
+            "configs/char_larger_hep_temporal_clipped_objective_gate.yaml",
+            dataset="tiny_shakespeare_char",
+            top_k=2,
+            alpha0_loss=char_baseline_loss,
+            final_loss=char_baseline_loss,
+            best_loss=char_baseline_loss,
+        ),
+        _support_width_validation_run(
+            "char_larger_capacity_hep_temporal_clipped_objective_gate",
+            "configs/char_larger_capacity_hep_temporal_clipped_objective_gate.yaml",
+            dataset="tiny_shakespeare_char",
+            top_k=2,
+            alpha0_loss=char_baseline_loss + char_capacity_delta,
+            final_loss=char_baseline_loss + char_capacity_delta,
+            best_loss=char_baseline_loss + char_capacity_delta,
+        ),
+        _support_width_validation_run(
+            "token_larger_hep_temporal_clipped_objective_gate",
+            "configs/token_larger_hep_temporal_clipped_objective_gate.yaml",
+            dataset="tiny_shakespeare_word",
+            top_k=2,
+            alpha0_loss=token_baseline_loss,
+            final_loss=token_baseline_loss,
+            best_loss=token_baseline_loss,
+        ),
+        _support_width_validation_run(
+            "token_larger_capacity_hep_temporal_clipped_objective_gate",
+            "configs/token_larger_capacity_hep_temporal_clipped_objective_gate.yaml",
+            dataset="tiny_shakespeare_word",
+            top_k=2,
+            alpha0_loss=token_baseline_loss + token_capacity_delta,
+            final_loss=token_baseline_loss + token_capacity_delta,
+            best_loss=token_baseline_loss + token_capacity_delta,
         ),
     ]
     (comparison_dir / "summary.json").write_text(
