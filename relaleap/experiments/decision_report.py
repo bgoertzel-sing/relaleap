@@ -320,6 +320,19 @@ DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COLAB_ARTIFACT_CHECKS = (
 DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COLAB_DECISION_OUT_DIR = Path(
     "results/reports/residual_capacity_support_diagnostic_colab_decision"
 )
+DEFAULT_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE_REPORT = (
+    DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COLAB_DECISION_OUT_DIR
+    / "decision_report.json"
+)
+DEFAULT_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE_CONFIGS = (
+    Path("configs/char_larger_hep_temporal_clipped_objective_gate.yaml"),
+    Path("configs/char_larger_support_wide_hep_temporal_clipped_objective_gate.yaml"),
+    Path("configs/token_larger_hep_temporal_clipped_objective_gate.yaml"),
+    Path("configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml"),
+)
+DEFAULT_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE_OUT_DIR = Path(
+    "results/reports/residual_support_width_validation_gate"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -391,6 +404,9 @@ RUN_COLAB_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC = (
 )
 CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION = (
     "continue_residual_capacity_support_validation"
+)
+DEFINE_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE = (
+    "define_residual_support_width_validation_gate"
 )
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -4394,6 +4410,167 @@ def write_residual_capacity_support_diagnostic_colab_decision_report(
     return report
 
 
+def write_residual_support_width_validation_gate_report(
+    colab_decision_report_path: Path = DEFAULT_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE_REPORT,
+    config_paths: list[Path] | tuple[Path, ...] = (
+        DEFAULT_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE_CONFIGS
+    ),
+    out_dir: Path = DEFAULT_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE_OUT_DIR,
+) -> dict[str, Any]:
+    """Define the broader support-width validation gate."""
+
+    failures = []
+    colab_decision = (
+        _read_json_object(colab_decision_report_path)
+        if Path(colab_decision_report_path).is_file()
+        else None
+    )
+    if colab_decision is None:
+        failures.append(
+            {
+                "field": "colab_decision_report",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(colab_decision_report_path),
+            }
+        )
+    else:
+        if colab_decision.get("status") != "pass":
+            failures.append(
+                {
+                    "field": "colab_decision_report.status",
+                    "expected": "pass",
+                    "actual": colab_decision.get("status"),
+                    "path": str(colab_decision_report_path),
+                }
+            )
+        if (
+            colab_decision.get("decision")
+            != CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION
+        ):
+            failures.append(
+                {
+                    "field": "colab_decision_report.decision",
+                    "expected": CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION,
+                    "actual": colab_decision.get("decision"),
+                    "path": str(colab_decision_report_path),
+                }
+            )
+
+    config_entries = []
+    for path in config_paths:
+        path = Path(path)
+        if not path.is_file():
+            failures.append(
+                {
+                    "field": "config",
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(path),
+                }
+            )
+            config_entries.append({"path": str(path), "status": "missing"})
+            continue
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
+            config = {}
+        entry = _residual_support_width_validation_config_entry(path, config)
+        config_entries.append(entry)
+        failures.extend(entry["failures"])
+    failures.extend(_residual_support_width_validation_matrix_failures(config_entries))
+
+    status = "fail" if failures else "pass"
+    comparison_dir = (
+        "results/comparisons/"
+        "support_width_larger_char_token_temporal_clipped_objective_gate"
+    )
+    compare_command = " ".join(
+        [
+            "python -m relaleap.experiments.compare",
+            *[f"--config {path}" for path in config_paths],
+            f"--out {comparison_dir}",
+        ]
+    )
+    check_command = " ".join(
+        [
+            "python -m relaleap.experiments.check_artifacts",
+            f"--comparison-dir {comparison_dir}",
+            f"--out {comparison_dir}/artifact_check_local.json",
+        ]
+    )
+    report = {
+        "status": status,
+        "decision": (
+            DEFINE_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE
+            if status == "pass"
+            else INSUFFICIENT_EVIDENCE
+        ),
+        "selected_next_direction": (
+            "support_width_larger_char_token_validation" if status == "pass" else None
+        ),
+        "promote_residual_learning_method": False,
+        "default_residual_objective": "supervised_ce",
+        "policy": {
+            "requires_passing_colab_capacity_support_decision": True,
+            "requires_supervised_ce_objective": True,
+            "requires_temporal_clipped_hep": True,
+            "requires_support_stress_preset_disabled": True,
+            "requires_larger_char_baseline_and_support_width": True,
+            "requires_tokenized_baseline_and_support_width": True,
+            "requires_support_width_top_k_increase_only": True,
+            "allows_residual_objective_promotion": False,
+            "validation_gate_only": True,
+        },
+        "evidence": {
+            "colab_decision_report_path": str(colab_decision_report_path),
+            "colab_decision_report_status": None
+            if colab_decision is None
+            else colab_decision.get("status"),
+            "colab_decision_report_decision": None
+            if colab_decision is None
+            else colab_decision.get("decision"),
+            "config_paths": [str(path) for path in config_paths],
+            "config_count": len(config_entries),
+            "configs": config_entries,
+            "failures": failures,
+        },
+        "commands": {
+            "compare": compare_command,
+            "check_artifacts": check_command,
+        },
+        "rationale": (
+            "The paired local/Colab residual capacity/support diagnostic selected "
+            "widened support as the best variant. This gate broadens that result "
+            "without changing the supervised CE residual objective or promoted "
+            "temporal-clipped HEP path by comparing baseline top-k support "
+            "against widened support at larger char and tokenized scales."
+            if status == "pass"
+            else (
+                "The support-width validation gate cannot be defined until the "
+                "paired local/Colab capacity-support diagnostic passes and the "
+                "larger char/tokenized config matrix preserves the promoted "
+                "temporal-clipped supervised CE harness."
+            )
+        ),
+        "next_step": (
+            "run the local support-width validation comparison and artifact check recorded in commands.compare and commands.check_artifacts"
+            if status == "pass"
+            else "repair the missing or drifting Colab diagnostic decision/config matrix, then regenerate this gate report"
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_residual_support_width_validation_gate_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def _focal_residual_objective_entry(
     comparison_dir: Path,
     *,
@@ -5688,6 +5865,197 @@ def _residual_capacity_support_matrix_failures(
                     "expected": baseline_top_k,
                     "actual": top_k,
                     "path": entry.get("path"),
+                }
+            )
+    return failures
+
+
+def _residual_support_width_validation_config_entry(
+    path: Path,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    run = config.get("run") if isinstance(config.get("run"), dict) else {}
+    data = config.get("data") if isinstance(config.get("data"), dict) else {}
+    training = (
+        config.get("training") if isinstance(config.get("training"), dict) else {}
+    )
+    model = config.get("model") if isinstance(config.get("model"), dict) else {}
+    base = model.get("base") if isinstance(model.get("base"), dict) else {}
+    columns = (
+        model.get("columns") if isinstance(model.get("columns"), dict) else {}
+    )
+    inference = (
+        config.get("inference") if isinstance(config.get("inference"), dict) else {}
+    )
+    outputs = config.get("outputs") if isinstance(config.get("outputs"), dict) else {}
+    entry = {
+        "path": str(path),
+        "experiment_id": run.get("experiment_id"),
+        "dataset": data.get("dataset"),
+        "seq_len": data.get("seq_len"),
+        "max_steps": run.get("max_steps"),
+        "residual_objective": training.get("residual_objective"),
+        "hidden_dim": base.get("hidden_dim"),
+        "num_columns": columns.get("num_columns"),
+        "atoms_per_column": columns.get("atoms_per_column"),
+        "top_k": columns.get("top_k"),
+        "support_stress": columns.get("support_stress"),
+        "support_stress_preset": columns.get("support_stress_preset"),
+        "pc_steps": inference.get("pc_steps"),
+        "hep_update_clip_norm": inference.get("hep_update_clip_norm"),
+        "hep_settling_objective": inference.get("hep_settling_objective"),
+        "hep_alpha_sweep": inference.get("hep_alpha_sweep"),
+        "require_summary_json": outputs.get("require_summary_json"),
+        "require_metrics_csv": outputs.get("require_metrics_csv"),
+        "require_notes_md": outputs.get("require_notes_md"),
+        "scale": _support_width_validation_scale(run.get("experiment_id"), path),
+        "support_width": _support_width_validation_is_wide(
+            run.get("experiment_id"),
+            path,
+        ),
+        "failures": [],
+    }
+    required_values = {
+        "max_steps": 50,
+        "residual_objective": "supervised_ce",
+        "hidden_dim": 96,
+        "num_columns": 24,
+        "atoms_per_column": 4,
+        "support_stress": True,
+        "support_stress_preset": False,
+        "pc_steps": 4,
+        "hep_update_clip_norm": 0.01,
+        "hep_settling_objective": "temporal_consistency_gradient",
+        "hep_alpha_sweep": "0.0,0.25,0.5,1.0",
+        "require_summary_json": True,
+        "require_metrics_csv": True,
+        "require_notes_md": True,
+    }
+    for field, expected in required_values.items():
+        if entry.get(field) != expected:
+            entry["failures"].append(
+                {
+                    "field": f"config.{field}",
+                    "expected": expected,
+                    "actual": entry.get(field),
+                    "path": str(path),
+                }
+            )
+    expected_by_scale = {
+        "larger_char": {"dataset": "tiny_shakespeare_char", "seq_len": 128},
+        "tokenized": {"dataset": "tiny_shakespeare_word", "seq_len": 64},
+    }
+    scale = entry.get("scale")
+    if scale not in expected_by_scale:
+        entry["failures"].append(
+            {
+                "field": "config.scale",
+                "expected": "larger_char or tokenized",
+                "actual": scale,
+                "path": str(path),
+            }
+        )
+    else:
+        for field, expected in expected_by_scale[scale].items():
+            if entry.get(field) != expected:
+                entry["failures"].append(
+                    {
+                        "field": f"config.{field}",
+                        "expected": expected,
+                        "actual": entry.get(field),
+                        "path": str(path),
+                    }
+                )
+    if entry.get("support_width") is True and entry.get("top_k") != 2:
+        entry["failures"].append(
+            {
+                "field": "config.top_k",
+                "expected": 2,
+                "actual": entry.get("top_k"),
+                "path": str(path),
+            }
+        )
+    if entry.get("support_width") is False and entry.get("top_k") != 1:
+        entry["failures"].append(
+            {
+                "field": "config.top_k",
+                "expected": 1,
+                "actual": entry.get("top_k"),
+                "path": str(path),
+            }
+        )
+    return entry
+
+
+def _support_width_validation_scale(experiment_id: Any, path: Path) -> str | None:
+    text = " ".join((str(experiment_id or ""), str(path)))
+    if "char_larger" in text:
+        return "larger_char"
+    if "token_larger" in text:
+        return "tokenized"
+    return None
+
+
+def _support_width_validation_is_wide(experiment_id: Any, path: Path) -> bool:
+    text = " ".join((str(experiment_id or ""), str(path)))
+    return "support_wide" in text
+
+
+def _residual_support_width_validation_matrix_failures(
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    if len(entries) != 4:
+        return [
+            {
+                "field": "config_matrix.count",
+                "expected": 4,
+                "actual": len(entries),
+            }
+        ]
+    if any(entry.get("failures") for entry in entries):
+        return failures
+    by_key = {
+        (entry.get("scale"), entry.get("support_width")): entry for entry in entries
+    }
+    for scale in ("larger_char", "tokenized"):
+        baseline = by_key.get((scale, False))
+        support = by_key.get((scale, True))
+        if baseline is None:
+            failures.append(
+                {
+                    "field": "config_matrix.scale_baseline",
+                    "expected": f"{scale} baseline",
+                    "actual": "missing",
+                }
+            )
+            continue
+        if support is None:
+            failures.append(
+                {
+                    "field": "config_matrix.scale_support_width",
+                    "expected": f"{scale} support-width variant",
+                    "actual": "missing",
+                }
+            )
+            continue
+        for field in ("dataset", "seq_len", "max_steps", "hidden_dim", "num_columns"):
+            if support.get(field) != baseline.get(field):
+                failures.append(
+                    {
+                        "field": f"config_matrix.{scale}.{field}",
+                        "expected": baseline.get(field),
+                        "actual": support.get(field),
+                        "path": support.get("path"),
+                    }
+                )
+        if not support.get("top_k") > baseline.get("top_k"):
+            failures.append(
+                {
+                    "field": f"config_matrix.{scale}.top_k",
+                    "expected": f"> {baseline.get('top_k')}",
+                    "actual": support.get("top_k"),
+                    "path": support.get("path"),
                 }
             )
     return failures
@@ -7370,6 +7738,63 @@ def _write_residual_capacity_support_diagnostic_colab_decision_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_residual_support_width_validation_gate_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Residual Support Width Validation Gate",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        f"- Selected direction: `{report['selected_next_direction']}`",
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        f"- Config count: `{evidence['config_count']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Commands",
+        "",
+        "```bash",
+        report["commands"]["compare"],
+        report["commands"]["check_artifacts"],
+        "```",
+        "",
+        "## Config Matrix",
+        "",
+        "| Scale | Support-wide | Config | Dataset | Seq len | Columns | Top-k | Failures |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: |",
+    ]
+    for entry in evidence["configs"]:
+        lines.append(
+            (
+                f"| {entry.get('scale') or ''} "
+                f"| `{entry.get('support_width')}` "
+                f"| `{entry.get('path')}` "
+                f"| {entry.get('dataset') or ''} "
+                f"| {entry.get('seq_len') or ''} "
+                f"| {entry.get('num_columns') or ''} "
+                f"| {entry.get('top_k') or ''} "
+                f"| {len(entry.get('failures') or [])} |"
+            )
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _write_focal_promotion_gate_markdown(
     path: Path,
     report: dict[str, Any],
@@ -7549,6 +7974,7 @@ def main() -> None:
             "residual-capacity-support-diagnostic-gate",
             "residual-capacity-support-diagnostic-decision",
             "residual-capacity-support-diagnostic-colab-decision",
+            "residual-support-width-validation-gate",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -7818,6 +8244,16 @@ def main() -> None:
             if not args.artifact_check
             else (args.artifact_check,),
             max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "residual-support-width-validation-gate":
+        report = write_residual_support_width_validation_gate_report(
+            args.decision_report[0]
+            if args.decision_report
+            else DEFAULT_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE_REPORT,
+            tuple(args.decision_report[1:])
+            if args.decision_report and len(args.decision_report) > 1
+            else DEFAULT_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE_CONFIGS,
+            args.out or DEFAULT_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE_OUT_DIR,
         )
     else:
         report = write_pinned_support_decision_report(

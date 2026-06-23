@@ -1295,6 +1295,33 @@ python -m relaleap.experiments.decision_report \
 The paired report fails closed unless both local and Colab artifact-backed
 comparisons pass and both select widened support as the best variant. A failing
 paired report is treated as a divergence diagnosis input, not a promotion gate.
+When it passes, define the broader support-width validation gate without
+rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report residual-support-width-validation-gate \
+  --out results/reports/residual_support_width_validation_gate
+```
+
+The report writes `decision_report.json` and `decision_report.md`. It fails
+closed unless the paired local/Colab capacity-support diagnostic report passes
+and the larger char/tokenized config matrix keeps supervised CE, promoted
+temporal-clipped HEP, column capacity, and support-stress settings fixed while
+only widening top-k support from `1` to `2` within each scale. When the gate
+passes, run its recorded local comparison and artifact check:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_larger_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_larger_support_wide_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/token_larger_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate \
+  --out results/comparisons/support_width_larger_char_token_temporal_clipped_objective_gate/artifact_check_local.json
+```
 
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:

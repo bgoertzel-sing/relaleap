@@ -28,6 +28,7 @@ from relaleap.experiments.decision_report import (
     DEFINE_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE,
     RUN_COLAB_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC,
     CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION,
+    DEFINE_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -48,6 +49,7 @@ from relaleap.experiments.decision_report import (
     write_residual_capacity_support_diagnostic_gate_report,
     write_residual_capacity_support_diagnostic_decision_report,
     write_residual_capacity_support_diagnostic_colab_decision_report,
+    write_residual_support_width_validation_gate_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -2241,6 +2243,78 @@ class ResidualCapacitySupportDiagnosticDecisionReportTest(unittest.TestCase):
             )
 
 
+class ResidualSupportWidthValidationGateReportTest(unittest.TestCase):
+    def test_valid_larger_char_token_matrix_defines_validation_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            colab_decision = _write_capacity_support_colab_decision(
+                tmp_path,
+                status="pass",
+                decision=CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION,
+            )
+            configs = _write_support_width_validation_configs(tmp_path)
+
+            report = write_residual_support_width_validation_gate_report(
+                colab_decision,
+                configs,
+                tmp_path / "support_width_gate",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                DEFINE_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE,
+            )
+            self.assertEqual(
+                report["selected_next_direction"],
+                "support_width_larger_char_token_validation",
+            )
+            self.assertFalse(report["promote_residual_learning_method"])
+            self.assertEqual(report["default_residual_objective"], "supervised_ce")
+            self.assertEqual(report["evidence"]["config_count"], 4)
+            self.assertEqual(report["evidence"]["failures"], [])
+            self.assertIn("relaleap.experiments.compare", report["commands"]["compare"])
+            self.assertIn(
+                "relaleap.experiments.check_artifacts",
+                report["commands"]["check_artifacts"],
+            )
+            self.assertTrue(
+                (tmp_path / "support_width_gate" / "decision_report.json").is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "support_width_gate" / "decision_report.md").is_file()
+            )
+
+    def test_failed_colab_decision_blocks_validation_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            colab_decision = _write_capacity_support_colab_decision(
+                tmp_path,
+                status="fail",
+                decision=INSUFFICIENT_EVIDENCE,
+            )
+            configs = _write_support_width_validation_configs(tmp_path)
+
+            report = write_residual_support_width_validation_gate_report(
+                colab_decision,
+                configs,
+                tmp_path / "support_width_gate",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIsNone(report["selected_next_direction"])
+            self.assertIn(
+                {
+                    "field": "colab_decision_report.status",
+                    "expected": "pass",
+                    "actual": "fail",
+                    "path": str(colab_decision),
+                },
+                report["evidence"]["failures"],
+            )
+
+
 def _write_capacity_support_comparison(comparison_dir: Path) -> None:
     comparison_dir.mkdir(parents=True)
     runs = [
@@ -2405,6 +2479,114 @@ model:
 
 inference:
   pc_steps: 3
+  hep_alpha: 0.0
+  hep_alpha_sweep: "0.0,0.25,0.5,1.0"
+  hep_update_clip_norm: 0.01
+  hep_settling_objective: temporal_consistency_gradient
+
+outputs:
+  require_summary_json: true
+  require_metrics_csv: true
+  require_notes_md: true
+""",
+            encoding="utf-8",
+        )
+        paths.append(path)
+    return paths
+
+
+def _write_capacity_support_colab_decision(
+    tmp_path: Path,
+    *,
+    status: str,
+    decision: str,
+) -> Path:
+    report_dir = tmp_path / "residual_capacity_support_diagnostic_colab_decision"
+    report_dir.mkdir(parents=True)
+    report_path = report_dir / "decision_report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "status": status,
+                "decision": decision,
+                "selected_next_direction": (
+                    "residual_capacity_support_validation_gate"
+                    if decision == CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION
+                    else None
+                ),
+                "promote_residual_learning_method": False,
+                "default_residual_objective": "supervised_ce",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return report_path
+
+
+def _write_support_width_validation_configs(tmp_path: Path) -> list[Path]:
+    specs = [
+        (
+            "char_larger_baseline.yaml",
+            "char_larger_hep_temporal_clipped_objective_gate",
+            "tiny_shakespeare_char",
+            128,
+            1,
+        ),
+        (
+            "char_larger_support.yaml",
+            "char_larger_support_wide_hep_temporal_clipped_objective_gate",
+            "tiny_shakespeare_char",
+            128,
+            2,
+        ),
+        (
+            "token_larger_baseline.yaml",
+            "token_larger_hep_temporal_clipped_objective_gate",
+            "tiny_shakespeare_word",
+            64,
+            1,
+        ),
+        (
+            "token_larger_support.yaml",
+            "token_larger_support_wide_hep_temporal_clipped_objective_gate",
+            "tiny_shakespeare_word",
+            64,
+            2,
+        ),
+    ]
+    paths = []
+    for filename, experiment_id, dataset, seq_len, top_k in specs:
+        path = tmp_path / filename
+        path.write_text(
+            f"""run:
+  experiment_id: {experiment_id}
+  seed: 1
+  max_steps: 50
+
+data:
+  dataset: {dataset}
+  seq_len: {seq_len}
+
+training:
+  residual_objective: supervised_ce
+
+model:
+  base:
+    layers: 2
+    hidden_dim: 96
+  columns:
+    num_columns: 24
+    atoms_per_column: 4
+    top_k: {top_k}
+    insertion_sites: 1
+    support_stress: true
+    support_stress_preset: false
+
+inference:
+  pc_steps: 4
   hep_alpha: 0.0
   hep_alpha_sweep: "0.0,0.25,0.5,1.0"
   hep_update_clip_norm: 0.01
