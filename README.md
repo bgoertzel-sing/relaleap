@@ -911,6 +911,21 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate_seed2/artifact_check.json
 ```
 
+After the seed-2 xxlarge-char and tokenized larger local/Colab repeat artifacts
+exist, decide whether the focal promotion/stop gate is satisfied without
+rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report focal-residual-objective-promotion-gate-satisfaction \
+  --out results/reports/focal_residual_objective_promotion_gate_satisfaction
+```
+
+The report writes `decision_report.json` and `decision_report.md`. It promotes
+focal CE only if all four repeat comparisons pass artifacts/invariants and
+focal CE beats supervised CE on best temporal-clipped supervised CE HEP loss in
+each comparison; otherwise it stops focal validation under the current gate.
+
 The earlier label-free temporal validation uses the same command-driven
 harness and writes the artifact tree under the Colab-prefixed validation path:
 

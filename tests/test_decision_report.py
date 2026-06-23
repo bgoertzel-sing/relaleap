@@ -24,6 +24,7 @@ from relaleap.experiments.decision_report import (
     CONTINUE_LABEL_SMOOTHING_RESIDUAL_OBJECTIVE_VALIDATION,
     CONTINUE_FOCAL_RESIDUAL_OBJECTIVE_VALIDATION,
     DEFINE_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE,
+    SATISFY_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -36,6 +37,7 @@ from relaleap.experiments.decision_report import (
     write_label_smoothing_residual_objective_decision_report,
     write_focal_residual_objective_decision_report,
     write_focal_residual_objective_promotion_gate_report,
+    write_focal_residual_objective_promotion_gate_satisfaction_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -1761,6 +1763,150 @@ class FocalResidualObjectiveDecisionReportTest(unittest.TestCase):
                 },
                 gate["evidence"]["failures"],
             )
+
+    def test_seed2_gate_satisfaction_stops_focal_when_token_repeat_loses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            gate_report = _write_passing_focal_promotion_gate(tmp_path)
+            comparison_dirs = []
+            artifact_checks = []
+            for name, focal_loss in (
+                ("char_xxlarge_focal_temporal_clipped_objective_gate_seed2_local", 3.57),
+                (
+                    "colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2",
+                    3.57,
+                ),
+                ("token_larger_focal_temporal_clipped_objective_gate_seed2_local", 3.59),
+                (
+                    "colab_token_larger_focal_temporal_clipped_objective_gate_seed2",
+                    3.59,
+                ),
+            ):
+                comparison_dir = tmp_path / name
+                _write_residual_objective_gate_comparison(
+                    comparison_dir,
+                    pc_best_hep_loss=3.60,
+                    focal_best_hep_loss=focal_loss,
+                    support_stress_preset=False,
+                )
+                artifact_check = comparison_dir / "artifact_check_local.json"
+                artifact_check.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                comparison_dirs.append(comparison_dir)
+                artifact_checks.append(artifact_check)
+
+            report = write_focal_residual_objective_promotion_gate_satisfaction_report(
+                gate_report,
+                comparison_dirs,
+                tmp_path / "focal_gate_satisfaction",
+                artifact_check_paths=artifact_checks,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["decision"], STOP_FOCAL_RESIDUAL_OBJECTIVE_VALIDATION)
+            self.assertFalse(report["promotion_gate_satisfied"])
+            self.assertFalse(report["promote_residual_learning_method"])
+            self.assertIsNone(report["selected_residual_objective_variant"])
+            self.assertEqual(report["evidence"]["comparison_count"], 4)
+            self.assertEqual(report["evidence"]["focal_ce_win_count"], 2)
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "focal_gate_satisfaction"
+                    / "decision_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "focal_gate_satisfaction"
+                    / "decision_report.md"
+                ).is_file()
+            )
+
+    def test_seed2_gate_satisfaction_promotes_focal_when_all_repeats_win(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            gate_report = _write_passing_focal_promotion_gate(tmp_path)
+            comparison_dirs = []
+            artifact_checks = []
+            for name in (
+                "char_xxlarge_focal_temporal_clipped_objective_gate_seed2_local",
+                "colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2",
+                "token_larger_focal_temporal_clipped_objective_gate_seed2_local",
+                "colab_token_larger_focal_temporal_clipped_objective_gate_seed2",
+            ):
+                comparison_dir = tmp_path / name
+                _write_residual_objective_gate_comparison(
+                    comparison_dir,
+                    pc_best_hep_loss=3.60,
+                    focal_best_hep_loss=3.57,
+                    support_stress_preset=False,
+                )
+                artifact_check = comparison_dir / "artifact_check_local.json"
+                artifact_check.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                comparison_dirs.append(comparison_dir)
+                artifact_checks.append(artifact_check)
+
+            report = write_focal_residual_objective_promotion_gate_satisfaction_report(
+                gate_report,
+                comparison_dirs,
+                tmp_path / "focal_gate_satisfaction",
+                artifact_check_paths=artifact_checks,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                SATISFY_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE,
+            )
+            self.assertTrue(report["promotion_gate_satisfied"])
+            self.assertTrue(report["promote_residual_learning_method"])
+            self.assertEqual(
+                report["selected_residual_objective_variant"],
+                "supervised_ce_focal",
+            )
+            self.assertEqual(report["evidence"]["focal_ce_win_count"], 4)
+
+
+def _write_passing_focal_promotion_gate(tmp_path: Path) -> Path:
+    comparison_dirs = []
+    artifact_checks = []
+    for backend in ("local", "colab"):
+        comparison_dir = tmp_path / f"{backend}_focal_objective_gate"
+        _write_residual_objective_gate_comparison(
+            comparison_dir,
+            pc_best_hep_loss=3.60,
+            focal_best_hep_loss=3.57,
+            support_stress_preset=False,
+        )
+        artifact_check = comparison_dir / "artifact_check_local.json"
+        artifact_check.write_text(
+            json.dumps({"status": "pass"}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        comparison_dirs.append(comparison_dir)
+        artifact_checks.append(artifact_check)
+
+    decision = write_focal_residual_objective_decision_report(
+        comparison_dirs,
+        tmp_path / "focal_decision",
+        artifact_check_paths=artifact_checks,
+    )
+    if decision["decision"] != CONTINUE_FOCAL_RESIDUAL_OBJECTIVE_VALIDATION:
+        raise AssertionError(decision)
+    gate = write_focal_residual_objective_promotion_gate_report(
+        tmp_path / "focal_decision" / "decision_report.json",
+        tmp_path / "focal_promotion_gate",
+    )
+    if gate["decision"] != DEFINE_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE:
+        raise AssertionError(gate)
+    return tmp_path / "focal_promotion_gate" / "decision_report.json"
 
 
 def _write_comparison(

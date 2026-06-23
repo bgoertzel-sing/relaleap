@@ -214,6 +214,32 @@ DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_DECISION_REPORT = (
 DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_OUT_DIR = Path(
     "results/reports/focal_residual_objective_promotion_gate"
 )
+DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_REPORT = (
+    DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_OUT_DIR / "decision_report.json"
+)
+DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_COMPARISON_DIRS = (
+    Path("results/comparisons/char_xxlarge_focal_temporal_clipped_objective_gate_seed2"),
+    Path(
+        "results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2"
+    ),
+    Path("results/comparisons/token_larger_focal_temporal_clipped_objective_gate_seed2"),
+    Path(
+        "results/comparisons/colab_token_larger_focal_temporal_clipped_objective_gate_seed2"
+    ),
+)
+DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_ARTIFACT_CHECKS = (
+    DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_COMPARISON_DIRS[0]
+    / "artifact_check_local.json",
+    DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_COMPARISON_DIRS[1]
+    / "artifact_check_local.json",
+    DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_COMPARISON_DIRS[2]
+    / "artifact_check_local.json",
+    DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_COMPARISON_DIRS[3]
+    / "artifact_check_local.json",
+)
+DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_OUT_DIR = Path(
+    "results/reports/focal_residual_objective_promotion_gate_satisfaction"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -255,6 +281,9 @@ CONTINUE_FOCAL_RESIDUAL_OBJECTIVE_VALIDATION = (
 )
 DEFINE_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE = (
     "define_focal_residual_objective_promotion_gate"
+)
+SATISFY_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE = (
+    "satisfy_focal_residual_objective_promotion_gate"
 )
 DIAGNOSE_PC_RESIDUAL_OBJECTIVE = "diagnose_pc_residual_objective_gap"
 STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION = "stop_pc_residual_objective_validation"
@@ -3228,6 +3257,224 @@ def write_focal_residual_objective_promotion_gate_report(
     return report
 
 
+def write_focal_residual_objective_promotion_gate_satisfaction_report(
+    promotion_gate_report_path: Path = (
+        DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_REPORT
+    ),
+    comparison_dirs: list[Path] | tuple[Path, ...] = (
+        DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_COMPARISON_DIRS
+    ),
+    out_dir: Path = (
+        DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_OUT_DIR
+    ),
+    *,
+    artifact_check_paths: list[Path] | tuple[Path, ...] | None = (
+        DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_ARTIFACT_CHECKS
+    ),
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+) -> dict[str, Any]:
+    """Decide whether the focal objective promotion/stop gate is satisfied."""
+
+    if max_logit_delta < 0.0:
+        raise ValueError("max_logit_delta must be non-negative")
+
+    failures = []
+    promotion_gate_report: dict[str, Any] | None = None
+    if not promotion_gate_report_path.is_file():
+        failures.append(
+            {
+                "field": "promotion_gate_report",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(promotion_gate_report_path),
+            }
+        )
+    else:
+        promotion_gate_report = _read_json_object(promotion_gate_report_path)
+        if promotion_gate_report.get("status") != "pass":
+            failures.append(
+                {
+                    "field": "promotion_gate_report.status",
+                    "expected": "pass",
+                    "actual": promotion_gate_report.get("status"),
+                    "path": str(promotion_gate_report_path),
+                }
+            )
+        if (
+            promotion_gate_report.get("decision")
+            != DEFINE_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE
+        ):
+            failures.append(
+                {
+                    "field": "promotion_gate_report.decision",
+                    "expected": DEFINE_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE,
+                    "actual": promotion_gate_report.get("decision"),
+                    "path": str(promotion_gate_report_path),
+                }
+            )
+
+    entries = []
+    artifact_paths = list(artifact_check_paths or [])
+    for index, comparison_dir in enumerate(comparison_dirs):
+        comparison_dir = Path(comparison_dir)
+        artifact_check_path = (
+            Path(artifact_paths[index]) if index < len(artifact_paths) else None
+        )
+        entry = _focal_residual_objective_entry(
+            comparison_dir,
+            artifact_check_path=artifact_check_path,
+            max_logit_delta=max_logit_delta,
+        )
+        entry["gate"] = _infer_focal_promotion_gate(comparison_dir, entry)
+        entries.append(entry)
+        failures.extend(entry["failures"])
+
+    gate_backend_pairs = sorted(
+        {
+            (entry.get("gate"), entry.get("backend"))
+            for entry in entries
+            if entry.get("gate") is not None and entry.get("backend") is not None
+        }
+    )
+    required_pairs = {
+        ("char_xxlarge_seed2_local_colab", "local"),
+        ("char_xxlarge_seed2_local_colab", "colab"),
+        ("token_larger_seed2_local_colab", "local"),
+        ("token_larger_seed2_local_colab", "colab"),
+    }
+    for gate, backend in sorted(required_pairs - set(gate_backend_pairs)):
+        failures.append(
+            {
+                "field": "comparison.gate_backend_pair",
+                "expected": f"{gate}/{backend}",
+                "actual": "missing",
+            }
+        )
+
+    focal_ce_wins = [
+        entry
+        for entry in entries
+        if entry.get("supervised_run")
+        and entry.get("focal_run")
+        and entry["focal_run"]["best_hep_loss"] is not None
+        and entry["supervised_run"]["best_hep_loss"] is not None
+        and entry["focal_run"]["best_hep_loss"]
+        < entry["supervised_run"]["best_hep_loss"]
+    ]
+    focal_minus_supervised = [
+        entry["focal_minus_supervised_best_hep_loss"]
+        for entry in entries
+        if entry.get("focal_minus_supervised_best_hep_loss") is not None
+    ]
+    residual_loss_deltas = [
+        entry["focal_minus_supervised_final_residual_loss"]
+        for entry in entries
+        if entry.get("focal_minus_supervised_final_residual_loss") is not None
+    ]
+    status = "fail" if failures else "pass"
+    promote = status == "pass" and len(focal_ce_wins) == len(entries)
+    report = {
+        "status": status,
+        "decision": (
+            SATISFY_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE
+            if promote
+            else (
+                STOP_FOCAL_RESIDUAL_OBJECTIVE_VALIDATION
+                if status == "pass"
+                else INSUFFICIENT_EVIDENCE
+            )
+        ),
+        "promotion_gate_satisfied": promote,
+        "selected_residual_objective_variant": "supervised_ce_focal"
+        if promote
+        else None,
+        "promote_residual_learning_method": promote,
+        "default_residual_objective": "supervised_ce",
+        "policy": {
+            "max_logit_delta_from_ordinary": max_logit_delta,
+            "requires_promotion_gate_report_pass": True,
+            "requires_char_xxlarge_seed2_local_and_colab": True,
+            "requires_token_larger_seed2_local_and_colab": True,
+            "requires_passing_artifact_checks": True,
+            "requires_support_stress_preset_disabled": True,
+            "requires_temporal_clipped_hep_path": True,
+            "requires_both_objectives_improve_own_training_loss": True,
+            "requires_focal_lower_supervised_ce_hep_loss_in_every_gate_comparison": True,
+            "allows_default_promotion": True,
+        },
+        "evidence": {
+            "promotion_gate_report_path": str(promotion_gate_report_path),
+            "promotion_gate_status": None
+            if promotion_gate_report is None
+            else promotion_gate_report.get("status"),
+            "promotion_gate_decision": None
+            if promotion_gate_report is None
+            else promotion_gate_report.get("decision"),
+            "comparison_dirs": [str(path) for path in comparison_dirs],
+            "artifact_check_paths": [str(path) for path in artifact_paths],
+            "comparison_count": len(entries),
+            "focal_ce_win_count": len(focal_ce_wins),
+            "gate_backend_pairs": [
+                {"gate": gate, "backend": backend}
+                for gate, backend in gate_backend_pairs
+            ],
+            "gate_count": len({gate for gate, _backend in gate_backend_pairs}),
+            "backend_count": len({backend for _gate, backend in gate_backend_pairs}),
+            "mean_focal_minus_supervised_best_hep_loss": (
+                sum(focal_minus_supervised) / len(focal_minus_supervised)
+                if focal_minus_supervised
+                else None
+            ),
+            "mean_focal_minus_supervised_final_residual_loss": (
+                sum(residual_loss_deltas) / len(residual_loss_deltas)
+                if residual_loss_deltas
+                else None
+            ),
+            "entries": entries,
+            "failures": failures,
+        },
+        "rationale": (
+            "The focal promotion gate is satisfied: seed-2 xxlarge char and "
+            "tokenized larger local/Colab comparisons all pass and focal CE has "
+            "lower best temporal-clipped supervised CE HEP loss than supervised CE."
+            if promote
+            else (
+                "The focal promotion/stop gate evidence is valid, but focal CE "
+                "does not beat supervised CE in every required seed-2 comparison. "
+                "Focal validation should stop under the current gate and the "
+                "default residual objective should remain supervised CE."
+                if status == "pass"
+                else (
+                    "The focal promotion/stop gate requires the gate definition "
+                    "plus seed-2 xxlarge char and tokenized larger local/Colab "
+                    "comparisons with passing artifact checks and valid focal and "
+                    "supervised temporal-clipped runs."
+                )
+            )
+        ),
+        "next_step": (
+            "make the explicit default residual objective change to supervised_ce_focal"
+            if promote
+            else (
+                "stop focal residual-objective validation under the current gate and select the next residual-learning direction"
+                if status == "pass"
+                else "repair or regenerate the missing or failing focal promotion-gate evidence"
+            )
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_focal_promotion_gate_satisfaction_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def _focal_residual_objective_entry(
     comparison_dir: Path,
     *,
@@ -4106,6 +4353,24 @@ def _infer_promotion_gate_from_report(
         return "non_char_tokenized_local_colab"
     if "larger" in joined:
         return "larger_char_local_colab"
+    return None
+
+
+def _infer_focal_promotion_gate(
+    comparison_dir: Path,
+    entry: dict[str, Any],
+) -> str | None:
+    texts = [str(comparison_dir)]
+    for run_key in ("supervised_run", "focal_run"):
+        run = entry.get(run_key)
+        if isinstance(run, dict):
+            texts.append(str(run.get("experiment_id", "")))
+            texts.append(str(run.get("dataset", "")))
+    joined = " ".join(texts)
+    if "token_larger" in joined or "tiny_shakespeare_word" in joined:
+        return "token_larger_seed2_local_colab"
+    if "char_xxlarge" in joined or "tiny_shakespeare_char" in joined:
+        return "char_xxlarge_seed2_local_colab"
     return None
 
 
@@ -5440,6 +5705,79 @@ def _write_focal_promotion_gate_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_focal_promotion_gate_satisfaction_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Focal Residual Objective Promotion Gate Satisfaction",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        f"- Promotion gate satisfied: `{report['promotion_gate_satisfied']}`",
+        (
+            "- Promote residual learning method: "
+            f"`{report['promote_residual_learning_method']}`"
+        ),
+        (
+            "- Selected variant: "
+            f"`{report['selected_residual_objective_variant']}`"
+        ),
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        f"- Promotion gate report: `{evidence['promotion_gate_report_path']}`",
+        f"- Promotion gate status: `{evidence['promotion_gate_status']}`",
+        f"- Promotion gate decision: `{evidence['promotion_gate_decision']}`",
+        f"- Focal CE win count: `{evidence['focal_ce_win_count']}`",
+        (
+            "- Mean focal minus supervised best HEP loss: "
+            f"`{_format_metric(evidence['mean_focal_minus_supervised_best_hep_loss'])}`"
+        ),
+        (
+            "- Mean focal minus supervised final residual loss: "
+            f"`{_format_metric(evidence['mean_focal_minus_supervised_final_residual_loss'])}`"
+        ),
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        (
+            "| Gate | Backend | Artifact check | Supervised best HEP loss "
+            "| Focal best HEP loss | Focal minus supervised | Source |"
+        ),
+        "| --- | --- | --- | ---: | ---: | ---: | --- |",
+    ]
+    for entry in evidence["entries"]:
+        supervised = entry.get("supervised_run") or {}
+        focal = entry.get("focal_run") or {}
+        lines.append(
+            (
+                f"| {entry.get('gate') or ''} "
+                f"| {entry.get('backend') or ''} "
+                f"| {entry.get('artifact_check_status') or ''} "
+                f"| {_format_metric(supervised.get('best_hep_loss'))} "
+                f"| {_format_metric(focal.get('best_hep_loss'))} "
+                f"| {_format_metric(entry.get('focal_minus_supervised_best_hep_loss'))} "
+                f"| `{entry.get('comparison_dir')}` |"
+            )
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -5470,6 +5808,7 @@ def main() -> None:
             "label-smoothing-residual-objective-decision",
             "focal-residual-objective-decision",
             "focal-residual-objective-promotion-gate",
+            "focal-residual-objective-promotion-gate-satisfaction",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -5671,6 +6010,24 @@ def main() -> None:
             if args.decision_report
             else DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_DECISION_REPORT,
             args.out or DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_OUT_DIR,
+        )
+    elif args.report == "focal-residual-objective-promotion-gate-satisfaction":
+        comparison_dirs = (
+            tuple(args.decision_report[1:])
+            if args.decision_report and len(args.decision_report) > 1
+            else DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_COMPARISON_DIRS
+        )
+        report = write_focal_residual_objective_promotion_gate_satisfaction_report(
+            args.decision_report[0]
+            if args.decision_report
+            else DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_REPORT,
+            comparison_dirs,
+            args.out
+            or DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_OUT_DIR,
+            artifact_check_paths=DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_ARTIFACT_CHECKS
+            if not args.artifact_check
+            else (args.artifact_check,),
+            max_logit_delta=args.max_logit_delta,
         )
     else:
         report = write_pinned_support_decision_report(
