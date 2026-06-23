@@ -11,7 +11,9 @@ from unittest.mock import patch
 from tools.colab_playwright_runner import (
     ARTIFACT_BUNDLE_BEGIN,
     ARTIFACT_BUNDLE_END,
+    COLAB_NOTEBOOK_URL,
     COMPLETION_TEXT,
+    _colab_notebook_url,
     _confirm_run_modals,
     _extract_colab_artifact_bundle,
     _validate_evidence_text,
@@ -21,6 +23,14 @@ from tools.colab_playwright_runner import (
 
 
 class ColabPlaywrightRunnerTest(unittest.TestCase):
+    def test_colab_notebook_url_includes_revision_cache_buster(self) -> None:
+        with patch("tools.colab_playwright_runner._current_git_revision") as revision:
+            revision.return_value = "abc123def456"
+
+            url = _colab_notebook_url()
+
+        self.assertEqual(url, f"{COLAB_NOTEBOOK_URL}?relaleap_rev=abc123def456")
+
     def test_validate_evidence_accepts_rendered_success_markers(self) -> None:
         _validate_evidence_text(
             "\n".join(

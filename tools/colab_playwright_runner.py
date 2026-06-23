@@ -22,8 +22,10 @@ from datetime import datetime, timezone
 import io
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlencode
 import zipfile
 
 
@@ -59,6 +61,28 @@ OUTPUT_SELECTORS = (
     ".output",
     ".stream.output_text",
 )
+
+
+def _current_git_revision() -> str | None:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return None
+
+    revision = completed.stdout.strip()
+    return revision or None
+
+
+def _colab_notebook_url() -> str:
+    revision = _current_git_revision()
+    if revision is None:
+        return COLAB_NOTEBOOK_URL
+    return f"{COLAB_NOTEBOOK_URL}?{urlencode({'relaleap_rev': revision})}"
 
 
 async def _click_first(page, labels: list[str], timeout_ms: int = 5_000) -> bool:
@@ -467,8 +491,9 @@ async def _operate_page(
     completion_timeout_minutes: float,
     evidence_out: Path,
 ) -> None:
-    await page.goto(COLAB_NOTEBOOK_URL, wait_until="domcontentloaded")
-    print(f"opened: {COLAB_NOTEBOOK_URL}")
+    notebook_url = _colab_notebook_url()
+    await page.goto(notebook_url, wait_until="domcontentloaded")
+    print(f"opened: {notebook_url}")
 
     if manual_login:
         print()
