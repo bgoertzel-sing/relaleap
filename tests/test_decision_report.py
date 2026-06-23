@@ -27,6 +27,7 @@ from relaleap.experiments.decision_report import (
     SATISFY_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE,
     DEFINE_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE,
     RUN_COLAB_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC,
+    CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -46,6 +47,7 @@ from relaleap.experiments.decision_report import (
     write_residual_learning_next_direction_report,
     write_residual_capacity_support_diagnostic_gate_report,
     write_residual_capacity_support_diagnostic_decision_report,
+    write_residual_capacity_support_diagnostic_colab_decision_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -2149,6 +2151,91 @@ class ResidualCapacitySupportDiagnosticDecisionReportTest(unittest.TestCase):
                     "expected": "pass",
                     "actual": "fail",
                     "path": str(comparison_dir),
+                },
+                report["evidence"]["failures"],
+            )
+
+    def test_matching_colab_evidence_continues_support_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            local_dir = tmp_path / "local"
+            colab_dir = tmp_path / "colab"
+            _write_capacity_support_comparison(local_dir)
+            _write_capacity_support_comparison(colab_dir)
+            local_check = local_dir / "artifact_check_local.json"
+            colab_check = colab_dir / "artifact_check_local.json"
+            for artifact_check in (local_check, colab_check):
+                artifact_check.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+
+            report = write_residual_capacity_support_diagnostic_colab_decision_report(
+                (local_dir, colab_dir),
+                tmp_path / "capacity_support_colab_decision",
+                artifact_check_paths=(local_check, colab_check),
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION,
+            )
+            self.assertEqual(
+                report["selected_next_direction"],
+                "residual_capacity_support_validation_gate",
+            )
+            self.assertFalse(report["promote_residual_learning_method"])
+            self.assertEqual(report["evidence"]["backend_count"], 2)
+            self.assertEqual(report["evidence"]["failures"], [])
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "capacity_support_colab_decision"
+                    / "decision_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "capacity_support_colab_decision"
+                    / "decision_report.md"
+                ).is_file()
+            )
+
+    def test_failed_colab_artifact_check_blocks_support_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            local_dir = tmp_path / "local"
+            colab_dir = tmp_path / "colab"
+            _write_capacity_support_comparison(local_dir)
+            _write_capacity_support_comparison(colab_dir)
+            local_check = local_dir / "artifact_check_local.json"
+            colab_check = colab_dir / "artifact_check_local.json"
+            local_check.write_text(
+                json.dumps({"status": "pass"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            colab_check.write_text(
+                json.dumps({"status": "fail"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_residual_capacity_support_diagnostic_colab_decision_report(
+                (local_dir, colab_dir),
+                tmp_path / "capacity_support_colab_decision",
+                artifact_check_paths=(local_check, colab_check),
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIsNone(report["selected_next_direction"])
+            self.assertIn(
+                {
+                    "field": "artifact_check.status",
+                    "expected": "pass",
+                    "actual": "fail",
+                    "path": str(colab_dir),
                 },
                 report["evidence"]["failures"],
             )

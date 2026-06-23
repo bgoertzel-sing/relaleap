@@ -303,6 +303,23 @@ DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_ARTIFACT_CHECK = (
 DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_DECISION_OUT_DIR = Path(
     "results/reports/residual_capacity_support_diagnostic_decision"
 )
+DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COLAB_COMPARISON_DIRS = (
+    DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COMPARISON_DIR,
+    Path(
+        "results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate"
+    ),
+)
+DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COLAB_ARTIFACT_CHECKS = (
+    DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COMPARISON_DIR
+    / "artifact_check_local.json",
+    Path(
+        "results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate"
+    )
+    / "artifact_check_local.json",
+)
+DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COLAB_DECISION_OUT_DIR = Path(
+    "results/reports/residual_capacity_support_diagnostic_colab_decision"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -371,6 +388,9 @@ DEFINE_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_GATE = (
 )
 RUN_COLAB_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC = (
     "run_colab_residual_capacity_support_diagnostic"
+)
+CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION = (
+    "continue_residual_capacity_support_validation"
 )
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -4238,6 +4258,142 @@ def write_residual_capacity_support_diagnostic_decision_report(
     return report
 
 
+def write_residual_capacity_support_diagnostic_colab_decision_report(
+    comparison_dirs: tuple[Path, ...] = DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COLAB_COMPARISON_DIRS,
+    out_dir: Path = DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COLAB_DECISION_OUT_DIR,
+    *,
+    artifact_check_paths: tuple[Path, ...] = DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COLAB_ARTIFACT_CHECKS,
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+) -> dict[str, Any]:
+    """Confirm local residual capacity/support evidence against Colab artifacts."""
+
+    if max_logit_delta < 0.0:
+        raise ValueError("max_logit_delta must be non-negative")
+
+    backend_names = ("local", "colab")
+    backend_evidence = []
+    failures: list[dict[str, Any]] = []
+    for index, comparison_dir in enumerate(comparison_dirs):
+        artifact_check_path = (
+            artifact_check_paths[index] if index < len(artifact_check_paths) else None
+        )
+        backend = (
+            backend_names[index]
+            if index < len(backend_names)
+            else f"backend_{index + 1}"
+        )
+        evidence = _residual_capacity_support_decision_evidence(
+            comparison_dir,
+            artifact_check_path=artifact_check_path,
+            max_logit_delta=max_logit_delta,
+        )
+        evidence["backend"] = backend
+        backend_evidence.append(evidence)
+        failures.extend(evidence["failures"])
+        if not evidence["support_beats_baseline"]:
+            failures.append(
+                {
+                    "field": f"{backend}.support_width.best_hep_loss",
+                    "expected": "< baseline best HEP loss",
+                    "actual": None
+                    if evidence["support_minus_baseline_best_hep_loss"] is None
+                    else f"delta {evidence['support_minus_baseline_best_hep_loss']}",
+                    "path": str(comparison_dir),
+                }
+            )
+        if not evidence["support_is_best"]:
+            best = evidence["best_variant"]
+            failures.append(
+                {
+                    "field": f"{backend}.best_variant",
+                    "expected": "support_width",
+                    "actual": None if best is None else best.get("variant"),
+                    "path": str(comparison_dir),
+                }
+            )
+        if evidence["accepted_support_width_alpha"] is None:
+            failures.append(
+                {
+                    "field": f"{backend}.support_width.hep_alpha_sweep",
+                    "expected": "accepted nonzero alpha within logit-delta budget",
+                    "actual": "none",
+                    "path": str(comparison_dir),
+                }
+            )
+
+    if len(backend_evidence) < 2:
+        failures.append(
+            {
+                "field": "comparison_dirs",
+                "expected": "local and colab comparison directories",
+                "actual": len(backend_evidence),
+            }
+        )
+
+    failures = _dedupe_failures(failures)
+    decision = (
+        CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION
+        if not failures
+        else INSUFFICIENT_EVIDENCE
+    )
+    report = {
+        "status": "pass" if decision != INSUFFICIENT_EVIDENCE else "fail",
+        "decision": decision,
+        "selected_next_direction": (
+            "residual_capacity_support_validation_gate"
+            if decision == CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION
+            else None
+        ),
+        "promote_residual_learning_method": False,
+        "default_residual_objective": "supervised_ce",
+        "policy": {
+            "max_logit_delta_from_ordinary": max_logit_delta,
+            "requires_local_and_colab_artifact_checks": True,
+            "requires_passing_comparison_verdicts": True,
+            "requires_four_expected_variants_per_backend": True,
+            "requires_support_width_to_beat_baseline_per_backend": True,
+            "requires_support_width_to_be_best_variant_per_backend": True,
+            "requires_support_width_accepted_nonzero_alpha_per_backend": True,
+            "allows_residual_objective_promotion": False,
+        },
+        "evidence": {
+            "backend_count": len(backend_evidence),
+            "backends": backend_evidence,
+            "failures": failures,
+        },
+        "rationale": (
+            "The residual capacity/support diagnostic now has matching local "
+            "and Colab artifact-backed evidence. In both backends, widened "
+            "support is the best variant and accepts a nonzero temporal-clipped "
+            "HEP alpha inside the ordinary-logit budget, while increased column "
+            "capacity alone does not explain the gain. This supports continuing "
+            "with a broader support-width validation gate, not changing the "
+            "default residual objective yet."
+            if decision == CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION
+            else (
+                "The paired local/Colab diagnostic is missing, failing, or does "
+                "not consistently select widened support under the policy."
+            )
+        ),
+        "next_step": (
+            "define a command-driven support-width validation gate at larger char and tokenized scales"
+            if decision == CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION
+            else "diagnose the local/Colab residual capacity/support divergence before any broader support-width gate"
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_residual_capacity_support_diagnostic_colab_decision_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def _focal_residual_objective_entry(
     comparison_dir: Path,
     *,
@@ -5725,6 +5881,89 @@ def _residual_capacity_support_decision_failures(
     return failures
 
 
+def _residual_capacity_support_decision_evidence(
+    comparison_dir: Path,
+    *,
+    artifact_check_path: Path | None,
+    max_logit_delta: float,
+) -> dict[str, Any]:
+    comparison = _read_json_object(comparison_dir / "summary.json")
+    artifact_check = (
+        _read_json_object(artifact_check_path)
+        if artifact_check_path is not None and artifact_check_path.is_file()
+        else check_comparison_artifacts(comparison_dir)
+    )
+    runs = comparison.get("runs") if isinstance(comparison.get("runs"), list) else []
+    entries = [
+        _residual_capacity_support_run_entry(run, max_logit_delta=max_logit_delta)
+        for run in runs
+        if isinstance(run, dict)
+    ]
+    entry_by_variant = {
+        entry["variant"]: entry
+        for entry in entries
+        if entry.get("variant") is not None
+    }
+    failures = _residual_capacity_support_decision_failures(
+        comparison_dir,
+        comparison,
+        artifact_check,
+        entries,
+        entry_by_variant,
+    )
+    baseline = entry_by_variant.get("baseline")
+    support = entry_by_variant.get("support_width")
+    capacity = entry_by_variant.get("capacity")
+    combined = entry_by_variant.get("capacity_support_width")
+    best_entry = min(
+        [entry for entry in entries if entry.get("best_hep_loss") is not None],
+        key=lambda entry: float(entry["best_hep_loss"]),
+        default=None,
+    )
+    support_minus_baseline = _entry_loss_delta(support, baseline)
+    support_is_best = (
+        best_entry is not None and best_entry.get("variant") == "support_width"
+    )
+    accepted_support_alpha = (
+        None
+        if support is None
+        else _best_accepted_alpha(
+            support.get("alpha_candidates") or [],
+            max_logit_delta=max_logit_delta,
+        )
+    )
+    return {
+        "comparison_dir": str(comparison_dir),
+        "artifact_check_path": None
+        if artifact_check_path is None
+        else str(artifact_check_path),
+        "artifact_check_status": artifact_check.get("status"),
+        "comparison_status": comparison.get("status"),
+        "verdict_status": (comparison.get("verdict") or {}).get("status")
+        if isinstance(comparison.get("verdict"), dict)
+        else None,
+        "run_count": len(entries),
+        "baseline_variant": baseline,
+        "capacity_variant": capacity,
+        "support_width_variant": support,
+        "capacity_support_width_variant": combined,
+        "best_variant": best_entry,
+        "support_minus_baseline_best_hep_loss": support_minus_baseline,
+        "capacity_minus_baseline_best_hep_loss": _entry_loss_delta(capacity, baseline),
+        "capacity_support_width_minus_baseline_best_hep_loss": _entry_loss_delta(
+            combined,
+            baseline,
+        ),
+        "accepted_support_width_alpha": accepted_support_alpha,
+        "support_beats_baseline": (
+            support_minus_baseline is not None and support_minus_baseline < 0.0
+        ),
+        "support_is_best": support_is_best,
+        "entries": entries,
+        "failures": failures,
+    }
+
+
 def _dedupe_failures(failures: list[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped = []
     seen = set()
@@ -7083,6 +7322,54 @@ def _write_residual_capacity_support_diagnostic_decision_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_residual_capacity_support_diagnostic_colab_decision_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    lines = [
+        "# Residual Capacity Support Colab Decision",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        f"- Selected direction: `{report['selected_next_direction']}`",
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        "| Backend | Artifact check | Verdict | Best variant | Support minus baseline | Accepted support alpha |",
+        "| --- | --- | --- | --- | ---: | ---: |",
+    ]
+    for backend in report["evidence"]["backends"]:
+        best = backend["best_variant"] or {}
+        accepted = backend["accepted_support_width_alpha"] or {}
+        lines.append(
+            (
+                f"| {backend['backend']} "
+                f"| `{backend['artifact_check_status']}` "
+                f"| `{backend['verdict_status']}` "
+                f"| `{best.get('variant')}` "
+                f"| {_format_metric(backend['support_minus_baseline_best_hep_loss'])} "
+                f"| {_format_metric(accepted.get('alpha'))} |"
+            )
+        )
+    if report["evidence"]["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in report["evidence"]["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _write_focal_promotion_gate_markdown(
     path: Path,
     report: dict[str, Any],
@@ -7261,6 +7548,7 @@ def main() -> None:
             "residual-learning-next-direction",
             "residual-capacity-support-diagnostic-gate",
             "residual-capacity-support-diagnostic-decision",
+            "residual-capacity-support-diagnostic-colab-decision",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -7517,6 +7805,18 @@ def main() -> None:
             or DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_DECISION_OUT_DIR,
             artifact_check_path=args.artifact_check
             or DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_ARTIFACT_CHECK,
+            max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "residual-capacity-support-diagnostic-colab-decision":
+        report = write_residual_capacity_support_diagnostic_colab_decision_report(
+            tuple(args.decision_report)
+            if args.decision_report
+            else DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COLAB_COMPARISON_DIRS,
+            args.out
+            or DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COLAB_DECISION_OUT_DIR,
+            artifact_check_paths=DEFAULT_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC_COLAB_ARTIFACT_CHECKS
+            if not args.artifact_check
+            else (args.artifact_check,),
             max_logit_delta=args.max_logit_delta,
         )
     else:

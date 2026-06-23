@@ -1280,6 +1280,21 @@ variant with an accepted nonzero temporal-clipped HEP alpha inside the ordinary
 logit-delta budget. When it passes, the next step is the matching real-Chrome
 Colab bridge run that emits
 `results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate`.
+After extracting that Colab bundle locally, inspect it and write the paired
+local/Colab confirmation report without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate \
+  --out results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate/artifact_check_local.json
+python -m relaleap.experiments.decision_report \
+  --report residual-capacity-support-diagnostic-colab-decision \
+  --out results/reports/residual_capacity_support_diagnostic_colab_decision
+```
+
+The paired report fails closed unless both local and Colab artifact-backed
+comparisons pass and both select widened support as the best variant. A failing
+paired report is treated as a divergence diagnosis input, not a promotion gate.
 
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
