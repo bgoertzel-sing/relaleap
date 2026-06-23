@@ -8,29 +8,32 @@
 
 ## Rationale
 
-The per-token oracle beats the learned router on most evaluated positions, so the strongest signal is router support-selection headroom: regret=0.06139732, positive_fraction=0.93253970. The learned router still beats the best single global fixed pair by 0.03750205, which points to improving token-conditioned routing rather than replacing it with one fixed support.
+The per-token oracle beats the learned router on most evaluated positions, so the strongest signal is router support-selection headroom: regret=0.03597923, positive_fraction=0.87301588. The learned router still beats the best single global fixed pair by 0.03413963, which points to improving token-conditioned routing rather than replacing it with one fixed support.
 
 ## Evidence
 
-- Router loss: `3.51750112`
-- Per-token oracle loss: `3.45610356`
-- Oracle-support regret: `0.06139732`
-- Oracle-support positive fraction: `0.93253970`
-- Router minus best global fixed support loss: `-0.03750205`
-- Best global fixed support: `0,2`
+- Router loss: `3.49828529`
+- Per-token oracle loss: `3.46230602`
+- Oracle-support regret: `0.03597923`
+- Oracle-support positive fraction: `0.87301588`
+- Router minus best global fixed support loss: `-0.03413963`
+- Best global fixed support: `1,2`
 - Dominant router support: `0,1`
-- Best one-swap support: `0,2`
-- Router-target holdout accuracy: `0.32539684`
-- Router-target holdout selector minus router loss: `0.02856421`
-- Router-target holdout oracle-gap recovery: `-0.43181163`
-- Router-target nonlinear holdout accuracy: `0.33333334`
-- Router-target nonlinear holdout selector minus router loss: `0.02387667`
-- Router-target nonlinear holdout oracle-gap recovery: `-0.36094892`
-- Best router-target holdout oracle-gap recovery: `-0.36094892`
-- Used columns: `9` of `12`
-- Dead columns: `3`
-- Unique router support sets: `12`
-- Strongest pairwise synergy: `0.01413918`
+- Best one-swap support: `1,2`
+- Router-target holdout accuracy: `0.40476191`
+- Router-target holdout selector minus router loss: `0.04427838`
+- Router-target holdout oracle-gap recovery: `-1.06762746`
+- Router-target nonlinear holdout accuracy: `0.39682540`
+- Router-target nonlinear holdout selector minus router loss: `0.03769732`
+- Router-target nonlinear holdout oracle-gap recovery: `-0.90894667`
+- Router-target contextual holdout accuracy: `0.89682537`
+- Router-target contextual holdout selector minus router loss: `-0.03149462`
+- Router-target contextual holdout oracle-gap recovery: `0.75938903`
+- Best router-target holdout oracle-gap recovery: `0.75938903`
+- Used columns: `8` of `12`
+- Dead columns: `4`
+- Unique router support sets: `11`
+- Strongest pairwise synergy: `0.06710577`
 
 ## Signals
 
@@ -40,4 +43,4 @@ The per-token oracle beats the learned router on most evaluated positions, so th
 
 ## Next Step
 
-prototype a contextual router-support diagnostic with token position or sequence-neighborhood features because hidden-only oracle-target selectors did not recover the holdout oracle gap
+repeat the best router oracle-target selector, including contextual features, on a fresh seed and larger support-width setting

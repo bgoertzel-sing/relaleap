@@ -178,6 +178,10 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
         out_dir / "router_target_nonlinear_diagnostic.csv",
         router_target["nonlinear_splits"],
     )
+    _write_router_target_diagnostic(
+        out_dir / "router_target_contextual_diagnostic.csv",
+        router_target["contextual_splits"],
+    )
     summary = {
         "status": "ok",
         "experiment_id": f"{experiment_id}_exhaustive_support_audit",
@@ -232,6 +236,9 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
             "router_oracle_target_nonlinear_diagnostic": router_target[
                 "nonlinear_summary"
             ],
+            "router_oracle_target_contextual_diagnostic": router_target[
+                "contextual_summary"
+            ],
             "support_audit": _residual_support_audit(base, residual, inputs),
             "residual_parameter_delta": _state_dict_delta(before_residual, residual),
         },
@@ -242,6 +249,9 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
             "router_target_diagnostic_csv": str(out_dir / "router_target_diagnostic.csv"),
             "router_target_nonlinear_diagnostic_csv": str(
                 out_dir / "router_target_nonlinear_diagnostic.csv"
+            ),
+            "router_target_contextual_diagnostic_csv": str(
+                out_dir / "router_target_contextual_diagnostic.csv"
             ),
             "notes_md": str(out_dir / "notes.md"),
         },
@@ -418,8 +428,29 @@ def _router_oracle_target_diagnostic(
         learning_rate=0.01,
         weight_decay=1e-3,
     )
+    contextual_features = _contextual_router_features(hidden)
+    contextual_width = max(16, min(128, contextual_features.shape[-1]))
+    contextual = _train_router_target_probe(
+        nn.Sequential(
+            nn.LayerNorm(contextual_features.shape[-1]),
+            nn.Linear(contextual_features.shape[-1], contextual_width),
+            nn.GELU(),
+            nn.Linear(contextual_width, len(rows)),
+        ).to(contextual_features.device),
+        features=contextual_features,
+        targets=targets,
+        train_mask=train_mask,
+        token_loss_matrix=token_loss_matrix,
+        router_losses=router_losses,
+        oracle_losses=oracle_losses,
+        rows=rows,
+        steps=steps,
+        learning_rate=0.01,
+        weight_decay=1e-3,
+    )
     linear_by_name = {row["split"]: row for row in linear["splits"]}
     nonlinear_by_name = {row["split"]: row for row in nonlinear["splits"]}
+    contextual_by_name = {row["split"]: row for row in contextual["splits"]}
     return {
         "summary": {
             "selector": "linear_hidden_to_oracle_pair",
@@ -442,7 +473,68 @@ def _router_oracle_target_diagnostic(
             "holdout": nonlinear_by_name["holdout_odd_positions"],
         },
         "nonlinear_splits": nonlinear["splits"],
+        "contextual_summary": {
+            "selector": "mlp_contextual_hidden_to_oracle_pair",
+            "training_steps": steps,
+            "hidden_width": contextual_width,
+            "features": [
+                "current_hidden",
+                "previous_hidden",
+                "next_hidden",
+                "previous_delta",
+                "next_delta",
+                "normalized_token_position",
+                "position_sin",
+                "position_cos",
+            ],
+            "train_split": "even flattened token positions",
+            "holdout_split": "odd flattened token positions",
+            "selected_support_counts": contextual["selected_support_counts"],
+            "all": contextual_by_name["all"],
+            "holdout": contextual_by_name["holdout_odd_positions"],
+        },
+        "contextual_splits": contextual["splits"],
     }
+
+
+def _contextual_router_features(hidden: Any) -> Any:
+    import torch
+
+    current = hidden[:, :-1, :].detach()
+    previous = torch.cat([current[:, :1, :], current[:, :-1, :]], dim=1)
+    next_hidden = hidden[:, 1:, :].detach()
+    seq_len = int(current.shape[1])
+    if seq_len <= 1:
+        normalized_position = torch.zeros(
+            current.shape[0],
+            seq_len,
+            1,
+            dtype=current.dtype,
+            device=current.device,
+        )
+    else:
+        normalized_position = torch.linspace(
+            0.0,
+            1.0,
+            seq_len,
+            dtype=current.dtype,
+            device=current.device,
+        ).view(1, seq_len, 1).expand(current.shape[0], seq_len, 1)
+    angle = normalized_position * (2.0 * torch.pi)
+    context = torch.cat(
+        [
+            current,
+            previous,
+            next_hidden,
+            current - previous,
+            next_hidden - current,
+            normalized_position,
+            torch.sin(angle),
+            torch.cos(angle),
+        ],
+        dim=-1,
+    )
+    return context.reshape(-1, context.shape[-1])
 
 
 def _train_router_target_probe(
@@ -729,6 +821,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
                 f"`{audit['router_oracle_target_diagnostic']['holdout']['oracle_gap_recovery_fraction']}`",
                 "- Router-target nonlinear holdout gap recovery: "
                 f"`{audit['router_oracle_target_nonlinear_diagnostic']['holdout']['oracle_gap_recovery_fraction']}`",
+                "- Router-target contextual holdout gap recovery: "
+                f"`{audit['router_oracle_target_contextual_diagnostic']['holdout']['oracle_gap_recovery_fraction']}`",
                 "",
             ]
         ),

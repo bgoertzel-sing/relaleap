@@ -1460,15 +1460,18 @@ python -m relaleap.experiments.decision_report \
 The audit retrains the configured residual adapter, evaluates all 12 singleton
 supports and all 66 two-column supports on the fixed in-repo validation batch,
 and writes `summary.json`, `support_losses.csv`, `pairwise_synergy.csv`,
-`router_target_diagnostic.csv`, `router_target_nonlinear_diagnostic.csv`, and
-`notes.md`. The summary reports per-token oracle-support regret, best global
-fixed support, dominant router support, one-swap recovery, support-loss
+`router_target_diagnostic.csv`, `router_target_nonlinear_diagnostic.csv`,
+`router_target_contextual_diagnostic.csv`, and `notes.md`. The summary reports
+per-token oracle-support regret, best global fixed support, dominant router
+support, one-swap recovery, support-loss
 distribution, pairwise synergy leaders, the existing router support audit, and
-linear plus small-MLP router-target probes that train against the per-token
-oracle support pair on even flattened token positions and report holdout
-odd-position recovery of the oracle gap. The decision report fails closed on
-missing audit artifacts and selects whether the next branch should target
-router support selection, column redundancy, or pairwise composition.
+linear, small-MLP, and contextual small-MLP router-target probes that train
+against the per-token oracle support pair on even flattened token positions and
+report holdout odd-position recovery of the oracle gap. The contextual probe
+adds normalized token position plus immediate previous/next hidden-neighborhood
+features. The decision report fails closed on missing audit artifacts and
+selects whether the next branch should target router support selection, column
+redundancy, or pairwise composition.
 
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
