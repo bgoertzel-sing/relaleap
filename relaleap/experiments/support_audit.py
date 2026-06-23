@@ -57,8 +57,16 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
     num_columns = int(column_cfg.get("num_columns", 8))
     atoms_per_column = int(column_cfg.get("atoms_per_column", 4))
     top_k = int(column_cfg.get("top_k", 1))
+    support_router = str(column_cfg.get("support_router", "linear"))
+    contextual_router_hidden_dim = int(
+        column_cfg.get("contextual_router_hidden_dim", hidden_dim * 2)
+    )
     if top_k != 2:
         raise ValueError("the first exhaustive support audit expects model.columns.top_k: 2")
+    if support_router not in {"linear", "contextual_mlp"}:
+        raise ValueError("model.columns.support_router must be one of: linear, contextual_mlp")
+    if contextual_router_hidden_dim < 1:
+        raise ValueError("model.columns.contextual_router_hidden_dim must be positive")
 
     torch.manual_seed(seed)
     inputs, targets, vocab_size = _build_batch(
@@ -77,6 +85,8 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
         num_columns=num_columns,
         atoms_per_column=atoms_per_column,
         top_k=top_k,
+        support_router=support_router,
+        contextual_router_hidden_dim=contextual_router_hidden_dim,
     )
     base.eval()
     residual.train()
@@ -229,6 +239,8 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
             "residual_objective": residual_objective,
             "num_columns": num_columns,
             "top_k": top_k,
+            "support_router": support_router,
+            "contextual_router_hidden_dim": contextual_router_hidden_dim,
             "support_set_count": len(pair_rows),
             "singleton_count": len(singleton_rows),
             "empty_loss": empty_loss,

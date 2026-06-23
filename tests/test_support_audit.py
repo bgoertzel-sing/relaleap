@@ -37,6 +37,8 @@ model:
     atoms_per_column: 2
     top_k: 2
     insertion_sites: 1
+    support_router: contextual_mlp
+    contextual_router_hidden_dim: 16
 
 outputs:
   require_summary_json: true
@@ -53,6 +55,8 @@ outputs:
             audit = summary["audit"]
             self.assertEqual(audit["num_columns"], 4)
             self.assertEqual(audit["top_k"], 2)
+            self.assertEqual(audit["support_router"], "contextual_mlp")
+            self.assertEqual(audit["contextual_router_hidden_dim"], 16)
             self.assertEqual(audit["support_set_count"], 6)
             self.assertEqual(audit["singleton_count"], 4)
             self.assertIn("oracle_support_regret", audit)

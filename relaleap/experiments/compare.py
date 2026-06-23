@@ -359,6 +359,8 @@ def _comparison_entry(
         "num_columns": phase0.get("num_columns"),
         "atoms_per_column": phase0.get("atoms_per_column"),
         "top_k": phase0.get("top_k"),
+        "support_router": phase0.get("support_router", "linear"),
+        "contextual_router_hidden_dim": phase0.get("contextual_router_hidden_dim"),
         "training_steps": phase0.get("training_steps"),
         "initial_residual_loss": initial,
         "final_residual_loss": final,

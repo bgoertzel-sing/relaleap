@@ -103,6 +103,53 @@ class Phase0SmokeTest(unittest.TestCase):
         self.assertTrue(torch.equal(support[..., 0], torch.zeros_like(support[..., 0])))
         self.assertTrue(torch.equal(support[..., 1], torch.ones_like(support[..., 1])))
 
+    def test_contextual_residual_router_preserves_zero_init_identity(self) -> None:
+        try:
+            import torch
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+        except ModuleNotFoundError as exc:
+            if exc.name == "torch":
+                self.skipTest(str(exc))
+            raise
+
+        residual = ResidualColumns(
+            hidden_dim=4,
+            num_columns=5,
+            atoms_per_column=2,
+            top_k=2,
+            support_router="contextual_mlp",
+            contextual_router_hidden_dim=8,
+        )
+        hidden = torch.randn(2, 3, 4)
+
+        output, support = residual(hidden, return_support=True)
+
+        self.assertTrue(torch.equal(output, hidden))
+        self.assertEqual(support.shape, (2, 3, 2))
+        self.assertEqual(residual.support_router, "contextual_mlp")
+
+    def test_phase0_accepts_contextual_support_router(self) -> None:
+        contextual_config = copy.deepcopy(CONFIG)
+        contextual_config["model"]["columns"]["top_k"] = 2
+        contextual_config["model"]["columns"]["support_router"] = "contextual_mlp"
+        contextual_config["model"]["columns"]["contextual_router_hidden_dim"] = 16
+
+        try:
+            result = run_phase0_smoke(contextual_config)
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+
+        self.assertTrue(all(result.invariants.values()))
+        self.assertEqual(result.support_router, "contextual_mlp")
+        self.assertEqual(result.contextual_router_hidden_dim, 16)
+        self.assertEqual(result.to_summary()["support_router"], "contextual_mlp")
+        self.assertEqual(result.support_audit["top_k"], 2)
+
     def test_pc_logit_mse_objective_toggle(self) -> None:
         pc_config = copy.deepcopy(CONFIG)
         pc_config["training"] = {"residual_objective": "pc_logit_mse"}

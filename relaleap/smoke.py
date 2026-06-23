@@ -49,6 +49,8 @@ class Phase0Result:
     num_columns: int
     atoms_per_column: int
     top_k: int
+    support_router: str
+    contextual_router_hidden_dim: int
     base_loss: float
     zero_init_loss: float
     initial_loss: float
@@ -85,6 +87,8 @@ class Phase0Result:
             "num_columns": self.num_columns,
             "atoms_per_column": self.atoms_per_column,
             "top_k": self.top_k,
+            "support_router": self.support_router,
+            "contextual_router_hidden_dim": self.contextual_router_hidden_dim,
             "base_loss": self.base_loss,
             "zero_init_loss": self.zero_init_loss,
             "initial_loss": self.initial_loss,
@@ -164,6 +168,10 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
     support_stress_preset = support_stress and bool(
         column_cfg.get("support_stress_preset", True)
     )
+    support_router = str(column_cfg.get("support_router", "linear"))
+    contextual_router_hidden_dim = int(
+        column_cfg.get("contextual_router_hidden_dim", hidden_dim * 2)
+    )
     pc_steps = int(inference_cfg.get("pc_steps", 1))
     hep_alpha = float(inference_cfg.get("hep_alpha", 0.0))
     hep_update_clip_norm = _parse_optional_float(
@@ -197,6 +205,10 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         raise ValueError("training.focal_gamma must be non-negative")
     if temporal_consistency_weight < 0.0:
         raise ValueError("training.temporal_consistency_weight must be non-negative")
+    if support_router not in {"linear", "contextual_mlp"}:
+        raise ValueError("model.columns.support_router must be one of: linear, contextual_mlp")
+    if contextual_router_hidden_dim < 1:
+        raise ValueError("model.columns.contextual_router_hidden_dim must be positive")
     if residual_objective not in {
         "supervised_ce",
         "supervised_ce_confidence_penalty",
@@ -243,6 +255,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         num_columns=num_columns,
         atoms_per_column=atoms_per_column,
         top_k=top_k,
+        support_router=support_router,
+        contextual_router_hidden_dim=contextual_router_hidden_dim,
     )
     base.eval()
     residual.eval()
@@ -501,6 +515,8 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         num_columns=num_columns,
         atoms_per_column=atoms_per_column,
         top_k=top_k,
+        support_router=support_router,
+        contextual_router_hidden_dim=contextual_router_hidden_dim,
         base_loss=float(base_loss_tensor.detach().item()),
         zero_init_loss=float(zero_init_loss_tensor.detach().item()),
         initial_loss=float(initial_loss_tensor.detach().item()),
@@ -592,12 +608,37 @@ class ResidualColumns:
                 num_columns: int,
                 atoms_per_column: int,
                 top_k: int,
+                support_router: str = "linear",
+                contextual_router_hidden_dim: int | None = None,
             ) -> None:
                 super().__init__()
                 if top_k < 1 or top_k > num_columns:
                     raise ValueError("top_k must be between 1 and num_columns")
+                if support_router not in {"linear", "contextual_mlp"}:
+                    raise ValueError(
+                        "support_router must be one of: linear, contextual_mlp"
+                    )
+                if (
+                    contextual_router_hidden_dim is not None
+                    and contextual_router_hidden_dim < 1
+                ):
+                    raise ValueError("contextual_router_hidden_dim must be positive")
                 self.top_k = top_k
+                self.num_columns = num_columns
+                self.support_router = support_router
                 self.column_scores = nn.Linear(hidden_dim, num_columns, bias=False)
+                contextual_feature_dim = hidden_dim * 5 + 3
+                contextual_width = (
+                    contextual_router_hidden_dim
+                    if contextual_router_hidden_dim is not None
+                    else hidden_dim * 2
+                )
+                self.contextual_column_scores = nn.Sequential(
+                    nn.LayerNorm(contextual_feature_dim),
+                    nn.Linear(contextual_feature_dim, contextual_width),
+                    nn.GELU(),
+                    nn.Linear(contextual_width, num_columns, bias=False),
+                )
                 self.atom_logits = nn.Parameter(torch.zeros(num_columns, atoms_per_column))
                 self.atom_values = nn.Parameter(
                     torch.zeros(num_columns, atoms_per_column, hidden_dim)
@@ -614,13 +655,56 @@ class ResidualColumns:
                 )
                 nn.init.zeros_(self.column_scores.weight)
 
+            def _contextual_features(self, hidden: Any) -> Any:
+                import torch
+
+                current = hidden
+                previous = torch.cat([current[:, :1, :], current[:, :-1, :]], dim=1)
+                next_hidden = torch.cat([current[:, 1:, :], current[:, -1:, :]], dim=1)
+                seq_len = int(current.shape[1])
+                if seq_len <= 1:
+                    normalized_position = torch.zeros(
+                        current.shape[0],
+                        seq_len,
+                        1,
+                        dtype=current.dtype,
+                        device=current.device,
+                    )
+                else:
+                    normalized_position = torch.linspace(
+                        0.0,
+                        1.0,
+                        seq_len,
+                        dtype=current.dtype,
+                        device=current.device,
+                    ).view(1, seq_len, 1).expand(current.shape[0], seq_len, 1)
+                angle = normalized_position * (2.0 * torch.pi)
+                return torch.cat(
+                    [
+                        current,
+                        previous,
+                        next_hidden,
+                        current - previous,
+                        next_hidden - current,
+                        normalized_position,
+                        torch.sin(angle),
+                        torch.cos(angle),
+                    ],
+                    dim=-1,
+                )
+
+            def _score_columns(self, hidden: Any) -> Any:
+                if self.support_router == "contextual_mlp":
+                    return self.contextual_column_scores(self._contextual_features(hidden))
+                return self.column_scores(hidden)
+
             def forward(
                 self,
                 hidden: Any,
                 support_indices: Any | None = None,
                 return_support: bool = False,
             ) -> Any:
-                scores = self.column_scores(hidden) + self.score_tie_breaker.to(
+                scores = self._score_columns(hidden) + self.score_tie_breaker.to(
                     device=hidden.device,
                     dtype=hidden.dtype,
                 )
@@ -1075,7 +1159,7 @@ def _residual_support_audit(base: Any, residual: Any, inputs: Any) -> dict[str, 
     support_rows = support.reshape(-1, support.shape[-1]).detach().cpu()
     total_positions = int(support_rows.shape[0])
     top_k = int(support_rows.shape[-1])
-    num_columns = int(residual.column_scores.out_features)
+    num_columns = int(getattr(residual, "num_columns", residual.column_scores.out_features))
     column_counts = [0 for _ in range(num_columns)]
     support_set_counts: dict[str, int] = {}
     for row in support_rows.tolist():
