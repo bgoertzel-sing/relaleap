@@ -97,11 +97,11 @@
     "accepted_alpha": {
       "accepted": true,
       "alpha": 1.0,
-      "alpha0_loss": 3.5867366790771484,
-      "experiment_id": "char_validation_hep_temporal_clipped_objective_gate",
-      "loss": 3.586674451828003,
-      "loss_improvement_from_alpha0": 6.222724914550781e-05,
-      "max_logit_delta_from_ordinary": 0.0004913806915283203
+      "alpha0_loss": 3.493901014328003,
+      "experiment_id": "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+      "loss": 3.4938478469848633,
+      "loss_improvement_from_alpha0": 5.316734313964844e-05,
+      "max_logit_delta_from_ordinary": 0.0004826784133911133
     },
     "status": "accepted"
   },

@@ -1,26 +1,21 @@
 # Residual Capacity Support Colab Decision
 
-- Status: `fail`
-- Decision: `insufficient_evidence`
-- Selected direction: `None`
+- Status: `pass`
+- Decision: `continue_residual_capacity_support_validation`
+- Selected direction: `residual_capacity_support_validation_gate`
 - Default residual objective: `supervised_ce`
 
 ## Rationale
 
-The paired local/Colab diagnostic is missing, failing, or does not consistently select widened support under the policy.
+The residual capacity/support diagnostic now has matching local and Colab artifact-backed evidence. In both backends, widened support is the best variant and accepts a nonzero temporal-clipped HEP alpha inside the ordinary-logit budget, while increased column capacity alone does not explain the gain. This supports continuing with a broader support-width validation gate, not changing the default residual objective yet.
 
 ## Evidence
 
 | Backend | Artifact check | Verdict | Best variant | Support minus baseline | Accepted support alpha |
 | --- | --- | --- | --- | ---: | ---: |
 | local | `pass` | `pass` | `support_width` | -0.08517456 | 1.00000000 |
-| colab | `pass` | `pass` | `baseline` | 0.00000072 | 1.00000000 |
-
-## Failures
-
-- `colab.support_width.best_hep_loss` expected `< baseline best HEP loss`, got `delta 7.152557373046875e-07` at `results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate`
-- `colab.best_variant` expected `support_width`, got `baseline` at `results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate`
+| colab | `pass` | `pass` | `support_width` | -0.09282660 | 1.00000000 |
 
 ## Next Step
 
-diagnose the local/Colab residual capacity/support divergence before any broader support-width gate
+define a command-driven support-width validation gate at larger char and tokenized scales

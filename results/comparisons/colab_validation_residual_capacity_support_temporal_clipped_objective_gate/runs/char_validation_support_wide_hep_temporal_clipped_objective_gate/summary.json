@@ -11,7 +11,7 @@
   "device": "cuda",
   "error": null,
   "experiment_id": "char_validation_support_wide_hep_temporal_clipped_objective_gate",
-  "final_smoke_loss": 3.58673739,
+  "final_smoke_loss": 3.49390101,
   "out_dir": "results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate/runs/char_validation_support_wide_hep_temporal_clipped_objective_gate",
   "phase0": {
     "base_loss": 3.7288691997528076,
@@ -23,35 +23,35 @@
     "hep_alpha_sweep": [
       {
         "alpha": 0.0,
-        "loss": 3.5867373943328857,
+        "loss": 3.493901014328003,
         "max_logit_delta_from_ordinary": 0.0,
         "pinned_vs_repicked_logit_delta": 0.0,
-        "support_change_fraction": 0.0,
-        "support_transition_count": 0.0
+        "support_change_fraction": 0.30859375,
+        "support_transition_count": 158.0
       },
       {
         "alpha": 0.25,
-        "loss": 3.586721658706665,
-        "max_logit_delta_from_ordinary": 0.0001227855682373047,
-        "pinned_vs_repicked_logit_delta": 0.0,
-        "support_change_fraction": 0.0,
-        "support_transition_count": 0.0
+        "loss": 3.4938879013061523,
+        "max_logit_delta_from_ordinary": 0.00012052059173583984,
+        "pinned_vs_repicked_logit_delta": 0.0020474791526794434,
+        "support_change_fraction": 0.30859375,
+        "support_transition_count": 158.0
       },
       {
         "alpha": 0.5,
-        "loss": 3.5867059230804443,
-        "max_logit_delta_from_ordinary": 0.0002459287643432617,
-        "pinned_vs_repicked_logit_delta": 0.0,
-        "support_change_fraction": 0.0,
-        "support_transition_count": 0.0
+        "loss": 3.4938747882843018,
+        "max_logit_delta_from_ordinary": 0.0002416372299194336,
+        "pinned_vs_repicked_logit_delta": 0.00409543514251709,
+        "support_change_fraction": 0.30859375,
+        "support_transition_count": 158.0
       },
       {
         "alpha": 1.0,
-        "loss": 3.5866751670837402,
-        "max_logit_delta_from_ordinary": 0.0004912614822387695,
-        "pinned_vs_repicked_logit_delta": 0.0,
-        "support_change_fraction": 0.0,
-        "support_transition_count": 0.0
+        "loss": 3.4938478469848633,
+        "max_logit_delta_from_ordinary": 0.0004826784133911133,
+        "pinned_vs_repicked_logit_delta": 0.008192360401153564,
+        "support_change_fraction": 0.30859375,
+        "support_transition_count": 158.0
       }
     ],
     "hep_settling_objective": "temporal_consistency_gradient",
@@ -68,20 +68,20 @@
     "max_hep_alpha0_logit_delta": 0.0,
     "max_zero_init_logit_delta": 0.0,
     "pinned_support": false,
-    "post_step_loss": 3.5867373943328857,
+    "post_step_loss": 3.493901014328003,
     "residual_objective": "supervised_ce",
-    "residual_parameter_delta": 117.3337631225586,
+    "residual_parameter_delta": 355.15625381469727,
     "seq_len": 64,
     "support_instability": {
       "hep_alpha": 1.0,
       "hep_update_clip_norm": 0.01,
       "pc_steps": 3,
-      "pinned_vs_repicked_logit_delta": 0.0,
-      "support_change_fraction": 0.0,
-      "support_changed": false,
-      "support_changed_positions": 0,
+      "pinned_vs_repicked_logit_delta": 0.008192360401153564,
+      "support_change_fraction": 0.30859375,
+      "support_changed": true,
+      "support_changed_positions": 79,
       "support_positions": 256,
-      "support_transition_count": 0
+      "support_transition_count": 158
     },
     "support_stress": true,
     "support_stress_preset": false,
@@ -92,7 +92,7 @@
     "zero_init_loss": 3.7288691997528076
   },
   "platform": "Linux-6.6.122+-x86_64-with-glibc2.35",
-  "runtime_seconds": 0.3753,
+  "runtime_seconds": 0.5428,
   "seed": 1,
   "status": "ok",
   "torch_available": true,
