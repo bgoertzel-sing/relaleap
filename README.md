@@ -1148,6 +1148,26 @@ compare supervised residual updates against the existing PC-style residual
 objective under the promoted temporal clipped support-stress default, with
 local and Colab artifact-backed decisions before any residual-objective change.
 
+The first post-focal residual-learning direction is an opt-in supervised CE
+objective with a small train-time temporal-consistency regularizer. It keeps
+the objective-gate setting that disables the support-stress preset and uses the
+promoted temporal clipped HEP inference path:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_temporal_consistency_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/validation_temporal_consistency_temporal_clipped_objective_gate
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/validation_temporal_consistency_temporal_clipped_objective_gate \
+  --out results/comparisons/validation_temporal_consistency_temporal_clipped_objective_gate/artifact_check_local.json
+```
+
+The first local validation artifact passes invariants and artifact checks, but
+the temporal-consistency training regularizer is not discriminative at this
+scale: its best temporal-clipped HEP supervised CE loss ties the supervised CE
+baseline within the current deterministic precision.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
