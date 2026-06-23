@@ -29,6 +29,7 @@ from relaleap.experiments.decision_report import (
     RUN_COLAB_RESIDUAL_CAPACITY_SUPPORT_DIAGNOSTIC,
     CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION,
     DEFINE_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE,
+    CONTINUE_RESIDUAL_SUPPORT_WIDTH_VALIDATION,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -50,6 +51,7 @@ from relaleap.experiments.decision_report import (
     write_residual_capacity_support_diagnostic_decision_report,
     write_residual_capacity_support_diagnostic_colab_decision_report,
     write_residual_support_width_validation_gate_report,
+    write_residual_support_width_validation_decision_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -2313,6 +2315,202 @@ class ResidualSupportWidthValidationGateReportTest(unittest.TestCase):
                 },
                 report["evidence"]["failures"],
             )
+
+
+class ResidualSupportWidthValidationDecisionReportTest(unittest.TestCase):
+    def test_matching_local_colab_width_improvements_continue_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            local_dir = tmp_path / "local"
+            colab_dir = tmp_path / "colab"
+            _write_support_width_validation_comparison(local_dir)
+            _write_support_width_validation_comparison(colab_dir)
+
+            report = write_residual_support_width_validation_decision_report(
+                (local_dir, colab_dir),
+                tmp_path / "support_width_decision",
+                artifact_check_paths=(
+                    local_dir / "artifact_check_local.json",
+                    colab_dir / "artifact_check_local.json",
+                ),
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                CONTINUE_RESIDUAL_SUPPORT_WIDTH_VALIDATION,
+            )
+            self.assertEqual(
+                report["selected_next_direction"],
+                "support_width_repeat_or_capacity_interaction_validation",
+            )
+            self.assertFalse(report["promote_residual_learning_method"])
+            self.assertEqual(report["default_residual_objective"], "supervised_ce")
+            self.assertEqual(report["evidence"]["backend_count"], 2)
+            self.assertEqual(report["evidence"]["failures"], [])
+            for backend in report["evidence"]["backends"]:
+                for scale in ("larger_char", "tokenized"):
+                    self.assertTrue(
+                        backend["scales"][scale][
+                            "support_beats_baseline_alpha0_loss"
+                        ]
+                    )
+            self.assertTrue(
+                (tmp_path / "support_width_decision" / "decision_report.json").is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "support_width_decision" / "decision_report.md").is_file()
+            )
+
+    def test_failed_colab_artifact_check_blocks_width_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            local_dir = tmp_path / "local"
+            colab_dir = tmp_path / "colab"
+            _write_support_width_validation_comparison(local_dir)
+            _write_support_width_validation_comparison(colab_dir)
+            (colab_dir / "artifact_check_local.json").write_text(
+                json.dumps({"status": "fail"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_residual_support_width_validation_decision_report(
+                (local_dir, colab_dir),
+                tmp_path / "support_width_decision",
+                artifact_check_paths=(
+                    local_dir / "artifact_check_local.json",
+                    colab_dir / "artifact_check_local.json",
+                ),
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIsNone(report["selected_next_direction"])
+            self.assertIn(
+                {
+                    "field": "artifact_check.status",
+                    "expected": "pass",
+                    "actual": "fail",
+                    "path": str(colab_dir),
+                },
+                report["evidence"]["failures"],
+            )
+
+
+def _write_support_width_validation_comparison(comparison_dir: Path) -> None:
+    comparison_dir.mkdir(parents=True)
+    runs = [
+        _support_width_validation_run(
+            "char_larger_hep_temporal_clipped_objective_gate",
+            "configs/char_larger_hep_temporal_clipped_objective_gate.yaml",
+            dataset="tiny_shakespeare_char",
+            top_k=1,
+            alpha0_loss=3.40,
+            final_loss=3.40,
+            best_loss=3.399,
+        ),
+        _support_width_validation_run(
+            "char_larger_support_wide_hep_temporal_clipped_objective_gate",
+            "configs/char_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            dataset="tiny_shakespeare_char",
+            top_k=2,
+            alpha0_loss=3.15,
+            final_loss=3.15,
+            best_loss=3.149,
+        ),
+        _support_width_validation_run(
+            "token_larger_hep_temporal_clipped_objective_gate",
+            "configs/token_larger_hep_temporal_clipped_objective_gate.yaml",
+            dataset="tiny_shakespeare_word",
+            top_k=1,
+            alpha0_loss=4.06,
+            final_loss=4.06,
+            best_loss=4.059,
+        ),
+        _support_width_validation_run(
+            "token_larger_support_wide_hep_temporal_clipped_objective_gate",
+            "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            dataset="tiny_shakespeare_word",
+            top_k=2,
+            alpha0_loss=3.53,
+            final_loss=3.53,
+            best_loss=3.531,
+        ),
+    ]
+    (comparison_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "verdict": {
+                    "status": "pass",
+                    "phase0_invariants": {"passed": True},
+                    "artifact_invariants": {"passed": True},
+                },
+                "runs": runs,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (comparison_dir / "artifact_check_local.json").write_text(
+        json.dumps({"status": "pass"}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _support_width_validation_run(
+    experiment_id: str,
+    config_path: str,
+    *,
+    dataset: str,
+    top_k: int,
+    alpha0_loss: float,
+    final_loss: float,
+    best_loss: float,
+) -> dict[str, object]:
+    return {
+        "artifact_invariants": {
+            "metrics_csv": True,
+            "notes_md": True,
+            "summary_json": True,
+        },
+        "config_path": config_path,
+        "dataset": dataset,
+        "experiment_id": experiment_id,
+        "final_residual_loss": final_loss,
+        "hep_alpha_sweep": [
+            {
+                "alpha": 0.0,
+                "loss": alpha0_loss,
+                "max_logit_delta_from_ordinary": 0.0,
+                "pinned_vs_repicked_logit_delta": 0.0,
+                "support_change_fraction": 0.0,
+            },
+            {
+                "alpha": 1.0,
+                "loss": best_loss,
+                "max_logit_delta_from_ordinary": 0.001,
+                "pinned_vs_repicked_logit_delta": 0.001,
+                "support_change_fraction": 0.5 if top_k == 2 else 0.0,
+            },
+        ],
+        "hep_settling_objective": "temporal_consistency_gradient",
+        "hep_update_clip_norm": 0.01,
+        "invariants": {
+            "frozen_base_unchanged": True,
+            "hep_alpha_0_equivalence": True,
+            "residual_parameters_updated": True,
+            "zero_init_identity": True,
+        },
+        "residual_objective": "supervised_ce",
+        "status": "ok",
+        "support_stress": True,
+        "support_stress_preset": False,
+        "top_k": top_k,
+        "training_steps": 50,
+    }
 
 
 def _write_capacity_support_comparison(comparison_dir: Path) -> None:
