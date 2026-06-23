@@ -123,6 +123,10 @@ class ColabNotebookTest(unittest.TestCase):
             checkout_cell,
         )
         self.assertIn(
+            "configs/char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml",
+            checkout_cell,
+        )
+        self.assertIn(
             "configs/char_larger_capacity_hep_temporal_clipped_objective_gate.yaml",
             checkout_cell,
         )
@@ -586,6 +590,37 @@ class ColabNotebookTest(unittest.TestCase):
         )
         self.assertIn("num_columns'] == 48", evidence_cell)
         self.assertIn("support_stress_preset'] is False", evidence_cell)
+
+    def test_run_cell_executes_contextual_router_colab_path(self) -> None:
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+        run_cells = [
+            source
+            for source in sources
+            if "colab_char_larger_support_wide_contextual_router_temporal_clipped_objective_gate"
+            in source
+        ]
+
+        self.assertEqual(len(run_cells), 2)
+        run_cell, evidence_cell = run_cells
+        self.assertIn(
+            "--config configs/char_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "Contextual support-router comparison status:",
+            evidence_cell,
+        )
+        self.assertIn(
+            "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate",
+            evidence_cell,
+        )
+        self.assertIn("support_router'] == 'contextual_mlp'", evidence_cell)
+        self.assertIn("contextual_router_hidden_dim'] == 128", evidence_cell)
 
     def test_run_cell_executes_anchored_objective_gate_colab_path(self) -> None:
         notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))

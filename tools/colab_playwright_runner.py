@@ -38,32 +38,27 @@ ARTIFACT_BUNDLE_BEGIN = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_BEGIN"
 ARTIFACT_BUNDLE_END = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_END"
 FOCUSED_TARGET_COMPARISON_DIR = (
     "results/comparisons/"
-    "colab_validation_residual_capacity_support_temporal_clipped_objective_gate"
+    "colab_char_larger_support_wide_contextual_router_temporal_clipped_objective_gate"
 )
 FOCUSED_TARGET_RUN_SCHEMA = {
-    "char_validation_hep_temporal_clipped_objective_gate": {
-        "num_columns": 12,
-        "top_k": 1,
-    },
-    "char_validation_capacity_hep_temporal_clipped_objective_gate": {
-        "num_columns": 24,
-        "top_k": 1,
-    },
-    "char_validation_support_wide_hep_temporal_clipped_objective_gate": {
-        "num_columns": 12,
-        "top_k": 2,
-    },
-    "char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate": {
+    "char_larger_support_wide_hep_temporal_clipped_objective_gate": {
         "num_columns": 24,
         "top_k": 2,
+        "support_router": "linear",
+    },
+    "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate": {
+        "num_columns": 24,
+        "top_k": 2,
+        "support_router": "contextual_mlp",
+        "contextual_router_hidden_dim": 128,
     },
 }
 FOCUSED_TARGET_MARKERS = (
     "cuda_available: True",
     '"status": "pass"',
     FOCUSED_TARGET_COMPARISON_DIR,
-    "char_validation_support_wide_hep_temporal_clipped_objective_gate",
-    "char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate",
+    "char_larger_support_wide_hep_temporal_clipped_objective_gate",
+    "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate",
     COMPLETION_TEXT,
 )
 ERROR_MARKERS = (
@@ -290,7 +285,8 @@ def _validate_focused_target_summary(
         ):
             if support_audit.get(field) is None:
                 failures.append(f"{experiment_id}.support_audit.{field}=missing")
-        for field, expected_value in expected.items():
+        for field in ("num_columns", "top_k"):
+            expected_value = expected[field]
             if support_audit.get(field) != expected_value:
                 failures.append(
                     f"{experiment_id}.support_audit.{field}="
@@ -302,7 +298,7 @@ def _validate_focused_target_summary(
         if len(failures) > 8:
             preview = f"{preview}; ... ({len(failures)} total)"
         raise RuntimeError(
-            "Colab completed, but focused support-width artifact schema is "
+            "Colab completed, but focused contextual-router artifact schema is "
             f"stale or invalid: {preview}"
         )
 

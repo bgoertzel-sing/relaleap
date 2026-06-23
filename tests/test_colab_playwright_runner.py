@@ -102,6 +102,9 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "Post-support-width capacity larger char/token comparison status: ok",
                     "Post-support-width capacity larger char/token artifact check: pass",
                     "results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate",
+                    "Contextual support-router comparison status: ok",
+                    "Contextual support-router artifact check: pass",
+                    "results/comparisons/colab_char_larger_support_wide_contextual_router_temporal_clipped_objective_gate",
                     "char_smoke_hep_support_stress_clipped",
                     "char_smoke_hep_support_stress_entropy_clipped",
                     "char_smoke_hep_support_stress_temporal_clipped",
@@ -137,6 +140,7 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "char_larger_capacity_hep_temporal_clipped_objective_gate",
                     "char_larger_hep_temporal_clipped_objective_gate_seed2",
                     "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+                    "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate",
                     "char_larger_focal_hep_temporal_clipped_objective_gate",
                     "token_larger_hep_temporal_clipped_objective_gate",
                     "token_larger_support_wide_hep_temporal_clipped_objective_gate",
@@ -176,8 +180,8 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "cuda_available: True",
                     '"status": "pass"',
                     FOCUSED_TARGET_COMPARISON_DIR,
-                    "char_validation_support_wide_hep_temporal_clipped_objective_gate",
-                    "char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate",
+                    "char_larger_support_wide_hep_temporal_clipped_objective_gate",
+                    "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate",
                     COMPLETION_TEXT,
                 ]
             )
@@ -258,10 +262,10 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
         bundle = _zip_base64(
             {
                 "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate/summary.json": "{}\n",
-                "results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate/summary.json": "{}\n",
-                "results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate/metrics.csv": "step,loss\n",
-                "results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate/notes.md": "# Notes\n",
-                "results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate/artifact_check.json": "{}\n",
+                f"{FOCUSED_TARGET_COMPARISON_DIR}/summary.json": "{}\n",
+                f"{FOCUSED_TARGET_COMPARISON_DIR}/metrics.csv": "step,loss\n",
+                f"{FOCUSED_TARGET_COMPARISON_DIR}/notes.md": "# Notes\n",
+                f"{FOCUSED_TARGET_COMPARISON_DIR}/artifact_check.json": "{}\n",
             }
         )
         evidence = "\n".join(
@@ -281,7 +285,7 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
             self.assertTrue(
                 (
                     Path(tmpdir)
-                    / "results/comparisons/colab_validation_residual_capacity_support_temporal_clipped_objective_gate/summary.json"
+                    / f"{FOCUSED_TARGET_COMPARISON_DIR}/summary.json"
                 ).is_file()
             )
 
@@ -309,7 +313,7 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
         )
         evidence = "\n".join([ARTIFACT_BUNDLE_BEGIN, bundle, ARTIFACT_BUNDLE_END])
 
-        with self.assertRaisesRegex(RuntimeError, "focused support-width artifact schema"):
+        with self.assertRaisesRegex(RuntimeError, "focused contextual-router artifact schema"):
             _validate_focused_target_artifact_bundle(evidence)
 
     def test_focused_target_bundle_accepts_support_width_schema(self) -> None:
@@ -481,21 +485,29 @@ def json_dumps(value) -> str:
 
 def _focused_summary(*, include_support_schema: bool) -> dict:
     specs = [
-        ("char_validation_hep_temporal_clipped_objective_gate", 12, 1),
-        ("char_validation_capacity_hep_temporal_clipped_objective_gate", 24, 1),
-        ("char_validation_support_wide_hep_temporal_clipped_objective_gate", 12, 2),
         (
-            "char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate",
+            "char_larger_support_wide_hep_temporal_clipped_objective_gate",
             24,
             2,
+            "linear",
+            192,
+        ),
+        (
+            "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate",
+            24,
+            2,
+            "contextual_mlp",
+            128,
         ),
     ]
     runs = []
-    for experiment_id, num_columns, top_k in specs:
+    for experiment_id, num_columns, top_k, support_router, contextual_router_hidden_dim in specs:
         run = {
             "experiment_id": experiment_id,
             "status": "ok",
             "config_path": f"configs/{experiment_id}.yaml",
+            "support_router": support_router,
+            "contextual_router_hidden_dim": contextual_router_hidden_dim,
         }
         if include_support_schema:
             run.update(
