@@ -240,6 +240,19 @@ DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_ARTIFACT_CHECKS = (
 DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_OUT_DIR = Path(
     "results/reports/focal_residual_objective_promotion_gate_satisfaction"
 )
+DEFAULT_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS = (
+    Path("results/comparisons/validation_temporal_consistency_weight_sweep_temporal_clipped_objective_gate"),
+    Path("results/comparisons/extended_temporal_consistency_weight_sweep_temporal_clipped_objective_gate"),
+)
+DEFAULT_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS = (
+    DEFAULT_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[0]
+    / "artifact_check_local.json",
+    DEFAULT_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS[1]
+    / "artifact_check_local.json",
+)
+DEFAULT_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_OUT_DIR = Path(
+    "results/reports/temporal_consistency_residual_objective_decision"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -297,6 +310,12 @@ STOP_LABEL_SMOOTHING_RESIDUAL_OBJECTIVE_VALIDATION = (
     "stop_label_smoothing_residual_objective_validation"
 )
 STOP_FOCAL_RESIDUAL_OBJECTIVE_VALIDATION = "stop_focal_residual_objective_validation"
+STOP_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_VALIDATION = (
+    "stop_temporal_consistency_residual_objective_validation"
+)
+CONTINUE_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_VALIDATION = (
+    "continue_temporal_consistency_residual_objective_validation"
+)
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
@@ -3475,6 +3494,188 @@ def write_focal_residual_objective_promotion_gate_satisfaction_report(
     return report
 
 
+def write_temporal_consistency_residual_objective_decision_report(
+    comparison_dirs: list[Path] | tuple[Path, ...] = (
+        DEFAULT_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS
+    ),
+    out_dir: Path = DEFAULT_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_OUT_DIR,
+    *,
+    artifact_check_paths: list[Path] | tuple[Path, ...] | None = (
+        DEFAULT_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS
+    ),
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+    min_best_hep_loss_improvement: float = 1.0e-4,
+) -> dict[str, Any]:
+    """Decide whether train-time temporal consistency merits broader validation."""
+
+    if max_logit_delta < 0.0:
+        raise ValueError("max_logit_delta must be non-negative")
+    if min_best_hep_loss_improvement < 0.0:
+        raise ValueError("min_best_hep_loss_improvement must be non-negative")
+
+    entries = []
+    failures = []
+    artifact_paths = list(artifact_check_paths or [])
+    for index, comparison_dir in enumerate(comparison_dirs):
+        comparison_dir = Path(comparison_dir)
+        artifact_check_path = (
+            Path(artifact_paths[index]) if index < len(artifact_paths) else None
+        )
+        entry = _temporal_consistency_residual_objective_entry(
+            comparison_dir,
+            artifact_check_path=artifact_check_path,
+            max_logit_delta=max_logit_delta,
+        )
+        entries.append(entry)
+        failures.extend(entry["failures"])
+
+    scales = sorted({entry["scale"] for entry in entries if entry.get("scale")})
+    for scale in sorted({"validation", "extended"} - set(scales)):
+        failures.append(
+            {
+                "field": "comparison.scale",
+                "expected": scale,
+                "actual": "missing",
+            }
+        )
+
+    temporal_runs = [
+        run
+        for entry in entries
+        for run in entry.get("temporal_consistency_runs", [])
+    ]
+    improving_runs = [
+        run
+        for run in temporal_runs
+        if run.get("best_hep_loss_improvement_vs_supervised") is not None
+        and run["best_hep_loss_improvement_vs_supervised"]
+        >= min_best_hep_loss_improvement
+    ]
+    all_temporal_minus_supervised = [
+        run["best_hep_loss_delta_vs_supervised"]
+        for run in temporal_runs
+        if run.get("best_hep_loss_delta_vs_supervised") is not None
+    ]
+    final_loss_deltas = [
+        run["final_residual_loss_delta_vs_supervised"]
+        for run in temporal_runs
+        if run.get("final_residual_loss_delta_vs_supervised") is not None
+    ]
+    best_run = min(
+        (
+            run
+            for run in temporal_runs
+            if run.get("best_hep_loss_delta_vs_supervised") is not None
+        ),
+        key=lambda run: run["best_hep_loss_delta_vs_supervised"],
+        default=None,
+    )
+    best_improvement = (
+        None
+        if best_run is None
+        else -float(best_run["best_hep_loss_delta_vs_supervised"])
+    )
+    status = "fail" if failures else "pass"
+    continue_variant = (
+        status == "pass"
+        and bool(temporal_runs)
+        and len(improving_runs) == len(temporal_runs)
+    )
+    report = {
+        "status": status,
+        "decision": (
+            CONTINUE_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_VALIDATION
+            if continue_variant
+            else (
+                STOP_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_VALIDATION
+                if status == "pass"
+                else INSUFFICIENT_EVIDENCE
+            )
+        ),
+        "continue_temporal_consistency_residual_objective_validation": continue_variant,
+        "selected_residual_objective_variant": (
+            "supervised_ce_temporal_consistency" if continue_variant else None
+        ),
+        "promote_residual_learning_method": False,
+        "default_residual_objective": "supervised_ce",
+        "policy": {
+            "max_logit_delta_from_ordinary": max_logit_delta,
+            "min_best_hep_loss_improvement": min_best_hep_loss_improvement,
+            "requires_validation_and_extended_local_evidence": True,
+            "requires_passing_artifact_checks": True,
+            "requires_supervised_and_temporal_consistency_runs": True,
+            "requires_support_stress_preset_disabled": True,
+            "requires_temporal_clipped_hep_path": True,
+            "requires_all_objectives_improve_own_training_loss": True,
+            "requires_each_temporal_consistency_run_to_clear_min_best_hep_loss_improvement": True,
+            "allows_residual_objective_promotion": False,
+            "local_only_decision": True,
+        },
+        "evidence": {
+            "comparison_dirs": [str(path) for path in comparison_dirs],
+            "artifact_check_paths": [str(path) for path in artifact_paths],
+            "scale_count": len(scales),
+            "scales": scales,
+            "comparison_count": len(entries),
+            "temporal_consistency_run_count": len(temporal_runs),
+            "temporal_consistency_clear_margin_count": len(improving_runs),
+            "best_temporal_consistency_run": best_run,
+            "best_temporal_consistency_improvement": best_improvement,
+            "mean_temporal_consistency_minus_supervised_best_hep_loss": (
+                sum(all_temporal_minus_supervised) / len(all_temporal_minus_supervised)
+                if all_temporal_minus_supervised
+                else None
+            ),
+            "mean_temporal_consistency_minus_supervised_final_residual_loss": (
+                sum(final_loss_deltas) / len(final_loss_deltas)
+                if final_loss_deltas
+                else None
+            ),
+            "entries": entries,
+            "failures": failures,
+        },
+        "rationale": (
+            "The validation and extended local sweeps are artifact-valid, but the "
+            "train-time temporal-consistency regularizer only produces tiny best "
+            "temporal-clipped HEP CE-loss changes while substantially increasing "
+            "the regularized residual objective loss at larger weights. This does "
+            "not justify Colab time or broader validation under the current gate."
+            if status == "pass" and not continue_variant
+            else (
+                "Every temporal-consistency regularized run clears the minimum "
+                "best-HEP CE improvement margin, so the variant merits matching "
+                "Colab evidence before any promotion-style decision."
+                if status == "pass"
+                else (
+                    "The temporal-consistency residual-objective decision requires "
+                    "valid validation and extended local comparisons with passing "
+                    "artifact checks and temporal-clipped objective-gate runs."
+                )
+            )
+        ),
+        "next_step": (
+            "stop train-time temporal-consistency regularizer validation under the current gate and select a different residual-learning direction"
+            if status == "pass" and not continue_variant
+            else (
+                "run matching Colab temporal-consistency regularizer sweeps before any broader decision"
+                if status == "pass"
+                else "repair or regenerate the temporal-consistency weight-sweep artifacts"
+            )
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_temporal_consistency_residual_objective_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def _focal_residual_objective_entry(
     comparison_dir: Path,
     *,
@@ -3505,6 +3706,92 @@ def _focal_residual_objective_entry(
         - float(supervised["final_residual_loss"])
     )
     return entry
+
+
+def _temporal_consistency_residual_objective_entry(
+    comparison_dir: Path,
+    *,
+    artifact_check_path: Path | None,
+    max_logit_delta: float,
+) -> dict[str, Any]:
+    entry = _residual_objective_variant_entry(
+        comparison_dir,
+        variant_objective="supervised_ce_temporal_consistency",
+        variant_field="temporal_consistency_run",
+        missing_field="comparison.runs.supervised_ce_temporal_consistency",
+        artifact_check_path=artifact_check_path,
+        max_logit_delta=max_logit_delta,
+    )
+    comparison = (
+        _read_json_object(comparison_dir / "summary.json")
+        if (comparison_dir / "summary.json").is_file()
+        else {}
+    )
+    runs = comparison.get("runs", []) if isinstance(comparison.get("runs"), list) else []
+    supervised_runs = _runs_with_residual_objective(runs, "supervised_ce")
+    supervised = (
+        _residual_objective_run_entry(supervised_runs[0], max_logit_delta=max_logit_delta)
+        if supervised_runs
+        else None
+    )
+    temporal_runs = [
+        _residual_objective_run_entry(run, max_logit_delta=max_logit_delta)
+        for run in _runs_with_residual_objective(
+            runs,
+            "supervised_ce_temporal_consistency",
+        )
+    ]
+    for run in temporal_runs:
+        _append_residual_objective_run_failures(
+            entry["failures"],
+            comparison_dir,
+            run,
+        )
+        run["temporal_consistency_weight"] = _infer_temporal_consistency_weight(
+            str(run.get("experiment_id") or "")
+        )
+        run["best_hep_loss_delta_vs_supervised"] = _best_loss_delta(run, supervised)
+        run["best_hep_loss_improvement_vs_supervised"] = (
+            None
+            if run["best_hep_loss_delta_vs_supervised"] is None
+            else -float(run["best_hep_loss_delta_vs_supervised"])
+        )
+        run["final_residual_loss_delta_vs_supervised"] = (
+            None
+            if not isinstance(supervised, dict)
+            or run.get("final_residual_loss") is None
+            or supervised.get("final_residual_loss") is None
+            else float(run["final_residual_loss"])
+            - float(supervised["final_residual_loss"])
+        )
+    if not temporal_runs:
+        entry["temporal_consistency_runs"] = []
+    else:
+        entry["temporal_consistency_runs"] = temporal_runs
+        entry["temporal_consistency_run"] = temporal_runs[0]
+    entry["scale"] = _infer_temporal_consistency_scale(comparison_dir)
+    return entry
+
+
+def _infer_temporal_consistency_weight(experiment_id: str) -> float | None:
+    if "_w005_" in experiment_id:
+        return 0.05
+    if "_w010_" in experiment_id:
+        return 0.1
+    if "_w020_" in experiment_id:
+        return 0.2
+    if "temporal_consistency" in experiment_id:
+        return 0.01
+    return None
+
+
+def _infer_temporal_consistency_scale(comparison_dir: Path) -> str | None:
+    name = comparison_dir.name
+    if "validation" in name:
+        return "validation"
+    if "extended" in name:
+        return "extended"
+    return None
 
 
 def _residual_objective_variant_entry(
@@ -5635,6 +5922,78 @@ def _write_focal_residual_objective_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_temporal_consistency_residual_objective_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Temporal-Consistency Residual Objective Decision",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        (
+            "- Continue temporal-consistency validation: "
+            f"`{report['continue_temporal_consistency_residual_objective_validation']}`"
+        ),
+        (
+            "- Selected variant: "
+            f"`{report['selected_residual_objective_variant']}`"
+        ),
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        f"- Scales: `{', '.join(evidence['scales'])}`",
+        (
+            "- Best temporal-consistency improvement: "
+            f"`{_format_metric(evidence['best_temporal_consistency_improvement'])}`"
+        ),
+        (
+            "- Mean temporal-consistency minus supervised best HEP loss: "
+            f"`{_format_metric(evidence['mean_temporal_consistency_minus_supervised_best_hep_loss'])}`"
+        ),
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        (
+            "| Scale | Artifact check | Weight | Supervised best HEP loss "
+            "| Temporal best HEP loss | Temporal minus supervised "
+            "| Temporal final residual loss | Source |"
+        ),
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for entry in evidence["entries"]:
+        supervised = entry.get("supervised_run") or {}
+        temporal_runs = entry.get("temporal_consistency_runs") or []
+        for temporal in temporal_runs:
+            lines.append(
+                (
+                    f"| {entry.get('scale') or ''} "
+                    f"| {entry.get('artifact_check_status') or ''} "
+                    f"| {_format_metric(temporal.get('temporal_consistency_weight'))} "
+                    f"| {_format_metric(supervised.get('best_hep_loss'))} "
+                    f"| {_format_metric(temporal.get('best_hep_loss'))} "
+                    f"| {_format_metric(temporal.get('best_hep_loss_delta_vs_supervised'))} "
+                    f"| {_format_metric(temporal.get('final_residual_loss'))} "
+                    f"| `{entry.get('comparison_dir')}` |"
+                )
+            )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _write_focal_promotion_gate_markdown(
     path: Path,
     report: dict[str, Any],
@@ -5809,6 +6168,7 @@ def main() -> None:
             "focal-residual-objective-decision",
             "focal-residual-objective-promotion-gate",
             "focal-residual-objective-promotion-gate-satisfaction",
+            "temporal-consistency-residual-objective-decision",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -6025,6 +6385,17 @@ def main() -> None:
             args.out
             or DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_OUT_DIR,
             artifact_check_paths=DEFAULT_FOCAL_RESIDUAL_OBJECTIVE_PROMOTION_GATE_SATISFACTION_ARTIFACT_CHECKS
+            if not args.artifact_check
+            else (args.artifact_check,),
+            max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "temporal-consistency-residual-objective-decision":
+        report = write_temporal_consistency_residual_objective_decision_report(
+            tuple(args.decision_report)
+            if args.decision_report
+            else DEFAULT_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_COMPARISON_DIRS,
+            args.out or DEFAULT_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_OUT_DIR,
+            artifact_check_paths=DEFAULT_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_ARTIFACT_CHECKS
             if not args.artifact_check
             else (args.artifact_check,),
             max_logit_delta=args.max_logit_delta,

@@ -31,6 +31,8 @@ from relaleap.experiments.decision_report import (
     STOP_MARGIN_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_LABEL_SMOOTHING_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_FOCAL_RESIDUAL_OBJECTIVE_VALIDATION,
+    STOP_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_VALIDATION,
+    CONTINUE_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_VALIDATION,
     write_anchored_pc_residual_objective_decision_report,
     write_clipped_hep_decision_report,
     write_confidence_penalty_residual_objective_decision_report,
@@ -38,6 +40,7 @@ from relaleap.experiments.decision_report import (
     write_focal_residual_objective_decision_report,
     write_focal_residual_objective_promotion_gate_report,
     write_focal_residual_objective_promotion_gate_satisfaction_report,
+    write_temporal_consistency_residual_objective_decision_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -1874,6 +1877,89 @@ class FocalResidualObjectiveDecisionReportTest(unittest.TestCase):
             self.assertEqual(report["evidence"]["focal_ce_win_count"], 4)
 
 
+class TemporalConsistencyResidualObjectiveDecisionReportTest(unittest.TestCase):
+    def test_tiny_temporal_consistency_margin_stops_variant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dirs = []
+            artifact_checks = []
+            for scale in ("validation", "extended"):
+                comparison_dir = tmp_path / f"{scale}_temporal_consistency_weight_sweep_temporal_clipped_objective_gate"
+                _write_residual_objective_gate_comparison(
+                    comparison_dir,
+                    pc_best_hep_loss=3.60,
+                    temporal_consistency_best_hep_losses=[3.57999],
+                    support_stress_preset=False,
+                )
+                artifact_check = comparison_dir / "artifact_check_local.json"
+                artifact_check.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                comparison_dirs.append(comparison_dir)
+                artifact_checks.append(artifact_check)
+
+            report = write_temporal_consistency_residual_objective_decision_report(
+                comparison_dirs,
+                tmp_path / "temporal_consistency_decision",
+                artifact_check_paths=artifact_checks,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                STOP_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_VALIDATION,
+            )
+            self.assertFalse(
+                report["continue_temporal_consistency_residual_objective_validation"]
+            )
+            self.assertIsNone(report["selected_residual_objective_variant"])
+            self.assertEqual(
+                report["evidence"]["temporal_consistency_clear_margin_count"],
+                0,
+            )
+
+    def test_material_temporal_consistency_margin_continues_variant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dirs = []
+            artifact_checks = []
+            for scale in ("validation", "extended"):
+                comparison_dir = tmp_path / f"{scale}_temporal_consistency_weight_sweep_temporal_clipped_objective_gate"
+                _write_residual_objective_gate_comparison(
+                    comparison_dir,
+                    pc_best_hep_loss=3.60,
+                    temporal_consistency_best_hep_losses=[3.57],
+                    support_stress_preset=False,
+                )
+                artifact_check = comparison_dir / "artifact_check_local.json"
+                artifact_check.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                comparison_dirs.append(comparison_dir)
+                artifact_checks.append(artifact_check)
+
+            report = write_temporal_consistency_residual_objective_decision_report(
+                comparison_dirs,
+                tmp_path / "temporal_consistency_decision",
+                artifact_check_paths=artifact_checks,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                CONTINUE_TEMPORAL_CONSISTENCY_RESIDUAL_OBJECTIVE_VALIDATION,
+            )
+            self.assertTrue(
+                report["continue_temporal_consistency_residual_objective_validation"]
+            )
+            self.assertEqual(
+                report["selected_residual_objective_variant"],
+                "supervised_ce_temporal_consistency",
+            )
+
+
 def _write_passing_focal_promotion_gate(tmp_path: Path) -> Path:
     comparison_dirs = []
     artifact_checks = []
@@ -2195,6 +2281,7 @@ def _write_residual_objective_gate_comparison(
     margin_penalty_best_hep_loss: float | None = None,
     label_smoothing_best_hep_loss: float | None = None,
     focal_best_hep_loss: float | None = None,
+    temporal_consistency_best_hep_losses: list[float] | None = None,
 ) -> None:
     comparison_dir.mkdir(parents=True)
     runs = [
@@ -2270,6 +2357,19 @@ def _write_residual_objective_gate_comparison(
                 support_stress_preset=support_stress_preset,
             )
         )
+    if temporal_consistency_best_hep_losses is not None:
+        for index, best_loss in enumerate(temporal_consistency_best_hep_losses):
+            suffix = "" if index == 0 else f"_w{index}"
+            runs.append(
+                _residual_objective_run_entry(
+                    f"temporal_consistency{suffix}",
+                    residual_objective="supervised_ce_temporal_consistency",
+                    initial_loss=3.75,
+                    final_loss=3.65,
+                    best_hep_loss=best_loss,
+                    support_stress_preset=support_stress_preset,
+                )
+            )
     summary = {
         "status": "ok",
         "verdict": {

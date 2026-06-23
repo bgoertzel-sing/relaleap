@@ -1203,6 +1203,22 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/extended_temporal_consistency_weight_sweep_temporal_clipped_objective_gate/artifact_check_local.json
 ```
 
+After the validation and extended local sweeps complete, write the
+command-driven train-time temporal-consistency residual-objective decision
+report without rerunning experiments:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report temporal-consistency-residual-objective-decision \
+  --out results/reports/temporal_consistency_residual_objective_decision
+```
+
+The report writes `decision_report.json` and `decision_report.md`. Under the
+current local-only policy, temporal-consistency regularizer validation only
+continues if every regularized sweep run beats the supervised CE baseline by a
+material best temporal-clipped HEP supervised CE-loss margin. Tiny deterministic
+margins stop the variant before spending Colab time.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
