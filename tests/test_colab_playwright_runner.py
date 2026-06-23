@@ -79,6 +79,9 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "Temporal clipped larger support-stress artifact check: pass",
                     "Temporal clipped token larger support-stress comparison status: ok",
                     "Temporal clipped token larger support-stress artifact check: pass",
+                    "Support-width larger char/token comparison status: ok",
+                    "Support-width larger char/token artifact check: pass",
+                    "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate",
                     "char_smoke_hep_support_stress_clipped",
                     "char_smoke_hep_support_stress_entropy_clipped",
                     "char_smoke_hep_support_stress_temporal_clipped",
@@ -108,8 +111,10 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
                     "char_validation_focal_hep_temporal_clipped_objective_gate",
                     "char_larger_hep_temporal_clipped_objective_gate",
+                    "char_larger_support_wide_hep_temporal_clipped_objective_gate",
                     "char_larger_focal_hep_temporal_clipped_objective_gate",
                     "token_larger_hep_temporal_clipped_objective_gate",
+                    "token_larger_support_wide_hep_temporal_clipped_objective_gate",
                     "token_larger_focal_hep_temporal_clipped_objective_gate",
                     "token_larger_hep_temporal_clipped_objective_gate_seed2",
                     "token_larger_focal_hep_temporal_clipped_objective_gate_seed2",
@@ -211,7 +216,7 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
     def test_extract_colab_artifact_bundle_accepts_later_valid_bundle(self) -> None:
         bundle = _zip_base64(
             {
-                "results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2/summary.json": "{}\n",
+                "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate/summary.json": "{}\n",
             }
         )
         evidence = "\n".join(
@@ -231,7 +236,7 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
             self.assertTrue(
                 (
                     Path(tmpdir)
-                    / "results/comparisons/colab_char_xxlarge_focal_temporal_clipped_objective_gate_seed2/summary.json"
+                    / "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate/summary.json"
                 ).is_file()
             )
 
