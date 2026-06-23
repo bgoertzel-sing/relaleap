@@ -30,6 +30,7 @@ from relaleap.experiments.decision_report import (
     CONTINUE_RESIDUAL_CAPACITY_SUPPORT_VALIDATION,
     DEFINE_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE,
     CONTINUE_RESIDUAL_SUPPORT_WIDTH_VALIDATION,
+    DEFINE_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -52,6 +53,7 @@ from relaleap.experiments.decision_report import (
     write_residual_capacity_support_diagnostic_colab_decision_report,
     write_residual_support_width_validation_gate_report,
     write_residual_support_width_validation_decision_report,
+    write_residual_support_width_repeat_gate_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -2397,6 +2399,83 @@ class ResidualSupportWidthValidationDecisionReportTest(unittest.TestCase):
             )
 
 
+class ResidualSupportWidthRepeatGateReportTest(unittest.TestCase):
+    def test_seed2_matrix_defines_repeat_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            validation_decision = _write_support_width_validation_decision(
+                tmp_path,
+                status="pass",
+                decision=CONTINUE_RESIDUAL_SUPPORT_WIDTH_VALIDATION,
+            )
+            configs = _write_support_width_validation_configs(tmp_path, seed=2)
+
+            report = write_residual_support_width_repeat_gate_report(
+                validation_decision,
+                configs,
+                tmp_path / "support_width_repeat_gate",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["decision"], DEFINE_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE)
+            self.assertEqual(
+                report["selected_next_direction"],
+                "support_width_larger_char_token_seed2_repeat",
+            )
+            self.assertFalse(report["promote_support_width_default"])
+            self.assertEqual(report["default_residual_objective"], "supervised_ce")
+            self.assertEqual(
+                report["default_support_stress_mitigation"],
+                "temporal_clipped_hep",
+            )
+            self.assertEqual(report["evidence"]["config_count"], 4)
+            self.assertEqual(report["evidence"]["failures"], [])
+            self.assertIn("seed2", report["commands"]["compare"])
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "support_width_repeat_gate"
+                    / "decision_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "support_width_repeat_gate"
+                    / "decision_report.md"
+                ).is_file()
+            )
+
+    def test_seed1_matrix_blocks_repeat_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            validation_decision = _write_support_width_validation_decision(
+                tmp_path,
+                status="pass",
+                decision=CONTINUE_RESIDUAL_SUPPORT_WIDTH_VALIDATION,
+            )
+            configs = _write_support_width_validation_configs(tmp_path, seed=1)
+
+            report = write_residual_support_width_repeat_gate_report(
+                validation_decision,
+                configs,
+                tmp_path / "support_width_repeat_gate",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIsNone(report["selected_next_direction"])
+            self.assertIn(
+                {
+                    "field": "config.seed",
+                    "expected": 2,
+                    "actual": 1,
+                    "path": str(configs[0]),
+                },
+                report["evidence"]["failures"],
+            )
+
+
 def _write_support_width_validation_comparison(comparison_dir: Path) -> None:
     comparison_dir.mkdir(parents=True)
     runs = [
@@ -2724,32 +2803,72 @@ def _write_capacity_support_colab_decision(
     return report_path
 
 
-def _write_support_width_validation_configs(tmp_path: Path) -> list[Path]:
+def _write_support_width_validation_decision(
+    tmp_path: Path,
+    *,
+    status: str,
+    decision: str,
+) -> Path:
+    report_dir = tmp_path / "residual_support_width_validation_decision"
+    report_dir.mkdir(parents=True)
+    report_path = report_dir / "decision_report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "status": status,
+                "decision": decision,
+                "selected_next_direction": (
+                    "support_width_repeat_or_capacity_interaction_validation"
+                    if decision == CONTINUE_RESIDUAL_SUPPORT_WIDTH_VALIDATION
+                    else None
+                ),
+                "promote_residual_learning_method": False,
+                "default_residual_objective": "supervised_ce",
+                "default_support_stress_mitigation": "temporal_clipped_hep",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return report_path
+
+
+def _write_support_width_validation_configs_with_seed(
+    tmp_path: Path,
+    *,
+    seed: int,
+) -> list[Path]:
     specs = [
         (
             "char_larger_baseline.yaml",
-            "char_larger_hep_temporal_clipped_objective_gate",
+            "char_larger_hep_temporal_clipped_objective_gate"
+            + (f"_seed{seed}" if seed != 1 else ""),
             "tiny_shakespeare_char",
             128,
             1,
         ),
         (
             "char_larger_support.yaml",
-            "char_larger_support_wide_hep_temporal_clipped_objective_gate",
+            "char_larger_support_wide_hep_temporal_clipped_objective_gate"
+            + (f"_seed{seed}" if seed != 1 else ""),
             "tiny_shakespeare_char",
             128,
             2,
         ),
         (
             "token_larger_baseline.yaml",
-            "token_larger_hep_temporal_clipped_objective_gate",
+            "token_larger_hep_temporal_clipped_objective_gate"
+            + (f"_seed{seed}" if seed != 1 else ""),
             "tiny_shakespeare_word",
             64,
             1,
         ),
         (
             "token_larger_support.yaml",
-            "token_larger_support_wide_hep_temporal_clipped_objective_gate",
+            "token_larger_support_wide_hep_temporal_clipped_objective_gate"
+            + (f"_seed{seed}" if seed != 1 else ""),
             "tiny_shakespeare_word",
             64,
             2,
@@ -2761,7 +2880,7 @@ def _write_support_width_validation_configs(tmp_path: Path) -> list[Path]:
         path.write_text(
             f"""run:
   experiment_id: {experiment_id}
-  seed: 1
+  seed: {seed}
   max_steps: 50
 
 data:
@@ -2799,6 +2918,14 @@ outputs:
         )
         paths.append(path)
     return paths
+
+
+def _write_support_width_validation_configs(
+    tmp_path: Path,
+    *,
+    seed: int = 1,
+) -> list[Path]:
+    return _write_support_width_validation_configs_with_seed(tmp_path, seed=seed)
 
 
 def _write_stopped_residual_objective_reports(tmp_path: Path) -> list[Path]:
