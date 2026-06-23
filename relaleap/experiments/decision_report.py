@@ -454,6 +454,21 @@ DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_DIR = Path(
 DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_OUT_DIR = Path(
     "results/reports/validation_support_wide_exhaustive_support_audit"
 )
+DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_COMPARISON_DIRS = (
+    Path(
+        "results/comparisons/char_larger_support_wide_contextual_router_temporal_clipped_objective_gate"
+    ),
+    Path(
+        "results/comparisons/colab_char_larger_support_wide_contextual_router_temporal_clipped_objective_gate"
+    ),
+)
+DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_ARTIFACT_CHECKS = (
+    DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_COMPARISON_DIRS[0] / "artifact_check_local.json",
+    DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_COMPARISON_DIRS[1] / "artifact_check_local.json",
+)
+DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_OUT_DIR = Path(
+    "results/reports/contextual_support_router_decision"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -553,6 +568,9 @@ RUN_COLAB_SUPPORT_WIDTH_DECONFOUNDING_AUDIT = (
     "run_colab_support_width_deconfounding_audit"
 )
 DIAGNOSE_EXHAUSTIVE_SUPPORT_AUDIT = "diagnose_exhaustive_support_audit"
+DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE = (
+    "define_contextual_support_router_promotion_or_repeat_gate"
+)
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
@@ -6122,6 +6140,154 @@ def write_support_width_deconfounding_audit_report(
     return report
 
 
+def write_contextual_support_router_decision_report(
+    comparison_dirs: tuple[Path, ...] = DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_COMPARISON_DIRS,
+    out_dir: Path = DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_OUT_DIR,
+    *,
+    artifact_check_paths: tuple[Path, ...] | None = DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_ARTIFACT_CHECKS,
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+) -> dict[str, Any]:
+    """Summarize linear-vs-contextual support-router evidence."""
+
+    entries = []
+    failures: list[dict[str, Any]] = []
+    artifact_paths = artifact_check_paths or ()
+    for index, comparison_dir in enumerate(comparison_dirs):
+        artifact_check_path = artifact_paths[index] if index < len(artifact_paths) else None
+        entry = _contextual_support_router_comparison_entry(
+            comparison_dir,
+            artifact_check_path=artifact_check_path,
+            max_logit_delta=max_logit_delta,
+        )
+        entries.append(entry)
+        failures.extend(entry["failures"])
+
+    improvements = [
+        entry["comparison_metrics"]
+        for entry in entries
+        if isinstance(entry.get("comparison_metrics"), dict)
+    ]
+    contextual_loss_wins = [
+        metrics
+        for metrics in improvements
+        if metrics.get("contextual_minus_linear_alpha0_loss") is not None
+        and metrics["contextual_minus_linear_alpha0_loss"] < 0.0
+    ]
+    contextual_utilization_wins = [
+        metrics
+        for metrics in improvements
+        if metrics.get("contextual_minus_linear_used_columns") is not None
+        and metrics["contextual_minus_linear_used_columns"] > 0.0
+        and metrics.get("contextual_minus_linear_unique_support_sets") is not None
+        and metrics["contextual_minus_linear_unique_support_sets"] > 0.0
+    ]
+    contextual_churn_reductions = [
+        metrics
+        for metrics in improvements
+        if metrics.get("contextual_minus_linear_support_change_fraction") is not None
+        and metrics["contextual_minus_linear_support_change_fraction"] < 0.0
+    ]
+    nonzero_hep_wins = [
+        entry
+        for entry in entries
+        if (entry.get("contextual_run") or {}).get("accepted_nonzero_alpha") is not None
+    ]
+    if len(entries) != 2:
+        failures.append(
+            {
+                "field": "comparison_dirs",
+                "expected": "local and colab comparison directories",
+                "actual": len(entries),
+                "path": "",
+            }
+        )
+    if len(contextual_loss_wins) != len(entries):
+        failures.append(
+            {
+                "field": "contextual_router.alpha0_loss",
+                "expected": "contextual lower than linear in every backend",
+                "actual": len(contextual_loss_wins),
+                "path": "",
+            }
+        )
+    if len(contextual_utilization_wins) != len(entries):
+        failures.append(
+            {
+                "field": "contextual_router.support_utilization",
+                "expected": "contextual uses more columns and support sets in every backend",
+                "actual": len(contextual_utilization_wins),
+                "path": "",
+            }
+        )
+    if len(contextual_churn_reductions) != len(entries):
+        failures.append(
+            {
+                "field": "contextual_router.support_change_fraction",
+                "expected": "contextual lower than linear in every backend",
+                "actual": len(contextual_churn_reductions),
+                "path": "",
+            }
+        )
+
+    failures = _dedupe_failures(failures)
+    status = "pass" if not failures else "fail"
+    report = {
+        "status": status,
+        "decision": (
+            DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE
+            if status == "pass"
+            else INSUFFICIENT_EVIDENCE
+        ),
+        "selected_next_direction": (
+            "contextual_support_router_promotion_or_repeat_gate"
+            if status == "pass"
+            else None
+        ),
+        "promote_contextual_support_router_default": False,
+        "default_residual_objective": "supervised_ce",
+        "default_support_stress_mitigation": "temporal_clipped_hep",
+        "default_support_width_top_k": 2,
+        "evidence": {
+            "backends": entries,
+            "contextual_loss_win_count": len(contextual_loss_wins),
+            "contextual_utilization_win_count": len(contextual_utilization_wins),
+            "contextual_churn_reduction_count": len(contextual_churn_reductions),
+            "contextual_nonzero_hep_win_count": len(nonzero_hep_wins),
+            "failures": failures,
+        },
+        "rationale": (
+            "Matching local and Colab larger-char comparisons show that the "
+            "contextual MLP support router lowers alpha-0 CE loss, expands support "
+            "utilization, and reduces support churn relative to the linear "
+            "support-wide router. Nonzero temporal-clipped HEP alphas do not drive "
+            "the contextual-router win, so this evidence supports train-time "
+            "support selection rather than a new settling default."
+            if status == "pass"
+            else (
+                "The contextual support-router decision needs passing local and "
+                "Colab artifact-backed comparisons with one linear support-wide "
+                "run and one contextual-router run in each backend."
+            )
+        ),
+        "next_step": (
+            "define a bounded contextual support-router promotion-or-repeat gate across seed repeats and tokenized or non-char evidence"
+            if status == "pass"
+            else "repair or rerun the contextual support-router comparison artifacts before defining a gate"
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_contextual_support_router_decision_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def write_exhaustive_support_audit_report(
     audit_dir: Path = DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_DIR,
     out_dir: Path = DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_OUT_DIR,
@@ -6653,6 +6819,306 @@ def _support_width_deconfounding_matrix_failures(
                 }
             )
     return _dedupe_failures(failures)
+
+
+def _contextual_support_router_comparison_entry(
+    comparison_dir: Path,
+    *,
+    artifact_check_path: Path | None,
+    max_logit_delta: float,
+) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    comparison: dict[str, Any] | None = None
+    artifact_check: dict[str, Any] | None = None
+    summary_path = comparison_dir / "summary.json"
+    if summary_path.is_file():
+        comparison = _read_json_object(summary_path)
+    else:
+        failures.append(
+            {
+                "field": "comparison.summary.json",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(summary_path),
+            }
+        )
+    if artifact_check_path is not None and artifact_check_path.is_file():
+        artifact_check = _read_json_object(artifact_check_path)
+    elif comparison is not None:
+        artifact_check = check_comparison_artifacts(comparison_dir)
+    if artifact_check is None or artifact_check.get("status") != "pass":
+        failures.append(
+            {
+                "field": "artifact_check.status",
+                "expected": "pass",
+                "actual": None if artifact_check is None else artifact_check.get("status"),
+                "path": str(artifact_check_path or comparison_dir),
+            }
+        )
+
+    verdict = comparison.get("verdict") if isinstance(comparison, dict) else None
+    verdict = verdict if isinstance(verdict, dict) else {}
+    if comparison is None or comparison.get("status") != "ok":
+        failures.append(
+            {
+                "field": "comparison.status",
+                "expected": "ok",
+                "actual": None if comparison is None else comparison.get("status"),
+                "path": str(comparison_dir),
+            }
+        )
+    if verdict.get("status") != "pass":
+        failures.append(
+            {
+                "field": "comparison.verdict.status",
+                "expected": "pass",
+                "actual": verdict.get("status"),
+                "path": str(comparison_dir),
+            }
+        )
+
+    runs = (
+        comparison.get("runs", [])
+        if isinstance(comparison, dict) and isinstance(comparison.get("runs"), list)
+        else []
+    )
+    linear_runs = [
+        run
+        for run in runs
+        if isinstance(run, dict)
+        and run.get("top_k") == 2
+        and run.get("num_columns") == 24
+        and run.get("support_router") in (None, "linear", "linear_topk")
+    ]
+    contextual_runs = [
+        run
+        for run in runs
+        if isinstance(run, dict) and run.get("support_router") == "contextual_mlp"
+    ]
+    if len(linear_runs) != 1:
+        failures.append(
+            {
+                "field": "comparison.runs.linear_support_router",
+                "expected": 1,
+                "actual": len(linear_runs),
+                "path": str(comparison_dir),
+            }
+        )
+    if len(contextual_runs) != 1:
+        failures.append(
+            {
+                "field": "comparison.runs.contextual_support_router",
+                "expected": 1,
+                "actual": len(contextual_runs),
+                "path": str(comparison_dir),
+            }
+        )
+    linear_entry = (
+        _contextual_support_router_run_entry(
+            linear_runs[0],
+            max_logit_delta=max_logit_delta,
+        )
+        if linear_runs
+        else None
+    )
+    contextual_entry = (
+        _contextual_support_router_run_entry(
+            contextual_runs[0],
+            max_logit_delta=max_logit_delta,
+        )
+        if contextual_runs
+        else None
+    )
+    for entry in (linear_entry, contextual_entry):
+        if entry is not None:
+            _append_contextual_support_router_run_failures(failures, entry)
+
+    return {
+        "comparison_dir": str(comparison_dir),
+        "artifact_check_path": str(artifact_check_path) if artifact_check_path else None,
+        "backend": _infer_backend_from_report(comparison_dir, comparison_dir),
+        "artifact_check_status": None
+        if artifact_check is None
+        else artifact_check.get("status"),
+        "comparison_status": None if comparison is None else comparison.get("status"),
+        "verdict_status": verdict.get("status"),
+        "linear_run": linear_entry,
+        "contextual_run": contextual_entry,
+        "comparison_metrics": _contextual_support_router_comparison_metrics(
+            linear_entry,
+            contextual_entry,
+        ),
+        "failures": failures,
+    }
+
+
+def _contextual_support_router_run_entry(
+    run: dict[str, Any],
+    *,
+    max_logit_delta: float,
+) -> dict[str, Any]:
+    alpha_candidates = _alpha_candidates([run])
+    best_alpha = min(
+        alpha_candidates,
+        key=lambda candidate: float(candidate["loss"]),
+        default=None,
+    )
+    accepted_alpha = _best_accepted_alpha(
+        alpha_candidates,
+        max_logit_delta=max_logit_delta,
+    )
+    support_audit = (
+        run.get("support_audit") if isinstance(run.get("support_audit"), dict) else {}
+    )
+    return {
+        "experiment_id": run.get("experiment_id"),
+        "config_path": run.get("config_path"),
+        "status": run.get("status"),
+        "dataset": run.get("dataset"),
+        "residual_objective": run.get("residual_objective"),
+        "support_router": run.get("support_router") or "linear",
+        "contextual_router_hidden_dim": run.get("contextual_router_hidden_dim"),
+        "num_columns": run.get("num_columns"),
+        "top_k": run.get("top_k"),
+        "support_stress": run.get("support_stress"),
+        "support_stress_preset": run.get("support_stress_preset"),
+        "hep_settling_objective": run.get("hep_settling_objective"),
+        "hep_update_clip_norm": run.get("hep_update_clip_norm"),
+        "training_steps": run.get("training_steps"),
+        "final_residual_loss": run.get("final_residual_loss"),
+        "alpha0_loss": _alpha0_loss(run.get("hep_alpha_sweep") or []),
+        "best_hep_alpha": None if best_alpha is None else best_alpha.get("alpha"),
+        "best_hep_loss": None if best_alpha is None else best_alpha.get("loss"),
+        "accepted_nonzero_alpha": accepted_alpha,
+        "max_support_change_fraction": _max_alpha_metric(
+            [run],
+            "support_change_fraction",
+        ),
+        "max_pinned_vs_repicked_logit_delta": _max_alpha_metric(
+            [run],
+            "pinned_vs_repicked_logit_delta",
+        ),
+        "support_audit_used_columns": support_audit.get("used_columns"),
+        "support_audit_dead_columns": support_audit.get("dead_columns"),
+        "support_audit_unique_support_sets": support_audit.get("unique_support_sets"),
+        "support_audit_max_column_fraction": support_audit.get("max_column_fraction"),
+        "invariants": run.get("invariants")
+        if isinstance(run.get("invariants"), dict)
+        else {},
+        "artifact_invariants": run.get("artifact_invariants")
+        if isinstance(run.get("artifact_invariants"), dict)
+        else {},
+    }
+
+
+def _append_contextual_support_router_run_failures(
+    failures: list[dict[str, Any]],
+    entry: dict[str, Any],
+) -> None:
+    prefix = f"run.{entry.get('experiment_id')}"
+    required = {
+        "status": "ok",
+        "dataset": "tiny_shakespeare_char",
+        "residual_objective": "supervised_ce",
+        "support_stress": True,
+        "support_stress_preset": False,
+        "hep_settling_objective": "temporal_consistency_gradient",
+        "hep_update_clip_norm": 0.01,
+        "training_steps": 50,
+        "num_columns": 24,
+        "top_k": 2,
+    }
+    for field, expected in required.items():
+        if entry.get(field) != expected:
+            failures.append(
+                {
+                    "field": f"{prefix}.{field}",
+                    "expected": expected,
+                    "actual": entry.get(field),
+                    "path": entry.get("config_path"),
+                }
+            )
+    if entry.get("alpha0_loss") is None or entry.get("best_hep_loss") is None:
+        failures.append(
+            {
+                "field": f"{prefix}.hep_alpha_sweep",
+                "expected": "alpha-0 and best HEP loss",
+                "actual": None,
+                "path": entry.get("config_path"),
+            }
+        )
+    if entry.get("support_audit_used_columns") is None:
+        failures.append(
+            {
+                "field": f"{prefix}.support_audit",
+                "expected": "support audit metrics",
+                "actual": "missing",
+                "path": entry.get("config_path"),
+            }
+        )
+    for invariant, passed in entry.get("invariants", {}).items():
+        if passed is not True:
+            failures.append(
+                {
+                    "field": f"{prefix}.invariants.{invariant}",
+                    "expected": True,
+                    "actual": passed,
+                    "path": entry.get("config_path"),
+                }
+            )
+    for artifact, passed in entry.get("artifact_invariants", {}).items():
+        if passed is not True:
+            failures.append(
+                {
+                    "field": f"{prefix}.artifact_invariants.{artifact}",
+                    "expected": True,
+                    "actual": passed,
+                    "path": entry.get("config_path"),
+                }
+            )
+
+
+def _contextual_support_router_comparison_metrics(
+    linear: dict[str, Any] | None,
+    contextual: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "contextual_minus_linear_alpha0_loss": _entry_metric_delta(
+            contextual,
+            linear,
+            "alpha0_loss",
+        ),
+        "contextual_minus_linear_best_hep_loss": _entry_metric_delta(
+            contextual,
+            linear,
+            "best_hep_loss",
+        ),
+        "contextual_minus_linear_final_residual_loss": _entry_metric_delta(
+            contextual,
+            linear,
+            "final_residual_loss",
+        ),
+        "contextual_minus_linear_used_columns": _entry_metric_delta(
+            contextual,
+            linear,
+            "support_audit_used_columns",
+        ),
+        "contextual_minus_linear_unique_support_sets": _entry_metric_delta(
+            contextual,
+            linear,
+            "support_audit_unique_support_sets",
+        ),
+        "contextual_minus_linear_support_change_fraction": _entry_metric_delta(
+            contextual,
+            linear,
+            "max_support_change_fraction",
+        ),
+        "contextual_minus_linear_max_column_fraction": _entry_metric_delta(
+            contextual,
+            linear,
+            "support_audit_max_column_fraction",
+        ),
+    }
 
 
 def _focal_residual_objective_entry(
@@ -11285,6 +11751,95 @@ def _write_support_width_deconfounding_audit_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_contextual_support_router_decision_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Contextual Support Router Decision",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        f"- Selected next direction: `{report['selected_next_direction']}`",
+        (
+            "- Promote contextual support router default: "
+            f"`{report['promote_contextual_support_router_default']}`"
+        ),
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        f"- Default support-stress mitigation: `{report['default_support_stress_mitigation']}`",
+        f"- Default support width top-k: `{report['default_support_width_top_k']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        (
+            "| Backend | Artifact check | Verdict | Linear alpha-0 | Contextual alpha-0 "
+            "| Delta | Linear used | Contextual used | Linear supports | "
+            "Contextual supports | Support-change delta | Nonzero HEP win |"
+        ),
+        (
+            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: "
+            "| ---: | ---: | --- |"
+        ),
+    ]
+    for backend in evidence["backends"]:
+        linear = backend.get("linear_run") or {}
+        contextual = backend.get("contextual_run") or {}
+        metrics = backend.get("comparison_metrics") or {}
+        lines.append(
+            (
+                f"| {backend.get('backend') or ''} "
+                f"| `{backend.get('artifact_check_status')}` "
+                f"| `{backend.get('verdict_status')}` "
+                f"| {_format_metric(linear.get('alpha0_loss'))} "
+                f"| {_format_metric(contextual.get('alpha0_loss'))} "
+                f"| {_format_metric(metrics.get('contextual_minus_linear_alpha0_loss'))} "
+                f"| {linear.get('support_audit_used_columns') or ''} "
+                f"| {contextual.get('support_audit_used_columns') or ''} "
+                f"| {linear.get('support_audit_unique_support_sets') or ''} "
+                f"| {contextual.get('support_audit_unique_support_sets') or ''} "
+                f"| {_format_metric(metrics.get('contextual_minus_linear_support_change_fraction'))} "
+                f"| `{contextual.get('accepted_nonzero_alpha') is not None}` |"
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Counts",
+            "",
+            f"- Contextual alpha-0 loss wins: `{evidence['contextual_loss_win_count']}`",
+            (
+                "- Contextual utilization wins: "
+                f"`{evidence['contextual_utilization_win_count']}`"
+            ),
+            (
+                "- Contextual support-churn reductions: "
+                f"`{evidence['contextual_churn_reduction_count']}`"
+            ),
+            (
+                "- Contextual nonzero HEP wins: "
+                f"`{evidence['contextual_nonzero_hep_win_count']}`"
+            ),
+        ]
+    )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _exhaustive_support_audit_rationale(
     *,
     status: str,
@@ -11557,6 +12112,7 @@ def main() -> None:
             "post-support-width-residual-capacity-decision",
             "support-width-deconfounding-audit",
             "exhaustive-support-audit",
+            "contextual-support-router-decision",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -11928,6 +12484,17 @@ def main() -> None:
         report = write_exhaustive_support_audit_report(
             args.comparison_dir or DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_DIR,
             args.out or DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_OUT_DIR,
+        )
+    elif args.report == "contextual-support-router-decision":
+        report = write_contextual_support_router_decision_report(
+            tuple(args.decision_report)
+            if args.decision_report
+            else DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_COMPARISON_DIRS,
+            args.out or DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_OUT_DIR,
+            artifact_check_paths=DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_ARTIFACT_CHECKS
+            if not args.artifact_check
+            else (args.artifact_check,),
+            max_logit_delta=args.max_logit_delta,
         )
     else:
         report = write_pinned_support_decision_report(

@@ -39,6 +39,7 @@ from relaleap.experiments.decision_report import (
     STOP_RESIDUAL_CAPACITY_VALIDATION,
     RUN_COLAB_SUPPORT_WIDTH_DECONFOUNDING_AUDIT,
     DIAGNOSE_EXHAUSTIVE_SUPPORT_AUDIT,
+    DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -69,6 +70,7 @@ from relaleap.experiments.decision_report import (
     write_post_support_width_residual_capacity_decision_report,
     write_support_width_deconfounding_audit_report,
     write_exhaustive_support_audit_report,
+    write_contextual_support_router_decision_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -4370,6 +4372,85 @@ class SupportWidthDeconfoundingAuditReportTest(unittest.TestCase):
             )
 
 
+class ContextualSupportRouterDecisionReportTest(unittest.TestCase):
+    def test_matching_local_colab_contextual_router_evidence_defines_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            local_dir = tmp_path / "local_contextual"
+            colab_dir = tmp_path / "colab_contextual"
+            local_check = tmp_path / "local_artifact_check.json"
+            colab_check = tmp_path / "colab_artifact_check.json"
+            _write_contextual_support_router_comparison(local_dir)
+            _write_contextual_support_router_comparison(colab_dir)
+            for path in (local_check, colab_check):
+                path.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+
+            report = write_contextual_support_router_decision_report(
+                (local_dir, colab_dir),
+                tmp_path / "contextual_router_decision",
+                artifact_check_paths=(local_check, colab_check),
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
+            )
+            self.assertFalse(report["promote_contextual_support_router_default"])
+            self.assertEqual(report["evidence"]["contextual_loss_win_count"], 2)
+            self.assertEqual(
+                report["evidence"]["contextual_utilization_win_count"],
+                2,
+            )
+            self.assertEqual(
+                report["evidence"]["contextual_churn_reduction_count"],
+                2,
+            )
+            self.assertEqual(report["evidence"]["contextual_nonzero_hep_win_count"], 0)
+            self.assertTrue(
+                (tmp_path / "contextual_router_decision" / "decision_report.json").is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "contextual_router_decision" / "decision_report.md").is_file()
+            )
+
+    def test_failed_artifact_check_blocks_contextual_router_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            local_dir = tmp_path / "local_contextual"
+            colab_dir = tmp_path / "colab_contextual"
+            local_check = tmp_path / "local_artifact_check.json"
+            colab_check = tmp_path / "colab_artifact_check.json"
+            _write_contextual_support_router_comparison(local_dir)
+            _write_contextual_support_router_comparison(colab_dir)
+            local_check.write_text(
+                json.dumps({"status": "pass"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            colab_check.write_text(
+                json.dumps({"status": "fail"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_contextual_support_router_decision_report(
+                (local_dir, colab_dir),
+                tmp_path / "contextual_router_decision",
+                artifact_check_paths=(local_check, colab_check),
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertTrue(
+                any(
+                    failure["field"] == "artifact_check.status"
+                    for failure in report["evidence"]["failures"]
+                )
+            )
+
+
 class ExhaustiveSupportAuditReportTest(unittest.TestCase):
     def test_valid_audit_selects_router_support_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4625,6 +4706,118 @@ def _write_support_width_deconfounding_comparison(comparison_dir: Path) -> None:
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _write_contextual_support_router_comparison(comparison_dir: Path) -> None:
+    comparison_dir.mkdir(parents=True)
+    runs = [
+        _contextual_support_router_run_entry(
+            "char_larger_support_wide_hep_temporal_clipped_objective_gate",
+            support_router=None,
+            alpha0_loss=3.10,
+            best_hep_loss=3.099,
+            final_loss=3.10,
+            used_columns=12,
+            dead_columns=12,
+            unique_supports=15,
+            max_column_fraction=0.31,
+            support_change=0.52,
+        ),
+        _contextual_support_router_run_entry(
+            "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate",
+            support_router="contextual_mlp",
+            alpha0_loss=1.92,
+            best_hep_loss=1.92,
+            final_loss=1.92,
+            used_columns=18,
+            dead_columns=6,
+            unique_supports=44,
+            max_column_fraction=0.14,
+            support_change=0.17,
+        ),
+    ]
+    summary = {
+        "status": "ok",
+        "verdict": {
+            "status": "pass",
+            "invariants_passed": True,
+            "artifact_invariants_passed": True,
+        },
+        "runs": runs,
+    }
+    (comparison_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _contextual_support_router_run_entry(
+    experiment_id: str,
+    *,
+    support_router: str | None,
+    alpha0_loss: float,
+    best_hep_loss: float,
+    final_loss: float,
+    used_columns: int,
+    dead_columns: int,
+    unique_supports: int,
+    max_column_fraction: float,
+    support_change: float,
+) -> dict[str, object]:
+    run = {
+        "artifact_invariants": {
+            "metrics_csv": True,
+            "notes_md": True,
+            "summary_json": True,
+        },
+        "config_path": f"configs/{experiment_id}.yaml",
+        "dataset": "tiny_shakespeare_char",
+        "experiment_id": experiment_id,
+        "final_residual_loss": final_loss,
+        "hep_alpha_sweep": [
+            {
+                "alpha": 0.0,
+                "loss": alpha0_loss,
+                "max_logit_delta_from_ordinary": 0.0,
+                "pinned_vs_repicked_logit_delta": 0.0,
+                "support_change_fraction": support_change,
+            },
+            {
+                "alpha": 1.0,
+                "loss": best_hep_loss,
+                "max_logit_delta_from_ordinary": 0.001,
+                "pinned_vs_repicked_logit_delta": 0.001,
+                "support_change_fraction": support_change,
+            },
+        ],
+        "hep_settling_objective": "temporal_consistency_gradient",
+        "hep_update_clip_norm": 0.01,
+        "invariants": {
+            "frozen_base_unchanged": True,
+            "hep_alpha_0_equivalence": True,
+            "residual_parameters_updated": True,
+            "zero_init_identity": True,
+        },
+        "num_columns": 24,
+        "residual_objective": "supervised_ce",
+        "status": "ok",
+        "support_audit": {
+            "dead_columns": dead_columns,
+            "max_column_fraction": max_column_fraction,
+            "support_positions": 512,
+            "total_support_slots": 1024,
+            "unique_support_sets": unique_supports,
+            "used_columns": used_columns,
+        },
+        "support_stress": True,
+        "support_stress_preset": False,
+        "top_k": 2,
+        "training_steps": 50,
+    }
+    if support_router is not None:
+        run["contextual_router_hidden_dim"] = 128
+        run["support_router"] = support_router
+    return run
 
 
 def _support_width_deconfounding_run_entry(
