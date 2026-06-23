@@ -150,6 +150,13 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
 
     best_pair = min(pair_rows, key=lambda row: float(row["loss"]))
     token_oracle = _token_oracle(router_token_losses, pair_rows)
+    router_target = _router_oracle_target_diagnostic(
+        hidden,
+        router_token_losses,
+        pair_rows,
+        oracle_indices=token_oracle["_oracle_indices"],
+        seed=seed,
+    )
     dominant_router = _dominant_router_support(router_support)
     router_support_row = _find_support_row(pair_rows, dominant_router["support"])
     one_swap_rows = _one_swap_neighbors(pair_rows, dominant_router["support"])
@@ -163,6 +170,10 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
     support_rows = sorted(singleton_rows + pair_rows, key=lambda row: (len(row["support"]), tuple(row["support"])))
     _write_support_losses(out_dir / "support_losses.csv", support_rows)
     _write_pairwise_synergy(out_dir / "pairwise_synergy.csv", pair_rows)
+    _write_router_target_diagnostic(
+        out_dir / "router_target_diagnostic.csv",
+        router_target["splits"],
+    )
     summary = {
         "status": "ok",
         "experiment_id": f"{experiment_id}_exhaustive_support_audit",
@@ -213,6 +224,7 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
             "loss_distribution": _loss_distribution(pair_rows),
             "top_supports_by_loss": _top_supports(pair_rows, key="loss", reverse=False),
             "top_supports_by_synergy": _top_supports(pair_rows, key="pairwise_synergy", reverse=True),
+            "router_oracle_target_diagnostic": router_target["summary"],
             "support_audit": _residual_support_audit(base, residual, inputs),
             "residual_parameter_delta": _state_dict_delta(before_residual, residual),
         },
@@ -220,6 +232,7 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
             "summary_json": str(out_dir / "summary.json"),
             "support_losses_csv": str(out_dir / "support_losses.csv"),
             "pairwise_synergy_csv": str(out_dir / "pairwise_synergy.csv"),
+            "router_target_diagnostic_csv": str(out_dir / "router_target_diagnostic.csv"),
             "notes_md": str(out_dir / "notes.md"),
         },
     }
@@ -334,6 +347,142 @@ def _token_oracle(router_token_losses: Any, rows: list[dict[str, Any]]) -> dict[
         "oracle_support_counts": dict(
             sorted(support_counts.items(), key=lambda item: (-item[1], item[0]))
         ),
+        "_oracle_indices": oracle_indices.detach(),
+    }
+
+
+def _router_oracle_target_diagnostic(
+    hidden: Any,
+    router_token_losses: Any,
+    rows: list[dict[str, Any]],
+    *,
+    oracle_indices: Any,
+    seed: int,
+    steps: int = 200,
+) -> dict[str, Any]:
+    """Train a tiny hidden-state probe to imitate per-token oracle supports."""
+
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+
+    torch.manual_seed(seed + 1009)
+    features = hidden[:, :-1, :].reshape(-1, hidden.shape[-1]).detach()
+    targets = oracle_indices.reshape(-1).detach().to(dtype=torch.long)
+    token_loss_matrix = torch.stack([row["_token_losses"] for row in rows], dim=1)
+    router_losses = router_token_losses.reshape(-1).detach()
+    oracle_losses = token_loss_matrix.min(dim=1).values.detach()
+    position_ids = torch.arange(features.shape[0], device=features.device)
+    train_mask = position_ids.remainder(2) == 0
+    holdout_mask = ~train_mask
+
+    selector = nn.Linear(features.shape[-1], len(rows), bias=True).to(features.device)
+    optimizer = torch.optim.AdamW(selector.parameters(), lr=0.05, weight_decay=1e-4)
+    for _ in range(steps):
+        optimizer.zero_grad(set_to_none=True)
+        logits = selector(features[train_mask])
+        loss = F.cross_entropy(logits, targets[train_mask])
+        loss.backward()
+        optimizer.step()
+
+    with torch.no_grad():
+        logits = selector(features)
+        predicted_indices = logits.argmax(dim=-1)
+        selected_losses = token_loss_matrix[
+            torch.arange(token_loss_matrix.shape[0], device=features.device),
+            predicted_indices,
+        ].detach()
+        selected_counts: dict[str, int] = {}
+        for index in predicted_indices.detach().cpu().tolist():
+            key = str(rows[int(index)]["support_key"])
+            selected_counts[key] = selected_counts.get(key, 0) + 1
+
+    splits = [
+        _router_target_split(
+            "all",
+            torch.ones_like(train_mask, dtype=torch.bool),
+            targets=targets,
+            predicted_indices=predicted_indices,
+            router_losses=router_losses,
+            oracle_losses=oracle_losses,
+            selected_losses=selected_losses,
+        ),
+        _router_target_split(
+            "train_even_positions",
+            train_mask,
+            targets=targets,
+            predicted_indices=predicted_indices,
+            router_losses=router_losses,
+            oracle_losses=oracle_losses,
+            selected_losses=selected_losses,
+        ),
+        _router_target_split(
+            "holdout_odd_positions",
+            holdout_mask,
+            targets=targets,
+            predicted_indices=predicted_indices,
+            router_losses=router_losses,
+            oracle_losses=oracle_losses,
+            selected_losses=selected_losses,
+        ),
+    ]
+    by_name = {row["split"]: row for row in splits}
+    return {
+        "summary": {
+            "selector": "linear_hidden_to_oracle_pair",
+            "training_steps": steps,
+            "train_split": "even flattened token positions",
+            "holdout_split": "odd flattened token positions",
+            "selected_support_counts": dict(
+                sorted(selected_counts.items(), key=lambda item: (-item[1], item[0]))
+            ),
+            "all": by_name["all"],
+            "holdout": by_name["holdout_odd_positions"],
+        },
+        "splits": splits,
+    }
+
+
+def _router_target_split(
+    split: str,
+    mask: Any,
+    *,
+    targets: Any,
+    predicted_indices: Any,
+    router_losses: Any,
+    oracle_losses: Any,
+    selected_losses: Any,
+) -> dict[str, Any]:
+    selected_count = int(mask.sum().item())
+    if selected_count == 0:
+        return {
+            "split": split,
+            "positions": 0,
+            "oracle_target_accuracy": 0.0,
+            "router_loss": None,
+            "oracle_loss": None,
+            "selector_loss": None,
+            "selector_minus_router_loss": None,
+            "selector_oracle_regret": None,
+            "oracle_gap_recovery_fraction": None,
+        }
+    router_loss = float(router_losses[mask].mean().item())
+    oracle_loss = float(oracle_losses[mask].mean().item())
+    selector_loss = float(selected_losses[mask].mean().item())
+    gap = router_loss - oracle_loss
+    recovery = None if abs(gap) <= 1e-12 else (router_loss - selector_loss) / gap
+    return {
+        "split": split,
+        "positions": selected_count,
+        "oracle_target_accuracy": float(
+            (predicted_indices[mask] == targets[mask]).to(dtype=router_losses.dtype).mean().item()
+        ),
+        "router_loss": router_loss,
+        "oracle_loss": oracle_loss,
+        "selector_loss": selector_loss,
+        "selector_minus_router_loss": selector_loss - router_loss,
+        "selector_oracle_regret": selector_loss - oracle_loss,
+        "oracle_gap_recovery_fraction": recovery,
     }
 
 
@@ -453,6 +602,24 @@ def _write_pairwise_synergy(path: Path, rows: list[dict[str, Any]]) -> None:
     )
 
 
+def _write_router_target_diagnostic(path: Path, rows: list[dict[str, Any]]) -> None:
+    _write_csv(
+        path,
+        rows,
+        [
+            "split",
+            "positions",
+            "oracle_target_accuracy",
+            "router_loss",
+            "oracle_loss",
+            "selector_loss",
+            "selector_minus_router_loss",
+            "selector_oracle_regret",
+            "oracle_gap_recovery_fraction",
+        ],
+    )
+
+
 def _write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -477,6 +644,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
                 f"- Oracle-support regret: `{audit['oracle_support_regret']:.8f}`",
                 f"- Dominant router support: `{audit['dominant_router_support']}`",
                 f"- Best one-swap support: `{audit['best_one_swap_support']}`",
+                "- Router-target holdout gap recovery: "
+                f"`{audit['router_oracle_target_diagnostic']['holdout']['oracle_gap_recovery_fraction']}`",
                 "",
             ]
         ),

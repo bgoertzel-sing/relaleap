@@ -4391,6 +4391,7 @@ class ExhaustiveSupportAuditReportTest(unittest.TestCase):
             self.assertTrue(report["evidence"]["router_improvement_signal"])
             self.assertTrue(report["evidence"]["column_redundancy_signal"])
             self.assertTrue(report["evidence"]["pairwise_composition_signal"])
+            self.assertIn("fresh seed", report["next_step"])
             self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
             self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
 
@@ -4442,6 +4443,14 @@ def _write_exhaustive_support_audit(audit_dir: Path) -> None:
                 "dead_columns": 1,
                 "unique_support_sets": 4,
             },
+            "router_oracle_target_diagnostic": {
+                "selector": "linear_hidden_to_oracle_pair",
+                "holdout": {
+                    "oracle_target_accuracy": 0.5,
+                    "oracle_gap_recovery_fraction": 0.25,
+                    "selector_minus_router_loss": -0.025,
+                },
+            },
             "top_supports_by_synergy": [
                 {
                     "support": "0,1",
@@ -4453,6 +4462,9 @@ def _write_exhaustive_support_audit(audit_dir: Path) -> None:
             "summary_json": str(audit_dir / "summary.json"),
             "support_losses_csv": str(audit_dir / "support_losses.csv"),
             "pairwise_synergy_csv": str(audit_dir / "pairwise_synergy.csv"),
+            "router_target_diagnostic_csv": str(
+                audit_dir / "router_target_diagnostic.csv"
+            ),
             "notes_md": str(audit_dir / "notes.md"),
         },
     }
@@ -4463,6 +4475,10 @@ def _write_exhaustive_support_audit(audit_dir: Path) -> None:
     (audit_dir / "support_losses.csv").write_text("support_key,loss\n0,3.5\n")
     (audit_dir / "pairwise_synergy.csv").write_text(
         "support_key,pairwise_synergy\n0,1,0.02\n"
+    )
+    (audit_dir / "router_target_diagnostic.csv").write_text(
+        "split,oracle_gap_recovery_fraction\nholdout_odd_positions,0.25\n",
+        encoding="utf-8",
     )
     (audit_dir / "notes.md").write_text("# audit\n", encoding="utf-8")
 

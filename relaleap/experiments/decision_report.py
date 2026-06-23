@@ -6160,6 +6160,7 @@ def write_exhaustive_support_audit_report(
         "summary_json": summary_path,
         "support_losses_csv": audit_dir / "support_losses.csv",
         "pairwise_synergy_csv": audit_dir / "pairwise_synergy.csv",
+        "router_target_diagnostic_csv": audit_dir / "router_target_diagnostic.csv",
         "notes_md": audit_dir / "notes.md",
     }
     for key, default_path in required_artifacts.items():
@@ -6193,6 +6194,7 @@ def write_exhaustive_support_audit_report(
         "dominant_router_support",
         "best_one_swap_support",
         "support_audit",
+        "router_oracle_target_diagnostic",
         "top_supports_by_synergy",
     )
     for field in required_audit_fields:
@@ -6208,6 +6210,14 @@ def write_exhaustive_support_audit_report(
 
     support_audit = audit.get("support_audit")
     support_audit = support_audit if isinstance(support_audit, dict) else {}
+    router_target_diagnostic = audit.get("router_oracle_target_diagnostic")
+    router_target_diagnostic = (
+        router_target_diagnostic if isinstance(router_target_diagnostic, dict) else {}
+    )
+    router_target_holdout = router_target_diagnostic.get("holdout")
+    router_target_holdout = (
+        router_target_holdout if isinstance(router_target_holdout, dict) else {}
+    )
     top_synergy = audit.get("top_supports_by_synergy")
     top_synergy = top_synergy if isinstance(top_synergy, list) else []
     strongest_synergy = (
@@ -6287,6 +6297,16 @@ def write_exhaustive_support_audit_report(
                 audit.get("best_one_swap_recovers_oracle_gap_fraction")
             ),
             "support_audit": support_audit,
+            "router_oracle_target_diagnostic": router_target_diagnostic,
+            "router_target_holdout_oracle_gap_recovery_fraction": _optional_float(
+                router_target_holdout.get("oracle_gap_recovery_fraction")
+            ),
+            "router_target_holdout_selector_minus_router_loss": _optional_float(
+                router_target_holdout.get("selector_minus_router_loss")
+            ),
+            "router_target_holdout_accuracy": _optional_float(
+                router_target_holdout.get("oracle_target_accuracy")
+            ),
             "strongest_pairwise_synergy": None
             if strongest_synergy is None
             else float(strongest_synergy),
@@ -6308,22 +6328,12 @@ def write_exhaustive_support_audit_report(
             if strongest_synergy is None
             else float(strongest_synergy),
         ),
-        "next_step": (
-            "prototype a router-support improvement diagnostic that uses the exhaustive audit as the oracle target"
-            if status == "pass" and selected_branch == "router_support_selection"
-            else (
-                "prototype a column redundancy/load-balancing diagnostic on the same support-width setting"
-                if status == "pass" and selected_branch == "column_redundancy"
-                else (
-                    "prototype a pairwise composition diagnostic using the top synergy supports"
-                    if status == "pass" and selected_branch == "pairwise_composition"
-                    else (
-                        "collect a broader exhaustive support audit before branching"
-                        if status == "pass"
-                        else "repair or rerun the exhaustive support audit artifacts"
-                    )
-                )
-            )
+        "next_step": _exhaustive_support_audit_next_step(
+            status=status,
+            selected_branch=selected_branch,
+            router_target_holdout_recovery=_optional_float(
+                router_target_holdout.get("oracle_gap_recovery_fraction")
+            ),
         ),
     }
 
@@ -11164,6 +11174,40 @@ def _exhaustive_support_audit_rationale(
     )
 
 
+def _exhaustive_support_audit_next_step(
+    *,
+    status: str,
+    selected_branch: str,
+    router_target_holdout_recovery: float | None,
+) -> str:
+    if status != "pass":
+        return "repair or rerun the exhaustive support audit artifacts"
+    if selected_branch == "router_support_selection":
+        if router_target_holdout_recovery is None:
+            return (
+                "prototype a router-support improvement diagnostic that uses the "
+                "exhaustive audit as the oracle target"
+            )
+        if router_target_holdout_recovery <= 0.0:
+            return (
+                "prototype a contextual or nonlinear router-support diagnostic "
+                "because the linear oracle-target selector did not recover the "
+                "holdout oracle gap"
+            )
+        return (
+            "repeat the router oracle-target selector on a fresh seed and larger "
+            "support-width setting"
+        )
+    if selected_branch == "column_redundancy":
+        return (
+            "prototype a column redundancy/load-balancing diagnostic on the same "
+            "support-width setting"
+        )
+    if selected_branch == "pairwise_composition":
+        return "prototype a pairwise composition diagnostic using the top synergy supports"
+    return "collect a broader exhaustive support audit before branching"
+
+
 def _write_exhaustive_support_audit_markdown(
     path: Path,
     report: dict[str, Any],
@@ -11199,6 +11243,18 @@ def _write_exhaustive_support_audit_markdown(
         f"- Best global fixed support: `{evidence.get('best_global_fixed_support')}`",
         f"- Dominant router support: `{evidence.get('dominant_router_support')}`",
         f"- Best one-swap support: `{evidence.get('best_one_swap_support')}`",
+        (
+            "- Router-target holdout accuracy: "
+            f"`{_format_metric(evidence.get('router_target_holdout_accuracy'))}`"
+        ),
+        (
+            "- Router-target holdout selector minus router loss: "
+            f"`{_format_metric(evidence.get('router_target_holdout_selector_minus_router_loss'))}`"
+        ),
+        (
+            "- Router-target holdout oracle-gap recovery: "
+            f"`{_format_metric(evidence.get('router_target_holdout_oracle_gap_recovery_fraction'))}`"
+        ),
         f"- Used columns: `{support_audit.get('used_columns')}` of `{evidence.get('num_columns')}`",
         f"- Dead columns: `{support_audit.get('dead_columns')}`",
         f"- Unique router support sets: `{support_audit.get('unique_support_sets')}`",
