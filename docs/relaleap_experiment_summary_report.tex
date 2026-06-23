@@ -1,0 +1,629 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{hyperref}
+
+\title{RelaLeap Experiment Summary and Open Research Questions}
+\author{Generated from the RelaLeap automation evidence trail}
+\date{2026-06-23}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report summarizes the RelaLeap experiments completed so far, with an
+emphasis on what has actually been learned and what remains uncertain. The
+goal is to give external LLMs and human reviewers enough context to suggest
+routes toward more sizeable improvements. The current strongest empirical
+findings are: (i) temporal-consistency clipped HEP is a robust, deployable
+label-free support-stress mitigation, but its effect size is small; (ii)
+simple residual-objective variants mostly fail to beat supervised cross-entropy
+under the present gates; and (iii) the newest local diagnostic suggests that
+support width, rather than column count or another CE-adjacent loss, may be the
+current residual-layer bottleneck.
+\end{abstract}
+
+\section{Context and Vocabulary}
+
+RelaLeap is an experimental residual-layer learning program. A frozen base
+model is augmented with residual columns at one or more insertion sites. The
+experiments ask whether residual columns can adapt the frozen model in useful
+ways while preserving guardrails on ordinary behavior and artifact integrity.
+
+The main recurring concepts are:
+
+\begin{itemize}
+  \item \textbf{Residual columns}: learned residual atoms/columns inserted into
+  the frozen base computation.
+  \item \textbf{Support}: the selected residual columns/atoms active for a
+  given example. Most early runs used sparse support with \texttt{top\_k = 1}.
+  \item \textbf{HEP}: hidden-state error propagation / settling at inference
+  time, implemented as an $\alpha$ sweep over a local hidden-state update.
+  \item \textbf{Support stress}: a diagnostic condition that intentionally
+  creates nonzero support repicking so that support instability can be measured.
+  \item \textbf{Pinned support}: HEP is run while holding the original support
+  fixed. This is diagnostically useful, but early evidence showed it can harm
+  loss when support really wants to move.
+  \item \textbf{Clipped HEP}: HEP updates are clipped to keep logit movement and
+  pinned-vs-repicked divergence inside explicit budgets.
+  \item \textbf{Temporal-consistency HEP}: a deployable label-free HEP
+  objective that uses consistency over temporal/sequence perturbations rather
+  than supervised labels during settling.
+  \item \textbf{Artifact gate}: each comparison must produce expected
+  \texttt{summary.json}, \texttt{metrics.csv}, and \texttt{notes.md} files, and
+  model/summary invariants must pass.
+\end{itemize}
+
+\section{Evidence Protocol}
+
+The project now has a command-driven experiment harness, local and Colab
+comparison paths, artifact-contract checks, and decision reports. This matters
+because many observed effects are small, and because the Colab path is driven
+through a real-Chrome bridge rather than a clean official API.
+
+Important guardrails include:
+
+\begin{itemize}
+  \item Local and Colab comparisons should match when both are run.
+  \item HEP $\alpha = 0$ must reproduce ordinary inference.
+  \item Frozen base parameters must remain unchanged during residual training.
+  \item Residual parameters must update during residual training.
+  \item Nonzero HEP alphas are accepted only if they improve the relevant loss
+  while staying inside ordinary-logit and support-stability budgets.
+  \item Promotion decisions are made by explicit reports, not by ad hoc visual
+  inspection.
+\end{itemize}
+
+\section{High-Level Timeline}
+
+\begin{enumerate}
+  \item Phase 0 established the local and Colab smoke harness.
+  \item Pinned-support and support-stress diagnostics exposed support
+  instability.
+  \item Clipped HEP stabilized support-stress settling but did not by itself
+  improve loss.
+  \item A guided clipped HEP oracle showed that a helpful hidden-state signal
+  exists, but it used supervised labels and therefore was not deployable.
+  \item Label-free HEP objectives were tested. Prediction-entropy was stable
+  but poor; temporal consistency was stable and consistently slightly helpful.
+  \item Temporal-consistency clipped HEP passed multi-seed, validation,
+  extended, larger-char, and tokenized local/Colab gates, and was promoted as
+  the default support-stress mitigation.
+  \item With temporal clipped HEP fixed, residual-objective variants were
+  tested. PC-style, anchored-PC, confidence penalty, margin penalty, label
+  smoothing, focal CE, and train-time temporal consistency did not justify a
+  default change.
+  \item The newest diagnostic fixed supervised CE and temporal clipped HEP,
+  varied only column count and support width, and found that widened support
+  gave the largest local gain observed so far in this phase.
+\end{enumerate}
+
+\section{Phase 0: Harness and Baseline HEP}
+
+Phase 0 validated the basic experiment harness on Tiny Shakespeare character
+runs. The baseline configurations were:
+
+\begin{itemize}
+  \item \texttt{char\_smoke}: supervised CE residual update.
+  \item \texttt{char\_smoke\_pc}: PC-style logit-MSE residual update.
+  \item \texttt{char\_smoke\_hep}: supervised CE residual update plus HEP
+  $\alpha$ sweep.
+\end{itemize}
+
+The Phase 0 baseline used hidden dimension 32, sequence length 32, one
+insertion site, 8 residual columns, 4 atoms per column, \texttt{top\_k = 1},
+seed 1, and 10 residual training steps.
+
+\begin{center}
+\begin{tabular}{l l r r r}
+\hline
+Experiment & Objective & Initial loss & Final loss & Delta \\
+\hline
+\texttt{char\_smoke} & supervised CE & 3.61089253 & 3.56317067 & -0.04772186 \\
+\texttt{char\_smoke\_pc} & PC logit MSE & 0.02878798 & 0.02869168 & -0.00009630 \\
+\texttt{char\_smoke\_hep} & supervised CE & 3.61089253 & 3.56317067 & -0.04772186 \\
+\hline
+\end{tabular}
+\end{center}
+
+The HEP alpha sweep produced a meaningful initial result: $\alpha = 0.25$ was
+accepted because it improved loss while staying within the ordinary-logit
+delta budget. Larger alphas improved raw loss more but exceeded the budget.
+
+\begin{center}
+\begin{tabular}{r r r l}
+\hline
+$\alpha$ & Loss & Max logit delta & Gate result \\
+\hline
+0.00 & 3.56317067 & 0.00000000 & baseline \\
+0.25 & 3.55195642 & 0.05185765 & accepted \\
+0.50 & 3.54104090 & 0.10371491 & rejected \\
+1.00 & 3.52012682 & 0.20742965 & rejected \\
+\hline
+\end{tabular}
+\end{center}
+
+\textbf{Interpretation.} HEP can improve the supervised CE loss, but the
+unconstrained update is too aggressive. This motivated the later clipping and
+support-stability work.
+
+\section{Support Stress, Pinned Support, and Clipping}
+
+Support-stress runs intentionally induced support repicking. Pinned support was
+tested as a possible stabilizer. It exposed the problem clearly, but it did not
+improve performance under the acceptance gate.
+
+\begin{center}
+\begin{tabular}{r r r r}
+\hline
+$\alpha$ & Loss & Improvement vs $\alpha=0$ & Pinned-vs-repicked delta \\
+\hline
+0.00 & 4.32304668 & 0.00000000 & 0.00000000 \\
+0.25 & 4.71638441 & -0.39333773 & 0.83149838 \\
+0.50 & 5.17755079 & -0.85450411 & 1.66299534 \\
+1.00 & 6.23724604 & -1.91419935 & 3.32599020 \\
+\hline
+\end{tabular}
+\end{center}
+
+The pinned-support decision was \texttt{keep\_opt\_in}. The max support change
+fraction was 0.78906250, and the max pinned-vs-repicked logit delta was
+3.32599020. This is a large instability signal.
+
+Clipped HEP reduced the pinned-vs-repicked logit delta dramatically, from
+3.32599020 to 0.00235271, but simple clipping alone did not improve the
+support-stress loss. The clipped-HEP decision was also \texttt{keep\_opt\_in}.
+
+\textbf{Interpretation.} Support instability is real. Clipping can make the
+settling dynamics safe, but a useful settling direction is still needed.
+
+\section{Guided HEP Oracle and Label-Free HEP Signals}
+
+The guided clipped HEP oracle used supervised information during settling. It
+showed that a helpful signal exists:
+
+\begin{center}
+\begin{tabular}{r r r r}
+\hline
+$\alpha$ & Loss & Improvement vs $\alpha=0$ & Logit delta \\
+\hline
+0.00 & 4.32304668 & 0.00000000 & 0.00000000 \\
+0.25 & 4.32230139 & 0.00074530 & 0.00084373 \\
+0.50 & 4.32155704 & 0.00148964 & 0.00168708 \\
+1.00 & 4.32006598 & 0.00298071 & 0.00337455 \\
+\hline
+\end{tabular}
+\end{center}
+
+This result was important but not directly deployable, because the oracle used
+supervised labels. Two label-free alternatives were then tested:
+
+\begin{itemize}
+  \item Prediction-entropy clipped HEP: deployable and stable, but worsened
+  supervised support-stress loss in the local smoke comparison.
+  \item Temporal-consistency clipped HEP: deployable, stable, and consistently
+  slightly helpful under support stress.
+\end{itemize}
+
+\section{Temporal-Consistency Clipped HEP}
+
+Temporal-consistency clipped HEP became the strongest early mechanism result.
+It was selected across seed-smoke, validation, extended, larger-character, and
+tokenized local/Colab evidence.
+
+\subsection{Multi-Seed Smoke Evidence}
+
+The multi-seed aggregate included 8 reports: seeds 1--4, local and Colab. All
+selected temporal consistency. The mean loss improvement from $\alpha=0$ was
+0.00016832. The max ordinary-logit delta was 0.00176525, and the max
+pinned-vs-repicked delta was 0.00254941.
+
+\begin{center}
+\begin{tabular}{r l r r r}
+\hline
+Seed & Backend & Accepted $\alpha$ & Loss improvement & Logit delta \\
+\hline
+1 & local & 1.00 & 0.00020361 & 0.00176525 \\
+1 & Colab & 1.00 & 0.00020313 & 0.00176525 \\
+2 & local & 1.00 & 0.00012970 & 0.00168538 \\
+2 & Colab & 1.00 & 0.00012922 & 0.00168514 \\
+3 & local & 1.00 & 0.00015688 & 0.00127435 \\
+3 & Colab & 1.00 & 0.00015736 & 0.00127482 \\
+4 & local & 1.00 & 0.00018311 & 0.00173563 \\
+4 & Colab & 1.00 & 0.00018358 & 0.00173560 \\
+\hline
+\end{tabular}
+\end{center}
+
+\subsection{Cross-Scale Evidence}
+
+The cross-scale aggregate used 12 reports across seed-smoke, validation, and
+extended scales. All 12 selected temporal consistency. The mean loss
+improvement from $\alpha=0$ was 0.00019213. The max ordinary-logit delta was
+0.00241095, and the max pinned-vs-repicked delta was 0.00556183.
+
+\subsection{Promotion Gate}
+
+The final promotion gate required both larger char-level and non-char tokenized
+local/Colab evidence. It passed:
+
+\begin{center}
+\begin{tabular}{l l r r r}
+\hline
+Gate & Backend & Loss improvement & Logit delta & Support change \\
+\hline
+larger char & local & 0.00005436 & 0.00062868 & 0.65039062 \\
+larger char & Colab & 0.00005412 & 0.00062868 & 0.65039062 \\
+tokenized & local & 0.00011063 & 0.00174150 & 0.60546875 \\
+tokenized & Colab & 0.00011015 & 0.00174144 & 0.60546875 \\
+\hline
+\end{tabular}
+\end{center}
+
+The promotion-gate satisfaction report had:
+
+\begin{itemize}
+  \item Decision: \texttt{satisfy\_temporal\_label\_free\_support\_stress\_promotion\_gate}
+  \item Promotion gate satisfied: true.
+  \item Promote to default support-stress mitigation: true.
+  \item Mean temporal loss improvement from $\alpha=0$: 0.00008231.
+  \item Max ordinary-logit delta: 0.00174150.
+  \item Max pinned-vs-repicked delta: 0.00397229.
+\end{itemize}
+
+\textbf{Interpretation.} Temporal consistency is robust and safe, but its
+absolute effect size is small. It is a good default stabilizer, not yet a route
+to large performance gains.
+
+\section{Residual Objective Search After Temporal HEP Promotion}
+
+After temporal clipped HEP became the default support-stress mitigation, the
+research loop returned to residual learning itself. The question was whether
+the residual objective should remain supervised CE or move toward PC-style or
+regularized objectives.
+
+\subsection{PC-Style Objective}
+
+The objective-discriminative PC-vs-supervised gate disabled the support-stress
+preset so that learned residual values mattered. Both local and Colab results
+kept supervised CE as the default:
+
+\begin{center}
+\begin{tabular}{l r r r}
+\hline
+Backend & Supervised best HEP loss & PC best HEP loss & PC minus supervised \\
+\hline
+local & 3.58667445 & 3.59590077 & 0.00922632 \\
+Colab & 3.58667445 & 3.59590077 & 0.00922632 \\
+\hline
+\end{tabular}
+\end{center}
+
+PC improved its own logit-MSE objective, but its supervised CE HEP loss was
+worse. The diagnostic report interpreted this as an objective-alignment issue,
+not as a failed HEP sweep.
+
+\subsection{Anchored PC}
+
+A CE-anchored PC objective nearly closed the PC gap but still did not beat
+supervised CE:
+
+\begin{center}
+\begin{tabular}{l r r r}
+\hline
+Backend & Supervised best & Anchored PC best & Anchored minus supervised \\
+\hline
+local & 3.58667445 & 3.58672714 & 0.00005269 \\
+Colab & 3.58667445 & 3.58672714 & 0.00005269 \\
+\hline
+\end{tabular}
+\end{center}
+
+\textbf{Interpretation.} PC-style objectives are not obviously useless; the
+anchored variant almost matches supervised CE. But under the current gate they
+do not justify continued validation.
+
+\subsection{CE-Adjacent Objective Variants}
+
+Several CE-adjacent objectives were tested under matching local and Colab
+artifact gates:
+
+\begin{center}
+\begin{tabular}{l r l}
+\hline
+Variant & Mean variant minus supervised best HEP loss & Decision \\
+\hline
+confidence penalty & 0.00004196 & stop validation \\
+margin penalty & 0.00021887 & stop validation \\
+label smoothing & 0.00021148 & stop validation \\
+anchored PC & 0.00005269 & stop PC validation \\
+\hline
+\end{tabular}
+\end{center}
+
+These variants sometimes improved their own training objective, but they did
+not improve best temporal-clipped supervised CE HEP loss.
+
+\subsection{Focal CE}
+
+Focal CE looked promising in the first broader sweep. Across 12 artifact-backed
+comparisons, focal CE had a mean focal-minus-supervised best HEP loss of
+-0.00066582 and a much lower final residual training loss. This justified a
+promotion/stop gate.
+
+The stricter seed-2 promotion gate then failed:
+
+\begin{center}
+\begin{tabular}{l l r r r}
+\hline
+Gate & Backend & Supervised best & Focal best & Focal minus supervised \\
+\hline
+char xxlarge seed 2 & local & 3.38816094 & 3.38744736 & -0.00071359 \\
+char xxlarge seed 2 & Colab & 3.38816094 & 3.38744736 & -0.00071359 \\
+token larger seed 2 & local & 4.14445353 & 4.14522123 & 0.00076771 \\
+token larger seed 2 & Colab & 4.14445305 & 4.14522123 & 0.00076818 \\
+\hline
+\end{tabular}
+\end{center}
+
+The promotion-gate satisfaction report therefore stopped focal validation and
+kept supervised CE as the default. The mean focal-minus-supervised best HEP
+loss over the required seed-2 gate was 0.00002718.
+
+\subsection{Train-Time Temporal-Consistency Regularization}
+
+Train-time temporal-consistency regularization was tested as a residual
+objective. It passed artifacts and invariants, but the effect size was tiny:
+the best validation-scale improvement was 0.00000978 at weight 0.2, and the
+mean temporal-consistency-minus-supervised best HEP loss was -0.00000298.
+The branch was stopped before spending Colab time.
+
+\textbf{Interpretation.} The current evidence argues against chasing more
+small CE-adjacent objective variants unless they are tied to a sharper
+mechanistic hypothesis.
+
+\section{Newest Result: Residual Capacity vs Support Width}
+
+The latest diagnostic asked whether residual learning is bottlenecked by
+column capacity or by sparse support. It fixed the default residual objective
+to supervised CE and fixed HEP to temporal consistency, then varied only:
+
+\begin{itemize}
+  \item residual column count: 12 vs 24;
+  \item support width: \texttt{top\_k = 1} vs \texttt{top\_k = 2}.
+\end{itemize}
+
+The local result is the most interesting recent finding:
+
+\begin{center}
+\begin{tabular}{l r r r r}
+\hline
+Variant & Columns & \texttt{top\_k} & Best HEP loss & Support change \\
+\hline
+baseline & 12 & 1 & 3.58667445 & 0.00000000 \\
+capacity & 24 & 1 & 3.58667445 & 0.00000000 \\
+support width & 12 & 2 & 3.50149989 & 0.37890625 \\
+capacity plus support & 24 & 2 & 3.51517272 & 0.29687500 \\
+\hline
+\end{tabular}
+\end{center}
+
+The decision report selected \texttt{run\_colab\_residual\_capacity\_support\_diagnostic}.
+Widened support improved over the baseline best HEP CE loss by 0.08517456,
+accepted $\alpha=1.0$, and stayed inside the logit-delta budget. The matching
+Colab validation is now the next bounded step.
+
+\textbf{Interpretation.} This is a much larger effect than the temporal-HEP
+and CE-objective tweaks. It suggests that support sparsity may be a primary
+bottleneck in the current residual-column design. Doubling columns without
+widening support did nothing at the validation scale, while widening support
+helped substantially.
+
+\section{Summary of Main Experimental Lessons}
+
+\begin{enumerate}
+  \item The harness is now trustworthy enough for bounded local/Colab
+  comparisons, but not a substitute for larger-scale learning evidence.
+  \item HEP can help, but raw HEP must be constrained by stability budgets.
+  \item Pinned support is a useful diagnostic but not a default method.
+  \item Clipping solves a stability problem, not the direction-finding problem.
+  \item A supervised guided oracle proves useful HEP directions exist.
+  \item Temporal consistency is the best deployable label-free HEP direction
+  tested so far, but its effect size is small.
+  \item PC-style residual learning is not currently aligned with supervised CE
+  improvement. A CE anchor nearly closes the gap but still does not win.
+  \item Confidence penalty, margin penalty, label smoothing, and train-time
+  temporal consistency are not promising under the current gates.
+  \item Focal CE is mildly promising in some scales but inconsistent across
+  tokenized seed-2 evidence.
+  \item The strongest current route to larger improvement is not another loss
+  tweak, but changing support structure. The \texttt{top\_k = 2} diagnostic is
+  the largest recent positive signal.
+\end{enumerate}
+
+\section{Current Challenges}
+
+\subsection{Effect Size}
+
+Many statistically clean results are numerically tiny. Temporal clipped HEP is
+consistent, but its loss improvements are around $10^{-4}$ in the promotion
+gate. This is enough to justify a default safety/stability change, but not
+enough to be an exciting learning improvement by itself.
+
+\subsection{Objective Alignment}
+
+PC-style losses can improve their own objective without improving supervised
+CE. Anchored PC nearly matches supervised CE, suggesting the issue is not
+purely optimization failure; it is probably objective alignment or a mismatch
+between the residual representation and the downstream evaluation.
+
+\subsection{Support Dynamics}
+
+Support repicking is not a nuisance variable; it seems central. Pinned support
+can be harmful, clipped repicking can be safe, and widened support can sharply
+improve validation loss. The residual layer may need richer support dynamics
+before objective tweaks matter.
+
+\subsection{Colab Bridge Fragility}
+
+The real-Chrome Colab bridge works well enough and has produced repeated
+matching evidence, but it is still a brittle automation surface. The artifact
+gate and fail-closed extraction are important; reviewers should treat any
+single unverified Colab output as weaker than a checked artifact bundle.
+
+\subsection{Scale}
+
+The experiments are still small relative to the hoped-for conceptual target.
+They are useful mechanistic probes, not yet evidence of robust neural learning
+advantages at serious scale.
+
+\section{Possible Routes Toward Larger Improvements}
+
+The following are suggested routes for external reviewers to critique or
+extend.
+
+\subsection{Route A: Support-Width and Adaptive Support}
+
+The \texttt{top\_k = 2} result should be validated on Colab and then scaled.
+Possible follow-ups:
+
+\begin{itemize}
+  \item Repeat \texttt{top\_k = 2} at larger char and tokenized scales.
+  \item Compare \texttt{top\_k = 1, 2, 4} with equal compute budgets.
+  \item Add an adaptive support rule: start sparse, widen when support-change
+  or uncertainty crosses a threshold.
+  \item Test soft support weights rather than hard top-k selection.
+  \item Track whether widened support helps because of capacity, smoother
+  gradients, reduced support discontinuity, or easier HEP settling.
+\end{itemize}
+
+\subsection{Route B: Better HEP Direction Signals}
+
+The guided oracle says that useful directions exist. Temporal consistency is
+deployable but weak. Possible alternatives:
+
+\begin{itemize}
+  \item Contrastive temporal consistency across multiple augmentations.
+  \item Local predictive-coding errors at hidden-state level, not just logit
+  MSE.
+  \item Agreement between shallow and deep residual predictions.
+  \item A learned local critic that predicts whether an HEP step will improve
+  held-out CE, trained only on local training traces.
+  \item Energy functions that penalize support thrashing while rewarding
+  stable improvement.
+\end{itemize}
+
+\subsection{Route C: Residual Architecture Changes}
+
+Because doubling columns alone did not help, the bottleneck may be interaction
+between columns and support. Possible tests:
+
+\begin{itemize}
+  \item Multi-site residual insertion rather than one insertion site.
+  \item Column interaction terms or low-rank mixtures between selected columns.
+  \item Residual columns with recurrent state over tokens.
+  \item Per-column specialization losses to avoid redundant columns.
+  \item Shared support memory over short windows rather than independent
+  support selection per example.
+\end{itemize}
+
+\subsection{Route D: Objective Gates With Mechanistic Targets}
+
+The CE-adjacent objective search produced mostly tiny or inconsistent effects.
+Future objective variants should be tied to a mechanism:
+
+\begin{itemize}
+  \item objectives that directly improve support stability;
+  \item objectives that encourage complementary column specialization;
+  \item objectives that improve HEP alpha robustness;
+  \item objectives that make top-k support less discontinuous;
+  \item objectives that align PC-style local prediction error with downstream
+  CE rather than hoping the alignment emerges.
+\end{itemize}
+
+\subsection{Route E: Stronger Evaluation}
+
+To decide whether a route is real, evaluation should gradually move beyond
+small validation gates:
+
+\begin{itemize}
+  \item more seeds at the current validation scale;
+  \item larger tokenized runs;
+  \item held-out slices that are not used in gate construction;
+  \item explicit compute-matched baselines;
+  \item reporting absolute loss, relative loss, and stability metrics together.
+\end{itemize}
+
+\section{Questions for External Reviewers}
+
+\begin{enumerate}
+  \item Does the \texttt{top\_k = 2} result suggest a real support bottleneck,
+  or could it be an artifact of the current validation setup?
+  \item What is the cleanest experiment to distinguish ``more active columns''
+  from ``less discontinuous support''?
+  \item Should the project prioritize adaptive support, soft support, or
+  multi-site residual insertion?
+  \item Is temporal consistency too weak as a label-free HEP signal, or is it a
+  good base signal that needs a better architecture?
+  \item How could one construct a deployable approximation to the guided HEP
+  oracle without using supervised labels at inference time?
+  \item Is PC-style residual learning being evaluated fairly, or is supervised
+  CE too dominant as the downstream gate?
+  \item If PC should matter, what local objective would better align hidden
+  prediction error with CE improvement?
+  \item Would a learned local energy/critic be scientifically acceptable, or
+  would it obscure the mechanism?
+  \item What scale is the smallest meaningful next step beyond these probes?
+  \item Which metrics should become primary: CE loss, stability, support
+  change, alpha robustness, or value under a compute budget?
+  \item Are there known sparse mixture-of-experts or retrieval-routing results
+  that should inform the support-width experiments?
+  \item What is the most plausible route to a visible, not merely tiny,
+  improvement?
+\end{enumerate}
+
+\section{Recommended Immediate Next Experiments}
+
+\begin{enumerate}
+  \item Run the matching Colab residual capacity/support diagnostic for the
+  local \texttt{top\_k = 2} result.
+  \item If Colab confirms it, define a support-width promotion/scale gate:
+  larger char, tokenized larger, and at least one seed-repeat setting.
+  \item Add a diagnostic that compares hard \texttt{top\_k = 2} against soft
+  support with equal expected active mass.
+  \item Add support-transition metrics: how often support changes, whether
+  changes are beneficial, and whether HEP changes support before or after loss
+  improves.
+  \item Delay further CE-adjacent objective variants until support-width and
+  adaptive-support questions are better understood.
+\end{enumerate}
+
+\section{Key Artifact Pointers}
+
+The following files are useful starting points for reviewers:
+
+\begin{verbatim}
+docs/phase0_report.md
+AUTOMATION_STATUS.md
+results/reports/temporal_clipped_hep_promotion_gate_satisfaction/decision_report.md
+results/reports/residual_objective_gate_decision/decision_report.md
+results/reports/focal_residual_objective_promotion_gate_satisfaction/decision_report.md
+results/reports/residual_learning_next_direction/decision_report.md
+results/reports/residual_capacity_support_diagnostic_decision/decision_report.md
+results/comparisons/validation_residual_capacity_support_temporal_clipped_objective_gate/summary.json
+\end{verbatim}
+
+\section{Bottom Line}
+
+The project has learned something useful but not yet transformative. Temporal
+clipped HEP is a robust label-free stabilization mechanism, but it is not large
+enough by itself. Residual objective tweaks mostly wash out. The most promising
+new hypothesis is that sparse support is constraining the residual layer: when
+support is widened from \texttt{top\_k = 1} to \texttt{top\_k = 2}, local
+validation loss improves much more than any recent objective tweak. The next
+critical question is whether this support-width result survives Colab
+validation and larger/tokenized gates.
+
+\end{document}
