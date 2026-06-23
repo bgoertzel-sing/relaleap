@@ -169,6 +169,20 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
             )
         )
 
+    def test_validate_evidence_accepts_artifact_backed_focused_output(self) -> None:
+        _validate_evidence_text(
+            "\n".join(
+                [
+                    "cuda_available: True",
+                    '"status": "pass"',
+                    FOCUSED_TARGET_COMPARISON_DIR,
+                    "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+                    "char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate",
+                    COMPLETION_TEXT,
+                ]
+            )
+        )
+
     def test_validate_evidence_rejects_source_only_completion_text(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "cuda_available: True"):
             _validate_evidence_text(

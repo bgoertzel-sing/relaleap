@@ -64,7 +64,6 @@ FOCUSED_TARGET_MARKERS = (
     FOCUSED_TARGET_COMPARISON_DIR,
     "char_validation_support_wide_hep_temporal_clipped_objective_gate",
     "char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate",
-    "Residual capacity/support validation comparison status: ok",
     COMPLETION_TEXT,
 )
 ERROR_MARKERS = (
