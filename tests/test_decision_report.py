@@ -31,6 +31,7 @@ from relaleap.experiments.decision_report import (
     DEFINE_RESIDUAL_SUPPORT_WIDTH_VALIDATION_GATE,
     CONTINUE_RESIDUAL_SUPPORT_WIDTH_VALIDATION,
     DEFINE_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE,
+    SATISFY_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -54,6 +55,7 @@ from relaleap.experiments.decision_report import (
     write_residual_support_width_validation_gate_report,
     write_residual_support_width_validation_decision_report,
     write_residual_support_width_repeat_gate_report,
+    write_residual_support_width_repeat_decision_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -2476,12 +2478,98 @@ class ResidualSupportWidthRepeatGateReportTest(unittest.TestCase):
             )
 
 
-def _write_support_width_validation_comparison(comparison_dir: Path) -> None:
+class ResidualSupportWidthRepeatDecisionReportTest(unittest.TestCase):
+    def test_matching_seed2_local_colab_repeats_satisfy_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            local_dir = tmp_path / "local"
+            colab_dir = tmp_path / "colab"
+            _write_support_width_validation_comparison(local_dir, seed=2)
+            _write_support_width_validation_comparison(colab_dir, seed=2)
+
+            report = write_residual_support_width_repeat_decision_report(
+                (local_dir, colab_dir),
+                tmp_path / "support_width_repeat_decision",
+                artifact_check_paths=(
+                    local_dir / "artifact_check_local.json",
+                    colab_dir / "artifact_check_local.json",
+                ),
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                SATISFY_RESIDUAL_SUPPORT_WIDTH_REPEAT_GATE,
+            )
+            self.assertEqual(
+                report["selected_next_direction"],
+                "residual_support_width_promotion_gate",
+            )
+            self.assertFalse(report["promote_support_width_default"])
+            self.assertEqual(report["evidence"]["backend_count"], 2)
+            self.assertEqual(report["evidence"]["failures"], [])
+            for backend in report["evidence"]["backends"]:
+                for scale in ("larger_char", "tokenized"):
+                    self.assertTrue(
+                        backend["scales"][scale][
+                            "support_beats_baseline_final_loss"
+                        ]
+                    )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "support_width_repeat_decision"
+                    / "decision_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "support_width_repeat_decision"
+                    / "decision_report.md"
+                ).is_file()
+            )
+
+    def test_non_seed2_repeat_identity_blocks_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            local_dir = tmp_path / "local"
+            colab_dir = tmp_path / "colab"
+            _write_support_width_validation_comparison(local_dir)
+            _write_support_width_validation_comparison(colab_dir, seed=2)
+
+            report = write_residual_support_width_repeat_decision_report(
+                (local_dir, colab_dir),
+                tmp_path / "support_width_repeat_decision",
+                artifact_check_paths=(
+                    local_dir / "artifact_check_local.json",
+                    colab_dir / "artifact_check_local.json",
+                ),
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIsNone(report["selected_next_direction"])
+            self.assertTrue(
+                any(
+                    failure["field"].startswith("local.")
+                    and failure["field"].endswith(".seed")
+                    for failure in report["evidence"]["failures"]
+                )
+            )
+
+
+def _write_support_width_validation_comparison(
+    comparison_dir: Path,
+    *,
+    seed: int | None = None,
+) -> None:
     comparison_dir.mkdir(parents=True)
+    suffix = "" if seed is None else f"_seed{seed}"
     runs = [
         _support_width_validation_run(
-            "char_larger_hep_temporal_clipped_objective_gate",
-            "configs/char_larger_hep_temporal_clipped_objective_gate.yaml",
+            f"char_larger_hep_temporal_clipped_objective_gate{suffix}",
+            f"configs/char_larger_hep_temporal_clipped_objective_gate{suffix}.yaml",
             dataset="tiny_shakespeare_char",
             top_k=1,
             alpha0_loss=3.40,
@@ -2489,8 +2577,8 @@ def _write_support_width_validation_comparison(comparison_dir: Path) -> None:
             best_loss=3.399,
         ),
         _support_width_validation_run(
-            "char_larger_support_wide_hep_temporal_clipped_objective_gate",
-            "configs/char_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            f"char_larger_support_wide_hep_temporal_clipped_objective_gate{suffix}",
+            f"configs/char_larger_support_wide_hep_temporal_clipped_objective_gate{suffix}.yaml",
             dataset="tiny_shakespeare_char",
             top_k=2,
             alpha0_loss=3.15,
@@ -2498,8 +2586,8 @@ def _write_support_width_validation_comparison(comparison_dir: Path) -> None:
             best_loss=3.149,
         ),
         _support_width_validation_run(
-            "token_larger_hep_temporal_clipped_objective_gate",
-            "configs/token_larger_hep_temporal_clipped_objective_gate.yaml",
+            f"token_larger_hep_temporal_clipped_objective_gate{suffix}",
+            f"configs/token_larger_hep_temporal_clipped_objective_gate{suffix}.yaml",
             dataset="tiny_shakespeare_word",
             top_k=1,
             alpha0_loss=4.06,
@@ -2507,8 +2595,8 @@ def _write_support_width_validation_comparison(comparison_dir: Path) -> None:
             best_loss=4.059,
         ),
         _support_width_validation_run(
-            "token_larger_support_wide_hep_temporal_clipped_objective_gate",
-            "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            f"token_larger_support_wide_hep_temporal_clipped_objective_gate{suffix}",
+            f"configs/token_larger_support_wide_hep_temporal_clipped_objective_gate{suffix}.yaml",
             dataset="tiny_shakespeare_word",
             top_k=2,
             alpha0_loss=3.53,
