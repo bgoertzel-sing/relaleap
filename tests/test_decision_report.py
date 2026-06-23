@@ -37,6 +37,7 @@ from relaleap.experiments.decision_report import (
     DEFINE_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE,
     DEFINE_RESIDUAL_CAPACITY_REPEAT_GATE,
     STOP_RESIDUAL_CAPACITY_VALIDATION,
+    RUN_COLAB_SUPPORT_WIDTH_DECONFOUNDING_AUDIT,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -65,6 +66,7 @@ from relaleap.experiments.decision_report import (
     write_residual_support_width_promotion_gate_satisfaction_report,
     write_post_support_width_residual_learning_gate_report,
     write_post_support_width_residual_capacity_decision_report,
+    write_support_width_deconfounding_audit_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -4268,6 +4270,196 @@ def _residual_objective_run_entry(
                 "max_logit_delta_from_ordinary": 0.001,
                 "support_change_fraction": 0.0,
                 "pinned_vs_repicked_logit_delta": 0.0,
+            },
+        ],
+    }
+
+
+class SupportWidthDeconfoundingAuditReportTest(unittest.TestCase):
+    def test_valid_local_matrix_records_support_width_utilization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "comparison"
+            artifact_check_path = tmp_path / "artifact_check.json"
+            _write_support_width_deconfounding_comparison(comparison_dir)
+            artifact_check_path.write_text(
+                json.dumps({"status": "pass"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_support_width_deconfounding_audit_report(
+                comparison_dir,
+                tmp_path / "report",
+                artifact_check_path=artifact_check_path,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                RUN_COLAB_SUPPORT_WIDTH_DECONFOUNDING_AUDIT,
+            )
+            self.assertFalse(report["promote_support_width_default"])
+            self.assertTrue(report["evidence"]["support_width_improves_loss"])
+            self.assertFalse(report["evidence"]["capacity_improves_loss"])
+            self.assertTrue(report["evidence"]["support_width_improves_utilization"])
+            self.assertEqual(
+                report["evidence"]["comparisons"][
+                    "support_width_minus_baseline_used_columns"
+                ],
+                10.0,
+            )
+            self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
+            self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
+
+    def test_failed_artifact_check_blocks_audit_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "comparison"
+            artifact_check_path = tmp_path / "artifact_check.json"
+            _write_support_width_deconfounding_comparison(comparison_dir)
+            artifact_check_path.write_text(
+                json.dumps({"status": "fail"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_support_width_deconfounding_audit_report(
+                comparison_dir,
+                tmp_path / "report",
+                artifact_check_path=artifact_check_path,
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertEqual(report["evidence"]["failures"][0]["field"], "artifact_check.status")
+
+
+def _write_support_width_deconfounding_comparison(comparison_dir: Path) -> None:
+    comparison_dir.mkdir(parents=True)
+    runs = [
+        _support_width_deconfounding_run_entry(
+            "char_validation_hep_temporal_clipped_objective_gate",
+            num_columns=12,
+            top_k=1,
+            best_hep_loss=3.586,
+            final_loss=3.587,
+            used_columns=1,
+            dead_columns=11,
+            unique_supports=1,
+            max_column_fraction=1.0,
+        ),
+        _support_width_deconfounding_run_entry(
+            "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+            num_columns=12,
+            top_k=2,
+            best_hep_loss=3.497,
+            final_loss=3.497,
+            used_columns=11,
+            dead_columns=1,
+            unique_supports=19,
+            max_column_fraction=0.375,
+        ),
+        _support_width_deconfounding_run_entry(
+            "char_validation_capacity_hep_temporal_clipped_objective_gate",
+            num_columns=24,
+            top_k=1,
+            best_hep_loss=3.586,
+            final_loss=3.587,
+            used_columns=1,
+            dead_columns=23,
+            unique_supports=1,
+            max_column_fraction=1.0,
+        ),
+        _support_width_deconfounding_run_entry(
+            "char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate",
+            num_columns=24,
+            top_k=2,
+            best_hep_loss=3.490,
+            final_loss=3.490,
+            used_columns=13,
+            dead_columns=11,
+            unique_supports=20,
+            max_column_fraction=0.385,
+        ),
+    ]
+    summary = {
+        "status": "ok",
+        "verdict": {
+            "status": "pass",
+            "invariants_passed": True,
+            "invariant_count": 16,
+            "failed_invariants": [],
+            "artifact_invariants_passed": True,
+            "artifact_invariant_count": 12,
+            "failed_artifact_invariants": [],
+            "hep_alpha_acceptance": {"status": "accepted"},
+        },
+        "runs": runs,
+    }
+    (comparison_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _support_width_deconfounding_run_entry(
+    experiment_id: str,
+    *,
+    num_columns: int,
+    top_k: int,
+    best_hep_loss: float,
+    final_loss: float,
+    used_columns: int,
+    dead_columns: int,
+    unique_supports: int,
+    max_column_fraction: float,
+) -> dict[str, object]:
+    return {
+        "experiment_id": experiment_id,
+        "config_path": f"configs/{experiment_id}.yaml",
+        "status": "ok",
+        "dataset": "tiny_shakespeare_char",
+        "num_columns": num_columns,
+        "top_k": top_k,
+        "residual_objective": "supervised_ce",
+        "training_steps": 25,
+        "support_stress": True,
+        "support_stress_preset": False,
+        "hep_update_clip_norm": 0.01,
+        "hep_settling_objective": "temporal_consistency_gradient",
+        "final_residual_loss": final_loss,
+        "invariants": {
+            "zero_init_identity": True,
+            "frozen_base_unchanged": True,
+            "hep_alpha_0_equivalence": True,
+            "residual_parameters_updated": True,
+        },
+        "artifact_invariants": {
+            "summary_json": True,
+            "metrics_csv": True,
+            "notes_md": True,
+        },
+        "support_audit": {
+            "used_columns": used_columns,
+            "dead_columns": dead_columns,
+            "unique_support_sets": unique_supports,
+            "max_column_fraction": max_column_fraction,
+            "support_positions": 256,
+            "total_support_slots": 256 * top_k,
+        },
+        "hep_alpha_sweep": [
+            {
+                "alpha": 0.0,
+                "loss": best_hep_loss + 0.001,
+                "max_logit_delta_from_ordinary": 0.0,
+                "support_change_fraction": 0.0,
+                "pinned_vs_repicked_logit_delta": 0.0,
+            },
+            {
+                "alpha": 1.0,
+                "loss": best_hep_loss,
+                "max_logit_delta_from_ordinary": 0.001,
+                "support_change_fraction": 0.25 if top_k == 2 else 0.0,
+                "pinned_vs_repicked_logit_delta": 0.001,
             },
         ],
     }

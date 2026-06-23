@@ -438,6 +438,16 @@ DEFAULT_POST_SUPPORT_WIDTH_RESIDUAL_CAPACITY_DECISION_ARTIFACT_CHECKS = (
 DEFAULT_POST_SUPPORT_WIDTH_RESIDUAL_CAPACITY_DECISION_OUT_DIR = Path(
     "results/reports/post_support_width_residual_capacity_decision"
 )
+DEFAULT_SUPPORT_WIDTH_DECONFOUNDING_AUDIT_COMPARISON_DIR = Path(
+    "results/comparisons/support_width_deconfounding_validation_audit"
+)
+DEFAULT_SUPPORT_WIDTH_DECONFOUNDING_AUDIT_ARTIFACT_CHECK = (
+    DEFAULT_SUPPORT_WIDTH_DECONFOUNDING_AUDIT_COMPARISON_DIR
+    / "artifact_check_local.json"
+)
+DEFAULT_SUPPORT_WIDTH_DECONFOUNDING_AUDIT_OUT_DIR = Path(
+    "results/reports/support_width_deconfounding_validation_audit"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -533,6 +543,9 @@ DEFINE_POST_SUPPORT_WIDTH_RESIDUAL_LEARNING_GATE = (
 )
 STOP_RESIDUAL_CAPACITY_VALIDATION = "stop_residual_capacity_validation"
 DEFINE_RESIDUAL_CAPACITY_REPEAT_GATE = "define_residual_capacity_repeat_gate"
+RUN_COLAB_SUPPORT_WIDTH_DECONFOUNDING_AUDIT = (
+    "run_colab_support_width_deconfounding_audit"
+)
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
@@ -5919,6 +5932,346 @@ def write_post_support_width_residual_capacity_decision_report(
     return report
 
 
+def write_support_width_deconfounding_audit_report(
+    comparison_dir: Path = DEFAULT_SUPPORT_WIDTH_DECONFOUNDING_AUDIT_COMPARISON_DIR,
+    out_dir: Path = DEFAULT_SUPPORT_WIDTH_DECONFOUNDING_AUDIT_OUT_DIR,
+    *,
+    artifact_check_path: Path | None = DEFAULT_SUPPORT_WIDTH_DECONFOUNDING_AUDIT_ARTIFACT_CHECK,
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+) -> dict[str, Any]:
+    """Summarize the local top-k by capacity support-audit matrix."""
+
+    failures: list[dict[str, Any]] = []
+    comparison: dict[str, Any] | None = None
+    artifact_check: dict[str, Any] | None = None
+    summary_path = comparison_dir / "summary.json"
+    if summary_path.is_file():
+        comparison = _read_json_object(summary_path)
+    else:
+        failures.append(
+            {
+                "field": "comparison.summary.json",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(summary_path),
+            }
+        )
+    if artifact_check_path is not None and artifact_check_path.is_file():
+        artifact_check = _read_json_object(artifact_check_path)
+    elif comparison is not None:
+        artifact_check = check_comparison_artifacts(comparison_dir)
+    if artifact_check is None or artifact_check.get("status") != "pass":
+        failures.append(
+            {
+                "field": "artifact_check.status",
+                "expected": "pass",
+                "actual": None if artifact_check is None else artifact_check.get("status"),
+                "path": str(artifact_check_path or comparison_dir),
+            }
+        )
+    verdict = comparison.get("verdict") if isinstance(comparison, dict) else None
+    verdict = verdict if isinstance(verdict, dict) else {}
+    if comparison is None or comparison.get("status") != "ok":
+        failures.append(
+            {
+                "field": "comparison.status",
+                "expected": "ok",
+                "actual": None if comparison is None else comparison.get("status"),
+                "path": str(comparison_dir),
+            }
+        )
+    if verdict.get("status") != "pass":
+        failures.append(
+            {
+                "field": "comparison.verdict.status",
+                "expected": "pass",
+                "actual": verdict.get("status"),
+                "path": str(comparison_dir),
+            }
+        )
+
+    runs = (
+        comparison.get("runs", [])
+        if isinstance(comparison, dict) and isinstance(comparison.get("runs"), list)
+        else []
+    )
+    entries = [
+        _support_width_deconfounding_run_entry(run, max_logit_delta=max_logit_delta)
+        for run in runs
+        if isinstance(run, dict)
+    ]
+    failures.extend(_support_width_deconfounding_matrix_failures(entries))
+    by_variant = {entry["variant"]: entry for entry in entries if entry["variant"]}
+    baseline = by_variant.get("baseline")
+    support_width = by_variant.get("support_width")
+    capacity = by_variant.get("capacity")
+    capacity_support_width = by_variant.get("capacity_support_width")
+    comparisons = {
+        "support_width_minus_baseline_best_hep_loss": _entry_loss_delta(
+            support_width,
+            baseline,
+        ),
+        "capacity_minus_baseline_best_hep_loss": _entry_loss_delta(
+            capacity,
+            baseline,
+        ),
+        "capacity_support_width_minus_baseline_best_hep_loss": _entry_loss_delta(
+            capacity_support_width,
+            baseline,
+        ),
+        "capacity_support_width_minus_support_width_best_hep_loss": _entry_loss_delta(
+            capacity_support_width,
+            support_width,
+        ),
+        "support_width_minus_baseline_used_columns": _entry_metric_delta(
+            support_width,
+            baseline,
+            "support_audit_used_columns",
+        ),
+        "capacity_minus_baseline_used_columns": _entry_metric_delta(
+            capacity,
+            baseline,
+            "support_audit_used_columns",
+        ),
+        "capacity_support_width_minus_baseline_used_columns": _entry_metric_delta(
+            capacity_support_width,
+            baseline,
+            "support_audit_used_columns",
+        ),
+    }
+    local_evidence_valid = not failures and len(entries) == 4
+    support_width_improves_loss = (
+        comparisons["support_width_minus_baseline_best_hep_loss"] is not None
+        and comparisons["support_width_minus_baseline_best_hep_loss"] < 0.0
+    )
+    capacity_improves_loss = (
+        comparisons["capacity_minus_baseline_best_hep_loss"] is not None
+        and comparisons["capacity_minus_baseline_best_hep_loss"] < 0.0
+    )
+    support_width_improves_utilization = (
+        comparisons["support_width_minus_baseline_used_columns"] is not None
+        and comparisons["support_width_minus_baseline_used_columns"] > 0.0
+    )
+    status = "pass" if local_evidence_valid else "fail"
+    decision = (
+        RUN_COLAB_SUPPORT_WIDTH_DECONFOUNDING_AUDIT
+        if local_evidence_valid
+        else INSUFFICIENT_EVIDENCE
+    )
+    report = {
+        "status": status,
+        "decision": decision,
+        "selected_next_direction": (
+            "colab_support_width_deconfounding_audit"
+            if local_evidence_valid
+            else None
+        ),
+        "promote_support_width_default": False,
+        "comparison_dir": str(comparison_dir),
+        "artifact_check_path": str(artifact_check_path) if artifact_check_path else None,
+        "artifact_check_status": None
+        if artifact_check is None
+        else artifact_check.get("status"),
+        "comparison_status": None if comparison is None else comparison.get("status"),
+        "verdict_status": verdict.get("status"),
+        "default_residual_objective": "supervised_ce",
+        "default_support_stress_mitigation": "temporal_clipped_hep",
+        "evidence": {
+            "runs": entries,
+            "variants": by_variant,
+            "comparisons": comparisons,
+            "support_width_improves_loss": support_width_improves_loss,
+            "capacity_improves_loss": capacity_improves_loss,
+            "support_width_improves_utilization": support_width_improves_utilization,
+            "failures": _dedupe_failures(failures),
+        },
+        "rationale": (
+            "The local validation-scale deconfounding matrix is artifact-backed. "
+            "Top-k 2 improves best temporal-clipped HEP loss and support "
+            "utilization relative to the top-k 1 baseline, while doubling columns "
+            "at top-k 1 leaves the support audit collapsed onto one column."
+            if local_evidence_valid
+            else (
+                "The support-width deconfounding audit cannot be trusted until the "
+                "comparison summary, artifact check, verdict, and four matrix cells pass."
+            )
+        ),
+        "next_step": (
+            "run the matching Colab support-width deconfounding audit through the real-Chrome CDP bridge"
+            if local_evidence_valid
+            else "repair or rerun the local support-width deconfounding audit artifacts"
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_support_width_deconfounding_audit_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
+def _support_width_deconfounding_run_entry(
+    run: dict[str, Any],
+    *,
+    max_logit_delta: float,
+) -> dict[str, Any]:
+    alpha_candidates = _alpha_candidates([run])
+    best_alpha = min(
+        alpha_candidates,
+        key=lambda candidate: float(candidate["loss"]),
+        default=None,
+    )
+    accepted_alpha = _best_accepted_alpha(
+        alpha_candidates,
+        max_logit_delta=max_logit_delta,
+    )
+    support_audit = (
+        run.get("support_audit") if isinstance(run.get("support_audit"), dict) else {}
+    )
+    variant = _support_width_deconfounding_variant(run)
+    return {
+        "experiment_id": run.get("experiment_id"),
+        "config_path": run.get("config_path"),
+        "variant": variant,
+        "status": run.get("status"),
+        "dataset": run.get("dataset"),
+        "num_columns": run.get("num_columns"),
+        "top_k": run.get("top_k"),
+        "residual_objective": run.get("residual_objective"),
+        "support_stress": run.get("support_stress"),
+        "support_stress_preset": run.get("support_stress_preset"),
+        "hep_settling_objective": run.get("hep_settling_objective"),
+        "hep_update_clip_norm": run.get("hep_update_clip_norm"),
+        "training_steps": run.get("training_steps"),
+        "final_residual_loss": run.get("final_residual_loss"),
+        "best_hep_alpha": None if best_alpha is None else best_alpha.get("alpha"),
+        "best_hep_loss": None if best_alpha is None else best_alpha.get("loss"),
+        "accepted_hep_alpha": None
+        if accepted_alpha is None
+        else accepted_alpha.get("alpha"),
+        "accepted_hep_loss": None
+        if accepted_alpha is None
+        else accepted_alpha.get("loss"),
+        "max_support_change_fraction": _max_alpha_metric(
+            [run],
+            "support_change_fraction",
+        ),
+        "support_audit_used_columns": support_audit.get("used_columns"),
+        "support_audit_dead_columns": support_audit.get("dead_columns"),
+        "support_audit_unique_support_sets": support_audit.get("unique_support_sets"),
+        "support_audit_max_column_fraction": support_audit.get("max_column_fraction"),
+        "support_audit_total_support_slots": support_audit.get("total_support_slots"),
+        "support_audit_positions": support_audit.get("support_positions"),
+        "invariants": run.get("invariants")
+        if isinstance(run.get("invariants"), dict)
+        else {},
+        "artifact_invariants": run.get("artifact_invariants")
+        if isinstance(run.get("artifact_invariants"), dict)
+        else {},
+    }
+
+
+def _support_width_deconfounding_variant(run: dict[str, Any]) -> str | None:
+    num_columns = run.get("num_columns")
+    top_k = run.get("top_k")
+    if num_columns == 12 and top_k == 1:
+        return "baseline"
+    if num_columns == 12 and top_k == 2:
+        return "support_width"
+    if num_columns == 24 and top_k == 1:
+        return "capacity"
+    if num_columns == 24 and top_k == 2:
+        return "capacity_support_width"
+    return None
+
+
+def _support_width_deconfounding_matrix_failures(
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    expected_variants = {
+        "baseline",
+        "support_width",
+        "capacity",
+        "capacity_support_width",
+    }
+    actual_variants = {entry.get("variant") for entry in entries}
+    if len(entries) != 4:
+        failures.append(
+            {
+                "field": "comparison.runs.count",
+                "expected": 4,
+                "actual": len(entries),
+            }
+        )
+    for variant in sorted(expected_variants - actual_variants):
+        failures.append(
+            {
+                "field": "comparison.runs.variant",
+                "expected": variant,
+                "actual": "missing",
+            }
+        )
+    for entry in entries:
+        prefix = f"run.{entry.get('experiment_id')}"
+        required = {
+            "status": "ok",
+            "dataset": "tiny_shakespeare_char",
+            "residual_objective": "supervised_ce",
+            "support_stress": True,
+            "support_stress_preset": False,
+            "hep_settling_objective": "temporal_consistency_gradient",
+            "hep_update_clip_norm": 0.01,
+            "training_steps": 25,
+        }
+        for field, expected in required.items():
+            if entry.get(field) != expected:
+                failures.append(
+                    {
+                        "field": f"{prefix}.{field}",
+                        "expected": expected,
+                        "actual": entry.get(field),
+                        "path": entry.get("config_path"),
+                    }
+                )
+        if entry.get("variant") is None:
+            failures.append(
+                {
+                    "field": f"{prefix}.matrix_cell",
+                    "expected": "12/24 columns crossed with top-k 1/2",
+                    "actual": {
+                        "num_columns": entry.get("num_columns"),
+                        "top_k": entry.get("top_k"),
+                    },
+                    "path": entry.get("config_path"),
+                }
+            )
+        if entry.get("support_audit_used_columns") is None:
+            failures.append(
+                {
+                    "field": f"{prefix}.support_audit",
+                    "expected": "support audit metrics",
+                    "actual": "missing",
+                    "path": entry.get("config_path"),
+                }
+            )
+        if entry.get("best_hep_loss") is None:
+            failures.append(
+                {
+                    "field": f"{prefix}.hep_alpha_sweep",
+                    "expected": "at least one loss",
+                    "actual": "missing",
+                    "path": entry.get("config_path"),
+                }
+            )
+    return _dedupe_failures(failures)
+
+
 def _focal_residual_objective_entry(
     comparison_dir: Path,
     *,
@@ -10441,6 +10794,95 @@ def _write_post_support_width_residual_capacity_decision_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_support_width_deconfounding_audit_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Support Width Deconfounding Audit",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        f"- Selected next direction: `{report['selected_next_direction']}`",
+        f"- Promote support-width default: `{report['promote_support_width_default']}`",
+        f"- Comparison: `{report['comparison_dir']}`",
+        f"- Artifact check: `{report['artifact_check_path']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Matrix",
+        "",
+        (
+            "| Variant | Columns | Top-k | Best HEP loss | Final residual loss "
+            "| Used columns | Dead columns | Unique supports | Max column fraction |"
+        ),
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for variant in (
+        "baseline",
+        "support_width",
+        "capacity",
+        "capacity_support_width",
+    ):
+        entry = evidence["variants"].get(variant, {})
+        lines.append(
+            (
+                f"| {variant} "
+                f"| {entry.get('num_columns') or ''} "
+                f"| {entry.get('top_k') or ''} "
+                f"| {_format_metric(entry.get('best_hep_loss'))} "
+                f"| {_format_metric(entry.get('final_residual_loss'))} "
+                f"| {entry.get('support_audit_used_columns') or ''} "
+                f"| {entry.get('support_audit_dead_columns') or ''} "
+                f"| {entry.get('support_audit_unique_support_sets') or ''} "
+                f"| {_format_metric(entry.get('support_audit_max_column_fraction'))} |"
+            )
+        )
+    comparisons = evidence["comparisons"]
+    lines.extend(
+        [
+            "",
+            "## Comparisons",
+            "",
+            (
+                f"- Support width minus baseline best HEP loss: "
+                f"`{_format_metric(comparisons.get('support_width_minus_baseline_best_hep_loss'))}`"
+            ),
+            (
+                f"- Capacity minus baseline best HEP loss: "
+                f"`{_format_metric(comparisons.get('capacity_minus_baseline_best_hep_loss'))}`"
+            ),
+            (
+                f"- Capacity+support width minus baseline best HEP loss: "
+                f"`{_format_metric(comparisons.get('capacity_support_width_minus_baseline_best_hep_loss'))}`"
+            ),
+            (
+                f"- Support width minus baseline used columns: "
+                f"`{comparisons.get('support_width_minus_baseline_used_columns')}`"
+            ),
+            (
+                f"- Capacity minus baseline used columns: "
+                f"`{comparisons.get('capacity_minus_baseline_used_columns')}`"
+            ),
+        ]
+    )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -10485,6 +10927,7 @@ def main() -> None:
             "residual-support-width-promotion-gate-satisfaction",
             "post-support-width-residual-learning-gate",
             "post-support-width-residual-capacity-decision",
+            "support-width-deconfounding-audit",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -10841,6 +11284,15 @@ def main() -> None:
             artifact_check_paths=DEFAULT_POST_SUPPORT_WIDTH_RESIDUAL_CAPACITY_DECISION_ARTIFACT_CHECKS
             if not args.artifact_check
             else (args.artifact_check,),
+            max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "support-width-deconfounding-audit":
+        report = write_support_width_deconfounding_audit_report(
+            args.comparison_dir
+            or DEFAULT_SUPPORT_WIDTH_DECONFOUNDING_AUDIT_COMPARISON_DIR,
+            args.out or DEFAULT_SUPPORT_WIDTH_DECONFOUNDING_AUDIT_OUT_DIR,
+            artifact_check_path=args.artifact_check
+            or DEFAULT_SUPPORT_WIDTH_DECONFOUNDING_AUDIT_ARTIFACT_CHECK,
             max_logit_delta=args.max_logit_delta,
         )
     else:

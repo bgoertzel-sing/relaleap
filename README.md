@@ -1414,6 +1414,35 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/post_support_width_capacity_larger_token_objective_gate/artifact_check_local.json
 ```
 
+The post-support-width residual-capacity decision stopped capacity validation
+under mixed local/Colab evidence and selected support-width deconfounding plus
+exhaustive support audit as the next non-CE-adjacent direction. The first local
+support-width deconfounding matrix reuses the validation-scale 2x2 controls:
+12 versus 24 columns crossed with top-k `1` versus top-k `2`, while holding
+supervised CE, temporal-clipped HEP, and `support_stress_preset: false` fixed:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_capacity_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/support_width_deconfounding_validation_audit
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/support_width_deconfounding_validation_audit \
+  --out results/comparisons/support_width_deconfounding_validation_audit/artifact_check_local.json
+python -m relaleap.experiments.decision_report \
+  --report support-width-deconfounding-audit \
+  --comparison-dir results/comparisons/support_width_deconfounding_validation_audit \
+  --artifact-check results/comparisons/support_width_deconfounding_validation_audit/artifact_check_local.json \
+  --out results/reports/support_width_deconfounding_validation_audit
+```
+
+The local audit report passes and selects the matching real-Chrome Colab repeat
+as the next step. At this scale, top-k `2` improves best temporal-clipped HEP
+CE and expands support utilization from one used column to 11 used columns,
+while doubling columns at top-k `1` leaves the audit collapsed onto one column.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
