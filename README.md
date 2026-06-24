@@ -1352,6 +1352,9 @@ larger-char and tokenized scales.
 
 After the support-width promotion gate is satisfied, the default larger-char
 and tokenized objective-gate configs use residual-column support top-k `2`.
+After the contextual support-router promotion gate is satisfied, the
+support-wide configs also use the contextual MLP support router with hidden dim
+`128` by default.
 Verify the promoted default locally with a fresh command-driven comparison and
 artifact check:
 

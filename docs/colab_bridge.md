@@ -295,9 +295,12 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_char_larger_support_wide_contextual_router_temporal_clipped_objective_gate/artifact_check.json
 ```
 
-The current contextual support-router promotion-gate bridge target also runs
-the larger-char seed-2 repeat plus tokenized larger linear-vs-contextual
-support-router matrix selected by `AUTOMATION_STATUS.md`:
+The historical contextual support-router promotion-gate bridge target ran the
+larger-char seed-2 repeat plus tokenized larger linear-vs-contextual
+support-router matrix selected by `AUTOMATION_STATUS.md`. After the contextual
+router default promotion, the plain support-wide configs below are no longer
+linear controls; fresh linear-vs-contextual gate evidence should use the
+already archived artifacts or newly scoped linear-control configs.
 
 ```bash
 python -m relaleap.experiments.compare \

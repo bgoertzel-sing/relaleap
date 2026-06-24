@@ -150,6 +150,29 @@ class Phase0SmokeTest(unittest.TestCase):
         self.assertEqual(result.to_summary()["support_router"], "contextual_mlp")
         self.assertEqual(result.support_audit["top_k"], 2)
 
+    def test_support_wide_configs_default_to_contextual_router(self) -> None:
+        config_paths = [
+            "configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            (
+                "configs/"
+                "char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.yaml"
+            ),
+            "configs/char_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            "configs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml",
+            "configs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.yaml",
+            "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml",
+            "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3.yaml",
+        ]
+
+        for config_path in config_paths:
+            with self.subTest(config=config_path):
+                config = _read_config(Path(config_path))
+                columns = config["model"]["columns"]
+                self.assertEqual(columns["top_k"], 2)
+                self.assertEqual(columns["support_router"], "contextual_mlp")
+                self.assertEqual(columns["contextual_router_hidden_dim"], 128)
+
     def test_pc_logit_mse_objective_toggle(self) -> None:
         pc_config = copy.deepcopy(CONFIG)
         pc_config["training"] = {"residual_objective": "pc_logit_mse"}
