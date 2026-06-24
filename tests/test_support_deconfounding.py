@@ -57,7 +57,7 @@ outputs:
             audit = summary["audit"]
             self.assertEqual(audit["baseline_num_columns"], 4)
             self.assertEqual(audit["baseline_top_k"], 2)
-            self.assertEqual(audit["variant_count"], 6)
+            self.assertEqual(audit["variant_count"], 8)
             variants = {row["variant"]: row for row in audit["variants"]}
             self.assertIn("learned_topk2_contextual", variants)
             self.assertIn("rank_matched_topk1_contextual", variants)
@@ -65,15 +65,33 @@ outputs:
             self.assertIn("learned_topk2_scale_one_over_k", variants)
             self.assertIn("learned_topk2_scale_one_over_sqrt_k", variants)
             self.assertIn("dense_rank_flop_matched_residual", variants)
+            self.assertIn("dense_rank_flop_matched_norm_matched", variants)
+            self.assertIn("dense_stored_parameter_matched_residual", variants)
             self.assertEqual(variants["rank_matched_topk1_contextual"]["top_k"], 1)
             self.assertEqual(variants["rank_matched_topk1_contextual"]["num_columns"], 8)
             self.assertEqual(variants["dense_rank_flop_matched_residual"]["kind"], "dense")
+            self.assertEqual(
+                variants["dense_rank_flop_matched_norm_matched"]["kind"],
+                "dense",
+            )
+            self.assertAlmostEqual(
+                variants["dense_rank_flop_matched_norm_matched"][
+                    "residual_norm_mean"
+                ],
+                variants["learned_topk2_contextual"]["residual_norm_mean"],
+                places=5,
+            )
             self.assertIn("oracle_support_regret", variants["learned_topk2_contextual"])
             self.assertIn("support_margin_mean", variants["learned_topk2_contextual"])
             self.assertIn("residual_norm_mean", variants["learned_topk2_contextual"])
+            self.assertIn("norm_match_scale", variants["dense_rank_flop_matched_norm_matched"])
+            self.assertIn(
+                "stored_parameter_ratio_to_sparse",
+                variants["dense_stored_parameter_matched_residual"],
+            )
 
             saved = json.loads((tmp_path / "audit" / "summary.json").read_text())
-            self.assertEqual(saved["audit"]["variant_count"], 6)
+            self.assertEqual(saved["audit"]["variant_count"], 8)
             self.assertTrue((tmp_path / "audit" / "variant_metrics.csv").is_file())
             self.assertTrue((tmp_path / "audit" / "column_interventions.csv").is_file())
             self.assertTrue((tmp_path / "audit" / "support_churn.csv").is_file())
@@ -84,9 +102,12 @@ outputs:
                 encoding="utf-8",
             ) as handle:
                 metric_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(metric_rows), 6)
+            self.assertEqual(len(metric_rows), 8)
             self.assertIn("stored_parameters", metric_rows[0])
             self.assertIn("active_parameters_proxy", metric_rows[0])
+            self.assertIn("raw_residual_norm_mean", metric_rows[0])
+            self.assertIn("norm_match_scale", metric_rows[0])
+            self.assertIn("stored_parameter_ratio_to_sparse", metric_rows[0])
 
             with (tmp_path / "audit" / "column_interventions.csv").open(
                 newline="",

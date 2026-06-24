@@ -43,6 +43,8 @@ class _VariantSpec:
     contextual_router_hidden_dim: int
     residual_scale: float = 1.0
     fixed_support: tuple[int, ...] | None = None
+    dense_rank: int | None = None
+    dense_norm_match: bool = False
 
 
 def run_support_deconfounding(config_path: Path, out_dir: Path) -> dict[str, Any]:
@@ -107,6 +109,19 @@ def run_support_deconfounding(config_path: Path, out_dir: Path) -> dict[str, Any
     empty_loss = _ce_loss(empty_logits, targets, vocab_size)
 
     rank_matched_columns = max(1, num_columns * top_k)
+    sparse_baseline_stored_parameters = sum(
+        p.numel()
+        for p in ResidualColumns(
+            hidden_dim=hidden_dim,
+            num_columns=num_columns,
+            atoms_per_column=atoms_per_column,
+            top_k=top_k,
+            support_router=support_router,
+            contextual_router_hidden_dim=contextual_router_hidden_dim,
+        ).parameters()
+    )
+    active_rank = top_k * atoms_per_column
+    stored_matched_rank = max(1, round(sparse_baseline_stored_parameters / (2 * hidden_dim)))
     specs = [
         _VariantSpec(
             name="learned_topk2_contextual",
@@ -164,6 +179,28 @@ def run_support_deconfounding(config_path: Path, out_dir: Path) -> dict[str, Any
             atoms_per_column=0,
             support_router="none",
             contextual_router_hidden_dim=0,
+            dense_rank=active_rank,
+        ),
+        _VariantSpec(
+            name="dense_rank_flop_matched_norm_matched",
+            kind="dense",
+            top_k=0,
+            num_columns=0,
+            atoms_per_column=0,
+            support_router="none",
+            contextual_router_hidden_dim=0,
+            dense_rank=active_rank,
+            dense_norm_match=True,
+        ),
+        _VariantSpec(
+            name="dense_stored_parameter_matched_residual",
+            kind="dense",
+            top_k=0,
+            num_columns=0,
+            atoms_per_column=0,
+            support_router="none",
+            contextual_router_hidden_dim=0,
+            dense_rank=stored_matched_rank,
         ),
     ]
 
@@ -171,13 +208,14 @@ def run_support_deconfounding(config_path: Path, out_dir: Path) -> dict[str, Any
     intervention_rows: list[dict[str, Any]] = []
     support_rows: list[dict[str, Any]] = []
     learned_support = None
+    learned_sparse_residual_norm: float | None = None
     for offset, spec in enumerate(specs):
         torch.manual_seed(seed + 100 * offset)
         if spec.kind == "dense":
-            active_rank = top_k * atoms_per_column
+            dense_rank = int(spec.dense_rank or active_rank)
             adapter = nn.Sequential(
-                nn.Linear(hidden_dim, active_rank, bias=False),
-                nn.Linear(active_rank, hidden_dim, bias=False),
+                nn.Linear(hidden_dim, dense_rank, bias=False),
+                nn.Linear(dense_rank, hidden_dim, bias=False),
             )
             nn.init.normal_(adapter[0].weight, mean=0.0, std=0.02)
             nn.init.zeros_(adapter[1].weight)
@@ -193,20 +231,36 @@ def run_support_deconfounding(config_path: Path, out_dir: Path) -> dict[str, Any
                 loss.backward()
                 optimizer.step()
             with torch.no_grad():
-                output_hidden = hidden + adapter(hidden)
+                raw_residual = adapter(hidden)
+                raw_residual_norm = float(raw_residual.norm(dim=-1).mean().item())
+                dense_eval_scale = 1.0
+                if spec.dense_norm_match:
+                    if learned_sparse_residual_norm is None:
+                        raise RuntimeError("norm-matched dense control requires sparse baseline first")
+                    dense_eval_scale = learned_sparse_residual_norm / max(
+                        raw_residual_norm,
+                        1e-12,
+                    )
+                output_hidden = hidden + raw_residual * dense_eval_scale
                 logits = base.decode(output_hidden)
                 loss_value = _ce_loss(logits, targets, vocab_size)
                 residual_norm = float((output_hidden - hidden).norm(dim=-1).mean().item())
+                stored_parameters = sum(p.numel() for p in adapter.parameters())
             variant_rows.append(
                 {
                     **_variant_base_row(spec, loss_value, empty_loss, residual_norm),
+                    "raw_residual_norm_mean": raw_residual_norm,
+                    "norm_match_target": "" if not spec.dense_norm_match else learned_sparse_residual_norm,
+                    "norm_match_scale": dense_eval_scale,
                     "support_margin_mean": "",
                     "used_columns": "",
                     "dead_columns": "",
                     "unique_support_sets": "",
                     "oracle_support_regret": "",
-                    "stored_parameters": sum(p.numel() for p in adapter.parameters()),
-                    "active_parameters_proxy": 2 * hidden_dim * active_rank,
+                    "stored_parameters": stored_parameters,
+                    "active_parameters_proxy": 2 * hidden_dim * dense_rank,
+                    "stored_parameter_ratio_to_sparse": stored_parameters
+                    / sparse_baseline_stored_parameters,
                     "parameter_delta": _state_dict_delta(before, adapter),
                 }
             )
@@ -276,6 +330,7 @@ def run_support_deconfounding(config_path: Path, out_dir: Path) -> dict[str, Any
                 oracle_regret = _oracle_regret(token_losses, pair_rows)
             if spec.name == "learned_topk2_contextual":
                 learned_support = support.detach().clone()
+                learned_sparse_residual_norm = residual_norm
             support_rows.extend(
                 _support_overlap_rows(
                     variant=spec.name,
@@ -299,6 +354,9 @@ def run_support_deconfounding(config_path: Path, out_dir: Path) -> dict[str, Any
         variant_rows.append(
             {
                 **_variant_base_row(spec, loss_value, empty_loss, residual_norm),
+                "raw_residual_norm_mean": residual_norm,
+                "norm_match_target": "",
+                "norm_match_scale": 1.0,
                 "support_margin_mean": float(margins["mean"]),
                 "used_columns": support_audit["used_columns"],
                 "dead_columns": support_audit["dead_columns"],
@@ -306,6 +364,8 @@ def run_support_deconfounding(config_path: Path, out_dir: Path) -> dict[str, Any
                 "oracle_support_regret": oracle_regret,
                 "stored_parameters": sum(p.numel() for p in residual.parameters()),
                 "active_parameters_proxy": spec.top_k * hidden_dim * spec.atoms_per_column,
+                "stored_parameter_ratio_to_sparse": sum(p.numel() for p in residual.parameters())
+                / sparse_baseline_stored_parameters,
                 "parameter_delta": _state_dict_delta(before, residual),
             }
         )
@@ -338,9 +398,12 @@ def run_support_deconfounding(config_path: Path, out_dir: Path) -> dict[str, Any
                 "oracle_support_regret",
                 "support_churn",
                 "residual_norm_mean",
+                "raw_residual_norm_mean",
+                "norm_match_scale",
                 "support_margin_mean",
                 "column_intervention_loss_delta",
                 "stored_parameters",
+                "stored_parameter_ratio_to_sparse",
                 "active_parameters_proxy",
             ],
         },
@@ -420,6 +483,9 @@ def _variant_base_row(
         "ce_loss": ce_loss,
         "delta_from_empty_ce": ce_loss - empty_loss,
         "residual_norm_mean": residual_norm,
+        "raw_residual_norm_mean": residual_norm,
+        "norm_match_target": "",
+        "norm_match_scale": 1.0,
     }
 
 
