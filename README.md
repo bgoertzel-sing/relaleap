@@ -142,6 +142,21 @@ for every alpha. That means this smoke case does not yet exercise support
 repicking during settling, so pinned support remains an opt-in artifact-only
 smoke path rather than a separate checked baseline.
 
+After a promoted support-wide contextual-router run, inspect whether remaining
+dead or underloaded columns look like router-load skew or learned-value
+redundancy without rerunning the exhaustive oracle-support matrix:
+
+```bash
+python -m relaleap.experiments.column_redundancy \
+  --config configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml \
+  --out results/audits/token_larger_support_wide_promoted_default_column_redundancy
+```
+
+This writes `summary.json`, `column_loads.csv`,
+`column_pair_similarity.csv`, and `notes.md` with column support counts, load
+entropy, effective-column count, column-value norms, and pairwise column-value
+similarities.
+
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic
 sees nonzero repicking without changing the checked Phase 0 baseline. After the
