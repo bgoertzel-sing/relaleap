@@ -13,6 +13,7 @@ from tools.colab_playwright_runner import (
     ARTIFACT_BUNDLE_END,
     COLAB_NOTEBOOK_URL,
     COMPLETION_TEXT,
+    FOCUSED_TARGET_AUDIT_DIRS,
     FOCUSED_TARGET_COMPARISON_DIR,
     _colab_notebook_url,
     _colab_state_diagnostics,
@@ -118,6 +119,10 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "char_validation_support_wide_hep_temporal_clipped_objective_gate",
                     "char_larger_support_wide_hep_temporal_clipped_objective_gate",
                     "token_larger_support_wide_hep_temporal_clipped_objective_gate",
+                    f"{FOCUSED_TARGET_COMPARISON_DIR}_seed2",
+                    "token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+                    "Dead-column low-weight seed1 decision:",
+                    "Dead-column low-weight seed2 decision:",
                     "char_smoke_hep_support_stress_clipped",
                     "char_smoke_hep_support_stress_entropy_clipped",
                     "char_smoke_hep_support_stress_temporal_clipped",
@@ -195,9 +200,11 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "cuda_available: True",
                     '"status": "pass"',
                     FOCUSED_TARGET_COMPARISON_DIR,
-                    "char_validation_support_wide_hep_temporal_clipped_objective_gate",
-                    "char_larger_support_wide_hep_temporal_clipped_objective_gate",
                     "token_larger_support_wide_hep_temporal_clipped_objective_gate",
+                    f"{FOCUSED_TARGET_COMPARISON_DIR}_seed2",
+                    "token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+                    "Dead-column low-weight seed1 decision:",
+                    "Dead-column low-weight seed2 decision:",
                     COMPLETION_TEXT,
                 ]
             )
@@ -278,10 +285,7 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
         bundle = _zip_base64(
             {
                 "results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate/summary.json": "{}\n",
-                f"{FOCUSED_TARGET_COMPARISON_DIR}/summary.json": "{}\n",
-                f"{FOCUSED_TARGET_COMPARISON_DIR}/metrics.csv": "step,loss\n",
-                f"{FOCUSED_TARGET_COMPARISON_DIR}/notes.md": "# Notes\n",
-                f"{FOCUSED_TARGET_COMPARISON_DIR}/artifact_check.json": "{}\n",
+                **_focused_audit_files(include_valid_schema=True),
             }
         )
         evidence = "\n".join(
@@ -297,7 +301,7 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             extracted = _extract_colab_artifact_bundle(evidence, Path(tmpdir))
 
-            self.assertEqual(len(extracted), 5)
+            self.assertEqual(len(extracted), 7)
             self.assertTrue(
                 (
                     Path(tmpdir)
@@ -313,39 +317,15 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Unsafe Colab artifact path"):
                 _extract_colab_artifact_bundle(evidence, Path(tmpdir))
 
-    def test_focused_target_bundle_rejects_stale_support_schema(self) -> None:
-        summary = _focused_summary(include_support_schema=False)
-        bundle = _zip_base64(
-            {
-                f"{FOCUSED_TARGET_COMPARISON_DIR}/summary.json": (
-                    json_dumps(summary)
-                ),
-                f"{FOCUSED_TARGET_COMPARISON_DIR}/artifact_check.json": (
-                    '{"status": "pass"}\n'
-                ),
-                f"{FOCUSED_TARGET_COMPARISON_DIR}/metrics.csv": "step,loss\n",
-                f"{FOCUSED_TARGET_COMPARISON_DIR}/notes.md": "# Notes\n",
-            }
-        )
+    def test_focused_target_bundle_rejects_stale_dead_column_schema(self) -> None:
+        bundle = _zip_base64(_focused_audit_files(include_valid_schema=False))
         evidence = "\n".join([ARTIFACT_BUNDLE_BEGIN, bundle, ARTIFACT_BUNDLE_END])
 
-        with self.assertRaisesRegex(RuntimeError, "focused promoted support-wide artifact schema"):
+        with self.assertRaisesRegex(RuntimeError, "focused dead-column probe artifact schema"):
             _validate_focused_target_artifact_bundle(evidence)
 
-    def test_focused_target_bundle_accepts_support_width_schema(self) -> None:
-        summary = _focused_summary(include_support_schema=True)
-        bundle = _zip_base64(
-            {
-                f"{FOCUSED_TARGET_COMPARISON_DIR}/summary.json": (
-                    json_dumps(summary)
-                ),
-                f"{FOCUSED_TARGET_COMPARISON_DIR}/artifact_check.json": (
-                    '{"status": "pass"}\n'
-                ),
-                f"{FOCUSED_TARGET_COMPARISON_DIR}/metrics.csv": "step,loss\n",
-                f"{FOCUSED_TARGET_COMPARISON_DIR}/notes.md": "# Notes\n",
-            }
-        )
+    def test_focused_target_bundle_accepts_dead_column_probe_schema(self) -> None:
+        bundle = _zip_base64(_focused_audit_files(include_valid_schema=True))
         evidence = "\n".join([ARTIFACT_BUNDLE_BEGIN, bundle, ARTIFACT_BUNDLE_END])
 
         _validate_focused_target_artifact_bundle(evidence)
@@ -647,6 +627,54 @@ def json_dumps(value) -> str:
     import json
 
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
+
+
+def _focused_audit_files(*, include_valid_schema: bool) -> dict[str, str]:
+    files = {}
+    for audit_dir, config_stem in FOCUSED_TARGET_AUDIT_DIRS.items():
+        files[f"{audit_dir}/summary.json"] = json_dumps(
+            _focused_audit_summary(
+                config_stem=config_stem,
+                include_valid_schema=include_valid_schema,
+            )
+        )
+        files[f"{audit_dir}/variant_metrics.csv"] = (
+            "variant,load_balance_weight,alpha0_ce_loss\n"
+            "baseline,0.0,2.9\n"
+        )
+        files[f"{audit_dir}/notes.md"] = "# Dead-Column Recruitment Probe\n"
+    return files
+
+
+def _focused_audit_summary(
+    *,
+    config_stem: str,
+    include_valid_schema: bool,
+) -> dict:
+    probe = {
+        "num_columns": 24,
+        "top_k": 2,
+        "support_router": "contextual_mlp",
+        "contextual_router_hidden_dim": 128,
+        "load_balance_weights": [0.0, 0.01125, 0.0125, 0.01375, 0.015, 0.02],
+        "ce_tolerance": 0.01,
+        "decision": {"status": "recruited_without_ce_hurt"},
+        "variants": [
+            {"variant": "baseline"},
+            {"variant": "load_balance_0.01125"},
+            {"variant": "load_balance_0.0125"},
+            {"variant": "load_balance_0.01375"},
+            {"variant": "load_balance_0.015"},
+            {"variant": "load_balance_0.02"},
+        ],
+    }
+    if not include_valid_schema:
+        probe.pop("load_balance_weights")
+    return {
+        "status": "ok",
+        "experiment_id": f"{config_stem}_dead_column_probe",
+        "probe": probe,
+    }
 
 
 def _focused_summary(*, include_support_schema: bool) -> dict:

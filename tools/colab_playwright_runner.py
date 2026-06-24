@@ -37,36 +37,25 @@ COMPLETION_TEXT = "RelaLeap Colab Phase 0 comparison completed."
 ARTIFACT_BUNDLE_BEGIN = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_BEGIN"
 ARTIFACT_BUNDLE_END = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_END"
 FOCUSED_TARGET_COMPARISON_DIR = (
-    "results/comparisons/"
-    "colab_post_promotion_support_wide_promoted_default"
+    "results/audits/"
+    "colab_token_larger_support_wide_promoted_default_dead_column_probe_low_weight_bracket"
 )
-FOCUSED_TARGET_RUN_SCHEMA = {
-    "char_validation_support_wide_hep_temporal_clipped_objective_gate": {
-        "num_columns": 12,
-        "top_k": 2,
-        "support_router": "contextual_mlp",
-        "contextual_router_hidden_dim": 128,
-    },
-    "char_larger_support_wide_hep_temporal_clipped_objective_gate": {
-        "num_columns": 24,
-        "top_k": 2,
-        "support_router": "contextual_mlp",
-        "contextual_router_hidden_dim": 128,
-    },
-    "token_larger_support_wide_hep_temporal_clipped_objective_gate": {
-        "num_columns": 24,
-        "top_k": 2,
-        "support_router": "contextual_mlp",
-        "contextual_router_hidden_dim": 128,
-    },
+FOCUSED_TARGET_AUDIT_DIRS = {
+    FOCUSED_TARGET_COMPARISON_DIR: (
+        "token_larger_support_wide_hep_temporal_clipped_objective_gate"
+    ),
+    f"{FOCUSED_TARGET_COMPARISON_DIR}_seed2": (
+        "token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2"
+    ),
 }
 FOCUSED_TARGET_MARKERS = (
     "cuda_available: True",
-    '"status": "pass"',
     FOCUSED_TARGET_COMPARISON_DIR,
-    "char_validation_support_wide_hep_temporal_clipped_objective_gate",
-    "char_larger_support_wide_hep_temporal_clipped_objective_gate",
     "token_larger_support_wide_hep_temporal_clipped_objective_gate",
+    f"{FOCUSED_TARGET_COMPARISON_DIR}_seed2",
+    "token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+    "Dead-column low-weight seed1 decision:",
+    "Dead-column low-weight seed2 decision:",
     COMPLETION_TEXT,
 )
 ERROR_MARKERS = (
@@ -422,85 +411,80 @@ def _validate_focused_target_artifact_bundle(text: str) -> None:
             "Colab completed, but no focused artifact bundle was found."
         )
 
-    summary_name = f"{FOCUSED_TARGET_COMPARISON_DIR}/summary.json"
-    check_name = f"{FOCUSED_TARGET_COMPARISON_DIR}/artifact_check.json"
     with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
-        try:
-            summary = json.loads(archive.read(summary_name))
-        except KeyError as exc:
-            raise RuntimeError(
-                "Colab completed, but artifact bundle is missing required "
-                f"focused summary: {summary_name}"
-            ) from exc
-        try:
-            artifact_check = json.loads(archive.read(check_name))
-        except KeyError as exc:
-            raise RuntimeError(
-                "Colab completed, but artifact bundle is missing required "
-                f"focused artifact check: {check_name}"
-            ) from exc
+        summaries = {}
+        for audit_dir in FOCUSED_TARGET_AUDIT_DIRS:
+            for filename in ("summary.json", "variant_metrics.csv", "notes.md"):
+                member_name = f"{audit_dir}/{filename}"
+                try:
+                    content = archive.read(member_name)
+                except KeyError as exc:
+                    raise RuntimeError(
+                        "Colab completed, but artifact bundle is missing required "
+                        f"focused audit artifact: {member_name}"
+                    ) from exc
+                if filename == "summary.json":
+                    summaries[audit_dir] = json.loads(content)
 
-    _validate_focused_target_summary(summary, artifact_check)
+    _validate_focused_target_summary(summaries)
 
 
 def _validate_focused_target_summary(
-    summary: dict[str, object],
-    artifact_check: dict[str, object],
+    summaries: dict[str, dict[str, object]],
 ) -> None:
     failures: list[str] = []
-    if summary.get("status") != "ok":
-        failures.append(f"summary.status={summary.get('status')!r}")
-    verdict = summary.get("verdict") if isinstance(summary.get("verdict"), dict) else {}
-    if verdict.get("status") != "pass":
-        failures.append(f"summary.verdict.status={verdict.get('status')!r}")
-    if artifact_check.get("status") != "pass":
-        failures.append(f"artifact_check.status={artifact_check.get('status')!r}")
 
-    runs = summary.get("runs") if isinstance(summary.get("runs"), list) else []
-    by_experiment = {
-        run.get("experiment_id"): run for run in runs if isinstance(run, dict)
-    }
-    missing = sorted(set(FOCUSED_TARGET_RUN_SCHEMA) - set(by_experiment))
-    if missing:
-        failures.append(f"missing focused run(s): {', '.join(missing)}")
-
-    for experiment_id, expected in FOCUSED_TARGET_RUN_SCHEMA.items():
-        run = by_experiment.get(experiment_id)
-        if not isinstance(run, dict):
+    for audit_dir, config_stem in FOCUSED_TARGET_AUDIT_DIRS.items():
+        summary = summaries.get(audit_dir)
+        if not isinstance(summary, dict):
+            failures.append(f"{audit_dir}.summary=missing")
             continue
-        for field, expected_value in expected.items():
-            if run.get(field) != expected_value:
+        if summary.get("status") != "ok":
+            failures.append(f"{audit_dir}.summary.status={summary.get('status')!r}")
+        expected_experiment_id = f"{config_stem}_dead_column_probe"
+        if summary.get("experiment_id") != expected_experiment_id:
+            failures.append(
+                f"{audit_dir}.experiment_id={summary.get('experiment_id')!r}, "
+                f"expected {expected_experiment_id!r}"
+            )
+        probe = summary.get("probe")
+        if not isinstance(probe, dict):
+            failures.append(f"{audit_dir}.probe=missing")
+            continue
+        expected_fields = {
+            "num_columns": 24,
+            "top_k": 2,
+            "support_router": "contextual_mlp",
+            "contextual_router_hidden_dim": 128,
+            "load_balance_weights": [0.0, 0.01125, 0.0125, 0.01375, 0.015, 0.02],
+            "ce_tolerance": 0.01,
+        }
+        for field, expected_value in expected_fields.items():
+            if probe.get(field) != expected_value:
                 failures.append(
-                    f"{experiment_id}.{field}={run.get(field)!r}, "
+                    f"{audit_dir}.probe.{field}={probe.get(field)!r}, "
                     f"expected {expected_value!r}"
                 )
-        support_audit = run.get("support_audit")
-        if not isinstance(support_audit, dict):
-            failures.append(f"{experiment_id}.support_audit=missing")
-            continue
-        for field in (
-            "used_columns",
-            "dead_columns",
-            "unique_support_sets",
-            "total_support_slots",
-            "support_positions",
+        decision = probe.get("decision")
+        if not isinstance(decision, dict) or decision.get("status") not in (
+            "recruited_without_ce_hurt",
+            "no_safe_recruitment",
         ):
-            if support_audit.get(field) is None:
-                failures.append(f"{experiment_id}.support_audit.{field}=missing")
-        for field in ("num_columns", "top_k"):
-            expected_value = expected[field]
-            if support_audit.get(field) != expected_value:
-                failures.append(
-                    f"{experiment_id}.support_audit.{field}="
-                    f"{support_audit.get(field)!r}, expected {expected_value!r}"
-                )
+            failures.append(f"{audit_dir}.probe.decision.status=invalid")
+        variants = probe.get("variants")
+        if not isinstance(variants, list) or len(variants) != 6:
+            failures.append(f"{audit_dir}.probe.variants=invalid")
+        else:
+            variant_names = {row.get("variant") for row in variants if isinstance(row, dict)}
+            if "baseline" not in variant_names:
+                failures.append(f"{audit_dir}.probe.variants.baseline=missing")
 
     if failures:
         preview = "; ".join(failures[:8])
         if len(failures) > 8:
             preview = f"{preview}; ... ({len(failures)} total)"
         raise RuntimeError(
-            "Colab completed, but focused promoted support-wide artifact schema is "
+            "Colab completed, but focused dead-column probe artifact schema is "
             f"stale or invalid: {preview}"
         )
 
@@ -609,12 +593,15 @@ def _base64_block_before_marker(text: str, marker_start: int) -> str:
 
 
 def _archive_has_readable_focused_target(archive: zipfile.ZipFile) -> bool:
-    required = [
-        f"{FOCUSED_TARGET_COMPARISON_DIR}/summary.json",
-        f"{FOCUSED_TARGET_COMPARISON_DIR}/metrics.csv",
-        f"{FOCUSED_TARGET_COMPARISON_DIR}/notes.md",
-        f"{FOCUSED_TARGET_COMPARISON_DIR}/artifact_check.json",
-    ]
+    required = []
+    for audit_dir in FOCUSED_TARGET_AUDIT_DIRS:
+        required.extend(
+            [
+                f"{audit_dir}/summary.json",
+                f"{audit_dir}/variant_metrics.csv",
+                f"{audit_dir}/notes.md",
+            ]
+        )
     for name in required:
         try:
             archive.read(name)

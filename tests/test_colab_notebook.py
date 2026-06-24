@@ -206,6 +206,37 @@ class ColabNotebookTest(unittest.TestCase):
         self.assertIn("token_larger_hep_support_stress_temporal_clipped", evidence_cell)
         self.assertIn("tiny_shakespeare_word", evidence_cell)
 
+    def test_run_cell_executes_dead_column_low_weight_bracket(self) -> None:
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+        run_cells = [
+            source
+            for source in sources
+            if "colab_token_larger_support_wide_promoted_default_dead_column_probe_low_weight_bracket"
+            in source
+        ]
+
+        self.assertEqual(len(run_cells), 2)
+        run_cell, evidence_cell = run_cells
+        self.assertIn(
+            "python -m relaleap.experiments.dead_column_probe",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--load-balance-weights 0.0,0.01125,0.0125,0.01375,0.015,0.02",
+            run_cell,
+        )
+        self.assertIn("Dead-column low-weight seed1 decision:", evidence_cell)
+        self.assertIn("Dead-column low-weight seed2 decision:", evidence_cell)
+
     def test_run_cell_executes_xxlarge_focal_colab_path(self) -> None:
         notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
         sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]

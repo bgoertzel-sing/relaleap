@@ -145,13 +145,18 @@ the contextual support-router promotion-gate larger-char/tokenized matrix
 under
 `results/comparisons/colab_contextual_support_router_promotion_gate_larger_char_token`,
 and the post-promotion promoted-default support-wide validation under
-`results/comparisons/colab_post_promotion_support_wide_promoted_default`.
+`results/comparisons/colab_post_promotion_support_wide_promoted_default`,
+and the focused seed-1/seed-2 low-weight dead-column load-balancing bracket
+under
+`results/audits/colab_token_larger_support_wide_promoted_default_dead_column_probe_low_weight_bracket`
+and
+`results/audits/colab_token_larger_support_wide_promoted_default_dead_column_probe_low_weight_bracket_seed2`.
 When that bundle is present in the rendered output, the helper extracts it
 under the local repo root so the normal after-the-fact checker can inspect the
 Colab artifact tree locally.
-For the focused post-promotion support-wide target, the notebook emits the
-focused artifact bundle and completion marker immediately after that target's
-artifact check, before legacy evidence assertions and historical bundle output.
+For the focused dead-column load-balancing target, the notebook emits a focused
+artifact bundle containing both audit directories so the bridge can validate
+the current schema without relying on hidden notebook state.
 
 If the keyboard shortcut stops working after a Colab UI change, try
 `--run-method both`.
@@ -300,18 +305,20 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_char_larger_support_wide_contextual_router_temporal_clipped_objective_gate/artifact_check.json
 ```
 
-The current focused post-promotion bridge target runs the promoted-default
-support-wide artifact bundle selected by `AUTOMATION_STATUS.md`:
+The current focused bridge target runs the seed-1 and seed-2 low-weight
+dead-column load-balancing bracket selected by `AUTOMATION_STATUS.md`:
 
 ```bash
-python -m relaleap.experiments.compare \
-  --config configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml \
-  --config configs/char_larger_support_wide_hep_temporal_clipped_objective_gate.yaml \
+python -m relaleap.experiments.dead_column_probe \
   --config configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml \
-  --out results/comparisons/colab_post_promotion_support_wide_promoted_default
-python -m relaleap.experiments.check_artifacts \
-  --comparison-dir results/comparisons/colab_post_promotion_support_wide_promoted_default \
-  --out results/comparisons/colab_post_promotion_support_wide_promoted_default/artifact_check.json
+  --out results/audits/colab_token_larger_support_wide_promoted_default_dead_column_probe_low_weight_bracket \
+  --load-balance-weights 0.0,0.01125,0.0125,0.01375,0.015,0.02 \
+  --ce-tolerance 0.01
+python -m relaleap.experiments.dead_column_probe \
+  --config configs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --out results/audits/colab_token_larger_support_wide_promoted_default_dead_column_probe_low_weight_bracket_seed2 \
+  --load-balance-weights 0.0,0.01125,0.0125,0.01375,0.015,0.02 \
+  --ce-tolerance 0.01
 ```
 
 The historical contextual support-router promotion-gate bridge target ran the
