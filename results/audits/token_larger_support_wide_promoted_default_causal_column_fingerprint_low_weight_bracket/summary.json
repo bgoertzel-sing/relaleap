@@ -1,0 +1,65 @@
+{
+  "artifacts": {
+    "column_fingerprints_csv": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_low_weight_bracket/column_fingerprints.csv",
+    "notes_md": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_low_weight_bracket/notes.md",
+    "pair_interventions_csv": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_low_weight_bracket/pair_interventions.csv",
+    "summary_json": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_low_weight_bracket/summary.json"
+  },
+  "audit": {
+    "atoms_per_column": 4,
+    "batch_size": 4,
+    "column_fingerprint_count": 48,
+    "contextual_router_hidden_dim": 128,
+    "dataset": "tiny_shakespeare_word",
+    "load_balance_weights": [
+      0.0,
+      0.0125
+    ],
+    "num_columns": 24,
+    "pair_intervention_count": 32,
+    "residual_objective": "supervised_ce",
+    "seq_len": 64,
+    "support_router": "contextual_mlp",
+    "top_k": 2,
+    "training_steps": 50,
+    "variants": [
+      {
+        "alpha0_ce_loss": 2.912400960922241,
+        "dead_columns": 5,
+        "load_balance_weight": 0.0,
+        "load_entropy": 2.523192169717511,
+        "max_abs_ablate_loss_delta": 0.19186115264892578,
+        "max_abs_force_loss_delta": 1.394651174545288,
+        "mean_abs_ablate_loss_delta": 0.052134851614634194,
+        "mean_abs_force_loss_delta": 1.3214415709177654,
+        "unique_support_sets": 41,
+        "used_columns": 19,
+        "variant": "baseline"
+      },
+      {
+        "alpha0_ce_loss": 2.830270767211914,
+        "dead_columns": 0,
+        "load_balance_weight": 0.0125,
+        "load_entropy": 2.887798705299062,
+        "max_abs_ablate_loss_delta": 0.18938970565795898,
+        "max_abs_force_loss_delta": 1.4788436889648438,
+        "mean_abs_ablate_loss_delta": 0.05555600921312968,
+        "mean_abs_force_loss_delta": 1.413821280002594,
+        "unique_support_sets": 45,
+        "used_columns": 24,
+        "variant": "load_balance_0.0125"
+      }
+    ],
+    "vocab_size": 56
+  },
+  "config_path": "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+  "cuda_available": false,
+  "device": "cpu",
+  "experiment_id": "token_larger_support_wide_hep_temporal_clipped_objective_gate_causal_column_fingerprint",
+  "out_dir": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_low_weight_bracket",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "runtime_seconds": 2.5169,
+  "status": "ok",
+  "torch_available": true,
+  "torch_version": "2.2.2"
+}
