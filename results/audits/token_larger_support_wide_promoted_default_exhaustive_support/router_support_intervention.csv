@@ -1,0 +1,4 @@
+split,positions,intervention_loss,intervention_minus_router_loss,intervention_oracle_regret,oracle_gap_recovery_fraction
+all,252,2.8655788898468018,-0.0025284290313720703,0.0,1.0
+train_even_positions,126,2.858693838119507,-0.0025300979614257812,0.0,1.0
+holdout_odd_positions,126,2.872464179992676,-0.002526521682739258,0.0,1.0
