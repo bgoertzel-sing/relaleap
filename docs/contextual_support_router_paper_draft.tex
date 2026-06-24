@@ -1,0 +1,478 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{amsmath}
+\usepackage{hyperref}
+
+\title{RelaLeap: Early Evidence for Contextual Support Routing in Sparse Columnar Residual Adapters}
+\author{Draft generated from the RelaLeap automation evidence trail}
+\date{2026-06-24}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+RelaLeap studies small, auditable residual adapters added to a frozen
+sequence model. The working hypothesis is that a sparse set of residual
+columns can learn reusable corrections while disturbing the frozen base less
+than dense or poorly routed alternatives. The early harness phase succeeded:
+experiments are command-driven, reproduce across local and Colab backends, and
+emit checked artifacts. The strongest positive scientific result so far is not
+an inference-time settling result. It is a support-routing result. Replacing a
+linear top-k support router with a contextual MLP support router produced large
+cross-entropy reductions on both character-level and tokenized Tiny
+Shakespeare settings, expanded support usage, and reduced support churn. In
+the bounded promotion gate, contextual routing improved larger-character
+alpha-0 cross entropy from 3.2079 to 1.8480 in Colab and tokenized larger
+alpha-0 cross entropy from 3.5254 to 2.8681. The effect was replicated locally
+and in Colab, and the contextual router was promoted as the default
+support-wide router. However, the evidence does not yet justify a strong claim
+that individual residual columns are causally separable reusable mechanisms:
+rank-matched top-k-1 contextual routing currently has better cross entropy than
+the promoted top-k-2 contextual run, and held-out fingerprint stability remains
+to be measured. The useful interim conclusion is that support selection is a
+major bottleneck, contextual token-neighborhood features are a powerful way to
+route sparse residual columns, and causal-column claims require stricter
+deconfounding.
+\end{abstract}
+
+\section{Motivation}
+
+The goal of RelaLeap is not to produce a large language model benchmark win in
+the first campaign. The goal is to build a reproducible methodology for asking
+whether residual columns can provide modular, reusable, low-interference
+corrections to a frozen sequence model.
+
+The central research question after the first harness phase is:
+\[
+\text{Can a sparse residual layer learn causally separable reusable
+corrections with less interference than matched alternatives?}
+\]
+Cross entropy and perplexity are retained as guardrails, but are not the only
+scientific target. The more interesting quantities are support selection,
+oracle-support regret, functional churn, causal intervention fingerprints,
+continual-learning retention, and comparisons against dense or random-support
+controls.
+
+\section{Implemented System}
+
+\subsection{Frozen Base and Residual Adapter}
+
+The current experiments use small Tiny Shakespeare sequence models. The base is
+a frozen two-layer sequence model; hidden dimension and sequence length vary
+by experiment scale. A residual adapter is inserted at one site. The adapter is
+a sparse set of residual columns. Each token position chooses a top-k subset
+of columns, mixes the selected column values, and adds the result to the base
+hidden state.
+
+In the implementation, each column contains several learned residual atoms.
+The atom values are initialized to zero. This makes the residual adapter an
+exact identity map at initialization while still allowing gradients to flow
+into residual parameters. For a hidden vector \(h_t\), the adapter computes
+column scores \(s_c(h_t)\), chooses a support set \(S_t\), and adds
+\[
+r(h_t) =
+\sum_{c \in S_t}
+\operatorname{softmax}_{c \in S_t}(s_c(h_t)) v_c,
+\qquad
+h'_t = h_t + r(h_t).
+\]
+Here \(v_c\) is the atom-weighted value vector for column \(c\). Early runs
+used \(k=1\). Support-wide runs use \(k=2\).
+
+\subsection{Linear Versus Contextual Support Routing}
+
+The original router was linear:
+\[
+s(h_t) = W h_t.
+\]
+The contextual MLP router uses a richer local token-neighborhood feature
+vector. The implemented feature vector concatenates the current hidden state,
+the previous hidden state, the next hidden state, first differences, and
+position features:
+\[
+\phi_t =
+\left[
+h_t,\ h_{t-1},\ h_{t+1},\ h_t-h_{t-1},\
+h_{t+1}-h_t,\ p_t,\ \sin(2\pi p_t),\ \cos(2\pi p_t)
+\right].
+\]
+Column scores are then produced by a layer-normalized MLP:
+\[
+s(h_t) = W_2\,\operatorname{GELU}(W_1\,\operatorname{LN}(\phi_t)).
+\]
+In the main promotion-gate settings the contextual router hidden width was
+128, the base hidden dimension was 96, there were 24 residual columns, four
+atoms per column, and \(k=2\).
+
+\subsection{HEP Settling}
+
+The code also implements hidden-state error propagation (HEP), an
+inference-time settling procedure controlled by an alpha sweep. HEP variants
+included pinned support, clipped residual-adapter updates, a guided supervised
+oracle, prediction-entropy settling, and temporal-consistency settling.
+
+Temporal-consistency clipped HEP passed a promotion gate as a safe label-free
+support-stress mitigation, but the effect size is small. In the larger-char and
+tokenized local/Colab promotion gate, the mean loss improvement from nonzero
+temporal HEP over alpha 0 was \(8.231\times 10^{-5}\), with very small logit
+deltas. In the contextual-router experiments, nonzero HEP alphas did not
+explain the large win; alpha 0 was best after contextual routing. Thus the main
+positive result is a training-time support-routing result, not a settling-time
+result.
+
+\subsection{Artifact Discipline}
+
+Every accepted experiment is command-driven and writes standard artifacts:
+\texttt{summary.json}, \texttt{metrics.csv}, and \texttt{notes.md}. After
+completion, the same artifact checker validates the result tree. Decision
+reports summarize whether a gate is passed and whether a default should be
+changed. This mattered because many early HEP effects were extremely small and
+because Colab execution was brittle.
+
+\section{Experimental Progress}
+
+\subsection{Phase 0: Harness and Initial HEP}
+
+The first campaign validated a minimal char-level Tiny Shakespeare harness.
+The base had two layers, hidden dimension 32, sequence length 32, one
+insertion site, eight residual columns, four atoms per column, \(k=1\), seed 1,
+and 10 residual training steps. The initial HEP alpha sweep showed that
+\(\alpha=0.25\) improved cross entropy while staying within a logit-delta
+budget. Larger alphas improved raw loss more but violated the stability
+budget.
+
+\begin{center}
+\begin{tabular}{rrrr}
+\toprule
+Alpha & CE loss & Loss improvement vs alpha 0 & Max logit delta \\
+\midrule
+0.00 & 3.56317067 & 0.00000000 & 0.00000000 \\
+0.25 & 3.55195642 & 0.01121426 & 0.05185765 \\
+0.50 & 3.54104090 & 0.02212977 & 0.10371491 \\
+1.00 & 3.52012682 & 0.04304385 & 0.20742965 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This established that HEP could move the model in a useful direction, but also
+that unconstrained HEP was too easy to overdrive.
+
+\subsection{Support Stress and Clipped HEP}
+
+The next step intentionally created support repicking under support-stress
+conditions. Pinned support exposed large instability: support change fraction
+reached 0.7891, and pinned-versus-repicked logit delta reached 3.3260.
+Clipped HEP reduced the pinned-versus-repicked logit delta to about 0.00235,
+but simple clipping alone did not improve support-stress loss.
+
+A guided clipped HEP oracle then showed that useful hidden-state directions
+exist: supervised guidance during settling improved support-stress loss inside
+the stability budget. Because it used labels during settling, it was treated as
+an oracle, not as a deployable inference mechanism.
+
+Label-free HEP objectives were then tested. Prediction entropy was stable but
+poor. Temporal consistency was stable and repeatedly slightly helpful. It was
+promoted as the default support-stress mitigation, but its practical effect is
+small. This motivated shifting attention from settling objectives to support
+selection and column structure.
+
+\subsection{Residual Objective Variants}
+
+After temporal-clipped HEP was promoted as a support-stress mitigation, several
+residual training objectives were tested. The default supervised
+cross-entropy residual objective remained strongest under the current gates.
+PC logit-MSE, anchored PC, confidence penalty, margin penalty, label smoothing,
+focal CE, and train-time temporal consistency did not justify a default change.
+
+For example, in the objective-discriminative local/Colab PC gate, supervised CE
+had mean best HEP loss 3.58667445, while PC logit-MSE had mean best HEP loss
+3.59590077. PC improved its own objective but did not beat supervised residual
+training on supervised CE.
+
+\subsection{Support Width Deconfounding}
+
+The first major clue that support selection mattered came from a controlled
+support-width matrix. The experiment fixed supervised CE training,
+temporal-clipped HEP, disabled the support-stress preset, used sequence length
+64 and hidden dimension 64, and crossed column count with top-k:
+
+\begin{center}
+\begin{tabular}{lrrrrrr}
+\toprule
+Variant & Columns & Top-k & Best HEP CE & Used cols & Unique supports & Max frac \\
+\midrule
+Baseline & 12 & 1 & 3.58667445 & 1 & 1 & 1.0000 \\
+Support width & 12 & 2 & 3.49384785 & 10 & 15 & 0.3750 \\
+Capacity & 24 & 1 & 3.58667445 & 1 & 1 & 1.0000 \\
+Capacity + support & 24 & 2 & 3.49411678 & 15 & 17 & 0.3594 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Increasing top-k from 1 to 2 improved best HEP CE by about 0.0928 and expanded
+support utilization from one used column to ten. Increasing stored columns
+from 12 to 24 while keeping \(k=1\) did nothing. This suggested that active
+support width, not merely stored capacity, was the current bottleneck.
+
+\subsection{Exhaustive Support Audits}
+
+At validation scale, all \( \binom{12}{2} = 66 \) two-column supports could be
+evaluated exactly. The learned router was compared to the per-token oracle
+support and to global fixed supports. The per-token oracle beat the learned
+router on most positions:
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Quantity & Value \\
+\midrule
+Router loss & 3.49828529 \\
+Per-token oracle loss & 3.46230602 \\
+Oracle-support regret & 0.03597923 \\
+Oracle-support positive fraction & 0.87301588 \\
+Router minus best global fixed support loss & -0.03413963 \\
+Contextual holdout oracle-gap recovery & 0.75938903 \\
+Strongest pairwise synergy & 0.06710577 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The router still beat the best single global fixed pair, which pointed toward
+better token-conditioned routing rather than replacing routing with one fixed
+support. Hidden-only selectors did poorly, but contextual selectors recovered a
+large fraction of the oracle gap.
+
+The same pattern repeated on larger 24-column support-width audits. On
+larger-char seed 2, the contextual support intervention recovered 0.8930 of
+the router-oracle holdout gap and reduced holdout CE by 0.0861 versus the
+learned router. On seed 3, it recovered 0.9056 of the gap and reduced holdout
+CE by 0.1950. A train-time-style contextual support head also helped, with gap
+recoveries 0.8612 and 0.7693 on seeds 2 and 3.
+
+\section{Main Positive Result: Contextual MLP Support Routing}
+
+The support audits suggested that the router, not the residual atoms alone, was
+the bottleneck. The project therefore implemented and tested a learned
+contextual MLP support router. The first local and Colab larger-char
+comparisons showed large improvements over the linear top-k-2 router:
+
+\begin{center}
+\begin{tabular}{lrrrrrr}
+\toprule
+Backend & Linear CE & Context CE & Delta & Linear used & Context used & Churn delta \\
+\midrule
+Local & 3.09682608 & 1.91732013 & -1.17950594 & 12 & 18 & -0.45507812 \\
+Colab & 3.15306783 & 1.91732001 & -1.23574781 & 13 & 18 & -0.35156250 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This result was strong but initially came from one scale. A bounded promotion
+gate then required a larger-char seed-2 repeat and a tokenized larger setting,
+with both local and Colab evidence. The matrix preserved supervised CE,
+temporal-clipped HEP, \(k=2\), support-stress preset disabled, and the same
+artifact checks.
+
+\begin{center}
+\begin{tabular}{llrrrrr}
+\toprule
+Backend & Dataset & Linear CE & Context CE & Delta & Used cols & Unique supports \\
+\midrule
+Local & char, seed 2 & 3.15261722 & 1.84800947 & -1.30460775 & 19 & 60 \\
+Local & word, seed 1 & 3.51685524 & 2.86810708 & -0.64874816 & 20 & 50 \\
+Colab & char, seed 2 & 3.20794559 & 1.84802544 & -1.35992014 & 19 & 60 \\
+Colab & word, seed 1 & 3.52541637 & 2.86810851 & -0.65730786 & 20 & 52 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Every gate cell passed. Contextual routing lowered alpha-0 cross entropy in
+all four cells, expanded support utilization in all four cells, and reduced
+support churn in all four cells. Nonzero temporal-clipped HEP did not win in
+any of the four cells. The default change was therefore scoped to the support
+router, not to HEP settling.
+
+\section{Post-Promotion Check}
+
+After the contextual router was promoted as the support-wide default, fresh
+local promoted-default artifacts were generated for validation-char,
+larger-char, and tokenized larger settings:
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+Experiment & Columns & Used cols & Unique supports & Final CE \\
+\midrule
+Validation char & 12 & 11 & 30 & 3.09003305 \\
+Larger char & 24 & 18 & 44 & 1.91732013 \\
+Tokenized larger & 24 & 20 & 50 & 2.86810708 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Alpha 0 remained best in all three runs. Again, this supports the interpretation
+that the useful mechanism is train-time contextual support routing, not
+test-time HEP improvement.
+
+\section{Causal Column Fingerprints: Promising but Not Yet Proven}
+
+The latest audit asked whether the promoted contextual top-k-2 residual layer
+has interpretable causal column fingerprints. The audit measured loss changes
+under column ablation and forced-column interventions, then bracketed the
+result with controls.
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+Variant & CE & Residual norm & Used cols & Unique supports \\
+\midrule
+Learned top-k-2 contextual & 2.91240144 & 4.43444967 & 19 & 41 \\
+Rank-matched top-k-1 contextual & 2.84867883 & 4.67442513 & 33 & 33 \\
+Random fixed top-k-2 & 3.81906438 & 4.16884756 & 2 & 1 \\
+Dense rank/FLOP norm-matched & 3.25567937 & 4.43444967 & -- & -- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The learned top-k-2 contextual adapter clearly beats random fixed top-k-2 and a
+norm-matched dense active-rank control. The column ablation fingerprints are
+nontrivial:
+\[
+\operatorname{mean} |\Delta L_{\mathrm{ablate}}| = 0.05213485,
+\qquad
+\max |\Delta L_{\mathrm{ablate}}| = 0.19186115.
+\]
+However, rank-matched top-k-1 contextual routing currently has better CE than
+the promoted top-k-2 contextual run. Also, the current fingerprint artifact
+does not yet measure held-out batch/position fingerprint stability or compare
+against top-k-1 fingerprints. The current decision is therefore:
+\[
+\texttt{causal\_column\_claim\_supported} = \texttt{False}.
+\]
+
+\section{Useful Conclusions}
+
+The evidence so far supports the following conclusions.
+
+\begin{enumerate}
+  \item The infrastructure is now strong enough to run useful small-scale
+  science. Experiments are command-driven, artifact-checked, and have local
+  plus Colab evidence for the major promoted changes.
+
+  \item The main positive result is contextual support routing. A contextual
+  MLP router using neighboring hidden states and position features is much
+  better than a linear router for selecting sparse residual columns. The effect
+  is large compared with the earlier \(10^{-4}\)-scale HEP gains.
+
+  \item The router is a major bottleneck. Exhaustive support audits show that a
+  per-token oracle support often beats the learned router, and contextual
+  selectors can recover a large fraction of this gap.
+
+  \item Support width matters, but it is confounded with active rank and
+  residual scale. The top-k-2 gain is real in the current harness, but it is not
+  yet proof of cooperative columns.
+
+  \item HEP/settling is currently a stability mechanism, not the source of the
+  major gain. Temporal-consistency clipped HEP is safe and repeatable, but its
+  improvements are small. In the contextual-router runs, alpha 0 is best.
+
+  \item Causal column structure remains an open question. Column ablation
+  fingerprints are nontrivial, learned sparse routing beats random fixed
+  support, and norm-matched dense is worse than learned sparse top-k-2.
+  Nevertheless, rank-matched top-k-1 contextual CE is currently better, and
+  fingerprint stability is not yet established.
+\end{enumerate}
+
+\section{What Remains To Be Done}
+
+\subsection{Immediate Deconfounding}
+
+The next immediate step is to extend the causal fingerprint audit:
+\begin{itemize}
+  \item compute held-out batch and held-out position fingerprint stability;
+  \item compute rank-matched top-k-1 contextual fingerprints;
+  \item compare top-k-1, top-k-2, random fixed support, and dense controls under
+  matched residual norms, active rank, stored parameters, and approximate
+  FLOPs;
+  \item report both identity support churn and functional churn.
+\end{itemize}
+
+\subsection{Better Columnar Evidence}
+
+The project should avoid claiming ``causal columns'' merely from support
+utilization or CE. Stronger evidence would include:
+\begin{itemize}
+  \item stable column intervention fingerprints across batches, positions,
+  seeds, and data representations;
+  \item low oracle-support regret without collapsing into one dominant pair;
+  \item lower functional churn or lower anchor-task drift than matched dense
+  adapters;
+  \item recurrent reuse of columns under task-free continual learning;
+  \item pairwise synergy that remains after rank and norm matching.
+\end{itemize}
+
+\subsection{Scaling and Backend}
+
+The Colab path has been useful but brittle. A RunPod bridge is now being set up
+so that larger GPU runs can be launched by the same command-driven artifact
+contract. The immediate backend goal is not to add new science, but to make
+replication and scale-up less fragile.
+
+\subsection{Architectural Variants Worth Testing}
+
+The contextual router result suggests several next architecture tests:
+\begin{itemize}
+  \item train the contextual support head directly from oracle-support audit
+  targets, then fine-tune end-to-end;
+  \item compare hard top-k routing to softened or temperature-controlled
+  support selection;
+  \item test support composers that can exploit pair synergy rather than merely
+  selecting columns independently;
+  \item add explicit load-balancing only after checking that it does not trade
+  off against CE or causal-fingerprint stability;
+  \item compare against dense-teacher residual distillation at matched active
+  compute.
+\end{itemize}
+
+\section{Draft Takeaway for a Colleague}
+
+If another group is experimenting with columnar residual models, the most
+portable lesson is this: do not treat sparse-column routing as a minor detail.
+In the current RelaLeap harness, a linear hidden-state router left substantial
+performance and support-selection headroom on the table. Adding simple
+contextual information--previous and next hidden states, local differences, and
+position features--made the support router dramatically better. The improvement
+replicated across local and Colab backends and across character-level and
+tokenized settings. At the same time, the result should not be overinterpreted
+as proof that the columns are already clean causal modules. The current best
+scientific claim is narrower and stronger:
+\[
+\boxed{
+\text{contextual support selection is a high-leverage mechanism for sparse
+columnar residual adapters.}
+}
+\]
+The next burden of proof is to show that this better routing yields stable,
+reusable, causally interpretable column functions under matched controls.
+
+\appendix
+
+\section{Primary Artifact References}
+
+\begin{itemize}
+  \item \texttt{results/reports/contextual\_support\_router\_decision/decision\_report.md}
+  \item \texttt{results/reports/contextual\_support\_router\_promotion\_gate/decision\_report.md}
+  \item \texttt{results/reports/contextual\_support\_router\_promotion\_gate\_satisfaction/decision\_report.md}
+  \item \texttt{results/reports/support\_width\_deconfounding\_colab\_audit/decision\_report.md}
+  \item \texttt{results/reports/validation\_support\_wide\_exhaustive\_support\_audit/decision\_report.md}
+  \item \texttt{results/reports/char\_larger\_support\_wide\_seed2\_contextual\_support\_head\_audit/decision\_report.md}
+  \item \texttt{results/reports/char\_larger\_support\_wide\_seed3\_contextual\_support\_head\_audit/decision\_report.md}
+  \item \texttt{results/reports/post\_promotion\_support\_wide\_promoted\_default/decision\_report.md}
+  \item \texttt{results/reports/token\_larger\_causal\_column\_fingerprint\_audit/decision\_report.md}
+  \item \texttt{docs/research\_pivot\_2026\_06\_23.md}
+\end{itemize}
+
+\end{document}
