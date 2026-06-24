@@ -631,6 +631,23 @@ class ColabNotebookTest(unittest.TestCase):
         self.assertNotIn("support_router'] == 'linear'", evidence_cell)
         self.assertIn("contextual_router_hidden_dim'] == 128", evidence_cell)
 
+    def test_run_cell_dataset_assertions_are_backward_compatible(self) -> None:
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+        evidence_cells = [
+            source
+            for source in sources
+            if (
+                "token_larger_hep_support_stress_clipped" in source
+                and "token_temporal_runs =" in source
+            )
+        ]
+
+        self.assertEqual(len(evidence_cells), 1)
+        evidence_cell = evidence_cells[0]
+        self.assertIn(".get('dataset', 'tiny_shakespeare_word')", evidence_cell)
+        self.assertNotIn("['dataset'] == 'tiny_shakespeare_word'", evidence_cell)
+
     def test_run_cell_executes_contextual_router_promotion_gate_colab_path(self) -> None:
         notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
         sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
