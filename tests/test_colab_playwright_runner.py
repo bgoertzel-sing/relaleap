@@ -108,6 +108,12 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "Contextual support-router promotion-gate comparison status: ok",
                     "Contextual support-router promotion-gate artifact check: pass",
                     "results/comparisons/colab_contextual_support_router_promotion_gate_larger_char_token",
+                    "Post-promotion support-wide comparison status: ok",
+                    "Post-promotion support-wide artifact check: pass",
+                    FOCUSED_TARGET_COMPARISON_DIR,
+                    "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+                    "char_larger_support_wide_hep_temporal_clipped_objective_gate",
+                    "token_larger_support_wide_hep_temporal_clipped_objective_gate",
                     "char_smoke_hep_support_stress_clipped",
                     "char_smoke_hep_support_stress_entropy_clipped",
                     "char_smoke_hep_support_stress_temporal_clipped",
@@ -185,10 +191,9 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
                     "cuda_available: True",
                     '"status": "pass"',
                     FOCUSED_TARGET_COMPARISON_DIR,
-                    "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
-                    "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2",
+                    "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+                    "char_larger_support_wide_hep_temporal_clipped_objective_gate",
                     "token_larger_support_wide_hep_temporal_clipped_objective_gate",
-                    "token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate",
                     COMPLETION_TEXT,
                 ]
             )
@@ -320,7 +325,7 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
         )
         evidence = "\n".join([ARTIFACT_BUNDLE_BEGIN, bundle, ARTIFACT_BUNDLE_END])
 
-        with self.assertRaisesRegex(RuntimeError, "focused contextual-router artifact schema"):
+        with self.assertRaisesRegex(RuntimeError, "focused promoted support-wide artifact schema"):
             _validate_focused_target_artifact_bundle(evidence)
 
     def test_focused_target_bundle_accepts_support_width_schema(self) -> None:
@@ -493,14 +498,14 @@ def json_dumps(value) -> str:
 def _focused_summary(*, include_support_schema: bool) -> dict:
     specs = [
         (
-            "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
-            24,
+            "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+            12,
             2,
-            "linear",
-            None,
+            "contextual_mlp",
+            128,
         ),
         (
-            "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2",
+            "char_larger_support_wide_hep_temporal_clipped_objective_gate",
             24,
             2,
             "contextual_mlp",
@@ -508,13 +513,6 @@ def _focused_summary(*, include_support_schema: bool) -> dict:
         ),
         (
             "token_larger_support_wide_hep_temporal_clipped_objective_gate",
-            24,
-            2,
-            "linear",
-            None,
-        ),
-        (
-            "token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate",
             24,
             2,
             "contextual_mlp",

@@ -38,26 +38,22 @@ ARTIFACT_BUNDLE_BEGIN = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_BEGIN"
 ARTIFACT_BUNDLE_END = "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_END"
 FOCUSED_TARGET_COMPARISON_DIR = (
     "results/comparisons/"
-    "colab_contextual_support_router_promotion_gate_larger_char_token"
+    "colab_post_promotion_support_wide_promoted_default"
 )
 FOCUSED_TARGET_RUN_SCHEMA = {
-    "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2": {
-        "num_columns": 24,
+    "char_validation_support_wide_hep_temporal_clipped_objective_gate": {
+        "num_columns": 12,
         "top_k": 2,
-        "support_router": "linear",
+        "support_router": "contextual_mlp",
+        "contextual_router_hidden_dim": 128,
     },
-    "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2": {
+    "char_larger_support_wide_hep_temporal_clipped_objective_gate": {
         "num_columns": 24,
         "top_k": 2,
         "support_router": "contextual_mlp",
         "contextual_router_hidden_dim": 128,
     },
     "token_larger_support_wide_hep_temporal_clipped_objective_gate": {
-        "num_columns": 24,
-        "top_k": 2,
-        "support_router": "linear",
-    },
-    "token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate": {
         "num_columns": 24,
         "top_k": 2,
         "support_router": "contextual_mlp",
@@ -68,10 +64,9 @@ FOCUSED_TARGET_MARKERS = (
     "cuda_available: True",
     '"status": "pass"',
     FOCUSED_TARGET_COMPARISON_DIR,
-    "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
-    "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2",
+    "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+    "char_larger_support_wide_hep_temporal_clipped_objective_gate",
     "token_larger_support_wide_hep_temporal_clipped_objective_gate",
-    "token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate",
     COMPLETION_TEXT,
 )
 ERROR_MARKERS = (
@@ -311,7 +306,7 @@ def _validate_focused_target_summary(
         if len(failures) > 8:
             preview = f"{preview}; ... ({len(failures)} total)"
         raise RuntimeError(
-            "Colab completed, but focused contextual-router artifact schema is "
+            "Colab completed, but focused promoted support-wide artifact schema is "
             f"stale or invalid: {preview}"
         )
 

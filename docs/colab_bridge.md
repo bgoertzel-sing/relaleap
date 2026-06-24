@@ -141,9 +141,11 @@ the post-support-width residual-capacity larger-char/tokenized check under
 `results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate`,
 the larger-char linear-vs-contextual support-router check under
 `results/comparisons/colab_char_larger_support_wide_contextual_router_temporal_clipped_objective_gate`,
-and the contextual support-router promotion-gate larger-char/tokenized matrix
+the contextual support-router promotion-gate larger-char/tokenized matrix
 under
-`results/comparisons/colab_contextual_support_router_promotion_gate_larger_char_token`.
+`results/comparisons/colab_contextual_support_router_promotion_gate_larger_char_token`,
+and the post-promotion promoted-default support-wide validation under
+`results/comparisons/colab_post_promotion_support_wide_promoted_default`.
 When that bundle is present in the rendered output, the helper extracts it
 under the local repo root so the normal after-the-fact checker can inspect the
 Colab artifact tree locally.
@@ -282,7 +284,7 @@ python -m relaleap.experiments.check_artifacts \
   --out results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate/artifact_check.json
 ```
 
-The current focused bridge target also runs the larger-char linear-vs-contextual
+The bridge also runs the larger-char linear-vs-contextual
 support-router comparison selected by `AUTOMATION_STATUS.md`:
 
 ```bash
@@ -293,6 +295,20 @@ python -m relaleap.experiments.compare \
 python -m relaleap.experiments.check_artifacts \
   --comparison-dir results/comparisons/colab_char_larger_support_wide_contextual_router_temporal_clipped_objective_gate \
   --out results/comparisons/colab_char_larger_support_wide_contextual_router_temporal_clipped_objective_gate/artifact_check.json
+```
+
+The current focused post-promotion bridge target runs the promoted-default
+support-wide artifact bundle selected by `AUTOMATION_STATUS.md`:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/char_larger_support_wide_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_post_promotion_support_wide_promoted_default
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_post_promotion_support_wide_promoted_default \
+  --out results/comparisons/colab_post_promotion_support_wide_promoted_default/artifact_check.json
 ```
 
 The historical contextual support-router promotion-gate bridge target ran the

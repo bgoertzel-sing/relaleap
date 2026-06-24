@@ -636,12 +636,25 @@ class ColabNotebookTest(unittest.TestCase):
         run_cells = [
             source
             for source in sources
-            if "colab_contextual_support_router_promotion_gate_larger_char_token"
-            in source
+            if (
+                "python -m relaleap.experiments.compare" in source
+                and "colab_contextual_support_router_promotion_gate_larger_char_token"
+                in source
+            )
+        ]
+        evidence_cells = [
+            source
+            for source in sources
+            if (
+                "Contextual support-router promotion-gate comparison status:"
+                in source
+            )
         ]
 
-        self.assertEqual(len(run_cells), 2)
-        run_cell, evidence_cell = run_cells
+        self.assertEqual(len(run_cells), 1)
+        self.assertEqual(len(evidence_cells), 1)
+        run_cell = run_cells[0]
+        evidence_cell = evidence_cells[0]
         self.assertIn(
             "--config configs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml",
             run_cell,
@@ -672,6 +685,65 @@ class ColabNotebookTest(unittest.TestCase):
         )
         self.assertIn(
             "token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate",
+            evidence_cell,
+        )
+
+    def test_run_cell_executes_post_promotion_support_wide_colab_path(self) -> None:
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+        run_cells = [
+            source
+            for source in sources
+            if (
+                "python -m relaleap.experiments.compare" in source
+                and "colab_post_promotion_support_wide_promoted_default" in source
+            )
+        ]
+        evidence_cells = [
+            source
+            for source in sources
+            if "Post-promotion support-wide comparison status:" in source
+        ]
+        bundle_cells = [
+            source
+            for source in sources
+            if (
+                "focused_artifact_roots" in source
+                and "colab_post_promotion_support_wide_promoted_default" in source
+            )
+        ]
+
+        self.assertEqual(len(run_cells), 1)
+        self.assertEqual(len(evidence_cells), 1)
+        self.assertEqual(len(bundle_cells), 1)
+        run_cell = run_cells[0]
+        evidence_cell = evidence_cells[0]
+        self.assertIn(
+            "--config configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/char_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "Post-promotion support-wide comparison status:",
+            evidence_cell,
+        )
+        self.assertIn(
+            "Post-promotion support-wide artifact check:",
+            evidence_cell,
+        )
+        self.assertIn(
+            "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+            evidence_cell,
+        )
+        self.assertIn(
+            "token_larger_support_wide_hep_temporal_clipped_objective_gate",
             evidence_cell,
         )
 
