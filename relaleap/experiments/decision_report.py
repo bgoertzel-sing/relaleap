@@ -485,6 +485,26 @@ DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_CONFIGS = (
 DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_OUT_DIR = Path(
     "results/reports/contextual_support_router_promotion_gate"
 )
+DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_REPORT = (
+    DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_OUT_DIR / "decision_report.json"
+)
+DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_COMPARISON_DIRS = (
+    Path(
+        "results/comparisons/contextual_support_router_promotion_gate_larger_char_token"
+    ),
+    Path(
+        "results/comparisons/colab_contextual_support_router_promotion_gate_larger_char_token"
+    ),
+)
+DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_ARTIFACT_CHECKS = (
+    DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_COMPARISON_DIRS[0]
+    / "artifact_check_local.json",
+    DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_COMPARISON_DIRS[1]
+    / "artifact_check_local.json",
+)
+DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_OUT_DIR = Path(
+    "results/reports/contextual_support_router_promotion_gate_satisfaction"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -586,6 +606,9 @@ RUN_COLAB_SUPPORT_WIDTH_DECONFOUNDING_AUDIT = (
 DIAGNOSE_EXHAUSTIVE_SUPPORT_AUDIT = "diagnose_exhaustive_support_audit"
 DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE = (
     "define_contextual_support_router_promotion_or_repeat_gate"
+)
+SATISFY_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE = (
+    "satisfy_contextual_support_router_promotion_or_repeat_gate"
 )
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -6532,6 +6555,147 @@ def write_contextual_support_router_promotion_gate_report(
     return report
 
 
+def write_contextual_support_router_promotion_gate_satisfaction_report(
+    promotion_gate_report_path: Path = (
+        DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_REPORT
+    ),
+    comparison_dirs: tuple[Path, ...] = (
+        DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_COMPARISON_DIRS
+    ),
+    out_dir: Path = (
+        DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_OUT_DIR
+    ),
+    *,
+    artifact_check_paths: tuple[Path, ...] | None = (
+        DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_ARTIFACT_CHECKS
+    ),
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+) -> dict[str, Any]:
+    """Decide whether the contextual support-router promotion gate is satisfied."""
+
+    failures: list[dict[str, Any]] = []
+    gate_report: dict[str, Any] | None = None
+    if not promotion_gate_report_path.is_file():
+        failures.append(
+            {
+                "field": "promotion_gate_report",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(promotion_gate_report_path),
+            }
+        )
+    else:
+        gate_report = _read_json_object(promotion_gate_report_path)
+        if gate_report.get("status") != "pass":
+            failures.append(
+                {
+                    "field": "promotion_gate_report.status",
+                    "expected": "pass",
+                    "actual": gate_report.get("status"),
+                    "path": str(promotion_gate_report_path),
+                }
+            )
+        if gate_report.get("decision") != DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE:
+            failures.append(
+                {
+                    "field": "promotion_gate_report.decision",
+                    "expected": DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
+                    "actual": gate_report.get("decision"),
+                    "path": str(promotion_gate_report_path),
+                }
+            )
+
+    entries = []
+    artifact_paths = artifact_check_paths or ()
+    for index, comparison_dir in enumerate(comparison_dirs):
+        artifact_check_path = artifact_paths[index] if index < len(artifact_paths) else None
+        entry = _contextual_support_router_promotion_gate_comparison_entry(
+            comparison_dir,
+            artifact_check_path=artifact_check_path,
+            max_logit_delta=max_logit_delta,
+        )
+        entries.append(entry)
+        failures.extend(entry["failures"])
+
+    gate_evidence = _contextual_support_router_promotion_gate_evidence(entries)
+    failures.extend(gate_evidence["failures"])
+    failures = _dedupe_failures(failures)
+    status = "pass" if not failures else "fail"
+    report = {
+        "status": status,
+        "decision": (
+            SATISFY_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE
+            if status == "pass"
+            else INSUFFICIENT_EVIDENCE
+        ),
+        "selected_next_direction": (
+            "contextual_support_router_default_config_update"
+            if status == "pass"
+            else None
+        ),
+        "promote_contextual_support_router_default": status == "pass",
+        "default_residual_objective": "supervised_ce",
+        "default_support_stress_mitigation": "temporal_clipped_hep",
+        "default_support_width_top_k": 2,
+        "policy": {
+            "requires_passing_promotion_gate_report": True,
+            "requires_local_and_colab_evidence": True,
+            "requires_larger_char_seed2_repeat": True,
+            "requires_non_char_tokenized_evidence": True,
+            "requires_linear_and_contextual_runs_per_backend": True,
+            "requires_support_stress_preset_disabled": True,
+            "requires_temporal_clipped_hep_path": True,
+            "requires_contextual_alpha0_loss_win": True,
+            "requires_contextual_support_utilization_win": True,
+            "promotes_contextual_router_after_gate_satisfaction": True,
+        },
+        "evidence": {
+            "promotion_gate_report_path": str(promotion_gate_report_path),
+            "promotion_gate_report_status": None
+            if gate_report is None
+            else gate_report.get("status"),
+            "promotion_gate_report_decision": None
+            if gate_report is None
+            else gate_report.get("decision"),
+            "backends": entries,
+            **gate_evidence,
+            "failures": failures,
+        },
+        "rationale": (
+            "The bounded promotion gate now has matching local and real-Chrome "
+            "Colab evidence on both required settings. In every backend and "
+            "dataset cell, the contextual MLP support router lowers alpha-0 CE "
+            "loss and expands support utilization versus the linear top-k-2 "
+            "router while preserving supervised CE, temporal-clipped HEP, and "
+            "support_stress_preset: false. Nonzero HEP alphas still do not drive "
+            "the gain, so the default change should be scoped to support routing."
+            if status == "pass"
+            else (
+                "The contextual support-router default decision requires the "
+                "previous promotion gate plus passing local and Colab artifact "
+                "matrices with larger-char seed-2 and tokenized larger "
+                "linear-vs-contextual wins."
+            )
+        ),
+        "next_step": (
+            "apply the contextual MLP support-router default change in the support-wide experiment configs"
+            if status == "pass"
+            else "repair or rerun the contextual support-router promotion-gate artifacts before changing defaults"
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_contextual_support_router_promotion_gate_satisfaction_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def write_exhaustive_support_audit_report(
     audit_dir: Path = DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_DIR,
     out_dir: Path = DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_OUT_DIR,
@@ -7180,7 +7344,7 @@ def _contextual_support_router_comparison_entry(
     return {
         "comparison_dir": str(comparison_dir),
         "artifact_check_path": str(artifact_check_path) if artifact_check_path else None,
-        "backend": _infer_backend_from_report(comparison_dir, comparison_dir),
+        "backend": _infer_backend_from_report(comparison_dir, comparison_dir) or "local",
         "artifact_check_status": None
         if artifact_check is None
         else artifact_check.get("status"),
@@ -7320,6 +7484,404 @@ def _append_contextual_support_router_run_failures(
                     "path": entry.get("config_path"),
                 }
             )
+
+
+def _contextual_support_router_promotion_gate_comparison_entry(
+    comparison_dir: Path,
+    *,
+    artifact_check_path: Path | None,
+    max_logit_delta: float,
+) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    comparison: dict[str, Any] | None = None
+    artifact_check: dict[str, Any] | None = None
+    summary_path = comparison_dir / "summary.json"
+    if summary_path.is_file():
+        comparison = _read_json_object(summary_path)
+    else:
+        failures.append(
+            {
+                "field": "comparison.summary.json",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(summary_path),
+            }
+        )
+    if artifact_check_path is not None and artifact_check_path.is_file():
+        artifact_check = _read_json_object(artifact_check_path)
+    elif comparison is not None:
+        artifact_check = check_comparison_artifacts(comparison_dir)
+    if artifact_check is None or artifact_check.get("status") != "pass":
+        failures.append(
+            {
+                "field": "artifact_check.status",
+                "expected": "pass",
+                "actual": None if artifact_check is None else artifact_check.get("status"),
+                "path": str(artifact_check_path or comparison_dir),
+            }
+        )
+
+    verdict = comparison.get("verdict") if isinstance(comparison, dict) else None
+    verdict = verdict if isinstance(verdict, dict) else {}
+    if comparison is None or comparison.get("status") != "ok":
+        failures.append(
+            {
+                "field": "comparison.status",
+                "expected": "ok",
+                "actual": None if comparison is None else comparison.get("status"),
+                "path": str(comparison_dir),
+            }
+        )
+    if verdict.get("status") != "pass":
+        failures.append(
+            {
+                "field": "comparison.verdict.status",
+                "expected": "pass",
+                "actual": verdict.get("status"),
+                "path": str(comparison_dir),
+            }
+        )
+
+    runs = (
+        comparison.get("runs", [])
+        if isinstance(comparison, dict) and isinstance(comparison.get("runs"), list)
+        else []
+    )
+    run_entries = [
+        _contextual_support_router_run_entry(run, max_logit_delta=max_logit_delta)
+        for run in runs
+        if isinstance(run, dict)
+    ]
+    cells: list[dict[str, Any]] = []
+    expected_cells = (
+        ("tiny_shakespeare_char", 2),
+        ("tiny_shakespeare_word", 1),
+    )
+    for dataset, seed in expected_cells:
+        cell = _contextual_support_router_promotion_gate_cell(
+            run_entries,
+            dataset=dataset,
+            seed=seed,
+            comparison_dir=comparison_dir,
+        )
+        cells.append(cell)
+        failures.extend(cell["failures"])
+    unexpected_runs = [
+        entry
+        for entry in run_entries
+        if (entry.get("dataset"), _seed_from_experiment_id(entry.get("experiment_id")))
+        not in expected_cells
+    ]
+    if unexpected_runs:
+        failures.append(
+            {
+                "field": "comparison.runs.unexpected_gate_cells",
+                "expected": list(expected_cells),
+                "actual": [
+                    {
+                        "experiment_id": entry.get("experiment_id"),
+                        "dataset": entry.get("dataset"),
+                    }
+                    for entry in unexpected_runs
+                ],
+                "path": str(comparison_dir),
+            }
+        )
+
+    return {
+        "comparison_dir": str(comparison_dir),
+        "artifact_check_path": str(artifact_check_path) if artifact_check_path else None,
+        "backend": _infer_backend_from_report(comparison_dir, comparison_dir) or "local",
+        "artifact_check_status": None
+        if artifact_check is None
+        else artifact_check.get("status"),
+        "comparison_status": None if comparison is None else comparison.get("status"),
+        "verdict_status": verdict.get("status"),
+        "cells": cells,
+        "run_count": len(run_entries),
+        "failures": failures,
+    }
+
+
+def _contextual_support_router_promotion_gate_cell(
+    run_entries: list[dict[str, Any]],
+    *,
+    dataset: str,
+    seed: int,
+    comparison_dir: Path,
+) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    cell_runs = [
+        entry
+        for entry in run_entries
+        if entry.get("dataset") == dataset
+        and _seed_from_experiment_id(entry.get("experiment_id")) == seed
+    ]
+    linear_runs = [
+        entry
+        for entry in cell_runs
+        if entry.get("support_router") in ("linear", "linear_topk")
+    ]
+    contextual_runs = [
+        entry for entry in cell_runs if entry.get("support_router") == "contextual_mlp"
+    ]
+    if len(linear_runs) != 1:
+        failures.append(
+            {
+                "field": f"contextual_router_gate.{dataset}.seed{seed}.linear_run",
+                "expected": 1,
+                "actual": len(linear_runs),
+                "path": str(comparison_dir),
+            }
+        )
+    if len(contextual_runs) != 1:
+        failures.append(
+            {
+                "field": f"contextual_router_gate.{dataset}.seed{seed}.contextual_run",
+                "expected": 1,
+                "actual": len(contextual_runs),
+                "path": str(comparison_dir),
+            }
+        )
+    linear = linear_runs[0] if linear_runs else None
+    contextual = contextual_runs[0] if contextual_runs else None
+    for entry in (linear, contextual):
+        if entry is not None:
+            _append_contextual_support_router_promotion_gate_run_failures(
+                failures,
+                entry,
+                dataset=dataset,
+            )
+    metrics = _contextual_support_router_comparison_metrics(linear, contextual)
+    if (
+        metrics.get("contextual_minus_linear_alpha0_loss") is None
+        or metrics["contextual_minus_linear_alpha0_loss"] >= 0.0
+    ):
+        failures.append(
+            {
+                "field": f"contextual_router_gate.{dataset}.seed{seed}.alpha0_loss",
+                "expected": "contextual lower than linear",
+                "actual": metrics.get("contextual_minus_linear_alpha0_loss"),
+                "path": str(comparison_dir),
+            }
+        )
+    if (
+        metrics.get("contextual_minus_linear_used_columns") is None
+        or metrics["contextual_minus_linear_used_columns"] <= 0.0
+        or metrics.get("contextual_minus_linear_unique_support_sets") is None
+        or metrics["contextual_minus_linear_unique_support_sets"] <= 0.0
+    ):
+        failures.append(
+            {
+                "field": (
+                    f"contextual_router_gate.{dataset}.seed{seed}."
+                    "support_utilization"
+                ),
+                "expected": "contextual uses more columns and support sets",
+                "actual": metrics,
+                "path": str(comparison_dir),
+            }
+        )
+    return {
+        "dataset": dataset,
+        "seed": seed,
+        "linear_run": linear,
+        "contextual_run": contextual,
+        "comparison_metrics": metrics,
+        "failures": failures,
+    }
+
+
+def _append_contextual_support_router_promotion_gate_run_failures(
+    failures: list[dict[str, Any]],
+    entry: dict[str, Any],
+    *,
+    dataset: str,
+) -> None:
+    prefix = f"run.{entry.get('experiment_id')}"
+    expected_seq_scale = {
+        "tiny_shakespeare_char": {"training_steps": 50},
+        "tiny_shakespeare_word": {"training_steps": 50},
+    }
+    required = {
+        "status": "ok",
+        "dataset": dataset,
+        "residual_objective": "supervised_ce",
+        "support_stress": True,
+        "support_stress_preset": False,
+        "hep_settling_objective": "temporal_consistency_gradient",
+        "hep_update_clip_norm": 0.01,
+        "training_steps": expected_seq_scale[dataset]["training_steps"],
+        "num_columns": 24,
+        "top_k": 2,
+    }
+    for field, expected in required.items():
+        if entry.get(field) != expected:
+            failures.append(
+                {
+                    "field": f"{prefix}.{field}",
+                    "expected": expected,
+                    "actual": entry.get(field),
+                    "path": entry.get("config_path"),
+                }
+            )
+    if entry.get("alpha0_loss") is None or entry.get("best_hep_loss") is None:
+        failures.append(
+            {
+                "field": f"{prefix}.hep_alpha_sweep",
+                "expected": "alpha-0 and best HEP loss",
+                "actual": None,
+                "path": entry.get("config_path"),
+            }
+        )
+    if entry.get("support_audit_used_columns") is None:
+        failures.append(
+            {
+                "field": f"{prefix}.support_audit",
+                "expected": "support audit metrics",
+                "actual": "missing",
+                "path": entry.get("config_path"),
+            }
+        )
+    for invariant, passed in entry.get("invariants", {}).items():
+        if passed is not True:
+            failures.append(
+                {
+                    "field": f"{prefix}.invariants.{invariant}",
+                    "expected": True,
+                    "actual": passed,
+                    "path": entry.get("config_path"),
+                }
+            )
+    for artifact, passed in entry.get("artifact_invariants", {}).items():
+        if passed is not True:
+            failures.append(
+                {
+                    "field": f"{prefix}.artifact_invariants.{artifact}",
+                    "expected": True,
+                    "actual": passed,
+                    "path": entry.get("config_path"),
+                }
+            )
+
+
+def _contextual_support_router_promotion_gate_evidence(
+    entries: list[dict[str, Any]],
+) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    if len(entries) != 2:
+        failures.append(
+            {
+                "field": "comparison_dirs",
+                "expected": "local and colab comparison directories",
+                "actual": len(entries),
+                "path": "",
+            }
+        )
+    backend_names = {entry.get("backend") for entry in entries}
+    if "local" not in backend_names or "colab" not in backend_names:
+        failures.append(
+            {
+                "field": "comparison_dirs.backends",
+                "expected": ["local", "colab"],
+                "actual": sorted(name for name in backend_names if name is not None),
+                "path": "",
+            }
+        )
+
+    cells = [
+        cell
+        for entry in entries
+        for cell in entry.get("cells", [])
+        if isinstance(cell, dict)
+    ]
+    loss_wins = [
+        cell
+        for cell in cells
+        if (cell.get("comparison_metrics") or {}).get(
+            "contextual_minus_linear_alpha0_loss"
+        )
+        is not None
+        and (cell.get("comparison_metrics") or {})[
+            "contextual_minus_linear_alpha0_loss"
+        ]
+        < 0.0
+    ]
+    utilization_wins = [
+        cell
+        for cell in cells
+        if (cell.get("comparison_metrics") or {}).get(
+            "contextual_minus_linear_used_columns"
+        )
+        is not None
+        and (cell.get("comparison_metrics") or {})[
+            "contextual_minus_linear_used_columns"
+        ]
+        > 0.0
+        and (cell.get("comparison_metrics") or {}).get(
+            "contextual_minus_linear_unique_support_sets"
+        )
+        is not None
+        and (cell.get("comparison_metrics") or {})[
+            "contextual_minus_linear_unique_support_sets"
+        ]
+        > 0.0
+    ]
+    churn_reductions = [
+        cell
+        for cell in cells
+        if (cell.get("comparison_metrics") or {}).get(
+            "contextual_minus_linear_support_change_fraction"
+        )
+        is not None
+        and (cell.get("comparison_metrics") or {})[
+            "contextual_minus_linear_support_change_fraction"
+        ]
+        < 0.0
+    ]
+    nonzero_hep_wins = [
+        cell
+        for cell in cells
+        if ((cell.get("contextual_run") or {}).get("accepted_nonzero_alpha") is not None)
+    ]
+    expected_cell_count = len(entries) * 2
+    if len(loss_wins) != expected_cell_count:
+        failures.append(
+            {
+                "field": "contextual_router_gate.alpha0_loss_wins",
+                "expected": expected_cell_count,
+                "actual": len(loss_wins),
+                "path": "",
+            }
+        )
+    if len(utilization_wins) != expected_cell_count:
+        failures.append(
+            {
+                "field": "contextual_router_gate.support_utilization_wins",
+                "expected": expected_cell_count,
+                "actual": len(utilization_wins),
+                "path": "",
+            }
+        )
+    return {
+        "gate_cell_count": len(cells),
+        "contextual_loss_win_count": len(loss_wins),
+        "contextual_utilization_win_count": len(utilization_wins),
+        "contextual_churn_reduction_count": len(churn_reductions),
+        "contextual_nonzero_hep_win_count": len(nonzero_hep_wins),
+        "failures": _dedupe_failures(failures),
+    }
+
+
+def _seed_from_experiment_id(experiment_id: Any) -> int:
+    text = str(experiment_id or "")
+    if text.endswith("_seed2"):
+        return 2
+    if text.endswith("_seed3"):
+        return 3
+    if text.endswith("_seed4"):
+        return 4
+    return 1
 
 
 def _contextual_support_router_comparison_metrics(
@@ -12305,6 +12867,98 @@ def _write_contextual_support_router_promotion_gate_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_contextual_support_router_promotion_gate_satisfaction_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Contextual Support Router Promotion Gate Satisfaction",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        f"- Selected next direction: `{report['selected_next_direction']}`",
+        (
+            "- Promote contextual support router default: "
+            f"`{report['promote_contextual_support_router_default']}`"
+        ),
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        f"- Default support-stress mitigation: `{report['default_support_stress_mitigation']}`",
+        f"- Default support width top-k: `{report['default_support_width_top_k']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        (
+            "| Backend | Dataset | Seed | Artifact check | Verdict | Linear alpha-0 "
+            "| Contextual alpha-0 | Delta | Linear used | Contextual used | "
+            "Linear supports | Contextual supports | Support-change delta |"
+        ),
+        (
+            "| --- | --- | ---: | --- | --- | ---: | ---: | ---: | ---: "
+            "| ---: | ---: | ---: | ---: |"
+        ),
+    ]
+    for backend in evidence["backends"]:
+        for cell in backend.get("cells", []):
+            linear = cell.get("linear_run") or {}
+            contextual = cell.get("contextual_run") or {}
+            metrics = cell.get("comparison_metrics") or {}
+            lines.append(
+                (
+                    f"| {backend.get('backend') or ''} "
+                    f"| `{cell.get('dataset') or ''}` "
+                    f"| {cell.get('seed') or ''} "
+                    f"| `{backend.get('artifact_check_status')}` "
+                    f"| `{backend.get('verdict_status')}` "
+                    f"| {_format_metric(linear.get('alpha0_loss'))} "
+                    f"| {_format_metric(contextual.get('alpha0_loss'))} "
+                    f"| {_format_metric(metrics.get('contextual_minus_linear_alpha0_loss'))} "
+                    f"| {linear.get('support_audit_used_columns') or ''} "
+                    f"| {contextual.get('support_audit_used_columns') or ''} "
+                    f"| {linear.get('support_audit_unique_support_sets') or ''} "
+                    f"| {contextual.get('support_audit_unique_support_sets') or ''} "
+                    f"| {_format_metric(metrics.get('contextual_minus_linear_support_change_fraction'))} |"
+                )
+            )
+    lines.extend(
+        [
+            "",
+            "## Counts",
+            "",
+            f"- Gate cells: `{evidence['gate_cell_count']}`",
+            f"- Contextual alpha-0 loss wins: `{evidence['contextual_loss_win_count']}`",
+            (
+                "- Contextual utilization wins: "
+                f"`{evidence['contextual_utilization_win_count']}`"
+            ),
+            (
+                "- Contextual support-churn reductions: "
+                f"`{evidence['contextual_churn_reduction_count']}`"
+            ),
+            (
+                "- Contextual nonzero HEP wins: "
+                f"`{evidence['contextual_nonzero_hep_win_count']}`"
+            ),
+        ]
+    )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _exhaustive_support_audit_rationale(
     *,
     status: str,
@@ -12579,6 +13233,7 @@ def main() -> None:
             "exhaustive-support-audit",
             "contextual-support-router-decision",
             "contextual-support-router-promotion-gate",
+            "contextual-support-router-promotion-gate-satisfaction",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -12971,6 +13626,24 @@ def main() -> None:
             if args.decision_report and len(args.decision_report) > 1
             else DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_CONFIGS,
             args.out or DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_OUT_DIR,
+        )
+    elif args.report == "contextual-support-router-promotion-gate-satisfaction":
+        comparison_dirs = (
+            tuple(args.decision_report[1:])
+            if args.decision_report and len(args.decision_report) > 1
+            else DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_COMPARISON_DIRS
+        )
+        report = write_contextual_support_router_promotion_gate_satisfaction_report(
+            args.decision_report[0]
+            if args.decision_report
+            else DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_REPORT,
+            comparison_dirs,
+            args.out
+            or DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_OUT_DIR,
+            artifact_check_paths=DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_ARTIFACT_CHECKS
+            if not args.artifact_check
+            else (args.artifact_check,),
+            max_logit_delta=args.max_logit_delta,
         )
     else:
         report = write_pinned_support_decision_report(

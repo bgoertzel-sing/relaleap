@@ -40,6 +40,7 @@ from relaleap.experiments.decision_report import (
     RUN_COLAB_SUPPORT_WIDTH_DECONFOUNDING_AUDIT,
     DIAGNOSE_EXHAUSTIVE_SUPPORT_AUDIT,
     DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
+    SATISFY_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -72,6 +73,7 @@ from relaleap.experiments.decision_report import (
     write_exhaustive_support_audit_report,
     write_contextual_support_router_decision_report,
     write_contextual_support_router_promotion_gate_report,
+    write_contextual_support_router_promotion_gate_satisfaction_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -4532,6 +4534,102 @@ class ContextualSupportRouterPromotionGateReportTest(unittest.TestCase):
             )
 
 
+class ContextualSupportRouterPromotionGateSatisfactionReportTest(unittest.TestCase):
+    def test_matching_local_colab_gate_evidence_promotes_contextual_router(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            gate_report_path = _write_contextual_support_router_decision(
+                tmp_path,
+                status="pass",
+                decision=DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
+                promote_contextual_support_router_default=False,
+            )
+            local_dir = tmp_path / "contextual_support_router_promotion_gate"
+            colab_dir = tmp_path / "colab_contextual_support_router_promotion_gate"
+            local_check = tmp_path / "local_artifact_check.json"
+            colab_check = tmp_path / "colab_artifact_check.json"
+            _write_contextual_support_router_promotion_gate_comparison(local_dir)
+            _write_contextual_support_router_promotion_gate_comparison(colab_dir)
+            for path in (local_check, colab_check):
+                path.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+
+            report = write_contextual_support_router_promotion_gate_satisfaction_report(
+                gate_report_path,
+                (local_dir, colab_dir),
+                tmp_path / "contextual_router_promotion_gate_satisfaction",
+                artifact_check_paths=(local_check, colab_check),
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                SATISFY_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
+            )
+            self.assertTrue(report["promote_contextual_support_router_default"])
+            self.assertEqual(report["evidence"]["gate_cell_count"], 4)
+            self.assertEqual(report["evidence"]["contextual_loss_win_count"], 4)
+            self.assertEqual(report["evidence"]["contextual_utilization_win_count"], 4)
+            self.assertEqual(report["evidence"]["contextual_nonzero_hep_win_count"], 0)
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "contextual_router_promotion_gate_satisfaction"
+                    / "decision_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "contextual_router_promotion_gate_satisfaction"
+                    / "decision_report.md"
+                ).is_file()
+            )
+
+    def test_missing_tokenized_win_blocks_contextual_router_promotion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            gate_report_path = _write_contextual_support_router_decision(
+                tmp_path,
+                status="pass",
+                decision=DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
+                promote_contextual_support_router_default=False,
+            )
+            local_dir = tmp_path / "contextual_support_router_promotion_gate"
+            colab_dir = tmp_path / "colab_contextual_support_router_promotion_gate"
+            local_check = tmp_path / "local_artifact_check.json"
+            colab_check = tmp_path / "colab_artifact_check.json"
+            _write_contextual_support_router_promotion_gate_comparison(
+                local_dir,
+                token_contextual_alpha0_loss=3.7,
+            )
+            _write_contextual_support_router_promotion_gate_comparison(colab_dir)
+            for path in (local_check, colab_check):
+                path.write_text(
+                    json.dumps({"status": "pass"}, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+
+            report = write_contextual_support_router_promotion_gate_satisfaction_report(
+                gate_report_path,
+                (local_dir, colab_dir),
+                tmp_path / "contextual_router_promotion_gate_satisfaction",
+                artifact_check_paths=(local_check, colab_check),
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(report["promote_contextual_support_router_default"])
+            self.assertTrue(
+                any(
+                    failure["field"].endswith(".alpha0_loss")
+                    for failure in report["evidence"]["failures"]
+                )
+            )
+
+
 class ExhaustiveSupportAuditReportTest(unittest.TestCase):
     def test_valid_audit_selects_router_support_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4832,6 +4930,81 @@ def _write_contextual_support_router_comparison(comparison_dir: Path) -> None:
     )
 
 
+def _write_contextual_support_router_promotion_gate_comparison(
+    comparison_dir: Path,
+    *,
+    token_contextual_alpha0_loss: float = 2.90,
+) -> None:
+    comparison_dir.mkdir(parents=True)
+    runs = [
+        _contextual_support_router_run_entry(
+            "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+            support_router=None,
+            alpha0_loss=3.20,
+            best_hep_loss=3.20,
+            final_loss=3.20,
+            used_columns=12,
+            dead_columns=12,
+            unique_supports=13,
+            max_column_fraction=0.47,
+            support_change=0.28,
+            dataset="tiny_shakespeare_char",
+        ),
+        _contextual_support_router_run_entry(
+            "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2",
+            support_router="contextual_mlp",
+            alpha0_loss=1.85,
+            best_hep_loss=1.85,
+            final_loss=1.85,
+            used_columns=19,
+            dead_columns=5,
+            unique_supports=60,
+            max_column_fraction=0.18,
+            support_change=0.25,
+            dataset="tiny_shakespeare_char",
+        ),
+        _contextual_support_router_run_entry(
+            "token_larger_support_wide_hep_temporal_clipped_objective_gate",
+            support_router=None,
+            alpha0_loss=3.52,
+            best_hep_loss=3.52,
+            final_loss=3.52,
+            used_columns=14,
+            dead_columns=10,
+            unique_supports=26,
+            max_column_fraction=0.32,
+            support_change=0.62,
+            dataset="tiny_shakespeare_word",
+        ),
+        _contextual_support_router_run_entry(
+            "token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate",
+            support_router="contextual_mlp",
+            alpha0_loss=token_contextual_alpha0_loss,
+            best_hep_loss=token_contextual_alpha0_loss,
+            final_loss=token_contextual_alpha0_loss,
+            used_columns=20,
+            dead_columns=4,
+            unique_supports=52,
+            max_column_fraction=0.12,
+            support_change=0.32,
+            dataset="tiny_shakespeare_word",
+        ),
+    ]
+    summary = {
+        "status": "ok",
+        "verdict": {
+            "status": "pass",
+            "invariants_passed": True,
+            "artifact_invariants_passed": True,
+        },
+        "runs": runs,
+    }
+    (comparison_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_contextual_support_router_decision(
     tmp_path: Path,
     *,
@@ -4951,6 +5124,7 @@ def _contextual_support_router_run_entry(
     unique_supports: int,
     max_column_fraction: float,
     support_change: float,
+    dataset: str = "tiny_shakespeare_char",
 ) -> dict[str, object]:
     run = {
         "artifact_invariants": {
@@ -4959,7 +5133,7 @@ def _contextual_support_router_run_entry(
             "summary_json": True,
         },
         "config_path": f"configs/{experiment_id}.yaml",
-        "dataset": "tiny_shakespeare_char",
+        "dataset": dataset,
         "experiment_id": experiment_id,
         "final_residual_loss": final_loss,
         "hep_alpha_sweep": [
