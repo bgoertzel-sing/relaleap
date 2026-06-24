@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import platform
 import time
 from pathlib import Path
@@ -115,6 +116,7 @@ def run_dead_column_probe(
         parameter.requires_grad_(False)
 
     variant_rows = []
+    baseline_functional: dict[str, Any] | None = None
     for weight in weights:
         torch.manual_seed(seed)
         residual = ResidualColumns(
@@ -154,9 +156,39 @@ def run_dead_column_probe(
         residual.eval()
         with torch.no_grad():
             hidden = base.encode(inputs)
-            logits = base.decode(residual(hidden))
+            residual_output, support = residual(hidden, return_support=True)
+            logits = base.decode(residual_output)
             alpha0_ce_loss = _ce_loss(logits, targets, vocab_size)
             support_audit = _residual_support_audit(base, residual, inputs)
+            scores = residual._score_columns(hidden)
+            residual_delta = residual_output - hidden
+            column_values = _column_values(residual)
+            support_diagnostics = _support_diagnostics(
+                scores=scores,
+                support=support,
+                support_audit=support_audit,
+                residual_delta=residual_delta,
+                column_values=column_values,
+            )
+            support_controls = _support_controls(
+                base=base,
+                residual=residual,
+                hidden=hidden,
+                targets=targets,
+                vocab_size=vocab_size,
+                seed=seed,
+            )
+            functional = {
+                "logits": logits.detach().clone(),
+                "residual_delta": residual_delta.detach().clone(),
+                "support": support.detach().clone(),
+            }
+            functional_diagnostics = _functional_diagnostics(
+                functional=functional,
+                baseline_functional=baseline_functional,
+            )
+            if weight == 0.0 and baseline_functional is None:
+                baseline_functional = functional
         hep_rows = _evaluate_hep_alpha_sweep(
             base,
             residual,
@@ -195,6 +227,9 @@ def run_dead_column_probe(
                     before_residual,
                     residual,
                 ),
+                **support_diagnostics,
+                **support_controls,
+                **functional_diagnostics,
             }
         )
 
@@ -258,6 +293,157 @@ def _router_load_balance_loss(residual: Any, hidden: Any) -> Any:
 
 def _variant_name(weight: float) -> str:
     return "baseline" if weight == 0.0 else f"load_balance_{weight:g}"
+
+
+def _column_values(residual: Any) -> Any:
+    import torch
+    import torch.nn.functional as F
+
+    atom_weights = F.softmax(residual.atom_logits, dim=-1)
+    return torch.einsum("ca,cah->ch", atom_weights, residual.atom_values)
+
+
+def _support_diagnostics(
+    *,
+    scores: Any,
+    support: Any,
+    support_audit: dict[str, Any],
+    residual_delta: Any,
+    column_values: Any,
+) -> dict[str, Any]:
+    import torch.nn.functional as F
+
+    column_counts = [int(count) for count in support_audit["column_counts"]]
+    total_slots = int(support_audit["total_support_slots"])
+    fractions = [count / total_slots for count in column_counts] if total_slots else []
+    load_entropy = -sum(
+        fraction * math.log(fraction) for fraction in fractions if fraction > 0.0
+    )
+    num_columns = int(support_audit["num_columns"])
+    normalized_entropy = load_entropy / math.log(num_columns) if num_columns > 1 else 0.0
+    squared_fraction_sum = sum(fraction * fraction for fraction in fractions)
+    effective_columns = 1.0 / squared_fraction_sum if squared_fraction_sum > 0.0 else 0.0
+
+    sorted_scores = scores.sort(dim=-1, descending=True).values
+    top_k = int(support_audit["top_k"])
+    if scores.shape[-1] > top_k:
+        support_margin = sorted_scores[..., top_k - 1] - sorted_scores[..., top_k]
+        mean_support_margin = float(support_margin.mean().item())
+        min_support_margin = float(support_margin.min().item())
+    else:
+        mean_support_margin = None
+        min_support_margin = None
+
+    normalized_values = F.normalize(column_values, dim=-1, eps=1e-12)
+    similarity = normalized_values @ normalized_values.T
+    pairwise_values = []
+    for left in range(num_columns):
+        for right in range(left + 1, num_columns):
+            pairwise_values.append(float(similarity[left, right].item()))
+    active_columns = [index for index, count in enumerate(column_counts) if count > 0]
+    active_pairwise_values = [
+        float(similarity[left, right].item())
+        for left_index, left in enumerate(active_columns)
+        for right in active_columns[left_index + 1 :]
+    ]
+    support_rows = support.reshape(-1, support.shape[-1])
+    duplicate_support_fraction = float(
+        (support_rows[:, :1] == support_rows[:, 1:]).any(dim=-1).float().mean().item()
+    ) if support_rows.shape[-1] > 1 else 0.0
+    return {
+        "load_entropy": load_entropy,
+        "normalized_load_entropy": normalized_entropy,
+        "effective_num_columns": effective_columns,
+        "effective_column_fraction": effective_columns / num_columns if num_columns else 0.0,
+        "residual_delta_l2_mean": float(residual_delta.norm(dim=-1).mean().item()),
+        "residual_delta_l2_max": float(residual_delta.norm(dim=-1).max().item()),
+        "mean_support_margin": mean_support_margin,
+        "min_support_margin": min_support_margin,
+        "duplicate_support_fraction": duplicate_support_fraction,
+        "mean_pairwise_column_value_cosine": _mean(pairwise_values),
+        "max_pairwise_column_value_cosine": max(pairwise_values) if pairwise_values else None,
+        "mean_active_pairwise_column_value_cosine": _mean(active_pairwise_values),
+        "max_active_pairwise_column_value_cosine": (
+            max(active_pairwise_values) if active_pairwise_values else None
+        ),
+        "zero_value_columns": int((column_values.norm(dim=-1) <= 1e-12).sum().item()),
+    }
+
+
+def _support_controls(
+    *,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    seed: int,
+) -> dict[str, Any]:
+    import torch
+
+    generator = torch.Generator(device=hidden.device)
+    generator.manual_seed(seed + 1009)
+    flat_count = int(hidden.shape[0] * hidden.shape[1])
+    random_scores = torch.rand(
+        flat_count,
+        residual.num_columns,
+        generator=generator,
+        device=hidden.device,
+        dtype=hidden.dtype,
+    )
+    random_support = random_scores.topk(residual.top_k, dim=-1).indices.reshape(
+        hidden.shape[0],
+        hidden.shape[1],
+        residual.top_k,
+    )
+    random_logits = base.decode(residual(hidden, support_indices=random_support))
+
+    dense_output = hidden + _column_values(residual).mean(dim=0).view(1, 1, -1)
+    dense_logits = base.decode(dense_output)
+    return {
+        "fixed_random_support_ce_loss": _ce_loss(random_logits, targets, vocab_size),
+        "dense_uniform_support_ce_loss": _ce_loss(dense_logits, targets, vocab_size),
+    }
+
+
+def _functional_diagnostics(
+    *,
+    functional: dict[str, Any],
+    baseline_functional: dict[str, Any] | None,
+) -> dict[str, Any]:
+    import torch
+    import torch.nn.functional as F
+
+    if baseline_functional is None:
+        return {
+            "support_change_fraction_from_baseline": 0.0,
+            "logit_mse_delta_from_baseline": 0.0,
+            "mean_abs_logit_delta_from_baseline": 0.0,
+            "residual_stream_mse_delta_from_baseline": 0.0,
+            "residual_stream_l2_delta_from_baseline": 0.0,
+        }
+    support = functional["support"].sort(dim=-1).values
+    baseline_support = baseline_functional["support"].sort(dim=-1).values
+    support_change = (support != baseline_support).any(dim=-1).float().mean()
+    logit_delta = functional["logits"] - baseline_functional["logits"]
+    residual_delta = functional["residual_delta"] - baseline_functional["residual_delta"]
+    return {
+        "support_change_fraction_from_baseline": float(support_change.item()),
+        "logit_mse_delta_from_baseline": float(
+            F.mse_loss(logit_delta, torch.zeros_like(logit_delta)).item()
+        ),
+        "mean_abs_logit_delta_from_baseline": float(logit_delta.abs().mean().item()),
+        "residual_stream_mse_delta_from_baseline": float(
+            F.mse_loss(residual_delta, torch.zeros_like(residual_delta)).item()
+        ),
+        "residual_stream_l2_delta_from_baseline": float(
+            residual_delta.norm(dim=-1).mean().item()
+        ),
+    }
+
+
+def _mean(values: list[float]) -> float | None:
+    return None if not values else sum(values) / len(values)
 
 
 def _baseline_row(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -327,6 +513,18 @@ def _write_variant_metrics(
         "dead_columns",
         "unique_support_sets",
         "max_column_fraction",
+        "load_entropy",
+        "normalized_load_entropy",
+        "effective_num_columns",
+        "residual_delta_l2_mean",
+        "mean_support_margin",
+        "support_change_fraction_from_baseline",
+        "logit_mse_delta_from_baseline",
+        "residual_stream_l2_delta_from_baseline",
+        "fixed_random_support_ce_loss",
+        "dense_uniform_support_ce_loss",
+        "mean_active_pairwise_column_value_cosine",
+        "max_active_pairwise_column_value_cosine",
         "objective_loss",
         "load_balance_loss",
         "residual_parameter_delta",
@@ -354,6 +552,28 @@ def _write_variant_metrics(
                     "dead_columns": row["dead_columns"],
                     "unique_support_sets": row["unique_support_sets"],
                     "max_column_fraction": row["max_column_fraction"],
+                    "load_entropy": row["load_entropy"],
+                    "normalized_load_entropy": row["normalized_load_entropy"],
+                    "effective_num_columns": row["effective_num_columns"],
+                    "residual_delta_l2_mean": row["residual_delta_l2_mean"],
+                    "mean_support_margin": row["mean_support_margin"],
+                    "support_change_fraction_from_baseline": row[
+                        "support_change_fraction_from_baseline"
+                    ],
+                    "logit_mse_delta_from_baseline": row[
+                        "logit_mse_delta_from_baseline"
+                    ],
+                    "residual_stream_l2_delta_from_baseline": row[
+                        "residual_stream_l2_delta_from_baseline"
+                    ],
+                    "fixed_random_support_ce_loss": row["fixed_random_support_ce_loss"],
+                    "dense_uniform_support_ce_loss": row["dense_uniform_support_ce_loss"],
+                    "mean_active_pairwise_column_value_cosine": row[
+                        "mean_active_pairwise_column_value_cosine"
+                    ],
+                    "max_active_pairwise_column_value_cosine": row[
+                        "max_active_pairwise_column_value_cosine"
+                    ],
                     "objective_loss": row["objective_loss"],
                     "load_balance_loss": row["load_balance_loss"],
                     "residual_parameter_delta": row["residual_parameter_delta"],
@@ -385,7 +605,11 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
             f"`{row['variant']}`: alpha-0 CE `{row['alpha0_ce_loss']}`, "
             f"used columns `{row['used_columns']}`, "
             f"dead columns `{row['dead_columns']}`, "
-            f"unique support sets `{row['unique_support_sets']}`"
+            f"unique support sets `{row['unique_support_sets']}`, "
+            f"effective columns `{row['effective_num_columns']}`, "
+            f"support churn `{row['support_change_fraction_from_baseline']}`, "
+            f"random-support CE `{row['fixed_random_support_ce_loss']}`, "
+            f"dense-uniform CE `{row['dense_uniform_support_ce_loss']}`"
         )
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
