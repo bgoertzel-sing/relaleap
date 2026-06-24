@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import json
 import math
 import platform
@@ -15,6 +16,10 @@ from relaleap.experiments.run import _load_torch_info
 from relaleap.experiments.run import _read_config
 from relaleap.experiments.support_audit import _ce_loss
 from relaleap.experiments.support_audit import _configured_residual_loss
+from relaleap.experiments.support_audit import _score_for_support
+from relaleap.experiments.support_audit import _support_key
+from relaleap.experiments.support_audit import _token_losses
+from relaleap.experiments.support_audit import _token_oracle
 from relaleap.smoke import ResidualColumns
 from relaleap.smoke import TinyCharTransformer
 from relaleap.smoke import _build_batch
@@ -178,6 +183,14 @@ def run_dead_column_probe(
                 vocab_size=vocab_size,
                 seed=seed,
             )
+            oracle_support_metrics = _oracle_support_metrics(
+                base=base,
+                residual=residual,
+                hidden=hidden,
+                logits=logits,
+                targets=targets,
+                vocab_size=vocab_size,
+            )
             functional = {
                 "logits": logits.detach().clone(),
                 "residual_delta": residual_delta.detach().clone(),
@@ -229,6 +242,7 @@ def run_dead_column_probe(
                 ),
                 **support_diagnostics,
                 **support_controls,
+                **oracle_support_metrics,
                 **functional_diagnostics,
             }
         )
@@ -406,6 +420,52 @@ def _support_controls(
     }
 
 
+def _oracle_support_metrics(
+    *,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    logits: Any,
+    targets: Any,
+    vocab_size: int,
+) -> dict[str, Any]:
+    """Compare learned router support with exhaustive fixed top-k supports."""
+
+    empty_loss = _ce_loss(base.decode(hidden), targets, vocab_size)
+    router_loss = _ce_loss(logits, targets, vocab_size)
+    router_token_losses = _token_losses(logits, targets)
+    support_rows = [
+        _score_for_support(
+            base,
+            residual,
+            hidden,
+            targets,
+            vocab_size,
+            support=support,
+            empty_loss=empty_loss,
+            router_loss=router_loss,
+        )
+        for support in itertools.combinations(range(residual.num_columns), residual.top_k)
+    ]
+    best_global = min(support_rows, key=lambda row: float(row["loss"]))
+    token_oracle = _token_oracle(router_token_losses, support_rows)
+    router_oracle_gap = router_loss - float(token_oracle["oracle_loss"])
+    best_global_gap = router_loss - float(best_global["loss"])
+    return {
+        "oracle_support_set_count": len(support_rows),
+        "oracle_support_loss": token_oracle["oracle_loss"],
+        "oracle_support_regret": token_oracle["oracle_support_regret"],
+        "oracle_support_regret_positive_fraction": token_oracle[
+            "oracle_support_regret_positive_fraction"
+        ],
+        "router_oracle_gap": router_oracle_gap,
+        "best_global_fixed_support_loss": float(best_global["loss"]),
+        "best_global_fixed_support": _support_key(best_global["support"]),
+        "router_minus_best_global_fixed_support_loss": best_global_gap,
+        "oracle_support_counts": token_oracle["oracle_support_counts"],
+    }
+
+
 def _functional_diagnostics(
     *,
     functional: dict[str, Any],
@@ -523,6 +583,13 @@ def _write_variant_metrics(
         "residual_stream_l2_delta_from_baseline",
         "fixed_random_support_ce_loss",
         "dense_uniform_support_ce_loss",
+        "oracle_support_loss",
+        "oracle_support_regret",
+        "oracle_support_regret_positive_fraction",
+        "router_oracle_gap",
+        "best_global_fixed_support_loss",
+        "best_global_fixed_support",
+        "router_minus_best_global_fixed_support_loss",
         "mean_active_pairwise_column_value_cosine",
         "max_active_pairwise_column_value_cosine",
         "objective_loss",
@@ -568,6 +635,19 @@ def _write_variant_metrics(
                     ],
                     "fixed_random_support_ce_loss": row["fixed_random_support_ce_loss"],
                     "dense_uniform_support_ce_loss": row["dense_uniform_support_ce_loss"],
+                    "oracle_support_loss": row["oracle_support_loss"],
+                    "oracle_support_regret": row["oracle_support_regret"],
+                    "oracle_support_regret_positive_fraction": row[
+                        "oracle_support_regret_positive_fraction"
+                    ],
+                    "router_oracle_gap": row["router_oracle_gap"],
+                    "best_global_fixed_support_loss": row[
+                        "best_global_fixed_support_loss"
+                    ],
+                    "best_global_fixed_support": row["best_global_fixed_support"],
+                    "router_minus_best_global_fixed_support_loss": row[
+                        "router_minus_best_global_fixed_support_loss"
+                    ],
                     "mean_active_pairwise_column_value_cosine": row[
                         "mean_active_pairwise_column_value_cosine"
                     ],
@@ -609,7 +689,9 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
             f"effective columns `{row['effective_num_columns']}`, "
             f"support churn `{row['support_change_fraction_from_baseline']}`, "
             f"random-support CE `{row['fixed_random_support_ce_loss']}`, "
-            f"dense-uniform CE `{row['dense_uniform_support_ce_loss']}`"
+            f"dense-uniform CE `{row['dense_uniform_support_ce_loss']}`, "
+            f"oracle-support regret `{row['oracle_support_regret']}`, "
+            f"best fixed support `{row['best_global_fixed_support']}`"
         )
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")

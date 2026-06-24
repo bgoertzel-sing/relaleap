@@ -69,6 +69,11 @@ outputs:
             self.assertEqual(probe["support_router"], "contextual_mlp")
             self.assertEqual(probe["load_balance_weights"], [0.0, 0.01])
             self.assertEqual(len(probe["variants"]), 2)
+            for row in probe["variants"]:
+                self.assertIn("oracle_support_loss", row)
+                self.assertIn("oracle_support_regret", row)
+                self.assertIn("best_global_fixed_support", row)
+                self.assertEqual(row["oracle_support_set_count"], 6)
             self.assertIn("decision", probe)
             self.assertIn(
                 probe["decision"]["status"],
@@ -88,6 +93,8 @@ outputs:
             self.assertEqual(len(rows), 2)
             self.assertIn("alpha0_ce_delta_from_baseline", rows[0])
             self.assertIn("used_column_delta_from_baseline", rows[0])
+            self.assertIn("oracle_support_regret", rows[0])
+            self.assertIn("best_global_fixed_support", rows[0])
 
 
 if __name__ == "__main__":
