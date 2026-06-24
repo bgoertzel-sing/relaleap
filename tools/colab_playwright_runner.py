@@ -183,6 +183,170 @@ async def _write_evidence(page, evidence_out: Path) -> None:
     print(f"wrote Colab evidence: {evidence_out}")
 
 
+async def _write_state_inspection(
+    page,
+    evidence_out: Path,
+    state_out: Path,
+    debug_snapshot: bool,
+) -> None:
+    evidence_out.parent.mkdir(parents=True, exist_ok=True)
+    state_out.parent.mkdir(parents=True, exist_ok=True)
+    rendered_text = await _rendered_output_text(page)
+    body_text = await page.locator("body").inner_text(timeout=10_000)
+    try:
+        title = await page.title()
+    except Exception:
+        title = ""
+    try:
+        url = page.url
+    except Exception:
+        url = ""
+    dom_counts = await _colab_dom_counts(page)
+    diagnostics = _colab_state_diagnostics(
+        url=url,
+        title=title,
+        rendered_text=rendered_text,
+        body_text=body_text,
+        dom_counts=dom_counts,
+    )
+    evidence_out.write_text(
+        "\n".join(
+            [
+                "# Colab state inspection",
+                json.dumps(diagnostics, indent=2, sort_keys=True),
+                "",
+                "# Rendered Colab output",
+                rendered_text.strip(),
+                "",
+                "# Full page text",
+                body_text.strip(),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    state_out.write_text(
+        json.dumps(diagnostics, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if debug_snapshot:
+        await _write_debug_snapshot(page, "state_inspection")
+    print(f"wrote Colab state inspection: {state_out}")
+    print(f"wrote Colab inspection evidence: {evidence_out}")
+
+
+async def _colab_dom_counts(page) -> dict[str, int | None]:
+    selectors = {
+        "code_cells": "colab-code-cell",
+        "static_outputs": "colab-static-output-renderer",
+        "generic_outputs": ".output, .stream.output_text",
+        "run_buttons": "colab-run-button",
+        "dialogs": "[role='dialog']",
+        "busy_indicators": "paper-progress, mwc-circular-progress, .busy, .running",
+    }
+    counts: dict[str, int | None] = {}
+    for name, selector in selectors.items():
+        try:
+            counts[name] = await page.locator(selector).count()
+        except Exception:
+            counts[name] = None
+    return counts
+
+
+def _colab_state_diagnostics(
+    *,
+    url: str,
+    title: str,
+    rendered_text: str,
+    body_text: str,
+    dom_counts: dict[str, int | None],
+) -> dict[str, object]:
+    rendered = rendered_text or ""
+    body = body_text or ""
+    combined = f"{rendered}\n{body}"
+    lower = combined.lower()
+    source_only_markers = (
+        "print('cuda_available:', torch.cuda.is_available())",
+        'print("cuda_available:", torch.cuda.is_available())',
+        "python -m relaleap.experiments.compare",
+    )
+    prompt_markers = (
+        "run anyway",
+        "restart and run all",
+        "connect to a hosted runtime",
+        "not connected to a runtime",
+        "runtime disconnected",
+        "reconnect",
+        "resume",
+        "allow this notebook",
+    )
+    running_markers = (
+        "executing",
+        "busy",
+        "running",
+        "queued",
+        "initializing",
+        "connecting",
+    )
+    completion_in_rendered = COMPLETION_TEXT in rendered
+    completion_in_body = COMPLETION_TEXT in body
+    focused_bundle_in_rendered = (
+        ARTIFACT_BUNDLE_BEGIN in rendered and ARTIFACT_BUNDLE_END in rendered
+    )
+    focused_bundle_in_body = (
+        ARTIFACT_BUNDLE_BEGIN in body and ARTIFACT_BUNDLE_END in body
+    )
+    source_only_likely = (
+        not rendered.strip()
+        and any(marker in body for marker in source_only_markers)
+    )
+    rendered_error_markers = [
+        marker for marker in ERROR_MARKERS if marker in rendered
+    ]
+    body_error_markers = [marker for marker in ERROR_MARKERS if marker in body]
+    prompt_markers_present = [
+        marker for marker in prompt_markers if marker in lower
+    ]
+    running_markers_present = [
+        marker for marker in running_markers if marker in lower
+    ]
+
+    if completion_in_rendered and focused_bundle_in_rendered and not rendered_error_markers:
+        assessment = "completed_with_rendered_bundle"
+    elif rendered_error_markers:
+        assessment = "rendered_python_error"
+    elif prompt_markers_present:
+        assessment = "runtime_or_permission_prompt_visible"
+    elif running_markers_present:
+        assessment = "possibly_running_or_queued"
+    elif source_only_likely:
+        assessment = "source_only_not_executing"
+    elif rendered.strip():
+        assessment = "partial_rendered_output_no_completion"
+    else:
+        assessment = "unknown_no_rendered_output"
+
+    return {
+        "assessment": assessment,
+        "url": url,
+        "title": title,
+        "dom_counts": dom_counts,
+        "rendered_output_chars": len(rendered),
+        "body_text_chars": len(body),
+        "completion_text_in_rendered_output": completion_in_rendered,
+        "completion_text_in_body": completion_in_body,
+        "artifact_bundle_markers_in_rendered_output": focused_bundle_in_rendered,
+        "artifact_bundle_markers_in_body": focused_bundle_in_body,
+        "focused_target_dir_in_rendered_output": FOCUSED_TARGET_COMPARISON_DIR in rendered,
+        "focused_target_dir_in_body": FOCUSED_TARGET_COMPARISON_DIR in body,
+        "source_only_likely": source_only_likely,
+        "prompt_markers_present": prompt_markers_present,
+        "running_markers_present": running_markers_present,
+        "rendered_error_markers": rendered_error_markers,
+        "body_error_markers": body_error_markers,
+    }
+
+
 async def _rendered_output_text(page) -> str:
     chunks: list[str] = []
     for selector in OUTPUT_SELECTORS:
@@ -745,6 +909,7 @@ async def _operate_page(
 async def automate(
     manual_login: bool,
     run_all: bool,
+    inspect_state: bool,
     headed: bool,
     browser_channel: str | None,
     profile_dir: Path,
@@ -754,6 +919,7 @@ async def automate(
     wait_completion: bool,
     completion_timeout_minutes: float,
     evidence_out: Path,
+    state_out: Path,
     pause_before_close: bool,
 ) -> None:
     try:
@@ -768,16 +934,24 @@ async def automate(
             browser = await p.chromium.connect_over_cdp(cdp_url)
             context = browser.contexts[0] if browser.contexts else await browser.new_context()
             page = context.pages[0] if context.pages else await context.new_page()
-            await _operate_page(
-                page,
-                manual_login=manual_login,
-                run_all=run_all,
-                run_method=run_method,
-                debug_snapshot=debug_snapshot,
-                wait_completion=wait_completion,
-                completion_timeout_minutes=completion_timeout_minutes,
-                evidence_out=evidence_out,
-            )
+            if inspect_state:
+                await _write_state_inspection(
+                    page,
+                    evidence_out=evidence_out,
+                    state_out=state_out,
+                    debug_snapshot=debug_snapshot,
+                )
+            else:
+                await _operate_page(
+                    page,
+                    manual_login=manual_login,
+                    run_all=run_all,
+                    run_method=run_method,
+                    debug_snapshot=debug_snapshot,
+                    wait_completion=wait_completion,
+                    completion_timeout_minutes=completion_timeout_minutes,
+                    evidence_out=evidence_out,
+                )
             if pause_before_close:
                 print("Leaving connected Chrome open. Press Enter to detach automation.")
                 input()
@@ -793,16 +967,24 @@ async def automate(
             viewport={"width": 1440, "height": 1000},
         )
         page = context.pages[0] if context.pages else await context.new_page()
-        await _operate_page(
-            page,
-            manual_login=manual_login,
-            run_all=run_all,
-            run_method=run_method,
-            debug_snapshot=debug_snapshot,
-            wait_completion=wait_completion,
-            completion_timeout_minutes=completion_timeout_minutes,
-            evidence_out=evidence_out,
-        )
+        if inspect_state:
+            await _write_state_inspection(
+                page,
+                evidence_out=evidence_out,
+                state_out=state_out,
+                debug_snapshot=debug_snapshot,
+            )
+        else:
+            await _operate_page(
+                page,
+                manual_login=manual_login,
+                run_all=run_all,
+                run_method=run_method,
+                debug_snapshot=debug_snapshot,
+                wait_completion=wait_completion,
+                completion_timeout_minutes=completion_timeout_minutes,
+                evidence_out=evidence_out,
+            )
 
         if headed and pause_before_close:
             print("Leaving browser open. Press Enter to close this automation context.")
@@ -814,6 +996,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Open/run RelaLeap Colab notebook.")
     parser.add_argument("--manual-login", action="store_true")
     parser.add_argument("--run-all", action="store_true")
+    parser.add_argument(
+        "--inspect-state",
+        action="store_true",
+        help="Read the current browser tab state without navigating or running cells.",
+    )
     parser.add_argument("--headless", action="store_true")
     parser.add_argument(
         "--run-method",
@@ -841,6 +1028,11 @@ def main() -> None:
         "--evidence-out",
         default="results/colab_bridge_evidence/latest_colab_output.txt",
         help="Path to save visible Colab page text after completion or timeout.",
+    )
+    parser.add_argument(
+        "--state-out",
+        default="results/colab_bridge_evidence/latest_colab_state.json",
+        help="Path to save read-only Colab state diagnostics for --inspect-state.",
     )
     parser.add_argument(
         "--pause-before-close",
@@ -872,6 +1064,7 @@ def main() -> None:
             automate(
                 manual_login=args.manual_login,
                 run_all=args.run_all,
+                inspect_state=args.inspect_state,
                 headed=not args.headless,
                 browser_channel=args.browser_channel,
                 profile_dir=Path(args.profile_dir).resolve(),
@@ -881,6 +1074,7 @@ def main() -> None:
                 wait_completion=args.wait_completion,
                 completion_timeout_minutes=args.completion_timeout_minutes,
                 evidence_out=Path(args.evidence_out),
+                state_out=Path(args.state_out),
                 pause_before_close=args.pause_before_close,
             )
         )

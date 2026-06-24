@@ -15,6 +15,7 @@ from tools.colab_playwright_runner import (
     COMPLETION_TEXT,
     FOCUSED_TARGET_COMPARISON_DIR,
     _colab_notebook_url,
+    _colab_state_diagnostics,
     _confirm_run_modals,
     _extract_colab_artifact_bundle,
     _has_rendered_output,
@@ -351,6 +352,48 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
 
 
 class ConfirmRunModalsTest(unittest.IsolatedAsyncioTestCase):
+    def test_state_diagnostics_flags_runtime_prompt(self) -> None:
+        diagnostics = _colab_state_diagnostics(
+            url="https://colab.research.google.com/",
+            title="RelaLeap",
+            rendered_text="",
+            body_text="Connect to a hosted runtime\nRun anyway",
+            dom_counts={"dialogs": 1},
+        )
+
+        self.assertEqual(
+            diagnostics["assessment"],
+            "runtime_or_permission_prompt_visible",
+        )
+        self.assertIn("run anyway", diagnostics["prompt_markers_present"])
+
+    def test_state_diagnostics_flags_source_only_page(self) -> None:
+        diagnostics = _colab_state_diagnostics(
+            url="https://colab.research.google.com/",
+            title="RelaLeap",
+            rendered_text="",
+            body_text="print('cuda_available:', torch.cuda.is_available())",
+            dom_counts={"code_cells": 3},
+        )
+
+        self.assertEqual(diagnostics["assessment"], "source_only_not_executing")
+        self.assertTrue(diagnostics["source_only_likely"])
+
+    def test_state_diagnostics_flags_partial_rendered_output(self) -> None:
+        diagnostics = _colab_state_diagnostics(
+            url="https://colab.research.google.com/",
+            title="RelaLeap",
+            rendered_text="platform: Linux\ncuda_available: True",
+            body_text="platform: Linux\ncuda_available: True",
+            dom_counts={"static_outputs": 1},
+        )
+
+        self.assertEqual(
+            diagnostics["assessment"],
+            "partial_rendered_output_no_completion",
+        )
+        self.assertFalse(diagnostics["completion_text_in_rendered_output"])
+
     async def test_rendered_output_detection_rejects_source_only_prints(self) -> None:
         async def source_like_output(*args, **kwargs):
             return "print('cuda_available:', torch.cuda.is_available())"
