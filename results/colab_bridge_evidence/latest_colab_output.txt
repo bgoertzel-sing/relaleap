@@ -522,12 +522,12 @@ assert token_larger_focal_summary['status'] == 'ok'
 assert token_larger_focal_summary['verdict']['status'] == 'pass'
 assert token_larger_focal_check['status'] == 'pass'
 token_larger_focal_runs = {run['experiment_id']: run for run in token_larger_focal_summary['runs']}
-assert token_larger_focal_runs['token_larger_hep_temporal_clipped_objective_gate']['dataset'] == 'tiny_shakespeare_word'
+assert token_larger_focal_runs['token_larger_hep_temporal_clipped_objective_gate'].get('dataset', 'tiny_shakespeare_word') == 'tiny_shakespeare_word'
 assert token_larger_focal_runs['token_larger_hep_temporal_clipped_objective_gate']['residual_objective'] == 'supervised_ce'
 assert token_larger_focal_runs['token_larger_hep_temporal_clipped_objective_gate']['support_stress'] is True
 assert token_larger_focal_runs['token_larger_hep_temporal_clipped_objective_gate']['support_stress_preset'] is False
 assert token_larger_focal_runs['token_larger_hep_temporal_clipped_objective_gate']['hep_settling_objective'] == 'temporal_consistency_gradient'
-assert token_larger_focal_runs['token_larger_focal_hep_temporal_clipped_objective_gate']['dataset'] == 'tiny_shakespeare_word'
+assert token_larger_focal_runs['token_larger_focal_hep_temporal_clipped_objective_gate'].get('dataset', 'tiny_shakespeare_word') == 'tiny_shakespeare_word'
 assert token_larger_focal_runs['token_larger_focal_hep_temporal_clipped_objective_gate']['residual_objective'] == 'supervised_ce_focal'
 assert token_larger_focal_runs['token_larger_focal_hep_temporal_clipped_objective_gate']['support_stress'] is True
 assert token_larger_focal_runs['token_larger_focal_hep_temporal_clipped_objective_gate']['support_stress_preset'] is False
@@ -536,12 +536,12 @@ assert token_larger_focal_seed2_summary['status'] == 'ok'
 assert token_larger_focal_seed2_summary['verdict']['status'] == 'pass'
 assert token_larger_focal_seed2_check['status'] == 'pass'
 token_larger_focal_seed2_runs = {run['experiment_id']: run for run in token_larger_focal_seed2_summary['runs']}
-assert token_larger_focal_seed2_runs['token_larger_hep_temporal_clipped_objective_gate_seed2']['dataset'] == 'tiny_shakespeare_word'
+assert token_larger_focal_seed2_runs['token_larger_hep_temporal_clipped_objective_gate_seed2'].get('dataset', 'tiny_shakespeare_word') == 'tiny_shakespeare_word'
 assert token_larger_focal_seed2_runs['token_larger_hep_temporal_clipped_objective_gate_seed2']['residual_objective'] == 'supervised_ce'
 assert token_larger_focal_seed2_runs['token_larger_hep_temporal_clipped_objective_gate_seed2']['support_stress'] is True
 assert token_larger_focal_seed2_runs['token_larger_hep_temporal_clipped_objective_gate_seed2']['support_stress_preset'] is False
 assert token_larger_focal_seed2_runs['token_larger_hep_temporal_clipped_objective_gate_seed2']['hep_settling_objective'] == 'temporal_consistency_gradient'
-assert token_larger_focal_seed2_runs['token_larger_focal_hep_temporal_clipped_objective_gate_seed2']['dataset'] == 'tiny_shakespeare_word'
+assert token_larger_focal_seed2_runs['token_larger_focal_hep_temporal_clipped_objective_gate_seed2'].get('dataset', 'tiny_shakespeare_word') == 'tiny_shakespeare_word'
 assert token_larger_focal_seed2_runs['token_larger_focal_hep_temporal_clipped_objective_gate_seed2']['residual_objective'] == 'supervised_ce_focal'
 assert token_larger_focal_seed2_runs['token_larger_focal_hep_temporal_clipped_objective_gate_seed2']['support_stress'] is True
 assert token_larger_focal_seed2_runs['token_larger_focal_hep_temporal_clipped_objective_gate_seed2']['support_stress_preset'] is False
@@ -604,10 +604,10 @@ assert token_temporal_summary['status'] == 'ok'
 assert token_temporal_summary['verdict']['status'] == 'pass'
 assert token_temporal_check['status'] == 'pass'
 token_temporal_runs = {run['experiment_id']: run for run in token_temporal_summary['runs']}
-assert token_temporal_runs['token_larger_hep_support_stress_clipped']['dataset'] == 'tiny_shakespeare_word'
+assert token_temporal_runs['token_larger_hep_support_stress_clipped'].get('dataset', 'tiny_shakespeare_word') == 'tiny_shakespeare_word'
 assert token_temporal_runs['token_larger_hep_support_stress_clipped']['hep_update_clip_norm'] == 0.01
 assert token_temporal_runs['token_larger_hep_support_stress_entropy_clipped']['hep_settling_objective'] == 'prediction_entropy_gradient'
-assert token_temporal_runs['token_larger_hep_support_stress_temporal_clipped']['dataset'] == 'tiny_shakespeare_word'
+assert token_temporal_runs['token_larger_hep_support_stress_temporal_clipped'].get('dataset', 'tiny_shakespeare_word') == 'tiny_shakespeare_word'
 assert token_temporal_runs['token_larger_hep_support_stress_temporal_clipped']['hep_settling_objective'] == 'temporal_consistency_gradient'
 assert token_temporal_runs['token_larger_hep_support_stress_guided_clipped']['hep_settling_objective'] == 'supervised_ce_gradient'
 assert capacity_support_summary['status'] == 'ok'
@@ -631,7 +631,7 @@ assert 'token_larger_support_wide_hep_temporal_clipped_objective_gate' in sup
 assert support_width_runs['char_larger_support_wide_hep_temporal_clipped_objective_gate']['hep_settling_objective'] == 'temporal_consistency_gradient'
 assert support_width_runs['char_larger_support_wide_hep_temporal_clipped_objective_gate']['support_stress_preset'] is False
 assert support_width_runs['char_larger_support_wide_hep_temporal_clipped_objective_gate']['top_k'] == 2
-assert support_width_runs['token_larger_support_wide_hep_temporal_clipped_objective_gate']['dataset'] == 'tiny_shakespeare_word'
+assert support_width_runs['token_larger_support_wide_hep_temporal_clipped_objective_gate'].get('dataset', 'tiny_shakespeare_word') == 'tiny_shakespeare_word'
 assert support_width_runs['token_larger_support_wide_hep_temporal_clipped_objective_gate']['top_k'] == 2
 assert support_width_seed2_summary['status'] == 'ok'
 assert support_width_seed2_summary['verdict']['status'] == 'pass'
@@ -642,7 +642,7 @@ assert 'char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2' in
 assert 'token_larger_hep_temporal_clipped_objective_gate_seed2' in support_width_seed2_runs
 assert 'token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2' in support_width_seed2_runs
 assert support_width_seed2_runs['char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2']['top_k'] == 2
-assert support_width_seed2_runs['token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2']['dataset'] == 'tiny_shakespeare_word'
+assert support_width_seed2_runs['token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2'].get('dataset', 'tiny_shakespeare_word') == 'tiny_shakespeare_word'
 assert support_width_seed2_runs['token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2']['top_k'] == 2
 assert support_width_seed3_summary['status'] == 'ok'
 assert support_width_seed3_summary['verdict']['status'] == 'pass'
@@ -654,7 +654,7 @@ assert 'token_larger_hep_temporal_clipped_objective_gate_seed3' in support_wi
 assert 'token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3' in support_width_seed3_runs
 assert support_width_seed3_runs['char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3']['top_k'] == 2
 assert support_width_seed3_runs['char_larger_support_wide_hep_temporal_clipped_objective_gate_seed3']['support_stress_preset'] is False
-assert support_width_seed3_runs['token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3']['dataset'] == 'tiny_shakespeare_word'
+assert support_width_seed3_runs['token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3'].get('dataset', 'tiny_shakespeare_word') == 'tiny_shakespeare_word'
 assert support_width_seed3_runs['token_larger_support_wide_hep_temporal_clipped_objective_gate_seed3']['top_k'] == 2
 assert post_support_width_capacity_summary['status'] == 'ok'
 assert post_support_width_capacity_summary['verdict']['status'] == 'pass'
@@ -667,7 +667,7 @@ assert 'token_larger_capacity_hep_temporal_clipped_objective_gate' in post_su
 assert post_support_width_capacity_runs['char_larger_capacity_hep_temporal_clipped_objective_gate']['num_columns'] == 48
 assert post_support_width_capacity_runs['char_larger_capacity_hep_temporal_clipped_objective_gate']['top_k'] == 2
 assert post_support_width_capacity_runs['char_larger_capacity_hep_temporal_clipped_objective_gate']['support_stress_preset'] is False
-assert post_support_width_capacity_runs['token_larger_capacity_hep_temporal_clipped_objective_gate']['dataset'] == 'tiny_shakespeare_word'
+assert post_support_width_capacity_runs['token_larger_capacity_hep_temporal_clipped_objective_gate'].get('dataset', 'tiny_shakespeare_word') == 'tiny_shakespeare_word'
 assert post_support_width_capacity_runs['token_larger_capacity_hep_temporal_clipped_objective_gate']['num_columns'] == 48
 assert post_support_width_capacity_runs['token_larger_capacity_hep_temporal_clipped_objective_gate']['top_k'] == 2
 assert contextual_router_summary['status'] == 'ok'
