@@ -523,6 +523,14 @@ DEFAULT_DEAD_COLUMN_LOAD_BALANCE_PROBE_DIRS = (
         "results/audits/token_larger_support_wide_promoted_default_dead_column_probe_low_weight_bracket_seed2"
     ),
 )
+DEFAULT_DEAD_COLUMN_LOAD_BALANCE_CAUSAL_DIRS = (
+    Path(
+        "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_low_weight_bracket"
+    ),
+    Path(
+        "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_low_weight_bracket_seed2"
+    ),
+)
 DEFAULT_DEAD_COLUMN_LOAD_BALANCE_OUT_DIR = Path(
     "results/reports/dead_column_load_balance_probe"
 )
@@ -13570,13 +13578,18 @@ def _write_post_promotion_support_wide_promoted_default_markdown(
 def write_dead_column_load_balance_probe_report(
     probe_dirs: tuple[Path, ...] = DEFAULT_DEAD_COLUMN_LOAD_BALANCE_PROBE_DIRS,
     out_dir: Path = DEFAULT_DEAD_COLUMN_LOAD_BALANCE_OUT_DIR,
+    causal_dirs: tuple[Path, ...] = DEFAULT_DEAD_COLUMN_LOAD_BALANCE_CAUSAL_DIRS,
 ) -> dict[str, Any]:
-    """Summarize local dead-column load-balancing probe artifacts."""
+    """Summarize dead-column load-balancing probe and causal fingerprint artifacts."""
 
     failures: list[dict[str, Any]] = []
     entries = [
         _dead_column_probe_entry(probe_dir, failures)
         for probe_dir in probe_dirs
+    ]
+    causal_entries = [
+        _dead_column_causal_entry(causal_dir, failures)
+        for causal_dir in causal_dirs
     ]
     successful_entries = [
         entry
@@ -13584,7 +13597,20 @@ def write_dead_column_load_balance_probe_report(
         if entry.get("status") == "ok"
         and entry.get("decision_status") == "recruited_without_ce_hurt"
     ]
-    status = "fail" if failures or len(successful_entries) != len(entries) else "pass"
+    successful_causal_entries = [
+        entry
+        for entry in causal_entries
+        if entry.get("status") == "ok"
+        and entry.get("selected_variant")
+        and entry.get("baseline_variant") == "baseline"
+    ]
+    status = (
+        "fail"
+        if failures
+        or len(successful_entries) != len(entries)
+        or len(successful_causal_entries) != len(causal_entries)
+        else "pass"
+    )
     if len(successful_entries) != len(entries):
         failures.append(
             {
@@ -13596,6 +13622,21 @@ def write_dead_column_load_balance_probe_report(
                     if entry.get("decision_status") != "recruited_without_ce_hurt"
                 ],
                 "path": [str(path) for path in probe_dirs],
+            }
+        )
+    if len(successful_causal_entries) != len(causal_entries):
+        failures.append(
+            {
+                "field": "causal_fingerprint.status",
+                "expected": "ok causal fingerprint summary with baseline and selected variants for every probe",
+                "actual": [
+                    entry.get("status")
+                    for entry in causal_entries
+                    if entry.get("status") != "ok"
+                    or not entry.get("selected_variant")
+                    or entry.get("baseline_variant") != "baseline"
+                ],
+                "path": [str(path) for path in causal_dirs],
             }
         )
 
@@ -13615,17 +13656,36 @@ def write_dead_column_load_balance_probe_report(
         if entry.get("selected_used_columns") is not None
         and entry.get("baseline_used_columns") is not None
     ]
+    causal_ablate_delta_gains = [
+        _optional_float(entry.get("selected_mean_abs_ablate_loss_delta"))
+        - _optional_float(entry.get("baseline_mean_abs_ablate_loss_delta"))
+        for entry in causal_entries
+        if entry.get("selected_mean_abs_ablate_loss_delta") is not None
+        and entry.get("baseline_mean_abs_ablate_loss_delta") is not None
+    ]
+    causal_force_delta_gains = [
+        _optional_float(entry.get("selected_mean_abs_force_loss_delta"))
+        - _optional_float(entry.get("baseline_mean_abs_force_loss_delta"))
+        for entry in causal_entries
+        if entry.get("selected_mean_abs_force_loss_delta") is not None
+        and entry.get("baseline_mean_abs_force_loss_delta") is not None
+    ]
     report = {
         "status": status,
         "decision": KEEP_LOAD_BALANCE_PROBE_OPT_IN
         if status == "pass"
         else INSUFFICIENT_EVIDENCE,
         "promote_router_load_balance_default": False,
+        "causal_fingerprint_supports_promotion": False,
         "evidence": {
             "probe_dirs": [str(path) for path in probe_dirs],
+            "causal_dirs": [str(path) for path in causal_dirs],
             "probe_count": len(entries),
             "successful_probe_count": len(successful_entries),
+            "causal_fingerprint_count": len(causal_entries),
+            "successful_causal_fingerprint_count": len(successful_causal_entries),
             "entries": entries,
+            "causal_fingerprint_entries": causal_entries,
             "min_baseline_alpha0_ce_loss": min(baseline_losses)
             if baseline_losses
             else None,
@@ -13644,21 +13704,36 @@ def write_dead_column_load_balance_probe_report(
             "max_used_column_gain": max(used_column_gains)
             if used_column_gains
             else None,
+            "min_mean_abs_ablate_delta_gain": min(causal_ablate_delta_gains)
+            if causal_ablate_delta_gains
+            else None,
+            "max_mean_abs_ablate_delta_gain": max(causal_ablate_delta_gains)
+            if causal_ablate_delta_gains
+            else None,
+            "min_mean_abs_force_delta_gain": min(causal_force_delta_gains)
+            if causal_force_delta_gains
+            else None,
+            "max_mean_abs_force_delta_gain": max(causal_force_delta_gains)
+            if causal_force_delta_gains
+            else None,
             "failures": failures,
         },
         "rationale": (
             "Both local tokenized promoted-default dead-column bracket probes "
             "recruit additional columns within the configured CE tolerance, so "
             "router load balancing is a plausible train-time utilization probe. "
-            "It remains opt-in because the matching Colab focused artifact bundle "
-            "is still blocked by the Chrome/CDP or Colab rendered-output state."
+            "It remains opt-in because the matched causal fingerprint audits do "
+            "not show a cleaner reusable-column interpretation: mean absolute "
+            "ablation effects are essentially unchanged, direct force "
+            "interventions remain strongly disruptive, and fixed support-pair "
+            "swaps remain much worse than the learned per-token router."
             if status == "pass"
-            else "The local dead-column load-balancing probe evidence is incomplete or does not recruit columns within the CE tolerance."
+            else "The local dead-column load-balancing probe or causal fingerprint evidence is incomplete or inconsistent."
         ),
         "next_step": (
-            "recover the Chrome/Colab session state enough that cells render, then rerun the focused low-weight dead-column bracket bridge target and inspect the extracted seed-1/seed-2 artifacts"
+            "stop load-balancing promotion work for now and run the promoted-contextual-router support deconfounding controls: rank-matched top-k-1, learned top-k-2, random fixed top-k-2, dense rank/FLOP-matched residuals, and residual-sum normalization variants with oracle-regret, functional-churn, residual-norm, support-margin, and causal-fingerprint outputs"
             if status == "pass"
-            else "repair or regenerate the local seed-1/seed-2 dead-column bracket artifacts before retrying Colab"
+            else "repair or regenerate the local seed-1/seed-2 dead-column bracket and causal fingerprint artifacts before making a load-balancing decision"
         ),
     }
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -13783,6 +13858,121 @@ def _dead_column_probe_entry(
     return entry
 
 
+def _dead_column_causal_entry(
+    causal_dir: Path,
+    failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    summary_path = causal_dir / "summary.json"
+    column_path = causal_dir / "column_fingerprints.csv"
+    pair_path = causal_dir / "pair_interventions.csv"
+    notes_path = causal_dir / "notes.md"
+    if not summary_path.is_file():
+        failures.append(
+            {
+                "field": "causal.summary_json",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(summary_path),
+            }
+        )
+        return {"causal_dir": str(causal_dir), "status": None}
+    for artifact_path, field in (
+        (column_path, "causal.column_fingerprints_csv"),
+        (pair_path, "causal.pair_interventions_csv"),
+        (notes_path, "causal.notes_md"),
+    ):
+        if not artifact_path.is_file():
+            failures.append(
+                {
+                    "field": field,
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(artifact_path),
+                }
+            )
+    summary = _read_json_object(summary_path)
+    audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
+    variants = audit.get("variants") if isinstance(audit.get("variants"), list) else []
+    baseline = next(
+        (
+            row
+            for row in variants
+            if isinstance(row, dict) and row.get("variant") == "baseline"
+        ),
+        {},
+    )
+    selected = next(
+        (
+            row
+            for row in variants
+            if isinstance(row, dict) and row.get("variant") != "baseline"
+        ),
+        {},
+    )
+    entry = {
+        "causal_dir": str(causal_dir),
+        "experiment_id": summary.get("experiment_id"),
+        "config_path": summary.get("config_path"),
+        "status": summary.get("status"),
+        "dataset": audit.get("dataset"),
+        "seed": _seed_from_config_path(summary.get("config_path")),
+        "num_columns": audit.get("num_columns"),
+        "top_k": audit.get("top_k"),
+        "support_router": audit.get("support_router"),
+        "column_fingerprint_count": audit.get("column_fingerprint_count"),
+        "pair_intervention_count": audit.get("pair_intervention_count"),
+        "baseline_variant": baseline.get("variant"),
+        "baseline_alpha0_ce_loss": baseline.get("alpha0_ce_loss"),
+        "baseline_used_columns": baseline.get("used_columns"),
+        "baseline_mean_abs_ablate_loss_delta": baseline.get(
+            "mean_abs_ablate_loss_delta"
+        ),
+        "baseline_mean_abs_force_loss_delta": baseline.get(
+            "mean_abs_force_loss_delta"
+        ),
+        "selected_variant": selected.get("variant"),
+        "selected_load_balance_weight": selected.get("load_balance_weight"),
+        "selected_alpha0_ce_loss": selected.get("alpha0_ce_loss"),
+        "selected_used_columns": selected.get("used_columns"),
+        "selected_mean_abs_ablate_loss_delta": selected.get(
+            "mean_abs_ablate_loss_delta"
+        ),
+        "selected_mean_abs_force_loss_delta": selected.get(
+            "mean_abs_force_loss_delta"
+        ),
+        "artifact_summary_json": str(summary_path),
+        "artifact_column_fingerprints_csv": str(column_path),
+        "artifact_pair_interventions_csv": str(pair_path),
+        "artifact_notes_md": str(notes_path),
+    }
+    expected_values = {
+        "status": "ok",
+        "top_k": 2,
+        "support_router": "contextual_mlp",
+        "baseline_variant": "baseline",
+    }
+    for field, expected in expected_values.items():
+        if entry.get(field) != expected:
+            failures.append(
+                {
+                    "field": f"causal.{field}",
+                    "expected": expected,
+                    "actual": entry.get(field),
+                    "path": str(summary_path),
+                }
+            )
+    if not entry.get("selected_variant"):
+        failures.append(
+            {
+                "field": "causal.selected_variant",
+                "expected": "non-baseline load-balanced variant",
+                "actual": entry.get("selected_variant"),
+                "path": str(summary_path),
+            }
+        )
+    return entry
+
+
 def _seed_from_config_path(config_path: Any) -> int | None:
     if not isinstance(config_path, str):
         return None
@@ -13829,6 +14019,25 @@ def _write_dead_column_load_balance_probe_markdown(
             f"{_format_metric(entry.get('selected_alpha0_ce_loss'))} | "
             f"{entry.get('selected_used_columns')} | "
             f"{entry.get('selected_unique_support_sets')} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Causal Fingerprints",
+            "",
+            "| Audit | Seed | Selected | Used columns | Mean abs ablate delta | Mean abs force delta |",
+            "| --- | ---: | --- | ---: | ---: | ---: |",
+        ]
+    )
+    for entry in evidence["causal_fingerprint_entries"]:
+        lines.append(
+            "| "
+            f"`{entry.get('experiment_id')}` | "
+            f"{entry.get('seed') or ''} | "
+            f"`{entry.get('selected_variant')}` | "
+            f"{entry.get('selected_used_columns')} | "
+            f"{_format_metric(entry.get('selected_mean_abs_ablate_loss_delta'))} | "
+            f"{_format_metric(entry.get('selected_mean_abs_force_loss_delta'))} |"
         )
     if evidence["failures"]:
         lines.extend(["", "## Failures", ""])

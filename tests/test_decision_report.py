@@ -4715,12 +4715,37 @@ class DeadColumnLoadBalanceProbeReportTest(unittest.TestCase):
             report = write_dead_column_load_balance_probe_report(
                 (seed1, seed2),
                 tmp_path / "report",
+                (
+                    _write_dead_column_causal_fingerprint(
+                        tmp_path / "causal_seed1",
+                        config_path="configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+                        baseline_loss=2.91,
+                        baseline_used=19,
+                        selected_weight=0.0125,
+                        selected_loss=2.83,
+                        selected_used=24,
+                    ),
+                    _write_dead_column_causal_fingerprint(
+                        tmp_path / "causal_seed2",
+                        config_path="configs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml",
+                        baseline_loss=2.89,
+                        baseline_used=23,
+                        selected_weight=0.02,
+                        selected_loss=2.88,
+                        selected_used=24,
+                    ),
+                ),
             )
 
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["decision"], KEEP_LOAD_BALANCE_PROBE_OPT_IN)
             self.assertFalse(report["promote_router_load_balance_default"])
+            self.assertFalse(report["causal_fingerprint_supports_promotion"])
             self.assertEqual(report["evidence"]["successful_probe_count"], 2)
+            self.assertEqual(
+                report["evidence"]["successful_causal_fingerprint_count"],
+                2,
+            )
             self.assertEqual(report["evidence"]["min_used_column_gain"], 1)
             self.assertEqual(report["evidence"]["max_used_column_gain"], 5)
             self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
@@ -4741,6 +4766,11 @@ class DeadColumnLoadBalanceProbeReportTest(unittest.TestCase):
             report = write_dead_column_load_balance_probe_report(
                 (probe_dir,),
                 tmp_path / "report",
+                (
+                    _write_dead_column_causal_fingerprint(
+                        tmp_path / "causal",
+                    ),
+                ),
             )
 
             self.assertEqual(report["status"], "fail")
@@ -4807,6 +4837,27 @@ class ExhaustiveSupportAuditReportTest(unittest.TestCase):
             self.assertTrue(
                 any(
                     failure["field"] == "artifacts.pairwise_synergy_csv"
+                    for failure in report["evidence"]["failures"]
+                )
+            )
+
+    def test_missing_causal_fingerprint_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            probe_dir = tmp_path / "probe"
+            _write_dead_column_probe(probe_dir)
+
+            report = write_dead_column_load_balance_probe_report(
+                (probe_dir,),
+                tmp_path / "report",
+                (tmp_path / "missing_causal",),
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertTrue(
+                any(
+                    failure["field"] == "causal.summary_json"
                     for failure in report["evidence"]["failures"]
                 )
             )
@@ -4883,6 +4934,67 @@ def _write_dead_column_probe(
         encoding="utf-8",
     )
     (probe_dir / "notes.md").write_text("# probe\n", encoding="utf-8")
+
+
+def _write_dead_column_causal_fingerprint(
+    causal_dir: Path,
+    *,
+    config_path: str = "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+    baseline_loss: float = 2.91,
+    baseline_used: int = 19,
+    selected_weight: float = 0.0125,
+    selected_loss: float = 2.83,
+    selected_used: int = 24,
+) -> Path:
+    causal_dir.mkdir(parents=True)
+    selected_variant = f"load_balance_{selected_weight:g}"
+    summary = {
+        "status": "ok",
+        "experiment_id": "token_larger_support_wide_hep_temporal_clipped_objective_gate_causal_column_fingerprint",
+        "config_path": config_path,
+        "audit": {
+            "dataset": "tiny_shakespeare_word",
+            "num_columns": 24,
+            "top_k": 2,
+            "support_router": "contextual_mlp",
+            "column_fingerprint_count": 48,
+            "pair_intervention_count": 32,
+            "variants": [
+                {
+                    "variant": "baseline",
+                    "load_balance_weight": 0.0,
+                    "alpha0_ce_loss": baseline_loss,
+                    "used_columns": baseline_used,
+                    "dead_columns": 24 - baseline_used,
+                    "mean_abs_ablate_loss_delta": 0.052,
+                    "mean_abs_force_loss_delta": 1.32,
+                },
+                {
+                    "variant": selected_variant,
+                    "load_balance_weight": selected_weight,
+                    "alpha0_ce_loss": selected_loss,
+                    "used_columns": selected_used,
+                    "dead_columns": 24 - selected_used,
+                    "mean_abs_ablate_loss_delta": 0.055,
+                    "mean_abs_force_loss_delta": 1.41,
+                },
+            ],
+        },
+    }
+    (causal_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (causal_dir / "column_fingerprints.csv").write_text(
+        "variant,column,ablate_loss_delta,force_loss_delta\n",
+        encoding="utf-8",
+    )
+    (causal_dir / "pair_interventions.csv").write_text(
+        "variant,support,loss\n",
+        encoding="utf-8",
+    )
+    (causal_dir / "notes.md").write_text("# causal\n", encoding="utf-8")
+    return causal_dir
 
 
 def _write_exhaustive_support_audit(audit_dir: Path) -> None:
