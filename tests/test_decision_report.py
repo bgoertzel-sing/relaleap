@@ -41,6 +41,7 @@ from relaleap.experiments.decision_report import (
     DIAGNOSE_EXHAUSTIVE_SUPPORT_AUDIT,
     DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
     SATISFY_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
+    CONFIRM_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -74,6 +75,7 @@ from relaleap.experiments.decision_report import (
     write_contextual_support_router_decision_report,
     write_contextual_support_router_promotion_gate_report,
     write_contextual_support_router_promotion_gate_satisfaction_report,
+    write_post_promotion_support_wide_promoted_default_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -4630,6 +4632,59 @@ class ContextualSupportRouterPromotionGateSatisfactionReportTest(unittest.TestCa
             )
 
 
+class PostPromotionSupportWidePromotedDefaultReportTest(unittest.TestCase):
+    def test_local_promoted_default_artifacts_confirm_contextual_router(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "post_promotion"
+            artifact_check = tmp_path / "artifact_check.json"
+            _write_post_promotion_support_wide_comparison(comparison_dir)
+            artifact_check.write_text(
+                json.dumps({"status": "pass"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_post_promotion_support_wide_promoted_default_report(
+                comparison_dir,
+                tmp_path / "report",
+                artifact_check_path=artifact_check,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                CONFIRM_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT,
+            )
+            self.assertTrue(report["promoted_support_router_default_confirmed"])
+            self.assertEqual(report["evidence"]["run_count"], 3)
+            self.assertEqual(report["evidence"]["alpha0_best_run_count"], 3)
+            self.assertEqual(report["evidence"]["accepted_nonzero_hep_run_count"], 0)
+            self.assertEqual(report["evidence"]["min_used_columns"], 10)
+            self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
+            self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
+
+    def test_artifact_failure_blocks_promoted_default_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            comparison_dir = tmp_path / "post_promotion"
+            artifact_check = tmp_path / "artifact_check.json"
+            _write_post_promotion_support_wide_comparison(comparison_dir)
+            artifact_check.write_text(
+                json.dumps({"status": "fail"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            report = write_post_promotion_support_wide_promoted_default_report(
+                comparison_dir,
+                tmp_path / "report",
+                artifact_check_path=artifact_check,
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(report["promoted_support_router_default_confirmed"])
+
+
 class ExhaustiveSupportAuditReportTest(unittest.TestCase):
     def test_valid_audit_selects_router_support_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5180,6 +5235,116 @@ def _contextual_support_router_run_entry(
         run["contextual_router_hidden_dim"] = 128
         run["support_router"] = support_router
     return run
+
+
+def _write_post_promotion_support_wide_comparison(comparison_dir: Path) -> None:
+    comparison_dir.mkdir(parents=True, exist_ok=True)
+    runs = [
+        _post_promotion_support_wide_run_entry(
+            "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+            dataset="tiny_shakespeare_char",
+            num_columns=12,
+            used_columns=10,
+            unique_supports=26,
+            final_loss=3.1,
+        ),
+        _post_promotion_support_wide_run_entry(
+            "char_larger_support_wide_hep_temporal_clipped_objective_gate",
+            dataset="tiny_shakespeare_char",
+            num_columns=24,
+            used_columns=18,
+            unique_supports=50,
+            final_loss=1.9,
+        ),
+        _post_promotion_support_wide_run_entry(
+            "token_larger_support_wide_hep_temporal_clipped_objective_gate",
+            dataset="tiny_shakespeare_word",
+            num_columns=24,
+            used_columns=20,
+            unique_supports=52,
+            final_loss=2.8,
+        ),
+    ]
+    summary = {
+        "status": "ok",
+        "runs": runs,
+        "verdict": {
+            "status": "pass",
+            "invariants_passed": True,
+            "artifact_invariants_passed": True,
+            "hep_alpha_acceptance": {
+                "status": "no_accepted_alpha",
+                "accepted_alpha": None,
+            },
+        },
+    }
+    (comparison_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _post_promotion_support_wide_run_entry(
+    experiment_id: str,
+    *,
+    dataset: str,
+    num_columns: int,
+    used_columns: int,
+    unique_supports: int,
+    final_loss: float,
+) -> dict[str, object]:
+    return {
+        "artifact_invariants": {
+            "metrics_csv": True,
+            "notes_md": True,
+            "summary_json": True,
+        },
+        "config_path": f"configs/{experiment_id}.yaml",
+        "contextual_router_hidden_dim": 128,
+        "dataset": dataset,
+        "experiment_id": experiment_id,
+        "final_residual_loss": final_loss,
+        "hep_alpha_sweep": [
+            {
+                "alpha": 0.0,
+                "loss": final_loss,
+                "max_logit_delta_from_ordinary": 0.0,
+                "pinned_vs_repicked_logit_delta": 0.0,
+                "support_change_fraction": 0.1,
+            },
+            {
+                "alpha": 1.0,
+                "loss": final_loss + 0.01,
+                "max_logit_delta_from_ordinary": 0.001,
+                "pinned_vs_repicked_logit_delta": 0.001,
+                "support_change_fraction": 0.1,
+            },
+        ],
+        "hep_settling_objective": "temporal_consistency_gradient",
+        "hep_update_clip_norm": 0.01,
+        "initial_residual_loss": final_loss + 0.5,
+        "invariants": {
+            "frozen_base_unchanged": True,
+            "hep_alpha_0_equivalence": True,
+            "residual_parameters_updated": True,
+            "zero_init_identity": True,
+        },
+        "num_columns": num_columns,
+        "residual_loss_delta": -0.5,
+        "residual_objective": "supervised_ce",
+        "status": "ok",
+        "support_audit": {
+            "dead_columns": num_columns - used_columns,
+            "max_column_fraction": 0.2,
+            "unique_support_sets": unique_supports,
+            "used_columns": used_columns,
+        },
+        "support_router": "contextual_mlp",
+        "support_stress": True,
+        "support_stress_preset": False,
+        "top_k": 2,
+        "training_steps": 50,
+    }
 
 
 def _support_width_deconfounding_run_entry(

@@ -505,6 +505,16 @@ DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_ARTIFACT_CHECKS = 
 DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_OUT_DIR = Path(
     "results/reports/contextual_support_router_promotion_gate_satisfaction"
 )
+DEFAULT_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT_COMPARISON_DIR = Path(
+    "results/comparisons/post_promotion_support_wide_promoted_default"
+)
+DEFAULT_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT_ARTIFACT_CHECK = (
+    DEFAULT_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT_COMPARISON_DIR
+    / "artifact_check_rerun.json"
+)
+DEFAULT_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT_OUT_DIR = Path(
+    "results/reports/post_promotion_support_wide_promoted_default"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -609,6 +619,9 @@ DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE = (
 )
 SATISFY_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE = (
     "satisfy_contextual_support_router_promotion_or_repeat_gate"
+)
+CONFIRM_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT = (
+    "confirm_post_promotion_support_wide_promoted_default"
 )
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -13185,6 +13198,363 @@ def _write_exhaustive_support_audit_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_post_promotion_support_wide_promoted_default_report(
+    comparison_dir: Path = DEFAULT_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT_COMPARISON_DIR,
+    out_dir: Path = DEFAULT_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT_OUT_DIR,
+    *,
+    artifact_check_path: Path
+    | None = DEFAULT_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT_ARTIFACT_CHECK,
+    max_logit_delta: float = DEFAULT_MAX_LOGIT_DELTA,
+) -> dict[str, Any]:
+    """Summarize the local promoted-default support-wide sanity check."""
+
+    comparison: dict[str, Any] | None = None
+    artifact_check: dict[str, Any] | None = None
+    failures: list[dict[str, Any]] = []
+    summary_path = comparison_dir / "summary.json"
+    if not summary_path.is_file():
+        failures.append(
+            {
+                "field": "comparison.summary.json",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(summary_path),
+            }
+        )
+    else:
+        comparison = _read_json_object(summary_path)
+
+    if artifact_check_path is not None and artifact_check_path.is_file():
+        artifact_check = _read_json_object(artifact_check_path)
+    elif comparison is not None:
+        artifact_check = check_comparison_artifacts(comparison_dir)
+
+    verdict = comparison.get("verdict") if isinstance(comparison, dict) else None
+    verdict = verdict if isinstance(verdict, dict) else {}
+    runs = (
+        comparison.get("runs", [])
+        if isinstance(comparison, dict) and isinstance(comparison.get("runs"), list)
+        else []
+    )
+    run_entries = [
+        _post_promotion_support_wide_run_entry(run, max_logit_delta=max_logit_delta)
+        for run in runs
+        if isinstance(run, dict)
+    ]
+
+    if artifact_check is None or artifact_check.get("status") != "pass":
+        failures.append(
+            {
+                "field": "artifact_check.status",
+                "expected": "pass",
+                "actual": None if artifact_check is None else artifact_check.get("status"),
+                "path": str(artifact_check_path or comparison_dir),
+            }
+        )
+    if comparison is None or comparison.get("status") != "ok":
+        failures.append(
+            {
+                "field": "comparison.status",
+                "expected": "ok",
+                "actual": None if comparison is None else comparison.get("status"),
+                "path": str(comparison_dir),
+            }
+        )
+    if verdict.get("status") != "pass":
+        failures.append(
+            {
+                "field": "comparison.verdict.status",
+                "expected": "pass",
+                "actual": verdict.get("status"),
+                "path": str(comparison_dir),
+            }
+        )
+    expected_experiment_ids = {
+        "char_validation_support_wide_hep_temporal_clipped_objective_gate",
+        "char_larger_support_wide_hep_temporal_clipped_objective_gate",
+        "token_larger_support_wide_hep_temporal_clipped_objective_gate",
+    }
+    actual_experiment_ids = {entry.get("experiment_id") for entry in run_entries}
+    for experiment_id in sorted(expected_experiment_ids):
+        if experiment_id not in actual_experiment_ids:
+            failures.append(
+                {
+                    "field": "comparison.runs.experiment_id",
+                    "expected": experiment_id,
+                    "actual": sorted(str(value) for value in actual_experiment_ids),
+                    "path": str(comparison_dir),
+                }
+            )
+    if len(run_entries) != 3:
+        failures.append(
+            {
+                "field": "comparison.runs.count",
+                "expected": 3,
+                "actual": len(run_entries),
+                "path": str(comparison_dir),
+            }
+        )
+    for entry in run_entries:
+        _append_post_promotion_support_wide_run_failures(
+            failures,
+            comparison_dir,
+            entry,
+        )
+
+    nonzero_hep_wins = [
+        entry for entry in run_entries if entry.get("accepted_nonzero_alpha") is not None
+    ]
+    alpha0_best_runs = [
+        entry for entry in run_entries if entry.get("best_hep_alpha") == 0.0
+    ]
+    support_usage = [
+        _optional_int(entry.get("support_audit_used_columns"))
+        for entry in run_entries
+        if entry.get("support_audit_used_columns") is not None
+    ]
+    unique_support_sets = [
+        _optional_int(entry.get("support_audit_unique_support_sets"))
+        for entry in run_entries
+        if entry.get("support_audit_unique_support_sets") is not None
+    ]
+    status = "fail" if failures else "pass"
+    report = {
+        "status": status,
+        "decision": CONFIRM_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT
+        if status == "pass"
+        else INSUFFICIENT_EVIDENCE,
+        "promoted_support_router_default_confirmed": status == "pass",
+        "default_residual_objective": "supervised_ce",
+        "default_support_stress_mitigation": "temporal_clipped_hep",
+        "default_support_width_top_k": 2,
+        "evidence": {
+            "comparison_dir": str(comparison_dir),
+            "artifact_check_path": str(artifact_check_path)
+            if artifact_check_path
+            else None,
+            "artifact_check_status": None
+            if artifact_check is None
+            else artifact_check.get("status"),
+            "comparison_status": None if comparison is None else comparison.get("status"),
+            "verdict_status": verdict.get("status"),
+            "run_count": len(run_entries),
+            "runs": run_entries,
+            "alpha0_best_run_count": len(alpha0_best_runs),
+            "accepted_nonzero_hep_run_count": len(nonzero_hep_wins),
+            "min_used_columns": min(support_usage) if support_usage else None,
+            "max_used_columns": max(support_usage) if support_usage else None,
+            "min_unique_support_sets": min(unique_support_sets)
+            if unique_support_sets
+            else None,
+            "max_unique_support_sets": max(unique_support_sets)
+            if unique_support_sets
+            else None,
+            "failures": failures,
+        },
+        "rationale": (
+            "The local promoted-default support-wide artifacts pass their contract "
+            "and every run uses supervised CE, temporal-clipped HEP, top-k 2, and "
+            "the contextual MLP support router. Alpha 0 remains best in all runs, "
+            "which keeps the interpretation focused on train-time support routing "
+            "rather than a new settling-time CE gain."
+            if status == "pass"
+            else "The promoted-default support-wide evidence is incomplete or fails its artifact, invariant, or config-contract checks."
+        ),
+        "next_step": (
+            "restore the real-Chrome Colab runtime/rendered-output state and rerun the focused post-promotion promoted-default bridge target"
+            if status == "pass"
+            else "repair or regenerate the local promoted-default support-wide artifacts before retrying Colab"
+        ),
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_post_promotion_support_wide_promoted_default_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
+def _post_promotion_support_wide_run_entry(
+    run: dict[str, Any],
+    *,
+    max_logit_delta: float,
+) -> dict[str, Any]:
+    best_hep = _best_alpha_candidate(run)
+    accepted = [
+        candidate
+        for candidate in _alpha_candidates([run])
+        if candidate["alpha"] != 0.0
+        and candidate["loss_improvement_from_alpha0"] is not None
+        and candidate["loss_improvement_from_alpha0"] > 0.0
+        and candidate["max_logit_delta_from_ordinary"] <= max_logit_delta
+    ]
+    support_audit = (
+        run.get("support_audit") if isinstance(run.get("support_audit"), dict) else {}
+    )
+    return {
+        "experiment_id": run.get("experiment_id"),
+        "config_path": run.get("config_path"),
+        "dataset": run.get("dataset"),
+        "status": run.get("status"),
+        "residual_objective": run.get("residual_objective"),
+        "support_router": run.get("support_router"),
+        "contextual_router_hidden_dim": run.get("contextual_router_hidden_dim"),
+        "top_k": run.get("top_k"),
+        "num_columns": run.get("num_columns"),
+        "support_stress": run.get("support_stress"),
+        "support_stress_preset": run.get("support_stress_preset"),
+        "hep_settling_objective": run.get("hep_settling_objective"),
+        "hep_update_clip_norm": run.get("hep_update_clip_norm"),
+        "training_steps": run.get("training_steps"),
+        "initial_residual_loss": _optional_float(run.get("initial_residual_loss")),
+        "final_residual_loss": _optional_float(run.get("final_residual_loss")),
+        "residual_loss_delta": _optional_float(run.get("residual_loss_delta")),
+        "best_hep_alpha": None if best_hep is None else best_hep["alpha"],
+        "best_hep_loss": None if best_hep is None else best_hep["loss"],
+        "accepted_nonzero_alpha": accepted[0] if accepted else None,
+        "invariants": run.get("invariants")
+        if isinstance(run.get("invariants"), dict)
+        else {},
+        "artifact_invariants": run.get("artifact_invariants")
+        if isinstance(run.get("artifact_invariants"), dict)
+        else {},
+        "support_audit_used_columns": support_audit.get("used_columns"),
+        "support_audit_unique_support_sets": support_audit.get("unique_support_sets"),
+        "support_audit_dead_columns": support_audit.get("dead_columns"),
+        "support_audit_max_column_fraction": support_audit.get("max_column_fraction"),
+        "max_support_change_fraction": _max_support_change_fraction(run),
+    }
+
+
+def _append_post_promotion_support_wide_run_failures(
+    failures: list[dict[str, Any]],
+    comparison_dir: Path,
+    entry: dict[str, Any],
+) -> None:
+    prefix = f"run.{entry.get('experiment_id')}"
+    expected_values = {
+        "status": "ok",
+        "residual_objective": "supervised_ce",
+        "support_router": "contextual_mlp",
+        "contextual_router_hidden_dim": 128,
+        "top_k": 2,
+        "support_stress_preset": False,
+        "hep_settling_objective": "temporal_consistency_gradient",
+        "hep_update_clip_norm": 0.01,
+    }
+    for field, expected in expected_values.items():
+        if entry.get(field) != expected:
+            failures.append(
+                {
+                    "field": f"{prefix}.{field}",
+                    "expected": expected,
+                    "actual": entry.get(field),
+                    "path": str(comparison_dir),
+                }
+            )
+    if entry.get("residual_loss_delta") is None or entry["residual_loss_delta"] >= 0.0:
+        failures.append(
+            {
+                "field": f"{prefix}.residual_loss_delta",
+                "expected": "< 0.0",
+                "actual": entry.get("residual_loss_delta"),
+                "path": str(comparison_dir),
+            }
+        )
+    for invariant, passed in entry.get("invariants", {}).items():
+        if passed is not True:
+            failures.append(
+                {
+                    "field": f"{prefix}.invariants.{invariant}",
+                    "expected": True,
+                    "actual": passed,
+                    "path": str(comparison_dir),
+                }
+            )
+    for invariant, passed in entry.get("artifact_invariants", {}).items():
+        if passed is not True:
+            failures.append(
+                {
+                    "field": f"{prefix}.artifact_invariants.{invariant}",
+                    "expected": True,
+                    "actual": passed,
+                    "path": str(comparison_dir),
+                }
+            )
+
+
+def _best_alpha_candidate(run: dict[str, Any]) -> dict[str, Any] | None:
+    candidates = [
+        candidate
+        for candidate in _alpha_candidates([run])
+        if candidate.get("loss") is not None
+    ]
+    return min(candidates, key=lambda candidate: candidate["loss"], default=None)
+
+
+def _max_support_change_fraction(run: dict[str, Any]) -> float | None:
+    values = [
+        _optional_float(entry.get("support_change_fraction"))
+        for entry in run.get("hep_alpha_sweep", [])
+        if isinstance(entry, dict) and entry.get("support_change_fraction") is not None
+    ]
+    return max(values) if values else None
+
+
+def _write_post_promotion_support_wide_promoted_default_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Post-Promotion Support-Wide Promoted Default",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        "- Promoted support router default confirmed: "
+        f"`{report['promoted_support_router_default_confirmed']}`",
+        f"- Accepted nonzero HEP runs: `{evidence['accepted_nonzero_hep_run_count']}`",
+        f"- Alpha-0 best runs: `{evidence['alpha0_best_run_count']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        "| Experiment | Dataset | Columns | Used | Unique supports | Alpha-0 best | Final CE | Support change |",
+        "| --- | --- | ---: | ---: | ---: | --- | ---: | ---: |",
+    ]
+    for run in evidence["runs"]:
+        alpha0_best = run.get("best_hep_alpha") == 0.0
+        lines.append(
+            "| "
+            f"`{run.get('experiment_id')}` | "
+            f"`{run.get('dataset')}` | "
+            f"{run.get('num_columns')} | "
+            f"{run.get('support_audit_used_columns')} | "
+            f"{run.get('support_audit_unique_support_sets')} | "
+            f"`{alpha0_best}` | "
+            f"{_format_metric(run.get('final_residual_loss'))} | "
+            f"{_format_metric(run.get('max_support_change_fraction'))} |"
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                "- "
+                f"`{failure.get('field')}` expected "
+                f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                f"at `{failure.get('path', '')}`"
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -13234,6 +13604,7 @@ def main() -> None:
             "contextual-support-router-decision",
             "contextual-support-router-promotion-gate",
             "contextual-support-router-promotion-gate-satisfaction",
+            "post-promotion-support-wide-promoted-default",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -13643,6 +14014,15 @@ def main() -> None:
             artifact_check_paths=DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_SATISFACTION_ARTIFACT_CHECKS
             if not args.artifact_check
             else (args.artifact_check,),
+            max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "post-promotion-support-wide-promoted-default":
+        report = write_post_promotion_support_wide_promoted_default_report(
+            args.comparison_dir
+            or DEFAULT_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT_COMPARISON_DIR,
+            args.out or DEFAULT_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT_OUT_DIR,
+            artifact_check_path=args.artifact_check
+            or DEFAULT_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT_ARTIFACT_CHECK,
             max_logit_delta=args.max_logit_delta,
         )
     else:
