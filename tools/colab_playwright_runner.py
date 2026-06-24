@@ -118,6 +118,36 @@ async def _click_first(page, labels: list[str], timeout_ms: int = 5_000) -> bool
     return False
 
 
+async def _click_selector(page, selector: str, timeout_ms: int = 2_000) -> bool:
+    try:
+        target = page.locator(selector).first
+        await target.click(timeout=timeout_ms)
+        print(f"clicked selector: {selector}")
+        return True
+    except Exception:
+        pass
+
+    try:
+        clicked = await page.evaluate(
+            """selector => {
+                const element = document.querySelector(selector);
+                if (!element) {
+                    return false;
+                }
+                element.click();
+                return true;
+            }""",
+            selector,
+        )
+    except Exception:
+        return False
+
+    if clicked:
+        print(f"clicked selector via DOM: {selector}")
+        return True
+    return False
+
+
 async def _write_debug_snapshot(page, label: str) -> None:
     out_dir = Path("results/colab_bridge_debug")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -484,19 +514,82 @@ async def _wait_for_completion(page, timeout_minutes: float, evidence_out: Path)
     print("Colab completion detected and evidence passed visible-output checks.")
 
 
-async def _trigger_run_all(page, method: str) -> None:
+async def _trigger_run_all(page, method: str) -> bool:
+    triggered = False
     if method in {"shortcut", "both"}:
         print("triggering run all with keyboard shortcut: Meta+F9")
         await page.keyboard.press("Meta+F9")
+        triggered = True
         await page.wait_for_timeout(2_000)
 
     if method in {"menu", "both"}:
-        ran = await _click_first(page, ["Runtime"])
+        ran = await _click_selector(page, "#runtime-menu-button")
+        if not ran:
+            ran = await _click_first(page, ["Runtime"])
         if ran:
             await page.wait_for_timeout(1_000)
+            ran = await _click_selector(page, '#runtime-menu [command="runall"]')
+        if not ran:
             ran = await _click_first(page, ["Run all", "Run all cells"])
         if not ran:
             print("Could not trigger Run all via menus.")
+        triggered = triggered or ran
+    return triggered
+
+
+async def _write_source_only_failure(
+    page,
+    evidence_out: Path,
+    debug_snapshot: bool,
+) -> None:
+    await _write_evidence(page, evidence_out)
+    if debug_snapshot:
+        await _write_debug_snapshot(page, "source_only_after_run_all")
+    raise RuntimeError(
+        "Colab run-all was requested, but no rendered output appeared. "
+        "The notebook still looks source-only, so no GPU artifact bundle can "
+        "be trusted from this attempt."
+    )
+
+
+async def _has_rendered_output(page) -> bool:
+    text = await _rendered_output_text(page)
+    if re.search(r"\bcuda_available:\s+(True|False)\b", text):
+        return True
+    if re.search(r"\bplatform:\s+\S", text):
+        return True
+    if FOCUSED_TARGET_COMPARISON_DIR in text and '"status": "pass"' in text:
+        return True
+    return False
+
+
+async def _wait_for_run_all_start(
+    page,
+    evidence_out: Path,
+    debug_snapshot: bool,
+    timeout_seconds: float = 60.0,
+) -> None:
+    started = asyncio.get_running_loop().time()
+    while True:
+        if await _has_rendered_output(page):
+            print("detected rendered Colab output after run-all request")
+            return
+        elapsed = asyncio.get_running_loop().time() - started
+        if elapsed >= timeout_seconds:
+            await _write_source_only_failure(
+                page,
+                evidence_out=evidence_out,
+                debug_snapshot=debug_snapshot,
+            )
+        await _dismiss_obstructive_modals(page)
+        await _confirm_run_modals(
+            page,
+            max_rounds=1,
+            timeout_ms=750,
+            include_run_all=False,
+            include_generic_runtime_controls=False,
+        )
+        await page.wait_for_timeout(2_000)
 
 
 async def _confirm_run_modals(
@@ -621,7 +714,7 @@ async def _operate_page(
 
         await page.wait_for_timeout(8_000)
         await _dismiss_obstructive_modals(page)
-        await _trigger_run_all(page, method=run_method)
+        triggered = await _trigger_run_all(page, method=run_method)
         await page.wait_for_timeout(3_000)
         await _dismiss_obstructive_modals(page)
         await _confirm_run_modals(page)
@@ -630,8 +723,16 @@ async def _operate_page(
         if debug_snapshot:
             await _write_debug_snapshot(page, "after_run_all")
 
+        if not triggered:
+            raise RuntimeError("Could not trigger Colab Run all.")
+
         print("Run-all was requested. Watch the browser for completion/errors.")
         if wait_completion:
+            await _wait_for_run_all_start(
+                page,
+                evidence_out=evidence_out,
+                debug_snapshot=debug_snapshot,
+            )
             await _wait_for_completion(
                 page,
                 timeout_minutes=completion_timeout_minutes,
@@ -682,7 +783,6 @@ async def automate(
                 input()
             else:
                 print("Detaching automation from connected Chrome.")
-            await browser.close()
             return
 
         browser_type = p.chromium

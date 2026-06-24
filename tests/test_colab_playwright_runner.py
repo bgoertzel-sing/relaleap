@@ -17,10 +17,13 @@ from tools.colab_playwright_runner import (
     _colab_notebook_url,
     _confirm_run_modals,
     _extract_colab_artifact_bundle,
+    _has_rendered_output,
+    _trigger_run_all,
     _validate_evidence_text,
     _validate_focused_target_artifact_bundle,
     _validate_pinned_support_evidence,
     _wait_for_completion,
+    _wait_for_run_all_start,
 )
 
 
@@ -348,6 +351,83 @@ class ColabPlaywrightRunnerTest(unittest.TestCase):
 
 
 class ConfirmRunModalsTest(unittest.IsolatedAsyncioTestCase):
+    async def test_rendered_output_detection_rejects_source_only_prints(self) -> None:
+        async def source_like_output(*args, **kwargs):
+            return "print('cuda_available:', torch.cuda.is_available())"
+
+        with patch(
+            "tools.colab_playwright_runner._rendered_output_text",
+            source_like_output,
+        ):
+            self.assertFalse(await _has_rendered_output(_RecordingPage()))
+
+    async def test_rendered_output_detection_accepts_runtime_marker(self) -> None:
+        async def rendered_output(*args, **kwargs):
+            return "platform: Linux\ncuda_available: True"
+
+        with patch(
+            "tools.colab_playwright_runner._rendered_output_text",
+            rendered_output,
+        ):
+            self.assertTrue(await _has_rendered_output(_RecordingPage()))
+
+    async def test_menu_run_all_uses_runtime_command_selector(self) -> None:
+        page = _MenuRecordingPage()
+
+        triggered = await _trigger_run_all(page, method="menu")
+
+        self.assertTrue(triggered)
+        self.assertEqual(
+            page.clicked_selectors,
+            ["#runtime-menu-button", '#runtime-menu [command="runall"]'],
+        )
+
+    async def test_wait_for_run_all_start_fails_source_only_page(self) -> None:
+        async def no_rendered_output(*args, **kwargs):
+            return ""
+
+        async def no_obstructive_modal(*args, **kwargs):
+            return False
+
+        async def no_runtime_prompt(*args, **kwargs):
+            return False
+
+        snapshots = []
+
+        async def write_debug_snapshot(page, label):
+            snapshots.append(label)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            evidence_out = Path(tmpdir) / "source_only.txt"
+            with (
+                patch(
+                    "tools.colab_playwright_runner._rendered_output_text",
+                    no_rendered_output,
+                ),
+                patch(
+                    "tools.colab_playwright_runner._dismiss_obstructive_modals",
+                    no_obstructive_modal,
+                ),
+                patch(
+                    "tools.colab_playwright_runner._confirm_run_modals",
+                    no_runtime_prompt,
+                ),
+                patch(
+                    "tools.colab_playwright_runner._write_debug_snapshot",
+                    write_debug_snapshot,
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "source-only"):
+                    await _wait_for_run_all_start(
+                        _RecordingPage(),
+                        evidence_out=evidence_out,
+                        debug_snapshot=True,
+                        timeout_seconds=0.0,
+                    )
+
+            self.assertIn("# Rendered Colab output", evidence_out.read_text())
+            self.assertEqual(snapshots, ["source_only_after_run_all"])
+
     async def test_completion_wait_can_skip_run_all_prompts(self) -> None:
         page = _RecordingPage()
 
@@ -468,8 +548,23 @@ class _RecordingPage:
         self.text_labels.append(label)
         return _FailingTarget()
 
+    def locator(self, selector: str) -> "_FailingTarget":
+        return _FailingTarget()
+
+    async def evaluate(self, script: str, selector: str) -> bool:
+        return False
+
     async def wait_for_timeout(self, timeout_ms: int) -> None:
         return None
+
+
+class _MenuRecordingPage(_RecordingPage):
+    def __init__(self) -> None:
+        super().__init__()
+        self.clicked_selectors: list[str] = []
+
+    def locator(self, selector: str) -> "_ClickableTarget":
+        return _ClickableTarget(self.clicked_selectors, selector)
 
 
 class _FailingTarget:
@@ -479,6 +574,22 @@ class _FailingTarget:
 
     async def click(self, timeout: int) -> None:
         raise RuntimeError("not visible")
+
+    async def inner_text(self, timeout: int) -> str:
+        return "source-only page"
+
+
+class _ClickableTarget:
+    def __init__(self, clicked_selectors: list[str], selector: str) -> None:
+        self.clicked_selectors = clicked_selectors
+        self.selector = selector
+
+    @property
+    def first(self) -> "_ClickableTarget":
+        return self
+
+    async def click(self, timeout: int) -> None:
+        self.clicked_selectors.append(self.selector)
 
 
 def _zip_base64(files: dict[str, str]) -> str:
