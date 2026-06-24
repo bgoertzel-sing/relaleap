@@ -42,6 +42,7 @@ from relaleap.experiments.decision_report import (
     DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
     SATISFY_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
     CONFIRM_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT,
+    KEEP_LOAD_BALANCE_PROBE_OPT_IN,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -76,6 +77,7 @@ from relaleap.experiments.decision_report import (
     write_contextual_support_router_promotion_gate_report,
     write_contextual_support_router_promotion_gate_satisfaction_report,
     write_post_promotion_support_wide_promoted_default_report,
+    write_dead_column_load_balance_probe_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -4685,6 +4687,72 @@ class PostPromotionSupportWidePromotedDefaultReportTest(unittest.TestCase):
             self.assertFalse(report["promoted_support_router_default_confirmed"])
 
 
+class DeadColumnLoadBalanceProbeReportTest(unittest.TestCase):
+    def test_two_successful_probes_keep_load_balance_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            seed1 = tmp_path / "probe_seed1"
+            seed2 = tmp_path / "probe_seed2"
+            _write_dead_column_probe(
+                seed1,
+                config_path="configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+                baseline_loss=2.91,
+                baseline_used=19,
+                selected_weight=0.0125,
+                selected_loss=2.83,
+                selected_used=24,
+            )
+            _write_dead_column_probe(
+                seed2,
+                config_path="configs/token_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml",
+                baseline_loss=2.89,
+                baseline_used=23,
+                selected_weight=0.02,
+                selected_loss=2.88,
+                selected_used=24,
+            )
+
+            report = write_dead_column_load_balance_probe_report(
+                (seed1, seed2),
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["decision"], KEEP_LOAD_BALANCE_PROBE_OPT_IN)
+            self.assertFalse(report["promote_router_load_balance_default"])
+            self.assertEqual(report["evidence"]["successful_probe_count"], 2)
+            self.assertEqual(report["evidence"]["min_used_column_gain"], 1)
+            self.assertEqual(report["evidence"]["max_used_column_gain"], 5)
+            self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
+            self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
+
+    def test_failed_recruitment_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            probe_dir = tmp_path / "probe"
+            _write_dead_column_probe(
+                probe_dir,
+                decision_status="no_safe_recruitment",
+                selected_variant=None,
+                selected_loss=None,
+                selected_used=None,
+            )
+
+            report = write_dead_column_load_balance_probe_report(
+                (probe_dir,),
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertTrue(
+                any(
+                    failure["field"] == "probe.decision_status"
+                    for failure in report["evidence"]["failures"]
+                )
+            )
+
+
 class ExhaustiveSupportAuditReportTest(unittest.TestCase):
     def test_valid_audit_selects_router_support_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4742,6 +4810,79 @@ class ExhaustiveSupportAuditReportTest(unittest.TestCase):
                     for failure in report["evidence"]["failures"]
                 )
             )
+
+
+def _write_dead_column_probe(
+    probe_dir: Path,
+    *,
+    config_path: str = "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+    baseline_loss: float = 2.91,
+    baseline_used: int = 19,
+    selected_weight: float = 0.0125,
+    selected_loss: float | None = 2.83,
+    selected_used: int | None = 24,
+    selected_variant: str | None = "load_balance_0.0125",
+    decision_status: str = "recruited_without_ce_hurt",
+) -> None:
+    probe_dir.mkdir(parents=True)
+    variants = [
+        {
+            "variant": "baseline",
+            "load_balance_weight": 0.0,
+            "alpha0_ce_loss": baseline_loss,
+            "best_hep_loss": baseline_loss,
+            "used_columns": baseline_used,
+            "dead_columns": 24 - baseline_used,
+            "unique_support_sets": 41,
+            "max_column_fraction": 0.28,
+        }
+    ]
+    if selected_variant is not None:
+        variants.append(
+            {
+                "variant": selected_variant,
+                "load_balance_weight": selected_weight,
+                "alpha0_ce_loss": selected_loss,
+                "best_hep_loss": selected_loss,
+                "used_columns": selected_used,
+                "dead_columns": None if selected_used is None else 24 - selected_used,
+                "unique_support_sets": 55,
+                "max_column_fraction": 0.14,
+            }
+        )
+    summary = {
+        "status": "ok",
+        "experiment_id": "token_larger_support_wide_hep_temporal_clipped_objective_gate_dead_column_probe",
+        "config_path": config_path,
+        "probe": {
+            "dataset": "tiny_shakespeare_word",
+            "num_columns": 24,
+            "top_k": 2,
+            "support_router": "contextual_mlp",
+            "ce_tolerance": 0.01,
+            "decision": {
+                "status": decision_status,
+                "safe_candidate_count": 1
+                if decision_status == "recruited_without_ce_hurt"
+                else 0,
+                "baseline_alpha0_ce_loss": baseline_loss,
+                "baseline_used_columns": baseline_used,
+                "selected_variant": selected_variant,
+                "selected_alpha0_ce_loss": selected_loss,
+                "selected_used_columns": selected_used,
+            },
+            "variants": variants,
+        },
+    }
+    (probe_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    (probe_dir / "variant_metrics.csv").write_text(
+        "variant,load_balance_weight,alpha0_ce_loss,used_columns\n",
+        encoding="utf-8",
+    )
+    (probe_dir / "notes.md").write_text("# probe\n", encoding="utf-8")
 
 
 def _write_exhaustive_support_audit(audit_dir: Path) -> None:

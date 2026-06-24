@@ -515,6 +515,17 @@ DEFAULT_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT_ARTIFACT_CHECK = (
 DEFAULT_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT_OUT_DIR = Path(
     "results/reports/post_promotion_support_wide_promoted_default"
 )
+DEFAULT_DEAD_COLUMN_LOAD_BALANCE_PROBE_DIRS = (
+    Path(
+        "results/audits/token_larger_support_wide_promoted_default_dead_column_probe_low_weight_bracket"
+    ),
+    Path(
+        "results/audits/token_larger_support_wide_promoted_default_dead_column_probe_low_weight_bracket_seed2"
+    ),
+)
+DEFAULT_DEAD_COLUMN_LOAD_BALANCE_OUT_DIR = Path(
+    "results/reports/dead_column_load_balance_probe"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -623,6 +634,7 @@ SATISFY_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE = (
 CONFIRM_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT = (
     "confirm_post_promotion_support_wide_promoted_default"
 )
+KEEP_LOAD_BALANCE_PROBE_OPT_IN = "keep_router_load_balance_probe_opt_in"
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
@@ -13555,6 +13567,282 @@ def _write_post_promotion_support_wide_promoted_default_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_dead_column_load_balance_probe_report(
+    probe_dirs: tuple[Path, ...] = DEFAULT_DEAD_COLUMN_LOAD_BALANCE_PROBE_DIRS,
+    out_dir: Path = DEFAULT_DEAD_COLUMN_LOAD_BALANCE_OUT_DIR,
+) -> dict[str, Any]:
+    """Summarize local dead-column load-balancing probe artifacts."""
+
+    failures: list[dict[str, Any]] = []
+    entries = [
+        _dead_column_probe_entry(probe_dir, failures)
+        for probe_dir in probe_dirs
+    ]
+    successful_entries = [
+        entry
+        for entry in entries
+        if entry.get("status") == "ok"
+        and entry.get("decision_status") == "recruited_without_ce_hurt"
+    ]
+    status = "fail" if failures or len(successful_entries) != len(entries) else "pass"
+    if len(successful_entries) != len(entries):
+        failures.append(
+            {
+                "field": "probe.decision.status",
+                "expected": "recruited_without_ce_hurt for every probe",
+                "actual": [
+                    entry.get("decision_status")
+                    for entry in entries
+                    if entry.get("decision_status") != "recruited_without_ce_hurt"
+                ],
+                "path": [str(path) for path in probe_dirs],
+            }
+        )
+
+    baseline_losses = [
+        _optional_float(entry.get("baseline_alpha0_ce_loss"))
+        for entry in entries
+        if entry.get("baseline_alpha0_ce_loss") is not None
+    ]
+    selected_losses = [
+        _optional_float(entry.get("selected_alpha0_ce_loss"))
+        for entry in entries
+        if entry.get("selected_alpha0_ce_loss") is not None
+    ]
+    used_column_gains = [
+        int(entry["selected_used_columns"]) - int(entry["baseline_used_columns"])
+        for entry in entries
+        if entry.get("selected_used_columns") is not None
+        and entry.get("baseline_used_columns") is not None
+    ]
+    report = {
+        "status": status,
+        "decision": KEEP_LOAD_BALANCE_PROBE_OPT_IN
+        if status == "pass"
+        else INSUFFICIENT_EVIDENCE,
+        "promote_router_load_balance_default": False,
+        "evidence": {
+            "probe_dirs": [str(path) for path in probe_dirs],
+            "probe_count": len(entries),
+            "successful_probe_count": len(successful_entries),
+            "entries": entries,
+            "min_baseline_alpha0_ce_loss": min(baseline_losses)
+            if baseline_losses
+            else None,
+            "max_baseline_alpha0_ce_loss": max(baseline_losses)
+            if baseline_losses
+            else None,
+            "min_selected_alpha0_ce_loss": min(selected_losses)
+            if selected_losses
+            else None,
+            "max_selected_alpha0_ce_loss": max(selected_losses)
+            if selected_losses
+            else None,
+            "min_used_column_gain": min(used_column_gains)
+            if used_column_gains
+            else None,
+            "max_used_column_gain": max(used_column_gains)
+            if used_column_gains
+            else None,
+            "failures": failures,
+        },
+        "rationale": (
+            "Both local tokenized promoted-default dead-column bracket probes "
+            "recruit additional columns within the configured CE tolerance, so "
+            "router load balancing is a plausible train-time utilization probe. "
+            "It remains opt-in because the matching Colab focused artifact bundle "
+            "is still blocked by the Chrome/CDP or Colab rendered-output state."
+            if status == "pass"
+            else "The local dead-column load-balancing probe evidence is incomplete or does not recruit columns within the CE tolerance."
+        ),
+        "next_step": (
+            "recover the Chrome/Colab session state enough that cells render, then rerun the focused low-weight dead-column bracket bridge target and inspect the extracted seed-1/seed-2 artifacts"
+            if status == "pass"
+            else "repair or regenerate the local seed-1/seed-2 dead-column bracket artifacts before retrying Colab"
+        ),
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_dead_column_load_balance_probe_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
+def _dead_column_probe_entry(
+    probe_dir: Path,
+    failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    summary_path = probe_dir / "summary.json"
+    metrics_path = probe_dir / "variant_metrics.csv"
+    notes_path = probe_dir / "notes.md"
+    if not summary_path.is_file():
+        failures.append(
+            {
+                "field": "probe.summary_json",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(summary_path),
+            }
+        )
+        return {"probe_dir": str(probe_dir), "status": None}
+    for artifact_path, field in (
+        (metrics_path, "probe.variant_metrics_csv"),
+        (notes_path, "probe.notes_md"),
+    ):
+        if not artifact_path.is_file():
+            failures.append(
+                {
+                    "field": field,
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(artifact_path),
+                }
+            )
+    summary = _read_json_object(summary_path)
+    probe = summary.get("probe") if isinstance(summary.get("probe"), dict) else {}
+    decision = (
+        probe.get("decision") if isinstance(probe.get("decision"), dict) else {}
+    )
+    selected_variant = decision.get("selected_variant")
+    variants = probe.get("variants") if isinstance(probe.get("variants"), list) else []
+    selected_row = next(
+        (
+            row
+            for row in variants
+            if isinstance(row, dict) and row.get("variant") == selected_variant
+        ),
+        {},
+    )
+    entry = {
+        "probe_dir": str(probe_dir),
+        "experiment_id": summary.get("experiment_id"),
+        "config_path": summary.get("config_path"),
+        "status": summary.get("status"),
+        "dataset": probe.get("dataset"),
+        "seed": _seed_from_config_path(summary.get("config_path")),
+        "num_columns": probe.get("num_columns"),
+        "top_k": probe.get("top_k"),
+        "support_router": probe.get("support_router"),
+        "ce_tolerance": probe.get("ce_tolerance"),
+        "decision_status": decision.get("status"),
+        "safe_candidate_count": decision.get("safe_candidate_count"),
+        "baseline_alpha0_ce_loss": decision.get("baseline_alpha0_ce_loss"),
+        "baseline_used_columns": decision.get("baseline_used_columns"),
+        "selected_variant": selected_variant,
+        "selected_load_balance_weight": selected_row.get("load_balance_weight"),
+        "selected_alpha0_ce_loss": decision.get("selected_alpha0_ce_loss"),
+        "selected_used_columns": decision.get("selected_used_columns"),
+        "selected_dead_columns": selected_row.get("dead_columns"),
+        "selected_unique_support_sets": selected_row.get("unique_support_sets"),
+        "selected_max_column_fraction": selected_row.get("max_column_fraction"),
+        "artifact_summary_json": str(summary_path),
+        "artifact_variant_metrics_csv": str(metrics_path),
+        "artifact_notes_md": str(notes_path),
+    }
+    expected_values = {
+        "status": "ok",
+        "top_k": 2,
+        "support_router": "contextual_mlp",
+        "decision_status": "recruited_without_ce_hurt",
+    }
+    for field, expected in expected_values.items():
+        if entry.get(field) != expected:
+            failures.append(
+                {
+                    "field": f"probe.{field}",
+                    "expected": expected,
+                    "actual": entry.get(field),
+                    "path": str(summary_path),
+                }
+            )
+    if entry.get("selected_used_columns") is None or entry.get(
+        "baseline_used_columns"
+    ) is None:
+        failures.append(
+            {
+                "field": "probe.selected_used_columns",
+                "expected": "selected and baseline used-column counts",
+                "actual": None,
+                "path": str(summary_path),
+            }
+        )
+    elif int(entry["selected_used_columns"]) <= int(entry["baseline_used_columns"]):
+        failures.append(
+            {
+                "field": "probe.selected_used_columns",
+                "expected": "> baseline_used_columns",
+                "actual": entry["selected_used_columns"],
+                "path": str(summary_path),
+            }
+        )
+    return entry
+
+
+def _seed_from_config_path(config_path: Any) -> int | None:
+    if not isinstance(config_path, str):
+        return None
+    if "_seed2" in config_path:
+        return 2
+    if "_seed3" in config_path:
+        return 3
+    if "_seed4" in config_path:
+        return 4
+    return 1
+
+
+def _write_dead_column_load_balance_probe_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Dead-Column Load-Balance Probe",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        "- Promote router load-balance default: "
+        f"`{report['promote_router_load_balance_default']}`",
+        f"- Successful probes: `{evidence['successful_probe_count']}` / `{evidence['probe_count']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        "| Probe | Seed | Baseline CE | Selected | Weight | Selected CE | Used columns | Unique supports |",
+        "| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: |",
+    ]
+    for entry in evidence["entries"]:
+        lines.append(
+            "| "
+            f"`{entry.get('experiment_id')}` | "
+            f"{entry.get('seed') or ''} | "
+            f"{_format_metric(entry.get('baseline_alpha0_ce_loss'))} | "
+            f"`{entry.get('selected_variant')}` | "
+            f"{_format_metric(entry.get('selected_load_balance_weight'))} | "
+            f"{_format_metric(entry.get('selected_alpha0_ce_loss'))} | "
+            f"{entry.get('selected_used_columns')} | "
+            f"{entry.get('selected_unique_support_sets')} |"
+        )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                "- "
+                f"`{failure.get('field')}` expected "
+                f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                f"at `{failure.get('path', '')}`"
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _format_metric(value: Any) -> str:
     if value is None:
         return ""
@@ -13605,6 +13893,7 @@ def main() -> None:
             "contextual-support-router-promotion-gate",
             "contextual-support-router-promotion-gate-satisfaction",
             "post-promotion-support-wide-promoted-default",
+            "dead-column-load-balance-probe",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -14024,6 +14313,13 @@ def main() -> None:
             artifact_check_path=args.artifact_check
             or DEFAULT_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT_ARTIFACT_CHECK,
             max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "dead-column-load-balance-probe":
+        report = write_dead_column_load_balance_probe_report(
+            tuple(args.decision_report)
+            if args.decision_report
+            else DEFAULT_DEAD_COLUMN_LOAD_BALANCE_PROBE_DIRS,
+            args.out or DEFAULT_DEAD_COLUMN_LOAD_BALANCE_OUT_DIR,
         )
     else:
         report = write_pinned_support_decision_report(
