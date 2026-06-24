@@ -14,3 +14,7 @@ dist/
 results/
 *.log
 .DS_Store
+docs/*.aux
+docs/*.out
+docs/*.synctex.gz
+docs/contextual_support_router_paper_draft.pdf

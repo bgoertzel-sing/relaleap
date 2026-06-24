@@ -152,6 +152,31 @@ class CausalColumnFingerprintAuditReportTest(unittest.TestCase):
                 ],
             )
 
+    def test_report_detects_stability_and_rank_matched_fingerprints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            audit_dir = tmp_path / "fingerprint"
+            deconfounding_dir = tmp_path / "deconfounding"
+            _write_causal_fingerprint_audit(
+                audit_dir,
+                include_stability=True,
+                include_rank_matched_topk1=True,
+            )
+            _write_causal_deconfounding_audit(deconfounding_dir)
+
+            report = write_causal_column_fingerprint_audit_report(
+                audit_dir,
+                tmp_path / "report",
+                deconfounding_dir=deconfounding_dir,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            signals = report["evidence"]["signals"]
+            self.assertTrue(signals["heldout_stability_present"])
+            self.assertTrue(signals["rank_matched_topk1_fingerprint_present"])
+            self.assertFalse(report["causal_column_claim_supported"])
+            self.assertIn("rank-matched top-k-1 fingerprints", report["rationale"])
+
 
 class PinnedSupportDecisionReportTest(unittest.TestCase):
     def test_support_stress_evidence_keeps_pinned_support_opt_in(self) -> None:
@@ -5725,8 +5750,36 @@ def _support_width_deconfounding_run_entry(
     }
 
 
-def _write_causal_fingerprint_audit(audit_dir: Path) -> None:
+def _write_causal_fingerprint_audit(
+    audit_dir: Path,
+    *,
+    include_stability: bool = False,
+    include_rank_matched_topk1: bool = False,
+) -> None:
     audit_dir.mkdir(parents=True)
+    variants = [
+        {
+            "variant": "baseline",
+            "alpha0_ce_loss": 2.91,
+            "used_columns": 19,
+            "unique_support_sets": 41,
+            "mean_abs_ablate_loss_delta": 0.05,
+            "max_abs_ablate_loss_delta": 0.19,
+            "mean_abs_force_loss_delta": 1.32,
+        }
+    ]
+    if include_rank_matched_topk1:
+        variants.append(
+            {
+                "variant": "rank_matched_topk1_contextual",
+                "alpha0_ce_loss": 2.84,
+                "used_columns": 33,
+                "unique_support_sets": 33,
+                "mean_abs_ablate_loss_delta": 0.04,
+                "max_abs_ablate_loss_delta": 0.18,
+                "mean_abs_force_loss_delta": 1.1,
+            }
+        )
     summary = {
         "status": "ok",
         "experiment_id": "token_larger_causal_fingerprint",
@@ -5738,25 +5791,26 @@ def _write_causal_fingerprint_audit(audit_dir: Path) -> None:
             "support_router": "contextual_mlp",
             "column_fingerprint_count": 48,
             "pair_intervention_count": 32,
-            "variants": [
-                {
-                    "variant": "baseline",
-                    "alpha0_ce_loss": 2.91,
-                    "used_columns": 19,
-                    "unique_support_sets": 41,
-                    "mean_abs_ablate_loss_delta": 0.05,
-                    "max_abs_ablate_loss_delta": 0.19,
-                    "mean_abs_force_loss_delta": 1.32,
-                }
-            ],
+            "variants": variants,
         },
     }
+    if include_stability:
+        summary["audit"]["heldout_stability"] = [
+            {
+                "variant": "baseline",
+                "position_ablate_delta_correlation": 0.8,
+                "batch_ablate_delta_correlation": 0.7,
+            },
+        ]
     (audit_dir / "summary.json").write_text(
         json.dumps(summary, indent=2) + "\n",
         encoding="utf-8",
     )
+    column_rows = "variant,column,ablate_loss_delta\nbaseline,0,0.05\n"
+    if include_rank_matched_topk1:
+        column_rows += "rank_matched_topk1_contextual,0,0.04\n"
     (audit_dir / "column_fingerprints.csv").write_text(
-        "variant,column,ablate_loss_delta\nbaseline,0,0.05\n",
+        column_rows,
         encoding="utf-8",
     )
     (audit_dir / "pair_interventions.csv").write_text(

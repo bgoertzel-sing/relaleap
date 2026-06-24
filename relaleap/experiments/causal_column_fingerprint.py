@@ -42,6 +42,7 @@ def run_causal_column_fingerprint(
     out_dir: Path,
     *,
     load_balance_weights: list[float] | None = None,
+    include_rank_matched_topk1: bool = False,
     max_pair_rows: int = DEFAULT_MAX_PAIR_ROWS,
 ) -> dict[str, Any]:
     """Train variants and measure ablate/force/swap intervention fingerprints."""
@@ -112,7 +113,30 @@ def run_causal_column_fingerprint(
     column_rows: list[dict[str, Any]] = []
     pair_rows: list[dict[str, Any]] = []
     variant_summaries: list[dict[str, Any]] = []
-    for weight in weights:
+    stability_summaries: list[dict[str, Any]] = []
+    variant_specs = [
+        {
+            "variant": _variant_name(weight),
+            "load_balance_weight": weight,
+            "num_columns": num_columns,
+            "top_k": top_k,
+            "support_router": support_router,
+            "contextual_router_hidden_dim": contextual_router_hidden_dim,
+        }
+        for weight in weights
+    ]
+    if include_rank_matched_topk1:
+        variant_specs.append(
+            {
+                "variant": "rank_matched_topk1_contextual",
+                "load_balance_weight": 0.0,
+                "num_columns": num_columns * top_k,
+                "top_k": 1,
+                "support_router": "contextual_mlp",
+                "contextual_router_hidden_dim": contextual_router_hidden_dim,
+            }
+        )
+    for spec in variant_specs:
         residual = _train_residual_variant(
             base=base,
             inputs=inputs,
@@ -120,16 +144,16 @@ def run_causal_column_fingerprint(
             vocab_size=vocab_size,
             seed=seed,
             hidden_dim=hidden_dim,
-            num_columns=num_columns,
+            num_columns=int(spec["num_columns"]),
             atoms_per_column=atoms_per_column,
-            top_k=top_k,
-            support_router=support_router,
-            contextual_router_hidden_dim=contextual_router_hidden_dim,
+            top_k=int(spec["top_k"]),
+            support_router=str(spec["support_router"]),
+            contextual_router_hidden_dim=int(spec["contextual_router_hidden_dim"]),
             max_steps=max_steps,
             learning_rate=learning_rate,
             residual_objective=residual_objective,
             training_cfg=training_cfg,
-            load_balance_weight=weight,
+            load_balance_weight=float(spec["load_balance_weight"]),
         )
         residual.eval()
         with torch.no_grad():
@@ -149,8 +173,8 @@ def run_causal_column_fingerprint(
                     hidden=hidden,
                     targets=targets,
                     vocab_size=vocab_size,
-                    variant=_variant_name(weight),
-                    load_balance_weight=weight,
+                    variant=str(spec["variant"]),
+                    load_balance_weight=float(spec["load_balance_weight"]),
                     router_hidden=router_hidden,
                     router_logits=router_logits,
                     router_loss=router_loss,
@@ -160,44 +184,62 @@ def run_causal_column_fingerprint(
                     column_counts=support_audit["column_counts"],
                 )
             )
-            fixed_rows = [
-                _score_for_support(
-                    base,
-                    residual,
-                    hidden,
-                    targets,
-                    vocab_size,
-                    support=pair,
-                    empty_loss=empty_loss,
-                    router_loss=router_loss,
-                )
-                for pair in _all_pairs(num_columns)
-            ]
-            selected_pairs = _selected_pair_interventions(
-                fixed_rows=fixed_rows,
-                router_support=router_support,
-                max_pair_rows=max_pair_rows,
-            )
-            pair_rows.extend(
-                _pair_fingerprint_rows(
+            stability_summaries.append(
+                _column_stability_summary(
                     base=base,
                     residual=residual,
                     hidden=hidden,
                     targets=targets,
                     vocab_size=vocab_size,
-                    variant=_variant_name(weight),
-                    load_balance_weight=weight,
+                    variant=str(spec["variant"]),
+                    load_balance_weight=float(spec["load_balance_weight"]),
                     router_hidden=router_hidden,
                     router_logits=router_logits,
-                    router_loss=router_loss,
-                    column_values=values,
-                    selected_pairs=selected_pairs,
+                    router_support=router_support,
                 )
             )
+            if int(spec["top_k"]) == 2:
+                fixed_rows = [
+                    _score_for_support(
+                        base,
+                        residual,
+                        hidden,
+                        targets,
+                        vocab_size,
+                        support=pair,
+                        empty_loss=empty_loss,
+                        router_loss=router_loss,
+                    )
+                    for pair in _all_pairs(int(spec["num_columns"]))
+                ]
+                selected_pairs = _selected_pair_interventions(
+                    fixed_rows=fixed_rows,
+                    router_support=router_support,
+                    max_pair_rows=max_pair_rows,
+                )
+                pair_rows.extend(
+                    _pair_fingerprint_rows(
+                        base=base,
+                        residual=residual,
+                        hidden=hidden,
+                        targets=targets,
+                        vocab_size=vocab_size,
+                        variant=str(spec["variant"]),
+                        load_balance_weight=float(spec["load_balance_weight"]),
+                        router_hidden=router_hidden,
+                        router_logits=router_logits,
+                        router_loss=router_loss,
+                        column_values=values,
+                        selected_pairs=selected_pairs,
+                    )
+                )
             variant_summaries.append(
                 {
-                    "variant": _variant_name(weight),
-                    "load_balance_weight": weight,
+                    "variant": str(spec["variant"]),
+                    "load_balance_weight": float(spec["load_balance_weight"]),
+                    "num_columns": int(spec["num_columns"]),
+                    "top_k": int(spec["top_k"]),
+                    "support_router": str(spec["support_router"]),
                     "alpha0_ce_loss": router_loss,
                     "used_columns": support_audit["used_columns"],
                     "dead_columns": support_audit["dead_columns"],
@@ -207,28 +249,28 @@ def run_causal_column_fingerprint(
                         [
                             row["ablate_loss_delta"]
                             for row in column_rows
-                            if row["variant"] == _variant_name(weight)
+                            if row["variant"] == str(spec["variant"])
                         ]
                     ),
                     "mean_abs_force_loss_delta": _mean_abs(
                         [
                             row["force_loss_delta"]
                             for row in column_rows
-                            if row["variant"] == _variant_name(weight)
+                            if row["variant"] == str(spec["variant"])
                         ]
                     ),
                     "max_abs_ablate_loss_delta": _max_abs(
                         [
                             row["ablate_loss_delta"]
                             for row in column_rows
-                            if row["variant"] == _variant_name(weight)
+                            if row["variant"] == str(spec["variant"])
                         ]
                     ),
                     "max_abs_force_loss_delta": _max_abs(
                         [
                             row["force_loss_delta"]
                             for row in column_rows
-                            if row["variant"] == _variant_name(weight)
+                            if row["variant"] == str(spec["variant"])
                         ]
                     ),
                 }
@@ -258,9 +300,11 @@ def run_causal_column_fingerprint(
             "support_router": support_router,
             "contextual_router_hidden_dim": contextual_router_hidden_dim,
             "load_balance_weights": weights,
+            "include_rank_matched_topk1": include_rank_matched_topk1,
             "column_fingerprint_count": len(column_rows),
             "pair_intervention_count": len(pair_rows),
             "variants": variant_summaries,
+            "heldout_stability": stability_summaries,
         },
         "artifacts": {
             "summary_json": str(out_dir / "summary.json"),
@@ -430,6 +474,159 @@ def _pair_fingerprint_rows(
     return rows
 
 
+def _column_stability_summary(
+    *,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    variant: str,
+    load_balance_weight: float,
+    router_hidden: Any,
+    router_logits: Any,
+    router_support: Any,
+) -> dict[str, Any]:
+    del router_hidden
+
+    even_positions = [index for index in range(int(hidden.shape[1]) - 1) if index % 2 == 0]
+    odd_positions = [index for index in range(int(hidden.shape[1]) - 1) if index % 2 == 1]
+    first_batch = list(range(max(1, int(hidden.shape[0]) // 2)))
+    second_batch = list(range(max(1, int(hidden.shape[0]) // 2), int(hidden.shape[0])))
+    if not second_batch:
+        second_batch = first_batch
+    position_left = _ablate_delta_vector(
+        base=base,
+        residual=residual,
+        hidden=hidden,
+        targets=targets,
+        vocab_size=vocab_size,
+        router_logits=router_logits,
+        router_support=router_support,
+        position_indices=even_positions,
+    )
+    position_right = _ablate_delta_vector(
+        base=base,
+        residual=residual,
+        hidden=hidden,
+        targets=targets,
+        vocab_size=vocab_size,
+        router_logits=router_logits,
+        router_support=router_support,
+        position_indices=odd_positions,
+    )
+    batch_left = _ablate_delta_vector(
+        base=base,
+        residual=residual,
+        hidden=hidden,
+        targets=targets,
+        vocab_size=vocab_size,
+        router_logits=router_logits,
+        router_support=router_support,
+        batch_indices=first_batch,
+    )
+    batch_right = _ablate_delta_vector(
+        base=base,
+        residual=residual,
+        hidden=hidden,
+        targets=targets,
+        vocab_size=vocab_size,
+        router_logits=router_logits,
+        router_support=router_support,
+        batch_indices=second_batch,
+    )
+    return {
+        "variant": variant,
+        "load_balance_weight": load_balance_weight,
+        "position_split": "even_vs_odd",
+        "position_ablate_delta_correlation": _pearson(position_left, position_right),
+        "position_mean_abs_ablate_delta_difference": _mean_abs_difference(
+            position_left,
+            position_right,
+        ),
+        "batch_split": "first_half_vs_second_half",
+        "batch_ablate_delta_correlation": _pearson(batch_left, batch_right),
+        "batch_mean_abs_ablate_delta_difference": _mean_abs_difference(
+            batch_left,
+            batch_right,
+        ),
+    }
+
+
+def _ablate_delta_vector(
+    *,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    router_logits: Any,
+    router_support: Any,
+    batch_indices: list[int] | None = None,
+    position_indices: list[int] | None = None,
+) -> list[float]:
+    router_loss = _ce_loss_subset(
+        router_logits,
+        targets,
+        vocab_size,
+        batch_indices=batch_indices,
+        position_indices=position_indices,
+    )
+    del vocab_size
+    values = []
+    for column in range(residual.num_columns):
+        ablated_hidden = _ablate_column_hidden(
+            hidden=hidden,
+            residual=residual,
+            router_support=router_support,
+            column=column,
+        )
+        ablated_logits = base.decode(ablated_hidden)
+        values.append(
+            _ce_loss_subset(
+                ablated_logits,
+                targets,
+                int(ablated_logits.shape[-1]),
+                batch_indices=batch_indices,
+                position_indices=position_indices,
+            )
+            - router_loss
+        )
+    return values
+
+
+def _ce_loss_subset(
+    logits: Any,
+    targets: Any,
+    vocab_size: int,
+    *,
+    batch_indices: list[int] | None = None,
+    position_indices: list[int] | None = None,
+) -> float:
+    import torch
+    import torch.nn.functional as F
+
+    losses = F.cross_entropy(
+        logits[:, :-1, :].reshape(-1, vocab_size),
+        targets[:, :-1].reshape(-1),
+        reduction="none",
+    ).reshape(logits.shape[0], logits.shape[1] - 1)
+    if batch_indices is not None:
+        batch = torch.tensor(batch_indices, dtype=torch.long, device=logits.device)
+        losses = losses.index_select(0, batch)
+    if position_indices is not None:
+        positions = [
+            index
+            for index in position_indices
+            if 0 <= int(index) < int(logits.shape[1]) - 1
+        ]
+        if not positions:
+            positions = list(range(int(logits.shape[1]) - 1))
+        position = torch.tensor(positions, dtype=torch.long, device=logits.device)
+        losses = losses.index_select(1, position)
+    return float(losses.mean().detach().item())
+
+
 def _ablate_column_hidden(
     *,
     hidden: Any,
@@ -557,6 +754,34 @@ def _max_abs(values: list[float]) -> float | None:
     return None if not values else max(abs(float(value)) for value in values)
 
 
+def _pearson(left: list[float], right: list[float]) -> float | None:
+    if len(left) != len(right) or not left:
+        return None
+    left_mean = sum(left) / len(left)
+    right_mean = sum(right) / len(right)
+    left_centered = [value - left_mean for value in left]
+    right_centered = [value - right_mean for value in right]
+    numerator = sum(
+        left_value * right_value
+        for left_value, right_value in zip(left_centered, right_centered)
+    )
+    left_norm = math.sqrt(sum(value * value for value in left_centered))
+    right_norm = math.sqrt(sum(value * value for value in right_centered))
+    denominator = left_norm * right_norm
+    if denominator <= 1e-12:
+        return None
+    return numerator / denominator
+
+
+def _mean_abs_difference(left: list[float], right: list[float]) -> float | None:
+    if len(left) != len(right) or not left:
+        return None
+    return sum(
+        abs(float(left_value) - float(right_value))
+        for left_value, right_value in zip(left, right)
+    ) / len(left)
+
+
 _COLUMN_FIELDNAMES = [
     "variant",
     "load_balance_weight",
@@ -636,12 +861,18 @@ def main(argv: list[str] | None = None) -> int:
         default=list(DEFAULT_LOAD_BALANCE_WEIGHTS),
         help="Comma-separated router load-balance weights.",
     )
+    parser.add_argument(
+        "--include-rank-matched-topk1",
+        action="store_true",
+        help="Also train a contextual top-k-1 fingerprint variant with num_columns * top_k columns.",
+    )
     parser.add_argument("--max-pair-rows", type=int, default=DEFAULT_MAX_PAIR_ROWS)
     args = parser.parse_args(argv)
     summary = run_causal_column_fingerprint(
         args.config,
         args.out,
         load_balance_weights=args.load_balance_weights,
+        include_rank_matched_topk1=args.include_rank_matched_topk1,
         max_pair_rows=args.max_pair_rows,
     )
     print(

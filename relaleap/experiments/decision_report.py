@@ -13655,6 +13655,40 @@ def write_causal_column_fingerprint_audit_report(
         and not topk1_ce_better
     )
     status = "fail" if failures else "pass"
+    if status == "pass":
+        if has_stability_evidence and has_rank_matched_fingerprints:
+            rationale = (
+                "The promoted tokenized contextual top-k-2 audit has nontrivial "
+                "column ablation fingerprints, held-out split-stability evidence, "
+                "and rank-matched top-k-1 fingerprints. It is also bracketed by "
+                "the requested controls: random fixed top-k-2 is much worse, and "
+                "the norm-matched dense active-rank control is worse than learned "
+                "sparse top-k-2. The evidence still stays conservative because "
+                "the rank-matched top-k-1 contextual control has better CE; if "
+                "top-k-1 fingerprints are equal or cleaner, top-k-2 should be "
+                "treated as a support-width convenience rather than a causal "
+                "cooperation result."
+            )
+            next_step = (
+                "run a small local retention/churn microtest comparing promoted contextual top-k-2, rank-matched contextual top-k-1, and norm-matched dense controls before Colab replication"
+            )
+        else:
+            rationale = (
+                "The promoted tokenized contextual top-k-2 audit has nontrivial "
+                "column ablation fingerprints and is bracketed by the requested "
+                "controls: random fixed top-k-2 is much worse, and the norm-matched "
+                "dense active-rank control is worse than learned sparse top-k-2. "
+                "The evidence is still not enough to claim reusable cooperative "
+                "columns because the rank-matched top-k-1 contextual control has "
+                "better CE and this fingerprint artifact does not yet include "
+                "held-out fingerprint stability or top-k-1 fingerprint comparison."
+            )
+            next_step = (
+                "extend the causal column fingerprint audit to compute held-out batch/position fingerprint stability and rank-matched top-k-1 contextual fingerprints before any Colab replication or causal-column claim"
+            )
+    else:
+        rationale = "The causal fingerprint or deconfounding artifacts are missing, incomplete, or inconsistent."
+        next_step = "repair or regenerate the token-larger causal fingerprint and deconfounding-control artifacts"
     report = {
         "status": status,
         "decision": DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT
@@ -13677,23 +13711,8 @@ def write_causal_column_fingerprint_audit_report(
             },
             "failures": failures,
         },
-        "rationale": (
-            "The promoted tokenized contextual top-k-2 audit has nontrivial "
-            "column ablation fingerprints and is bracketed by the requested "
-            "controls: random fixed top-k-2 is much worse, and the norm-matched "
-            "dense active-rank control is worse than learned sparse top-k-2. "
-            "The evidence is still not enough to claim reusable cooperative "
-            "columns because the rank-matched top-k-1 contextual control has "
-            "better CE and this fingerprint artifact does not yet include "
-            "held-out fingerprint stability or top-k-1 fingerprint comparison."
-            if status == "pass"
-            else "The causal fingerprint or deconfounding artifacts are missing, incomplete, or inconsistent."
-        ),
-        "next_step": (
-            "extend the causal column fingerprint audit to compute held-out batch/position fingerprint stability and rank-matched top-k-1 contextual fingerprints before any Colab replication or causal-column claim"
-            if status == "pass"
-            else "repair or regenerate the token-larger causal fingerprint and deconfounding-control artifacts"
-        ),
+        "rationale": rationale,
+        "next_step": next_step,
     }
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "decision_report.json").write_text(
@@ -13742,6 +13761,11 @@ def _causal_column_fingerprint_entry(
     summary = _read_json_object(summary_path)
     audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
     variants = audit.get("variants") if isinstance(audit.get("variants"), list) else []
+    heldout_stability = (
+        audit.get("heldout_stability")
+        if isinstance(audit.get("heldout_stability"), list)
+        else []
+    )
     baseline = next(
         (
             row
@@ -13762,7 +13786,8 @@ def _causal_column_fingerprint_entry(
         "column_fingerprint_count": audit.get("column_fingerprint_count"),
         "pair_intervention_count": audit.get("pair_intervention_count"),
         "baseline_variant": baseline,
-        "heldout_stability_present": bool(audit.get("heldout_stability")),
+        "heldout_stability": heldout_stability,
+        "heldout_stability_present": bool(heldout_stability),
         "rank_matched_topk1_fingerprint_present": any(
             isinstance(row, dict)
             and "topk1" in str(row.get("variant", ""))
@@ -13898,11 +13923,29 @@ def _write_causal_column_fingerprint_audit_markdown(
         f"- Column fingerprint rows: `{fingerprint.get('column_fingerprint_count')}`",
         f"- Pair intervention rows: `{fingerprint.get('pair_intervention_count')}`",
         "",
+        "## Split Stability",
+        "",
+        "| Variant | Position corr | Position mean abs diff | Batch corr | Batch mean abs diff |",
+        "| --- | ---: | ---: | ---: | ---: |",
+    ]
+    for row in fingerprint.get("heldout_stability") or []:
+        lines.append(
+            "| "
+            f"`{row.get('variant')}` | "
+            f"{_format_metric(row.get('position_ablate_delta_correlation'))} | "
+            f"{_format_metric(row.get('position_mean_abs_ablate_delta_difference'))} | "
+            f"{_format_metric(row.get('batch_ablate_delta_correlation'))} | "
+            f"{_format_metric(row.get('batch_mean_abs_ablate_delta_difference'))} |"
+        )
+    lines.extend(
+        [
+            "",
         "## Deconfounding Controls",
         "",
         "| Variant | CE | Residual norm | Used columns | Unique supports | Oracle regret |",
         "| --- | ---: | ---: | ---: | ---: | ---: |",
-    ]
+        ]
+    )
     for name in (
         "learned_topk2_contextual",
         "rank_matched_topk1_contextual",
