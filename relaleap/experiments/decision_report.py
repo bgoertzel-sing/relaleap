@@ -534,6 +534,15 @@ DEFAULT_DEAD_COLUMN_LOAD_BALANCE_CAUSAL_DIRS = (
 DEFAULT_DEAD_COLUMN_LOAD_BALANCE_OUT_DIR = Path(
     "results/reports/dead_column_load_balance_probe"
 )
+DEFAULT_CAUSAL_COLUMN_FINGERPRINT_AUDIT_DIR = Path(
+    "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_low_weight_bracket"
+)
+DEFAULT_CAUSAL_COLUMN_FINGERPRINT_DECONFOUNDING_DIR = Path(
+    "results/audits/token_larger_support_deconfounding_controls"
+)
+DEFAULT_CAUSAL_COLUMN_FINGERPRINT_OUT_DIR = Path(
+    "results/reports/token_larger_causal_column_fingerprint_audit"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -643,6 +652,9 @@ CONFIRM_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT = (
     "confirm_post_promotion_support_wide_promoted_default"
 )
 KEEP_LOAD_BALANCE_PROBE_OPT_IN = "keep_router_load_balance_probe_opt_in"
+DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT = (
+    "diagnose_causal_column_fingerprint_audit"
+)
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
@@ -13575,6 +13587,361 @@ def _write_post_promotion_support_wide_promoted_default_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_causal_column_fingerprint_audit_report(
+    audit_dir: Path = DEFAULT_CAUSAL_COLUMN_FINGERPRINT_AUDIT_DIR,
+    out_dir: Path = DEFAULT_CAUSAL_COLUMN_FINGERPRINT_OUT_DIR,
+    *,
+    deconfounding_dir: Path = DEFAULT_CAUSAL_COLUMN_FINGERPRINT_DECONFOUNDING_DIR,
+) -> dict[str, Any]:
+    """Summarize token-larger causal fingerprints against deconfounding controls."""
+
+    failures: list[dict[str, Any]] = []
+    fingerprint = _causal_column_fingerprint_entry(audit_dir, failures)
+    deconfounding = _causal_column_deconfounding_entry(deconfounding_dir, failures)
+    baseline = fingerprint.get("baseline_variant") or {}
+    controls = deconfounding.get("controls") or {}
+    topk1 = controls.get("rank_matched_topk1_contextual") or {}
+    random_topk2 = controls.get("random_fixed_topk2") or {}
+    norm_matched_dense = controls.get("dense_rank_flop_matched_norm_matched") or {}
+
+    required_controls = (
+        "learned_topk2_contextual",
+        "rank_matched_topk1_contextual",
+        "random_fixed_topk2",
+        "dense_rank_flop_matched_norm_matched",
+    )
+    for control in required_controls:
+        if control not in controls:
+            failures.append(
+                {
+                    "field": "deconfounding.controls",
+                    "expected": control,
+                    "actual": sorted(controls),
+                    "path": str(deconfounding_dir / "summary.json"),
+                }
+            )
+
+    topk1_ce_better = (
+        _float_or_none(topk1.get("ce_loss")) is not None
+        and _float_or_none(baseline.get("alpha0_ce_loss")) is not None
+        and _float_or_none(topk1.get("ce_loss"))
+        < _float_or_none(baseline.get("alpha0_ce_loss"))
+    )
+    norm_matched_dense_guardrail_passed = (
+        _float_or_none(norm_matched_dense.get("ce_loss")) is not None
+        and _float_or_none(baseline.get("alpha0_ce_loss")) is not None
+        and _float_or_none(norm_matched_dense.get("ce_loss"))
+        > _float_or_none(baseline.get("alpha0_ce_loss"))
+    )
+    random_control_passed = (
+        _float_or_none(random_topk2.get("ce_loss")) is not None
+        and _float_or_none(baseline.get("alpha0_ce_loss")) is not None
+        and _float_or_none(random_topk2.get("ce_loss"))
+        > _float_or_none(baseline.get("alpha0_ce_loss"))
+    )
+    nontrivial_ablation = (
+        _float_or_none(baseline.get("mean_abs_ablate_loss_delta")) is not None
+        and _float_or_none(baseline.get("mean_abs_ablate_loss_delta")) > 0.01
+    )
+    has_stability_evidence = bool(fingerprint.get("heldout_stability_present"))
+    has_rank_matched_fingerprints = bool(
+        fingerprint.get("rank_matched_topk1_fingerprint_present")
+    )
+    causal_column_claim_supported = (
+        not failures
+        and nontrivial_ablation
+        and has_stability_evidence
+        and has_rank_matched_fingerprints
+        and not topk1_ce_better
+    )
+    status = "fail" if failures else "pass"
+    report = {
+        "status": status,
+        "decision": DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT
+        if status == "pass"
+        else INSUFFICIENT_EVIDENCE,
+        "causal_column_claim_supported": causal_column_claim_supported,
+        "support_utilization_alone_sufficient": False,
+        "evidence": {
+            "audit_dir": str(audit_dir),
+            "deconfounding_dir": str(deconfounding_dir),
+            "fingerprint": fingerprint,
+            "deconfounding": deconfounding,
+            "signals": {
+                "nontrivial_ablation": nontrivial_ablation,
+                "random_fixed_topk2_worse_than_learned": random_control_passed,
+                "norm_matched_dense_worse_than_learned": norm_matched_dense_guardrail_passed,
+                "rank_matched_topk1_ce_better_than_topk2": topk1_ce_better,
+                "heldout_stability_present": has_stability_evidence,
+                "rank_matched_topk1_fingerprint_present": has_rank_matched_fingerprints,
+            },
+            "failures": failures,
+        },
+        "rationale": (
+            "The promoted tokenized contextual top-k-2 audit has nontrivial "
+            "column ablation fingerprints and is bracketed by the requested "
+            "controls: random fixed top-k-2 is much worse, and the norm-matched "
+            "dense active-rank control is worse than learned sparse top-k-2. "
+            "The evidence is still not enough to claim reusable cooperative "
+            "columns because the rank-matched top-k-1 contextual control has "
+            "better CE and this fingerprint artifact does not yet include "
+            "held-out fingerprint stability or top-k-1 fingerprint comparison."
+            if status == "pass"
+            else "The causal fingerprint or deconfounding artifacts are missing, incomplete, or inconsistent."
+        ),
+        "next_step": (
+            "extend the causal column fingerprint audit to compute held-out batch/position fingerprint stability and rank-matched top-k-1 contextual fingerprints before any Colab replication or causal-column claim"
+            if status == "pass"
+            else "repair or regenerate the token-larger causal fingerprint and deconfounding-control artifacts"
+        ),
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_causal_column_fingerprint_audit_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
+def _causal_column_fingerprint_entry(
+    audit_dir: Path,
+    failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    summary_path = audit_dir / "summary.json"
+    column_path = audit_dir / "column_fingerprints.csv"
+    pair_path = audit_dir / "pair_interventions.csv"
+    notes_path = audit_dir / "notes.md"
+    if not summary_path.is_file():
+        failures.append(
+            {
+                "field": "fingerprint.summary_json",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(summary_path),
+            }
+        )
+        return {"status": None}
+    for artifact_path, field in (
+        (column_path, "fingerprint.column_fingerprints_csv"),
+        (pair_path, "fingerprint.pair_interventions_csv"),
+        (notes_path, "fingerprint.notes_md"),
+    ):
+        if not artifact_path.is_file():
+            failures.append(
+                {
+                    "field": field,
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(artifact_path),
+                }
+            )
+    summary = _read_json_object(summary_path)
+    audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
+    variants = audit.get("variants") if isinstance(audit.get("variants"), list) else []
+    baseline = next(
+        (
+            row
+            for row in variants
+            if isinstance(row, dict) and row.get("variant") == "baseline"
+        ),
+        {},
+    )
+    entry = {
+        "summary_path": str(summary_path),
+        "status": summary.get("status"),
+        "experiment_id": summary.get("experiment_id"),
+        "config_path": summary.get("config_path"),
+        "dataset": audit.get("dataset"),
+        "num_columns": audit.get("num_columns"),
+        "top_k": audit.get("top_k"),
+        "support_router": audit.get("support_router"),
+        "column_fingerprint_count": audit.get("column_fingerprint_count"),
+        "pair_intervention_count": audit.get("pair_intervention_count"),
+        "baseline_variant": baseline,
+        "heldout_stability_present": bool(audit.get("heldout_stability")),
+        "rank_matched_topk1_fingerprint_present": any(
+            isinstance(row, dict)
+            and "topk1" in str(row.get("variant", ""))
+            for row in variants
+        ),
+    }
+    expected_values = {
+        "status": "ok",
+        "top_k": 2,
+        "support_router": "contextual_mlp",
+    }
+    for field, expected in expected_values.items():
+        if entry.get(field) != expected:
+            failures.append(
+                {
+                    "field": f"fingerprint.{field}",
+                    "expected": expected,
+                    "actual": entry.get(field),
+                    "path": str(summary_path),
+                }
+            )
+    if not baseline:
+        failures.append(
+            {
+                "field": "fingerprint.variants.baseline",
+                "expected": "baseline variant",
+                "actual": [row.get("variant") for row in variants if isinstance(row, dict)],
+                "path": str(summary_path),
+            }
+        )
+    return entry
+
+
+def _causal_column_deconfounding_entry(
+    deconfounding_dir: Path,
+    failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    summary_path = deconfounding_dir / "summary.json"
+    metrics_path = deconfounding_dir / "variant_metrics.csv"
+    notes_path = deconfounding_dir / "notes.md"
+    if not summary_path.is_file():
+        failures.append(
+            {
+                "field": "deconfounding.summary_json",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(summary_path),
+            }
+        )
+        return {"status": None, "controls": {}}
+    for artifact_path, field in (
+        (metrics_path, "deconfounding.variant_metrics_csv"),
+        (notes_path, "deconfounding.notes_md"),
+    ):
+        if not artifact_path.is_file():
+            failures.append(
+                {
+                    "field": field,
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(artifact_path),
+                }
+            )
+    summary = _read_json_object(summary_path)
+    audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
+    variants = audit.get("variants") if isinstance(audit.get("variants"), list) else []
+    controls = {
+        str(row.get("variant")): row
+        for row in variants
+        if isinstance(row, dict) and row.get("variant")
+    }
+    entry = {
+        "summary_path": str(summary_path),
+        "status": summary.get("status"),
+        "experiment_id": summary.get("experiment_id"),
+        "config_path": summary.get("config_path"),
+        "dataset": audit.get("dataset"),
+        "variant_count": audit.get("variant_count"),
+        "controls": controls,
+    }
+    if entry["status"] != "ok":
+        failures.append(
+            {
+                "field": "deconfounding.status",
+                "expected": "ok",
+                "actual": entry["status"],
+                "path": str(summary_path),
+            }
+        )
+    return entry
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
+def _write_causal_column_fingerprint_audit_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    fingerprint = evidence["fingerprint"]
+    baseline = fingerprint.get("baseline_variant") or {}
+    controls = evidence["deconfounding"].get("controls") or {}
+    lines = [
+        "# Causal Column Fingerprint Audit Decision",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        "- Causal-column claim supported: "
+        f"`{report['causal_column_claim_supported']}`",
+        "- Support utilization alone sufficient: "
+        f"`{report['support_utilization_alone_sufficient']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Fingerprint Evidence",
+        "",
+        f"- Audit: `{evidence['audit_dir']}`",
+        f"- Baseline alpha-0 CE: `{_format_metric(baseline.get('alpha0_ce_loss'))}`",
+        f"- Baseline used columns: `{baseline.get('used_columns')}`",
+        f"- Baseline unique support sets: `{baseline.get('unique_support_sets')}`",
+        "- Mean abs ablate loss delta: "
+        f"`{_format_metric(baseline.get('mean_abs_ablate_loss_delta'))}`",
+        "- Max abs ablate loss delta: "
+        f"`{_format_metric(baseline.get('max_abs_ablate_loss_delta'))}`",
+        "- Mean abs force loss delta: "
+        f"`{_format_metric(baseline.get('mean_abs_force_loss_delta'))}`",
+        f"- Column fingerprint rows: `{fingerprint.get('column_fingerprint_count')}`",
+        f"- Pair intervention rows: `{fingerprint.get('pair_intervention_count')}`",
+        "",
+        "## Deconfounding Controls",
+        "",
+        "| Variant | CE | Residual norm | Used columns | Unique supports | Oracle regret |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for name in (
+        "learned_topk2_contextual",
+        "rank_matched_topk1_contextual",
+        "random_fixed_topk2",
+        "dense_rank_flop_matched_norm_matched",
+        "dense_stored_parameter_matched_residual",
+    ):
+        row = controls.get(name) or {}
+        lines.append(
+            "| "
+            f"`{name}` | "
+            f"{_format_metric(row.get('ce_loss'))} | "
+            f"{_format_metric(row.get('residual_norm_mean'))} | "
+            f"{row.get('used_columns', '')} | "
+            f"{row.get('unique_support_sets', '')} | "
+            f"{_format_metric(row.get('oracle_support_regret'))} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Signals",
+            "",
+        ]
+    )
+    for key, value in evidence["signals"].items():
+        lines.append(f"- {key}: `{value}`")
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                "- "
+                f"`{failure.get('field')}` expected "
+                f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                f"at `{failure.get('path', '')}`"
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def write_dead_column_load_balance_probe_report(
     probe_dirs: tuple[Path, ...] = DEFAULT_DEAD_COLUMN_LOAD_BALANCE_PROBE_DIRS,
     out_dir: Path = DEFAULT_DEAD_COLUMN_LOAD_BALANCE_OUT_DIR,
@@ -14053,7 +14420,7 @@ def _write_dead_column_load_balance_probe_markdown(
 
 
 def _format_metric(value: Any) -> str:
-    if value is None:
+    if value in (None, ""):
         return ""
     return f"{float(value):.8f}"
 
@@ -14103,6 +14470,7 @@ def main() -> None:
             "contextual-support-router-promotion-gate-satisfaction",
             "post-promotion-support-wide-promoted-default",
             "dead-column-load-balance-probe",
+            "causal-column-fingerprint-audit",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -14124,6 +14492,11 @@ def main() -> None:
         "--artifact-check",
         type=Path,
         help="Optional existing artifact check JSON to use as evidence.",
+    )
+    parser.add_argument(
+        "--deconfounding-dir",
+        type=Path,
+        help="Completed support-deconfounding audit directory for causal-column reports.",
     )
     parser.add_argument(
         "--decision-report",
@@ -14529,6 +14902,13 @@ def main() -> None:
             if args.decision_report
             else DEFAULT_DEAD_COLUMN_LOAD_BALANCE_PROBE_DIRS,
             args.out or DEFAULT_DEAD_COLUMN_LOAD_BALANCE_OUT_DIR,
+        )
+    elif args.report == "causal-column-fingerprint-audit":
+        report = write_causal_column_fingerprint_audit_report(
+            args.comparison_dir or DEFAULT_CAUSAL_COLUMN_FINGERPRINT_AUDIT_DIR,
+            args.out or DEFAULT_CAUSAL_COLUMN_FINGERPRINT_OUT_DIR,
+            deconfounding_dir=args.deconfounding_dir
+            or DEFAULT_CAUSAL_COLUMN_FINGERPRINT_DECONFOUNDING_DIR,
         )
     else:
         report = write_pinned_support_decision_report(

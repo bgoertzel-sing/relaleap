@@ -43,6 +43,7 @@ from relaleap.experiments.decision_report import (
     SATISFY_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
     CONFIRM_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT,
     KEEP_LOAD_BALANCE_PROBE_OPT_IN,
+    DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -78,6 +79,7 @@ from relaleap.experiments.decision_report import (
     write_contextual_support_router_promotion_gate_satisfaction_report,
     write_post_promotion_support_wide_promoted_default_report,
     write_dead_column_load_balance_probe_report,
+    write_causal_column_fingerprint_audit_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -90,6 +92,65 @@ from relaleap.experiments.decision_report import (
     write_temporal_clipped_hep_promotion_gate_report,
     write_temporal_clipped_hep_promotion_gate_satisfaction_report,
 )
+
+
+class CausalColumnFingerprintAuditReportTest(unittest.TestCase):
+    def test_control_bracketed_fingerprint_report_stays_conservative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            audit_dir = tmp_path / "fingerprint"
+            deconfounding_dir = tmp_path / "deconfounding"
+            _write_causal_fingerprint_audit(audit_dir)
+            _write_causal_deconfounding_audit(deconfounding_dir)
+
+            report = write_causal_column_fingerprint_audit_report(
+                audit_dir,
+                tmp_path / "report",
+                deconfounding_dir=deconfounding_dir,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT,
+            )
+            self.assertFalse(report["causal_column_claim_supported"])
+            self.assertFalse(report["support_utilization_alone_sufficient"])
+            signals = report["evidence"]["signals"]
+            self.assertTrue(signals["nontrivial_ablation"])
+            self.assertTrue(signals["random_fixed_topk2_worse_than_learned"])
+            self.assertTrue(signals["norm_matched_dense_worse_than_learned"])
+            self.assertTrue(signals["rank_matched_topk1_ce_better_than_topk2"])
+            self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
+            self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
+
+    def test_missing_deconfounding_control_fails_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            audit_dir = tmp_path / "fingerprint"
+            deconfounding_dir = tmp_path / "deconfounding"
+            _write_causal_fingerprint_audit(audit_dir)
+            _write_causal_deconfounding_audit(
+                deconfounding_dir,
+                include_norm_matched_dense=False,
+            )
+
+            report = write_causal_column_fingerprint_audit_report(
+                audit_dir,
+                tmp_path / "report",
+                deconfounding_dir=deconfounding_dir,
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIn(
+                "dense_rank_flop_matched_norm_matched",
+                [
+                    failure["expected"]
+                    for failure in report["evidence"]["failures"]
+                    if failure["field"] == "deconfounding.controls"
+                ],
+            )
 
 
 class PinnedSupportDecisionReportTest(unittest.TestCase):
@@ -5662,6 +5723,111 @@ def _support_width_deconfounding_run_entry(
             },
         ],
     }
+
+
+def _write_causal_fingerprint_audit(audit_dir: Path) -> None:
+    audit_dir.mkdir(parents=True)
+    summary = {
+        "status": "ok",
+        "experiment_id": "token_larger_causal_fingerprint",
+        "config_path": "configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml",
+        "audit": {
+            "dataset": "tiny_shakespeare_word",
+            "num_columns": 24,
+            "top_k": 2,
+            "support_router": "contextual_mlp",
+            "column_fingerprint_count": 48,
+            "pair_intervention_count": 32,
+            "variants": [
+                {
+                    "variant": "baseline",
+                    "alpha0_ce_loss": 2.91,
+                    "used_columns": 19,
+                    "unique_support_sets": 41,
+                    "mean_abs_ablate_loss_delta": 0.05,
+                    "max_abs_ablate_loss_delta": 0.19,
+                    "mean_abs_force_loss_delta": 1.32,
+                }
+            ],
+        },
+    }
+    (audit_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "column_fingerprints.csv").write_text(
+        "variant,column,ablate_loss_delta\nbaseline,0,0.05\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "pair_interventions.csv").write_text(
+        "variant,support,fixed_support_loss_delta\nbaseline,\"0,1\",0.1\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
+
+
+def _write_causal_deconfounding_audit(
+    audit_dir: Path,
+    *,
+    include_norm_matched_dense: bool = True,
+) -> None:
+    audit_dir.mkdir(parents=True)
+    variants = [
+        {
+            "variant": "learned_topk2_contextual",
+            "ce_loss": 2.91,
+            "residual_norm_mean": 4.4,
+            "used_columns": 19,
+            "unique_support_sets": 41,
+            "oracle_support_regret": 0.001,
+        },
+        {
+            "variant": "rank_matched_topk1_contextual",
+            "ce_loss": 2.84,
+            "residual_norm_mean": 4.7,
+            "used_columns": 33,
+            "unique_support_sets": 33,
+            "oracle_support_regret": "",
+        },
+        {
+            "variant": "random_fixed_topk2",
+            "ce_loss": 3.81,
+            "residual_norm_mean": 4.1,
+            "used_columns": 2,
+            "unique_support_sets": 1,
+            "oracle_support_regret": 0.017,
+        },
+    ]
+    if include_norm_matched_dense:
+        variants.append(
+            {
+                "variant": "dense_rank_flop_matched_norm_matched",
+                "ce_loss": 3.25,
+                "residual_norm_mean": 4.4,
+                "used_columns": "",
+                "unique_support_sets": "",
+                "oracle_support_regret": "",
+            }
+        )
+    summary = {
+        "status": "ok",
+        "experiment_id": "token_larger_support_deconfounding",
+        "config_path": "configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml",
+        "audit": {
+            "dataset": "tiny_shakespeare_word",
+            "variant_count": len(variants),
+            "variants": variants,
+        },
+    }
+    (audit_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "variant_metrics.csv").write_text(
+        "variant,ce_loss\nlearned_topk2_contextual,2.91\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
 
 
 if __name__ == "__main__":
