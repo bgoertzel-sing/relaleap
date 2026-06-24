@@ -469,6 +469,22 @@ DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_ARTIFACT_CHECKS = (
 DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_OUT_DIR = Path(
     "results/reports/contextual_support_router_decision"
 )
+DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_REPORT = (
+    DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_OUT_DIR / "decision_report.json"
+)
+DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_CONFIGS = (
+    Path("configs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml"),
+    Path(
+        "configs/char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2.yaml"
+    ),
+    Path("configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml"),
+    Path(
+        "configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml"
+    ),
+)
+DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_OUT_DIR = Path(
+    "results/reports/contextual_support_router_promotion_gate"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -6288,6 +6304,234 @@ def write_contextual_support_router_decision_report(
     return report
 
 
+def write_contextual_support_router_promotion_gate_report(
+    contextual_decision_report_path: Path = (
+        DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_REPORT
+    ),
+    config_paths: tuple[Path, ...] = (
+        DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_CONFIGS
+    ),
+    out_dir: Path = DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_OUT_DIR,
+) -> dict[str, Any]:
+    """Define the bounded promotion-or-repeat gate for contextual support routing."""
+
+    failures: list[dict[str, Any]] = []
+    contextual_decision: dict[str, Any] | None = None
+    if not contextual_decision_report_path.is_file():
+        failures.append(
+            {
+                "field": "contextual_decision_report",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(contextual_decision_report_path),
+            }
+        )
+    else:
+        contextual_decision = _read_json_object(contextual_decision_report_path)
+        if contextual_decision.get("status") != "pass":
+            failures.append(
+                {
+                    "field": "contextual_decision_report.status",
+                    "expected": "pass",
+                    "actual": contextual_decision.get("status"),
+                    "path": str(contextual_decision_report_path),
+                }
+            )
+        if (
+            contextual_decision.get("decision")
+            != DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE
+        ):
+            failures.append(
+                {
+                    "field": "contextual_decision_report.decision",
+                    "expected": DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
+                    "actual": contextual_decision.get("decision"),
+                    "path": str(contextual_decision_report_path),
+                }
+            )
+        if (
+            contextual_decision.get("promote_contextual_support_router_default")
+            is not False
+        ):
+            failures.append(
+                {
+                    "field": (
+                        "contextual_decision_report."
+                        "promote_contextual_support_router_default"
+                    ),
+                    "expected": False,
+                    "actual": contextual_decision.get(
+                        "promote_contextual_support_router_default"
+                    ),
+                    "path": str(contextual_decision_report_path),
+                }
+            )
+
+    config_entries = []
+    for path in config_paths:
+        if not path.is_file():
+            failures.append(
+                {
+                    "field": "config",
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(path),
+                }
+            )
+            config_entries.append({"path": str(path), "status": "missing"})
+            continue
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
+            config = {}
+        entry = _contextual_support_router_gate_config_entry(path, config)
+        config_entries.append(entry)
+        failures.extend(entry["failures"])
+    failures.extend(_contextual_support_router_gate_matrix_failures(config_entries))
+
+    status = "fail" if failures else "pass"
+    comparison_dir = (
+        "results/comparisons/"
+        "contextual_support_router_promotion_gate_larger_char_token"
+    )
+    colab_comparison_dir = (
+        "results/comparisons/"
+        "colab_contextual_support_router_promotion_gate_larger_char_token"
+    )
+    compare_command = " ".join(
+        [
+            "python -m relaleap.experiments.compare",
+            *[f"--config {path}" for path in config_paths],
+            f"--out {comparison_dir}",
+        ]
+    )
+    check_command = " ".join(
+        [
+            "python -m relaleap.experiments.check_artifacts",
+            f"--comparison-dir {comparison_dir}",
+            f"--out {comparison_dir}/artifact_check_local.json",
+        ]
+    )
+    colab_compare_command = compare_command.replace(comparison_dir, colab_comparison_dir)
+    colab_check_command = check_command.replace(comparison_dir, colab_comparison_dir)
+    required_evidence = [
+        {
+            "gate": "larger_char_seed2_local_colab",
+            "description": (
+                "Repeat linear top-k-2 versus contextual MLP support routing at "
+                "the larger char support-width scale with seed 2."
+            ),
+            "minimum_scale": {
+                "dataset": "tiny_shakespeare_char",
+                "seq_len": 128,
+                "hidden_dim": 96,
+                "num_columns": 24,
+                "pc_steps": 4,
+                "training_steps": 50,
+                "top_k": 2,
+            },
+            "required_backends": ["local", "colab"],
+        },
+        {
+            "gate": "tokenized_larger_local_colab",
+            "description": (
+                "Run the same linear versus contextual support-router comparison "
+                "on the non-char tokenized larger setting."
+            ),
+            "minimum_scale": {
+                "dataset": "tiny_shakespeare_word",
+                "seq_len": 64,
+                "hidden_dim": 96,
+                "num_columns": 24,
+                "pc_steps": 4,
+                "training_steps": 50,
+                "top_k": 2,
+            },
+            "required_backends": ["local", "colab"],
+        },
+    ]
+    report = {
+        "status": status,
+        "decision": (
+            DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE
+            if status == "pass"
+            else INSUFFICIENT_EVIDENCE
+        ),
+        "selected_next_direction": (
+            "contextual_support_router_promotion_gate_larger_char_token"
+            if status == "pass"
+            else None
+        ),
+        "promote_contextual_support_router_default": False,
+        "default_residual_objective": "supervised_ce",
+        "default_support_stress_mitigation": "temporal_clipped_hep",
+        "default_support_width_top_k": 2,
+        "policy": {
+            "requires_passing_contextual_router_decision": True,
+            "requires_local_and_colab_evidence": True,
+            "requires_larger_char_seed2_repeat": True,
+            "requires_non_char_tokenized_evidence": True,
+            "requires_linear_and_contextual_runs_per_backend": True,
+            "requires_support_stress_preset_disabled": True,
+            "requires_temporal_clipped_hep_path": True,
+            "requires_contextual_alpha0_loss_win": True,
+            "requires_contextual_support_utilization_win": True,
+            "allows_default_promotion_after_gate_satisfaction": True,
+        },
+        "evidence": {
+            "contextual_decision_report_path": str(contextual_decision_report_path),
+            "contextual_decision_report_status": None
+            if contextual_decision is None
+            else contextual_decision.get("status"),
+            "contextual_decision_report_decision": None
+            if contextual_decision is None
+            else contextual_decision.get("decision"),
+            "config_paths": [str(path) for path in config_paths],
+            "config_count": len(config_entries),
+            "configs": config_entries,
+            "required_evidence": required_evidence,
+            "failures": _dedupe_failures(failures),
+        },
+        "commands": {
+            "compare": compare_command,
+            "check_artifacts": check_command,
+            "colab_compare": colab_compare_command,
+            "colab_check_artifacts": colab_check_command,
+        },
+        "rationale": (
+            "The first contextual-router decision showed matching local and "
+            "Colab larger-char wins, but did not justify changing the default "
+            "router from one seed and one data representation. This gate bounds "
+            "the next evidence step to a seed-2 larger-char repeat plus a "
+            "tokenized larger comparison while preserving supervised CE, top-k "
+            "2 support width, support-stress preset disabled, and temporal "
+            "clipped HEP."
+            if status == "pass"
+            else (
+                "The contextual-router promotion-or-repeat gate cannot be "
+                "defined until the previous contextual-router decision passes "
+                "and the planned larger-char/tokenized config matrix preserves "
+                "the promoted harness."
+            )
+        ),
+        "next_step": (
+            "run the local contextual support-router promotion-gate comparison and artifact check recorded in commands.compare and commands.check_artifacts"
+            if status == "pass"
+            else "repair the contextual-router decision report or gate config matrix, then regenerate this report"
+        ),
+    }
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_contextual_support_router_promotion_gate_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
 def write_exhaustive_support_audit_report(
     audit_dir: Path = DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_DIR,
     out_dir: Path = DEFAULT_EXHAUSTIVE_SUPPORT_AUDIT_OUT_DIR,
@@ -7119,6 +7363,136 @@ def _contextual_support_router_comparison_metrics(
             "support_audit_max_column_fraction",
         ),
     }
+
+
+def _contextual_support_router_gate_config_entry(
+    path: Path,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    run = config.get("run") if isinstance(config.get("run"), dict) else {}
+    data = config.get("data") if isinstance(config.get("data"), dict) else {}
+    training = (
+        config.get("training") if isinstance(config.get("training"), dict) else {}
+    )
+    model = config.get("model") if isinstance(config.get("model"), dict) else {}
+    base = model.get("base") if isinstance(model.get("base"), dict) else {}
+    columns = model.get("columns") if isinstance(model.get("columns"), dict) else {}
+    inference = (
+        config.get("inference") if isinstance(config.get("inference"), dict) else {}
+    )
+    outputs = config.get("outputs") if isinstance(config.get("outputs"), dict) else {}
+    support_router = columns.get("support_router") or "linear"
+    entry = {
+        "path": str(path),
+        "status": "ok",
+        "experiment_id": run.get("experiment_id"),
+        "seed": run.get("seed"),
+        "max_steps": run.get("max_steps"),
+        "dataset": data.get("dataset"),
+        "seq_len": data.get("seq_len"),
+        "residual_objective": training.get("residual_objective"),
+        "layers": base.get("layers"),
+        "hidden_dim": base.get("hidden_dim"),
+        "num_columns": columns.get("num_columns"),
+        "atoms_per_column": columns.get("atoms_per_column"),
+        "top_k": columns.get("top_k"),
+        "support_stress": columns.get("support_stress"),
+        "support_stress_preset": columns.get("support_stress_preset"),
+        "support_router": support_router,
+        "contextual_router_hidden_dim": columns.get("contextual_router_hidden_dim"),
+        "pc_steps": inference.get("pc_steps"),
+        "hep_update_clip_norm": inference.get("hep_update_clip_norm"),
+        "hep_settling_objective": inference.get("hep_settling_objective"),
+        "require_summary_json": outputs.get("require_summary_json"),
+        "require_metrics_csv": outputs.get("require_metrics_csv"),
+        "require_notes_md": outputs.get("require_notes_md"),
+        "failures": [],
+    }
+    expected = {
+        "residual_objective": "supervised_ce",
+        "hidden_dim": 96,
+        "num_columns": 24,
+        "atoms_per_column": 4,
+        "top_k": 2,
+        "support_stress": True,
+        "support_stress_preset": False,
+        "pc_steps": 4,
+        "hep_update_clip_norm": 0.01,
+        "hep_settling_objective": "temporal_consistency_gradient",
+        "require_summary_json": True,
+        "require_metrics_csv": True,
+        "require_notes_md": True,
+    }
+    failures = entry["failures"]
+    for field, expected_value in expected.items():
+        if entry.get(field) != expected_value:
+            failures.append(
+                {
+                    "field": f"config.{path.name}.{field}",
+                    "expected": expected_value,
+                    "actual": entry.get(field),
+                    "path": str(path),
+                }
+            )
+    if support_router == "contextual_mlp":
+        if entry.get("contextual_router_hidden_dim") != 128:
+            failures.append(
+                {
+                    "field": f"config.{path.name}.contextual_router_hidden_dim",
+                    "expected": 128,
+                    "actual": entry.get("contextual_router_hidden_dim"),
+                    "path": str(path),
+                }
+            )
+    elif support_router != "linear":
+        failures.append(
+            {
+                "field": f"config.{path.name}.support_router",
+                "expected": "linear or contextual_mlp",
+                "actual": support_router,
+                "path": str(path),
+            }
+        )
+    return entry
+
+
+def _contextual_support_router_gate_matrix_failures(
+    config_entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    complete_entries = [
+        entry for entry in config_entries if entry.get("status") == "ok"
+    ]
+    expected_cells = {
+        ("tiny_shakespeare_char", 2, "linear"),
+        ("tiny_shakespeare_char", 2, "contextual_mlp"),
+        ("tiny_shakespeare_word", 1, "linear"),
+        ("tiny_shakespeare_word", 1, "contextual_mlp"),
+    }
+    actual_cells = {
+        (entry.get("dataset"), entry.get("seed"), entry.get("support_router"))
+        for entry in complete_entries
+    }
+    for cell in sorted(expected_cells):
+        if cell not in actual_cells:
+            failures.append(
+                {
+                    "field": "contextual_router_gate.matrix_cell",
+                    "expected": cell,
+                    "actual": sorted(actual_cells),
+                    "path": "",
+                }
+            )
+    if len(complete_entries) != 4:
+        failures.append(
+            {
+                "field": "contextual_router_gate.config_count",
+                "expected": 4,
+                "actual": len(complete_entries),
+                "path": "",
+            }
+        )
+    return failures
 
 
 def _focal_residual_objective_entry(
@@ -11840,6 +12214,97 @@ def _write_contextual_support_router_decision_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_contextual_support_router_promotion_gate_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    lines = [
+        "# Contextual Support Router Promotion Gate",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        f"- Selected next direction: `{report['selected_next_direction']}`",
+        (
+            "- Promote contextual support router default: "
+            f"`{report['promote_contextual_support_router_default']}`"
+        ),
+        f"- Default residual objective: `{report['default_residual_objective']}`",
+        f"- Default support-stress mitigation: `{report['default_support_stress_mitigation']}`",
+        f"- Default support width top-k: `{report['default_support_width_top_k']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Required Evidence",
+        "",
+    ]
+    for item in evidence["required_evidence"]:
+        lines.extend(
+            [
+                f"- `{item['gate']}`: {item['description']}",
+                f"  Required backends: `{', '.join(item['required_backends'])}`",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Config Matrix",
+            "",
+            (
+                "| Config | Dataset | Seed | Router | Seq len | Hidden | Columns "
+                "| Top-k | Steps |"
+            ),
+            "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for entry in evidence["configs"]:
+        lines.append(
+            (
+                f"| `{entry.get('path')}` "
+                f"| `{entry.get('dataset') or ''}` "
+                f"| {entry.get('seed') or ''} "
+                f"| `{entry.get('support_router') or ''}` "
+                f"| {entry.get('seq_len') or ''} "
+                f"| {entry.get('hidden_dim') or ''} "
+                f"| {entry.get('num_columns') or ''} "
+                f"| {entry.get('top_k') or ''} "
+                f"| {entry.get('max_steps') or ''} |"
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Commands",
+            "",
+            "```bash",
+            report["commands"]["compare"],
+            report["commands"]["check_artifacts"],
+            "```",
+            "",
+            "Colab target:",
+            "",
+            "```bash",
+            report["commands"]["colab_compare"],
+            report["commands"]["colab_check_artifacts"],
+            "```",
+        ]
+    )
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                (
+                    f"- `{failure.get('field')}` expected "
+                    f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                    f"at `{failure.get('path', '')}`"
+                )
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _exhaustive_support_audit_rationale(
     *,
     status: str,
@@ -12113,6 +12578,7 @@ def main() -> None:
             "support-width-deconfounding-audit",
             "exhaustive-support-audit",
             "contextual-support-router-decision",
+            "contextual-support-router-promotion-gate",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -12495,6 +12961,16 @@ def main() -> None:
             if not args.artifact_check
             else (args.artifact_check,),
             max_logit_delta=args.max_logit_delta,
+        )
+    elif args.report == "contextual-support-router-promotion-gate":
+        report = write_contextual_support_router_promotion_gate_report(
+            args.decision_report[0]
+            if args.decision_report
+            else DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_REPORT,
+            tuple(args.decision_report[1:])
+            if args.decision_report and len(args.decision_report) > 1
+            else DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_CONFIGS,
+            args.out or DEFAULT_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE_OUT_DIR,
         )
     else:
         report = write_pinned_support_decision_report(

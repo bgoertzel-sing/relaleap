@@ -71,6 +71,7 @@ from relaleap.experiments.decision_report import (
     write_support_width_deconfounding_audit_report,
     write_exhaustive_support_audit_report,
     write_contextual_support_router_decision_report,
+    write_contextual_support_router_promotion_gate_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -4451,6 +4452,86 @@ class ContextualSupportRouterDecisionReportTest(unittest.TestCase):
             )
 
 
+class ContextualSupportRouterPromotionGateReportTest(unittest.TestCase):
+    def test_passing_contextual_decision_defines_promotion_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            decision_path = _write_contextual_support_router_decision(
+                tmp_path,
+                status="pass",
+                decision=DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
+                promote_contextual_support_router_default=False,
+            )
+            config_paths = _write_contextual_support_router_gate_configs(tmp_path)
+
+            report = write_contextual_support_router_promotion_gate_report(
+                decision_path,
+                config_paths,
+                tmp_path / "contextual_router_promotion_gate",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
+            )
+            self.assertEqual(
+                report["selected_next_direction"],
+                "contextual_support_router_promotion_gate_larger_char_token",
+            )
+            self.assertFalse(report["promote_contextual_support_router_default"])
+            self.assertEqual(report["evidence"]["failures"], [])
+            self.assertEqual(len(report["evidence"]["required_evidence"]), 2)
+            self.assertIn("colab_compare", report["commands"])
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "contextual_router_promotion_gate"
+                    / "decision_report.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "contextual_router_promotion_gate"
+                    / "decision_report.md"
+                ).is_file()
+            )
+
+    def test_promoting_contextual_decision_blocks_gate_definition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            decision_path = _write_contextual_support_router_decision(
+                tmp_path,
+                status="pass",
+                decision=DEFINE_CONTEXTUAL_SUPPORT_ROUTER_PROMOTION_GATE,
+                promote_contextual_support_router_default=True,
+            )
+            config_paths = _write_contextual_support_router_gate_configs(tmp_path)
+
+            report = write_contextual_support_router_promotion_gate_report(
+                decision_path,
+                config_paths,
+                tmp_path / "contextual_router_promotion_gate",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIsNone(report["selected_next_direction"])
+            self.assertIn(
+                {
+                    "field": (
+                        "contextual_decision_report."
+                        "promote_contextual_support_router_default"
+                    ),
+                    "expected": False,
+                    "actual": True,
+                    "path": str(decision_path),
+                },
+                report["evidence"]["failures"],
+            )
+
+
 class ExhaustiveSupportAuditReportTest(unittest.TestCase):
     def test_valid_audit_selects_router_support_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4749,6 +4830,113 @@ def _write_contextual_support_router_comparison(comparison_dir: Path) -> None:
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _write_contextual_support_router_decision(
+    tmp_path: Path,
+    *,
+    status: str,
+    decision: str,
+    promote_contextual_support_router_default: bool,
+) -> Path:
+    report_path = tmp_path / "contextual_router_decision" / "decision_report.json"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text(
+        json.dumps(
+            {
+                "status": status,
+                "decision": decision,
+                "promote_contextual_support_router_default": (
+                    promote_contextual_support_router_default
+                ),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return report_path
+
+
+def _write_contextual_support_router_gate_configs(tmp_path: Path) -> tuple[Path, ...]:
+    configs = (
+        (
+            "char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2",
+            "tiny_shakespeare_char",
+            128,
+            2,
+            None,
+        ),
+        (
+            "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2",
+            "tiny_shakespeare_char",
+            128,
+            2,
+            "contextual_mlp",
+        ),
+        (
+            "token_larger_support_wide_hep_temporal_clipped_objective_gate",
+            "tiny_shakespeare_word",
+            64,
+            1,
+            None,
+        ),
+        (
+            "token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate",
+            "tiny_shakespeare_word",
+            64,
+            1,
+            "contextual_mlp",
+        ),
+    )
+    paths = []
+    for experiment_id, dataset, seq_len, seed, support_router in configs:
+        path = tmp_path / f"{experiment_id}.yaml"
+        router_lines = ""
+        if support_router is not None:
+            router_lines = (
+                "    support_router: contextual_mlp\n"
+                "    contextual_router_hidden_dim: 128\n"
+            )
+        path.write_text(
+            (
+                "run:\n"
+                f"  experiment_id: {experiment_id}\n"
+                f"  seed: {seed}\n"
+                "  max_steps: 50\n"
+                "data:\n"
+                f"  dataset: {dataset}\n"
+                f"  seq_len: {seq_len}\n"
+                "training:\n"
+                "  residual_objective: supervised_ce\n"
+                "model:\n"
+                "  base:\n"
+                "    layers: 2\n"
+                "    hidden_dim: 96\n"
+                "  columns:\n"
+                "    num_columns: 24\n"
+                "    atoms_per_column: 4\n"
+                "    top_k: 2\n"
+                "    insertion_sites: 1\n"
+                "    support_stress: true\n"
+                "    support_stress_preset: false\n"
+                f"{router_lines}"
+                "inference:\n"
+                "  pc_steps: 4\n"
+                "  hep_alpha: 0.0\n"
+                "  hep_alpha_sweep: \"0.0,0.25,0.5,1.0\"\n"
+                "  hep_update_clip_norm: 0.01\n"
+                "  hep_settling_objective: temporal_consistency_gradient\n"
+                "outputs:\n"
+                "  require_summary_json: true\n"
+                "  require_metrics_csv: true\n"
+                "  require_notes_md: true\n"
+            ),
+            encoding="utf-8",
+        )
+        paths.append(path)
+    return tuple(paths)
 
 
 def _contextual_support_router_run_entry(
