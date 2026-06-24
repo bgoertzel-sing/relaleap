@@ -157,6 +157,20 @@ This writes `summary.json`, `column_loads.csv`,
 entropy, effective-column count, column-value norms, and pairwise column-value
 similarities.
 
+To probe whether dead columns in the promoted tokenized support-wide setting can
+be recruited by a small differentiable router load-balancing intervention
+without hurting alpha-0 CE, run:
+
+```bash
+python -m relaleap.experiments.dead_column_probe \
+  --config configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml \
+  --out results/audits/token_larger_support_wide_promoted_default_dead_column_probe
+```
+
+This opt-in diagnostic writes `summary.json`, `variant_metrics.csv`, and
+`notes.md` for the baseline and several load-balance weights. It does not change
+the promoted default router policy or any checked Phase 0 baseline.
+
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic
 sees nonzero repicking without changing the checked Phase 0 baseline. After the
