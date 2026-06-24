@@ -217,18 +217,29 @@ def command_setup_snippet(args: argparse.Namespace) -> None:
     public_key = args.public_key.read_text(encoding="utf-8").strip()
     if not public_key.startswith(("ssh-rsa ", "ssh-ed25519 ", "ecdsa-")):
         raise SystemExit(f"{args.public_key} does not look like an SSH public key.")
+    quoted_public_key = shlex.quote(public_key)
     print(
         "\n".join(
             [
+                "set -euo pipefail",
                 "apt-get update",
                 "DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server rsync git",
-                "mkdir -p ~/.ssh",
-                "chmod 700 ~/.ssh",
-                "cat >> ~/.ssh/authorized_keys <<'EOF'",
-                public_key,
+                "mkdir -p /root/.ssh /run/sshd /etc/ssh/sshd_config.d",
+                "chmod 700 /root/.ssh",
+                f"PUBLIC_KEY={quoted_public_key}",
+                "touch /root/.ssh/authorized_keys",
+                'grep -qxF "$PUBLIC_KEY" /root/.ssh/authorized_keys || printf "%s\\n" "$PUBLIC_KEY" >> /root/.ssh/authorized_keys',
+                "chmod 600 /root/.ssh/authorized_keys",
+                "cat > /etc/ssh/sshd_config.d/99-codex-runpod.conf <<'EOF'",
+                "PermitRootLogin prohibit-password",
+                "PubkeyAuthentication yes",
+                "PasswordAuthentication no",
+                "AuthorizedKeysFile .ssh/authorized_keys",
                 "EOF",
-                "chmod 600 ~/.ssh/authorized_keys",
-                "service ssh start || /usr/sbin/sshd",
+                "/usr/sbin/sshd -t",
+                "pkill -x sshd 2>/dev/null || true",
+                "/usr/sbin/sshd -E /tmp/sshd-codex.log",
+                "echo relaleap-runpod-ssh-ready",
             ]
         )
     )

@@ -33,7 +33,13 @@ python tools/runpod_ssh_runner.py setup-snippet
 
 Paste the printed block into the RunPod web terminal for the pod. It installs
 `openssh-server`, `rsync`, and `git`, appends the local public key to
-`authorized_keys`, and starts SSH.
+`authorized_keys`, writes a small root-key SSH config, creates the container
+runtime directory SSH needs, and starts `sshd` directly. A successful setup ends
+with:
+
+```text
+relaleap-runpod-ssh-ready
+```
 
 Then verify from the local machine:
 
@@ -42,6 +48,14 @@ python tools/runpod_ssh_runner.py probe-ssh
 ```
 
 If multiple pods are running, add `--pod-id POD_ID`.
+
+If the setup block fails inside the web terminal, run this in the same terminal
+and paste the output back into Codex:
+
+```bash
+tail -n 100 /tmp/sshd-codex.log 2>/dev/null || true
+/usr/sbin/sshd -t
+```
 
 ## Bootstrap RelaLeap
 

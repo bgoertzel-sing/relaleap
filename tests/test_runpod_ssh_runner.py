@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 
@@ -58,6 +61,27 @@ class RunPodSshRunnerTest(unittest.TestCase):
         self.assertEqual(endpoint.pod_id, "pod123")
         self.assertEqual(endpoint.public_ip, "203.0.113.1")
         self.assertEqual(endpoint.ssh_port, 22188)
+
+    def test_setup_snippet_starts_sshd_directly(self) -> None:
+        runner = _load_runner_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            public_key_path = Path(tmpdir) / "id_rsa.pub"
+            public_key_path.write_text(
+                "ssh-rsa AAAATESTKEY codex@example\n",
+                encoding="utf-8",
+            )
+            args = type("Args", (), {"public_key": public_key_path})()
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                runner.command_setup_snippet(args)
+
+            snippet = output.getvalue()
+            self.assertIn("mkdir -p /root/.ssh /run/sshd", snippet)
+            self.assertIn("PermitRootLogin prohibit-password", snippet)
+            self.assertIn("/usr/sbin/sshd -t", snippet)
+            self.assertIn("/usr/sbin/sshd -E /tmp/sshd-codex.log", snippet)
+            self.assertIn("relaleap-runpod-ssh-ready", snippet)
 
 
 if __name__ == "__main__":
