@@ -139,8 +139,11 @@ the seed-3 larger-char/tokenized support-width promotion-gate evidence under
 `results/comparisons/colab_support_width_larger_char_token_temporal_clipped_objective_gate_seed3`,
 the post-support-width residual-capacity larger-char/tokenized check under
 `results/comparisons/colab_post_support_width_capacity_larger_token_objective_gate`,
-and the larger-char linear-vs-contextual support-router check under
-`results/comparisons/colab_char_larger_support_wide_contextual_router_temporal_clipped_objective_gate`.
+the larger-char linear-vs-contextual support-router check under
+`results/comparisons/colab_char_larger_support_wide_contextual_router_temporal_clipped_objective_gate`,
+and the contextual support-router promotion-gate larger-char/tokenized matrix
+under
+`results/comparisons/colab_contextual_support_router_promotion_gate_larger_char_token`.
 When that bundle is present in the rendered output, the helper extracts it
 under the local repo root so the normal after-the-fact checker can inspect the
 Colab artifact tree locally.
@@ -290,6 +293,22 @@ python -m relaleap.experiments.compare \
 python -m relaleap.experiments.check_artifacts \
   --comparison-dir results/comparisons/colab_char_larger_support_wide_contextual_router_temporal_clipped_objective_gate \
   --out results/comparisons/colab_char_larger_support_wide_contextual_router_temporal_clipped_objective_gate/artifact_check.json
+```
+
+The current contextual support-router promotion-gate bridge target also runs
+the larger-char seed-2 repeat plus tokenized larger linear-vs-contextual
+support-router matrix selected by `AUTOMATION_STATUS.md`:
+
+```bash
+python -m relaleap.experiments.compare \
+  --config configs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --config configs/char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --config configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml \
+  --config configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml \
+  --out results/comparisons/colab_contextual_support_router_promotion_gate_larger_char_token
+python -m relaleap.experiments.check_artifacts \
+  --comparison-dir results/comparisons/colab_contextual_support_router_promotion_gate_larger_char_token \
+  --out results/comparisons/colab_contextual_support_router_promotion_gate_larger_char_token/artifact_check.json
 ```
 
 After extracting the seed-3 Colab artifact bundle locally, inspect the local and

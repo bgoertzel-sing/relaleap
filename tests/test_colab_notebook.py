@@ -127,11 +127,19 @@ class ColabNotebookTest(unittest.TestCase):
             checkout_cell,
         )
         self.assertIn(
+            "configs/char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2.yaml",
+            checkout_cell,
+        )
+        self.assertIn(
             "configs/char_larger_capacity_hep_temporal_clipped_objective_gate.yaml",
             checkout_cell,
         )
         self.assertIn(
             "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            checkout_cell,
+        )
+        self.assertIn(
+            "configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml",
             checkout_cell,
         )
         self.assertIn(
@@ -621,6 +629,51 @@ class ColabNotebookTest(unittest.TestCase):
         )
         self.assertIn("support_router'] == 'contextual_mlp'", evidence_cell)
         self.assertIn("contextual_router_hidden_dim'] == 128", evidence_cell)
+
+    def test_run_cell_executes_contextual_router_promotion_gate_colab_path(self) -> None:
+        notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+        sources = ["".join(cell.get("source", [])) for cell in notebook["cells"]]
+        run_cells = [
+            source
+            for source in sources
+            if "colab_contextual_support_router_promotion_gate_larger_char_token"
+            in source
+        ]
+
+        self.assertEqual(len(run_cells), 2)
+        run_cell, evidence_cell = run_cells
+        self.assertIn(
+            "--config configs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "--config configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml",
+            run_cell,
+        )
+        self.assertIn(
+            "Contextual support-router promotion-gate comparison status:",
+            evidence_cell,
+        )
+        self.assertIn(
+            "Contextual support-router promotion-gate artifact check:",
+            evidence_cell,
+        )
+        self.assertIn(
+            "char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2",
+            evidence_cell,
+        )
+        self.assertIn(
+            "token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate",
+            evidence_cell,
+        )
 
     def test_run_cell_executes_anchored_objective_gate_colab_path(self) -> None:
         notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
