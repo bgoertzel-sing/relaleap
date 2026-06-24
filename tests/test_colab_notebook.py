@@ -628,6 +628,7 @@ class ColabNotebookTest(unittest.TestCase):
             evidence_cell,
         )
         self.assertIn("support_router'] == 'contextual_mlp'", evidence_cell)
+        self.assertNotIn("support_router'] == 'linear'", evidence_cell)
         self.assertIn("contextual_router_hidden_dim'] == 128", evidence_cell)
 
     def test_run_cell_executes_contextual_router_promotion_gate_colab_path(self) -> None:
