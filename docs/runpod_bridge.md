@@ -1,0 +1,87 @@
+# RunPod Bridge
+
+RunPod is the temporary GPU backend for RelaLeap when Colab is unreliable.
+The source of truth remains the GitHub repo plus command-generated artifacts.
+RunPod should only run ordinary repository commands, then send artifact trees
+back for the same local artifact checks used elsewhere.
+
+## Current Access Model
+
+The RunPod API key is stored in macOS Keychain as:
+
+```text
+codex-runpod-api-key
+```
+
+The local helper reads that key without printing it:
+
+```bash
+python tools/runpod_ssh_runner.py status
+```
+
+The existing test pod is visible through the API and exposes Jupyter plus TCP
+port 22, but SSH is not accepting connections yet. Before automation can sync
+files or run experiments, enable SSH once through the RunPod web terminal.
+
+## Enable SSH Once
+
+The helper can print a pasteable setup block using the local SSH public key:
+
+```bash
+python tools/runpod_ssh_runner.py setup-snippet
+```
+
+Paste the printed block into the RunPod web terminal for the pod. It installs
+`openssh-server`, `rsync`, and `git`, appends the local public key to
+`authorized_keys`, and starts SSH.
+
+Then verify from the local machine:
+
+```bash
+python tools/runpod_ssh_runner.py probe-ssh
+```
+
+If multiple pods are running, add `--pod-id POD_ID`.
+
+## Bootstrap RelaLeap
+
+After SSH works, clone or refresh RelaLeap on the pod and run the local test
+suite:
+
+```bash
+python tools/runpod_ssh_runner.py bootstrap
+```
+
+The bootstrap command uses `/workspace/relaleap` and the official GitHub repo.
+It deliberately uses the pod's system Python so the template's preinstalled
+PyTorch/CUDA stack stays intact.
+
+## Run A GPU Probe
+
+Run the default support-width validation probe:
+
+```bash
+python tools/runpod_ssh_runner.py run
+```
+
+Or pass a specific command:
+
+```bash
+python tools/runpod_ssh_runner.py run --command 'python3 -m relaleap.experiments.compare --config configs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml --config configs/char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2.yaml --out results/comparisons/runpod_char_larger_contextual_router_seed2'
+```
+
+## Fetch Artifacts
+
+Fetch the remote `results/` tree into a local ignored directory:
+
+```bash
+python tools/runpod_ssh_runner.py fetch
+```
+
+Then run the same artifact checker locally against the fetched comparison
+directory before treating RunPod output as evidence.
+
+## Cost Hygiene
+
+The helper does not create, stop, or delete pods automatically. Stop the pod in
+the RunPod console when it is no longer needed.
