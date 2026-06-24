@@ -149,6 +149,9 @@ and the post-promotion promoted-default support-wide validation under
 When that bundle is present in the rendered output, the helper extracts it
 under the local repo root so the normal after-the-fact checker can inspect the
 Colab artifact tree locally.
+For the focused post-promotion support-wide target, the notebook emits the
+focused artifact bundle and completion marker immediately after that target's
+artifact check, before legacy evidence assertions and historical bundle output.
 
 If the keyboard shortcut stops working after a Colab UI change, try
 `--run-method both`.

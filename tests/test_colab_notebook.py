@@ -746,6 +746,24 @@ class ColabNotebookTest(unittest.TestCase):
             "token_larger_support_wide_hep_temporal_clipped_objective_gate",
             evidence_cell,
         )
+        artifact_check_index = evidence_cell.index(
+            "Post-promotion support-wide artifact check:"
+        )
+        focused_bundle_index = evidence_cell.index(
+            "RELALEAP_ARTIFACT_BUNDLE_ZIP_BASE64_BEGIN",
+            artifact_check_index,
+        )
+        completion_index = evidence_cell.index(
+            "RelaLeap Colab Phase 0 comparison completed.",
+            focused_bundle_index,
+        )
+        legacy_assertion_index = evidence_cell.index(
+            "char_validation_label_smoothing_hep_temporal_clipped_objective_gate",
+            completion_index,
+        )
+        self.assertLess(artifact_check_index, focused_bundle_index)
+        self.assertLess(focused_bundle_index, completion_index)
+        self.assertLess(completion_index, legacy_assertion_index)
 
     def test_run_cell_executes_anchored_objective_gate_colab_path(self) -> None:
         notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
