@@ -27,6 +27,9 @@ DEFAULT_PROBE_DIRS = (
         "results/audits/token_larger_active_rank_matched_topk1_retention_churn_probe_seed2"
     ),
 )
+DEFAULT_MICROTEST_DIRS = (
+    Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_microtest"),
+)
 DEFAULT_FINGERPRINT_DIR = Path(
     "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1"
 )
@@ -47,6 +50,7 @@ def run_promoted_topk2_finite_update_order_control_audit(
     *,
     functional_churn_dir: Path = DEFAULT_FUNCTIONAL_CHURN_DIR,
     probe_dirs: tuple[Path, ...] = DEFAULT_PROBE_DIRS,
+    microtest_dirs: tuple[Path, ...] = DEFAULT_MICROTEST_DIRS,
     fingerprint_dir: Path = DEFAULT_FINGERPRINT_DIR,
     out_dir: Path = DEFAULT_OUT_DIR,
     low_ce_abs_delta_threshold: float = 0.05,
@@ -58,11 +62,28 @@ def run_promoted_topk2_finite_update_order_control_audit(
 
     functional_summary = _read_json_object(functional_churn_dir / "summary.json")
     packet_rows = [
-        _packet_row(index, path) for index, path in enumerate(probe_dirs, start=1)
+        _packet_row(
+            packet=f"retention_probe_seed{index}",
+            path=path,
+            expected_status="pass",
+            expected_decision=ACTIVE_TOPK1_RETENTION_CHURN_PROBE_ESTABLISHED,
+        )
+        for index, path in enumerate(probe_dirs, start=1)
     ]
+    microtest_packet_rows = [
+        _packet_row(
+            packet=f"retention_microtest_{index}",
+            path=path,
+            expected_status="ok",
+            expected_decision=None,
+        )
+        for index, path in enumerate(microtest_dirs, start=1)
+        if path.is_dir()
+    ]
+    all_packet_rows = [*packet_rows, *microtest_packet_rows]
     variant_rows = [
         variant
-        for packet in packet_rows
+        for packet in all_packet_rows
         for variant in packet.pop("variant_rows", [])
     ]
     token_rows = _read_csv_dicts(fingerprint_dir / "per_token_pair_interventions.csv")
@@ -83,6 +104,11 @@ def run_promoted_topk2_finite_update_order_control_audit(
         *[
             _source_row(f"retention_churn_probe_seed{index}", path / "summary.json")
             for index, path in enumerate(probe_dirs, start=1)
+        ],
+        *[
+            _source_row(f"retention_microtest_{index}", path / "summary.json")
+            for index, path in enumerate(microtest_dirs, start=1)
+            if path.is_dir()
         ],
         _source_row(
             "causal_fingerprint_per_token",
@@ -127,7 +153,7 @@ def run_promoted_topk2_finite_update_order_control_audit(
     failures = _failures(
         functional_summary=functional_summary,
         source_rows=source_rows,
-        packet_rows=packet_rows,
+        packet_rows=all_packet_rows,
         variant_rows=variant_rows,
         token_strata_rows=token_strata_rows,
     )
@@ -183,6 +209,7 @@ def run_promoted_topk2_finite_update_order_control_audit(
             "high_support_churn_threshold": high_support_churn_threshold,
         },
         "packet_rows": packet_rows,
+        "microtest_packet_rows": microtest_packet_rows,
         "variant_rows": variant_rows,
         "token_strata_rows": token_strata_rows,
         "token_correlation_rows": token_correlation_rows,
@@ -194,6 +221,9 @@ def run_promoted_topk2_finite_update_order_control_audit(
             "Fixed pre-update/post-update support replay rows are not present; "
             "previous-support controls are available only from the fingerprint "
             "functional-churn packet.",
+            "Microtest packet rows are included when fetched RunPod artifacts are "
+            "available; they provide random fixed top-k-2 and dense controls but "
+            "not per-token commutator rows.",
         ],
         "failures": failures,
         "rationale": rationale,
@@ -222,31 +252,39 @@ def run_promoted_topk2_finite_update_order_control_audit(
     return summary
 
 
-def _packet_row(index: int, path: Path) -> dict[str, Any]:
+def _packet_row(
+    *,
+    packet: str,
+    path: Path,
+    expected_status: str,
+    expected_decision: str | None,
+) -> dict[str, Any]:
     summary_path = path / "summary.json"
     summary = _read_json_object(summary_path)
     variants = summary.get("audit", {}).get("variants", [])
     variant_rows = [
-        _variant_row(index, path, variant)
+        _variant_row(packet, path, variant)
         for variant in variants
         if isinstance(variant, dict)
     ]
     return {
-        "packet": f"seed{index}",
+        "packet": packet,
         "probe_dir": str(path),
         "summary_path": str(summary_path),
         "summary_present": summary_path.is_file(),
         "status": summary.get("status"),
         "decision": summary.get("decision"),
+        "expected_status": expected_status,
+        "expected_decision": expected_decision,
         "config_path": summary.get("config_path"),
         "variant_count": len(variant_rows),
         "variant_rows": variant_rows,
     }
 
 
-def _variant_row(index: int, path: Path, variant: dict[str, Any]) -> dict[str, Any]:
+def _variant_row(packet: str, path: Path, variant: dict[str, Any]) -> dict[str, Any]:
     row = {
-        "packet": f"seed{index}",
+        "packet": packet,
         "probe_dir": str(path),
         "variant": variant.get("variant"),
         "kind": variant.get("kind"),
@@ -369,9 +407,11 @@ def _metrics(
 ) -> dict[str, Any]:
     topk2 = _rows_for_variant(variant_rows, "promoted_contextual_topk2")
     topk1 = _rows_for_variant(variant_rows, "rank_matched_contextual_topk1")
+    random_topk2 = _rows_for_variant(variant_rows, "random_fixed_topk2")
     dense = _rows_for_variant(variant_rows, "norm_matched_dense_active_rank")
     topk2_logit = _mean_field(topk2, "commutator_anchor_logit_mse")
     topk1_logit = _mean_field(topk1, "commutator_anchor_logit_mse")
+    random_topk2_logit = _mean_field(random_topk2, "commutator_anchor_logit_mse")
     dense_logit = _mean_field(dense, "commutator_anchor_logit_mse")
     all_stratum = _first(row for row in token_strata_rows if row["stratum"] == "all")
     return {
@@ -386,11 +426,15 @@ def _metrics(
         "topk1_mean_commutator_anchor_ce_abs_delta": _mean_field(
             topk1, "commutator_anchor_ce_abs_delta"
         ),
+        "random_fixed_topk2_mean_commutator_anchor_ce_abs_delta": _mean_field(
+            random_topk2, "commutator_anchor_ce_abs_delta"
+        ),
         "dense_mean_commutator_anchor_ce_abs_delta": _mean_field(
             dense, "commutator_anchor_ce_abs_delta"
         ),
         "topk2_mean_commutator_anchor_logit_mse": topk2_logit,
         "topk1_mean_commutator_anchor_logit_mse": topk1_logit,
+        "random_fixed_topk2_mean_commutator_anchor_logit_mse": random_topk2_logit,
         "dense_mean_commutator_anchor_logit_mse": dense_logit,
         "topk2_minus_topk1_mean_commutator_anchor_logit_mse": _delta(
             topk2_logit, topk1_logit
@@ -398,17 +442,26 @@ def _metrics(
         "topk2_minus_dense_mean_commutator_anchor_logit_mse": _delta(
             topk2_logit, dense_logit
         ),
+        "topk2_minus_random_fixed_topk2_mean_commutator_anchor_logit_mse": _delta(
+            topk2_logit, random_topk2_logit
+        ),
         "topk2_to_topk1_mean_commutator_anchor_logit_mse_ratio": _ratio(
             topk2_logit, topk1_logit
         ),
         "topk2_to_dense_mean_commutator_anchor_logit_mse_ratio": _ratio(
             topk2_logit, dense_logit
         ),
+        "topk2_to_random_fixed_topk2_mean_commutator_anchor_logit_mse_ratio": _ratio(
+            topk2_logit, random_topk2_logit
+        ),
         "topk2_mean_commutator_anchor_residual_stream_l2": _mean_field(
             topk2, "commutator_anchor_residual_stream_l2"
         ),
         "topk1_mean_commutator_anchor_residual_stream_l2": _mean_field(
             topk1, "commutator_anchor_residual_stream_l2"
+        ),
+        "random_fixed_topk2_mean_commutator_anchor_residual_stream_l2": _mean_field(
+            random_topk2, "commutator_anchor_residual_stream_l2"
         ),
         "dense_mean_commutator_anchor_residual_stream_l2": _mean_field(
             dense, "commutator_anchor_residual_stream_l2"
@@ -418,6 +471,9 @@ def _metrics(
         ),
         "topk1_mean_commutator_anchor_support_churn": _mean_field(
             topk1, "commutator_anchor_support_churn"
+        ),
+        "random_fixed_topk2_mean_commutator_anchor_support_churn": _mean_field(
+            random_topk2, "commutator_anchor_support_churn"
         ),
         "token_strata_row_count": len(token_strata_rows),
         "token_correlation_row_count": len(token_correlation_rows),
@@ -460,21 +516,23 @@ def _failures(
             }
         )
     for row in packet_rows:
-        if row.get("status") != "pass":
+        if row.get("status") != row.get("expected_status"):
             failures.append(
                 {
                     "source": row.get("packet"),
                     "field": "status",
-                    "expected": "pass",
+                    "expected": row.get("expected_status"),
                     "actual": row.get("status"),
                 }
             )
-        if row.get("decision") != ACTIVE_TOPK1_RETENTION_CHURN_PROBE_ESTABLISHED:
+        if row.get("expected_decision") is not None and row.get(
+            "decision"
+        ) != row.get("expected_decision"):
             failures.append(
                 {
                     "source": row.get("packet"),
                     "field": "decision",
-                    "expected": ACTIVE_TOPK1_RETENTION_CHURN_PROBE_ESTABLISHED,
+                    "expected": row.get("expected_decision"),
                     "actual": row.get("decision"),
                 }
             )
@@ -557,6 +615,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"`{metrics['topk2_to_topk1_mean_commutator_anchor_logit_mse_ratio']}`",
         "- Top-k-2/dense anchor commutator logit-MSE ratio: "
         f"`{metrics['topk2_to_dense_mean_commutator_anchor_logit_mse_ratio']}`",
+        "- Top-k-2/random-fixed-top-k-2 anchor commutator logit-MSE ratio: "
+        f"`{metrics['topk2_to_random_fixed_topk2_mean_commutator_anchor_logit_mse_ratio']}`",
         "- Top-k-2 mean anchor commutator residual-stream L2: "
         f"`{metrics['topk2_mean_commutator_anchor_residual_stream_l2']}`",
         "- Top-k-2 mean anchor commutator support churn: "
@@ -683,9 +743,39 @@ def _positive(value: float | None) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--functional-churn-dir",
+        type=Path,
+        default=DEFAULT_FUNCTIONAL_CHURN_DIR,
+    )
+    parser.add_argument(
+        "--probe-dir",
+        type=Path,
+        action="append",
+        default=None,
+        help="Retention-churn probe directory; may be repeated.",
+    )
+    parser.add_argument(
+        "--microtest-dir",
+        type=Path,
+        action="append",
+        default=None,
+        help="Optional retention-churn microtest directory; may be repeated.",
+    )
+    parser.add_argument(
+        "--fingerprint-dir",
+        type=Path,
+        default=DEFAULT_FINGERPRINT_DIR,
+    )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     args = parser.parse_args(argv)
-    summary = run_promoted_topk2_finite_update_order_control_audit(out_dir=args.out)
+    summary = run_promoted_topk2_finite_update_order_control_audit(
+        functional_churn_dir=args.functional_churn_dir,
+        probe_dirs=tuple(args.probe_dir or DEFAULT_PROBE_DIRS),
+        microtest_dirs=tuple(args.microtest_dir or DEFAULT_MICROTEST_DIRS),
+        fingerprint_dir=args.fingerprint_dir,
+        out_dir=args.out,
+    )
     print(
         json.dumps(
             {

@@ -23,15 +23,18 @@ class PromotedTopk2FiniteUpdateOrderControlAuditTest(unittest.TestCase):
             functional = root / "functional"
             seed1 = root / "seed1"
             seed2 = root / "seed2"
+            microtest = root / "microtest"
             fingerprint = root / "fingerprint"
             _write_functional(functional)
             _write_probe(seed1, "seed1", topk2_logit=0.20, topk1_logit=0.01)
             _write_probe(seed2, "seed2", topk2_logit=0.28, topk1_logit=0.01)
+            _write_microtest(microtest)
             _write_fingerprint(fingerprint)
 
             summary = run_promoted_topk2_finite_update_order_control_audit(
                 functional_churn_dir=functional,
                 probe_dirs=(seed1, seed2),
+                microtest_dirs=(microtest,),
                 fingerprint_dir=fingerprint,
                 out_dir=root / "out",
             )
@@ -53,6 +56,13 @@ class PromotedTopk2FiniteUpdateOrderControlAuditTest(unittest.TestCase):
                 ],
                 20.0,
             )
+            self.assertLess(
+                summary["metrics"][
+                    "topk2_to_random_fixed_topk2_mean_commutator_anchor_logit_mse_ratio"
+                ],
+                1.0,
+            )
+            self.assertEqual(len(summary["microtest_packet_rows"]), 1)
             self.assertTrue((root / "out" / "summary.json").is_file())
             self.assertTrue((root / "out" / "variant_commutator.csv").is_file())
             self.assertTrue((root / "out" / "token_strata.csv").is_file())
@@ -69,6 +79,7 @@ class PromotedTopk2FiniteUpdateOrderControlAuditTest(unittest.TestCase):
             summary = run_promoted_topk2_finite_update_order_control_audit(
                 functional_churn_dir=root / "missing_functional",
                 probe_dirs=(root / "missing_seed1", root / "missing_seed2"),
+                microtest_dirs=(),
                 fingerprint_dir=root / "missing_fingerprint",
                 out_dir=root / "out",
             )
@@ -132,6 +143,59 @@ def _write_probe(path: Path, packet: str, *, topk2_logit: float, topk1_logit: fl
                 "status": "pass",
                 "decision": "active_topk1_retention_churn_probe_established",
                 "config_path": f"configs/{packet}.yaml",
+                "audit": {"variants": variants},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_microtest(path: Path) -> None:
+    path.mkdir(parents=True)
+    variants = [
+        _variant(
+            "promoted_contextual_topk2",
+            top_k=2,
+            support_churn=0.88,
+            ce_delta=0.03,
+            logit_mse=0.22,
+            residual_l2=4.3,
+        ),
+        _variant(
+            "rank_matched_contextual_topk1",
+            top_k=1,
+            support_churn=0.0,
+            ce_delta=0.02,
+            logit_mse=0.01,
+            residual_l2=1.4,
+        ),
+        _variant(
+            "random_fixed_topk2",
+            top_k=2,
+            support_churn=0.0,
+            ce_delta=0.02,
+            logit_mse=0.36,
+            residual_l2=6.8,
+            kind="sparse_fixed",
+        ),
+        _variant(
+            "norm_matched_dense_active_rank",
+            top_k=0,
+            support_churn="",
+            ce_delta=0.02,
+            logit_mse=0.06,
+            residual_l2=2.9,
+            kind="dense",
+        ),
+    ]
+    (path / "summary.json").write_text(
+        json.dumps(
+            {
+                "status": "ok",
+                "config_path": "configs/token_larger.yaml",
                 "audit": {"variants": variants},
             },
             indent=2,
