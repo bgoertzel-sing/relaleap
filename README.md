@@ -202,6 +202,11 @@ controls available across the existing source artifacts, then emits one of
 `existing_artifacts_sufficient_for_next_no_training_audit`,
 `specific_missing_fields_require_artifact_extension`, or
 `new_training_required_for_deconfounded_causal_matrix`.
+The causal-column fingerprint audit now also writes
+`per_token_pair_interventions.csv` with batch/position/token indices,
+residual-norm and residual-gain bins, support-frequency fields, and an
+active-rank proxy so this report can decide whether the next no-training
+residual-norm/active-rank deconfounding audit can run without new training.
 
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic

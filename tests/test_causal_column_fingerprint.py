@@ -67,6 +67,7 @@ outputs:
             self.assertEqual(len(audit["variants"]), 2)
             self.assertEqual(audit["column_fingerprint_count"], 8)
             self.assertGreater(audit["pair_intervention_count"], 0)
+            self.assertGreater(audit["per_token_pair_intervention_count"], 0)
             self.assertEqual(len(audit["heldout_stability"]), 2)
             self.assertEqual(len(audit["functional_churn"]), 2)
             self.assertIn(
@@ -95,6 +96,11 @@ outputs:
             )
             self.assertTrue(
                 (tmp_path / "fingerprint" / "pair_interventions.csv").is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path / "fingerprint" / "per_token_pair_interventions.csv"
+                ).is_file()
             )
             self.assertTrue((tmp_path / "fingerprint" / "notes.md").is_file())
 
@@ -132,6 +138,21 @@ outputs:
                 {"common_target", "rare_target"}.issubset(
                     {row["token_class"] for row in pair_rows}
                 )
+            )
+
+            with (
+                tmp_path / "fingerprint" / "per_token_pair_interventions.csv"
+            ).open(newline="", encoding="utf-8") as handle:
+                per_token_rows = list(csv.DictReader(handle))
+            self.assertGreater(len(per_token_rows), 0)
+            self.assertIn("batch_index", per_token_rows[0])
+            self.assertIn("position_index", per_token_rows[0])
+            self.assertIn("token_index", per_token_rows[0])
+            self.assertIn("residual_norm_bin", per_token_rows[0])
+            self.assertIn("residual_gain_bin", per_token_rows[0])
+            self.assertIn("active_rank_proxy", per_token_rows[0])
+            self.assertTrue(
+                {"low", "mid", "high"} & {row["residual_norm_bin"] for row in per_token_rows}
             )
 
     def test_causal_column_fingerprint_can_include_rank_matched_topk1(self) -> None:

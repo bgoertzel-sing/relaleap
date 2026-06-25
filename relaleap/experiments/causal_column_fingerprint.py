@@ -112,6 +112,7 @@ def run_causal_column_fingerprint(
 
     column_rows: list[dict[str, Any]] = []
     pair_rows: list[dict[str, Any]] = []
+    per_token_pair_rows: list[dict[str, Any]] = []
     variant_summaries: list[dict[str, Any]] = []
     stability_summaries: list[dict[str, Any]] = []
     functional_churn_summaries: list[dict[str, Any]] = []
@@ -247,6 +248,22 @@ def run_causal_column_fingerprint(
                         selected_pairs=selected_pairs,
                     )
                 )
+                per_token_pair_rows.extend(
+                    _per_token_pair_fingerprint_rows(
+                        base=base,
+                        residual=residual,
+                        hidden=hidden,
+                        targets=targets,
+                        vocab_size=vocab_size,
+                        variant=str(spec["variant"]),
+                        load_balance_weight=float(spec["load_balance_weight"]),
+                        router_hidden=router_hidden,
+                        router_logits=router_logits,
+                        router_support=router_support,
+                        column_values=values,
+                        selected_interventions=selected_pairs,
+                    )
+                )
             elif int(spec["top_k"]) == 1:
                 selected_singletons = _selected_singleton_interventions(
                     hidden=hidden,
@@ -273,6 +290,22 @@ def run_causal_column_fingerprint(
                         router_loss=router_loss,
                         column_values=values,
                         selected_singletons=selected_singletons,
+                    )
+                )
+                per_token_pair_rows.extend(
+                    _per_token_pair_fingerprint_rows(
+                        base=base,
+                        residual=residual,
+                        hidden=hidden,
+                        targets=targets,
+                        vocab_size=vocab_size,
+                        variant=str(spec["variant"]),
+                        load_balance_weight=float(spec["load_balance_weight"]),
+                        router_hidden=router_hidden,
+                        router_logits=router_logits,
+                        router_support=router_support,
+                        column_values=values,
+                        selected_interventions=selected_singletons,
                     )
                 )
             variant_summaries.append(
@@ -321,6 +354,11 @@ def run_causal_column_fingerprint(
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_csv(out_dir / "column_fingerprints.csv", _COLUMN_FIELDNAMES, column_rows)
     _write_csv(out_dir / "pair_interventions.csv", _PAIR_FIELDNAMES, pair_rows)
+    _write_csv(
+        out_dir / "per_token_pair_interventions.csv",
+        _PER_TOKEN_PAIR_FIELDNAMES,
+        per_token_pair_rows,
+    )
     summary = {
         "status": "ok",
         "experiment_id": f"{experiment_id}_causal_column_fingerprint",
@@ -345,6 +383,7 @@ def run_causal_column_fingerprint(
             "include_rank_matched_topk1": include_rank_matched_topk1,
             "column_fingerprint_count": len(column_rows),
             "pair_intervention_count": len(pair_rows),
+            "per_token_pair_intervention_count": len(per_token_pair_rows),
             "variants": variant_summaries,
             "heldout_stability": stability_summaries,
             "functional_churn": functional_churn_summaries,
@@ -353,6 +392,9 @@ def run_causal_column_fingerprint(
             "summary_json": str(out_dir / "summary.json"),
             "column_fingerprints_csv": str(out_dir / "column_fingerprints.csv"),
             "pair_interventions_csv": str(out_dir / "pair_interventions.csv"),
+            "per_token_pair_interventions_csv": str(
+                out_dir / "per_token_pair_interventions.csv"
+            ),
             "notes_md": str(out_dir / "notes.md"),
         },
     }
@@ -712,6 +754,175 @@ def _singleton_intervention_rows(
                 }
             )
     return rows
+
+
+def _per_token_pair_fingerprint_rows(
+    *,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    variant: str,
+    load_balance_weight: float,
+    router_hidden: Any,
+    router_logits: Any,
+    router_support: Any,
+    column_values: Any,
+    selected_interventions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    import torch
+
+    empty_logits = base.decode(hidden)
+    empty_token_loss = _token_ce_losses(empty_logits, targets, vocab_size)
+    router_token_loss = _token_ce_losses(router_logits, targets, vocab_size)
+    target_tokens = targets[:, :-1].detach()
+    token_classes = _token_class_lookup(targets)
+    rows: list[dict[str, Any]] = []
+    for selected in selected_interventions:
+        support = tuple(int(part) for part in selected["support"])
+        fixed_hidden = residual(hidden, support_indices=_fixed_support(hidden, support))
+        fixed_logits = base.decode(fixed_hidden)
+        fixed_token_loss = _token_ce_losses(fixed_logits, targets, vocab_size)
+        fixed_logit_mse = (fixed_logits[:, :-1, :] - router_logits[:, :-1, :]).pow(2).mean(
+            dim=-1
+        )
+        fixed_stream_l2 = (fixed_hidden[:, :-1, :] - router_hidden[:, :-1, :]).norm(
+            dim=-1
+        )
+        fixed_residual_norm = (fixed_hidden[:, :-1, :] - hidden[:, :-1, :]).norm(dim=-1)
+        residual_gain = empty_token_loss - fixed_token_loss
+        norm_bins = _tensor_quantile_bins(fixed_residual_norm)
+        gain_bins = _tensor_quantile_bins(residual_gain)
+        active_rank = _support_active_rank(column_values, support)
+        support_key = _support_key(support)
+        sorted_support = torch.tensor(
+            sorted(support),
+            dtype=torch.long,
+            device=router_support.device,
+        ).view(1, 1, len(support))
+        router_support_matches_fixed = (
+            torch.sort(router_support[:, :-1, :], dim=-1).values == sorted_support
+        ).all(dim=-1)
+        for batch_index in range(int(hidden.shape[0])):
+            for position_index in range(int(hidden.shape[1]) - 1):
+                token_id = int(target_tokens[batch_index, position_index].item())
+                empty_loss = float(
+                    empty_token_loss[batch_index, position_index].detach().item()
+                )
+                router_loss = float(
+                    router_token_loss[batch_index, position_index].detach().item()
+                )
+                fixed_loss = float(
+                    fixed_token_loss[batch_index, position_index].detach().item()
+                )
+                rows.append(
+                    {
+                        "variant": variant,
+                        "load_balance_weight": load_balance_weight,
+                        "intervention": selected["intervention"],
+                        "support": support_key,
+                        "batch_index": batch_index,
+                        "position_index": position_index,
+                        "token_index": batch_index * (int(hidden.shape[1]) - 1)
+                        + position_index,
+                        "target_token": token_id,
+                        "position_bin": "even"
+                        if position_index % 2 == 0
+                        else "odd",
+                        "token_class": token_classes.get(token_id, "other_target"),
+                        "router_support_count": selected["router_support_count"],
+                        "router_support_matches_fixed": bool(
+                            router_support_matches_fixed[
+                                batch_index,
+                                position_index,
+                            ].item()
+                        ),
+                        "empty_loss": empty_loss,
+                        "router_loss": router_loss,
+                        "fixed_support_loss": fixed_loss,
+                        "fixed_support_loss_delta": fixed_loss - router_loss,
+                        "fixed_support_logit_mse": float(
+                            fixed_logit_mse[batch_index, position_index].detach().item()
+                        ),
+                        "fixed_support_residual_stream_l2_delta": float(
+                            fixed_stream_l2[batch_index, position_index].detach().item()
+                        ),
+                        "residual_norm": float(
+                            fixed_residual_norm[
+                                batch_index,
+                                position_index,
+                            ]
+                            .detach()
+                            .item()
+                        ),
+                        "residual_norm_bin": norm_bins[batch_index][position_index],
+                        "residual_gain": empty_loss - fixed_loss,
+                        "residual_gain_bin": gain_bins[batch_index][position_index],
+                        "active_rank_proxy": active_rank,
+                    }
+                )
+    return rows
+
+
+def _token_ce_losses(logits: Any, targets: Any, vocab_size: int) -> Any:
+    import torch.nn.functional as F
+
+    return F.cross_entropy(
+        logits[:, :-1, :].reshape(-1, vocab_size),
+        targets[:, :-1].reshape(-1),
+        reduction="none",
+    ).reshape(logits.shape[0], logits.shape[1] - 1)
+
+
+def _token_class_lookup(targets: Any) -> dict[int, str]:
+    lookup: dict[int, str] = {}
+    target_tokens = targets[:, :-1]
+    for token_class, mask in _token_class_masks(targets):
+        token_ids = sorted(
+            {
+                int(token.item())
+                for token in target_tokens[
+                    mask.to(device=target_tokens.device)
+                ]
+                .detach()
+                .cpu()
+            }
+        )
+        for token_id in token_ids:
+            lookup[token_id] = token_class
+    return lookup
+
+
+def _tensor_quantile_bins(values: Any) -> list[list[str]]:
+    import torch
+
+    flat = values.detach().reshape(-1)
+    if int(flat.numel()) == 0:
+        return []
+    low = torch.quantile(flat, 1.0 / 3.0)
+    high = torch.quantile(flat, 2.0 / 3.0)
+    labels = []
+    for row in values.detach().cpu():
+        label_row = []
+        for value in row:
+            if float(value.item()) <= float(low.item()):
+                label_row.append("low")
+            elif float(value.item()) <= float(high.item()):
+                label_row.append("mid")
+            else:
+                label_row.append("high")
+        labels.append(label_row)
+    return labels
+
+
+def _support_active_rank(column_values: Any, support: tuple[int, ...]) -> int:
+    import torch
+
+    if not support:
+        return 0
+    matrix = column_values[list(support)].detach()
+    return int(torch.linalg.matrix_rank(matrix).item())
 
 
 def _column_stability_summary(
@@ -1255,6 +1466,32 @@ _PAIR_FIELDNAMES = [
     "pair_value_cosine",
 ]
 
+_PER_TOKEN_PAIR_FIELDNAMES = [
+    "variant",
+    "load_balance_weight",
+    "intervention",
+    "support",
+    "batch_index",
+    "position_index",
+    "token_index",
+    "target_token",
+    "position_bin",
+    "token_class",
+    "router_support_count",
+    "router_support_matches_fixed",
+    "empty_loss",
+    "router_loss",
+    "fixed_support_loss",
+    "fixed_support_loss_delta",
+    "fixed_support_logit_mse",
+    "fixed_support_residual_stream_l2_delta",
+    "residual_norm",
+    "residual_norm_bin",
+    "residual_gain",
+    "residual_gain_bin",
+    "active_rank_proxy",
+]
+
 
 def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -1275,6 +1512,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Variants: `{', '.join(row['variant'] for row in audit['variants'])}`",
         f"- Column fingerprint rows: `{audit['column_fingerprint_count']}`",
         f"- Pair intervention rows: `{audit['pair_intervention_count']}`",
+        f"- Per-token pair intervention rows: `{audit['per_token_pair_intervention_count']}`",
         "",
         "## Variant Summary",
         "",

@@ -130,6 +130,9 @@ def _write_source_artifacts(
                 },
             ],
             "pair_intervention_count": 2,
+            "per_token_pair_intervention_count": 2
+            if include_per_token_fields
+            else 0,
             "functional_churn": [
                 {
                     "variant": "baseline",
@@ -156,12 +159,6 @@ def _write_source_artifacts(
         "fixed_support_residual_stream_l2_delta",
         "fixed_support_logit_mse",
     ]
-    if include_per_token_fields:
-        pair_fields.append("token_index")
-    if include_active_rank:
-        pair_fields.append("active_rank_proxy")
-    if include_residual_norm_bin:
-        pair_fields.append("residual_norm_bin")
     rows = [
         {
             "variant": "baseline",
@@ -191,6 +188,26 @@ def _write_source_artifacts(
         },
     ]
     _write_csv(audit_dir / "pair_interventions.csv", pair_fields, rows)
+    per_token_fields = [
+        "variant",
+        "intervention",
+        "support",
+        "batch_index",
+        "position_index",
+        "token_index",
+        "position_bin",
+        "token_class",
+        "router_support_count",
+        "fixed_support_loss_delta",
+        "fixed_support_logit_mse",
+        "fixed_support_residual_stream_l2_delta",
+    ]
+    if include_active_rank:
+        per_token_fields.append("active_rank_proxy")
+    if include_residual_norm_bin:
+        per_token_fields.extend(["residual_norm", "residual_norm_bin"])
+    if include_per_token_fields:
+        _write_csv(audit_dir / "per_token_pair_interventions.csv", per_token_fields, rows)
     _write_csv(
         audit_dir / "column_fingerprints.csv",
         [

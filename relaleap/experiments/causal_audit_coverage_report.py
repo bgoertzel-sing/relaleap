@@ -55,6 +55,10 @@ def write_causal_audit_coverage_report(
     source_artifacts = [
         _audit_summary_entry(audit_dir),
         _csv_entry(audit_dir / "pair_interventions.csv", "pair_interventions"),
+        _csv_entry(
+            audit_dir / "per_token_pair_interventions.csv",
+            "per_token_pair_interventions",
+        ),
         _csv_entry(audit_dir / "column_fingerprints.csv", "column_fingerprints"),
         _matched_strata_entry(matched_strata_dir),
         _report_entry(causal_fingerprint_report_path, "causal_fingerprint_report"),
@@ -70,6 +74,9 @@ def write_causal_audit_coverage_report(
     rank_report = _read_json_if_present(rank_matched_report_path)
     retention_report = _read_json_if_present(retention_report_path)
     pair_fields = _csv_fieldnames(audit_dir / "pair_interventions.csv")
+    per_token_pair_fields = _csv_fieldnames(
+        audit_dir / "per_token_pair_interventions.csv"
+    )
     column_fields = _csv_fieldnames(audit_dir / "column_fingerprints.csv")
     matched_fields = _csv_fieldnames(matched_strata_dir / "matched_strata.csv")
 
@@ -81,6 +88,7 @@ def write_causal_audit_coverage_report(
         rank_report,
         retention_report,
         pair_fields,
+        per_token_pair_fields,
         column_fields,
         matched_fields,
     )
@@ -119,6 +127,7 @@ def _coverage_summary(
     rank_report: dict[str, Any],
     retention_report: dict[str, Any],
     pair_fields: list[str],
+    per_token_pair_fields: list[str],
     column_fields: list[str],
     matched_fields: list[str],
 ) -> dict[str, Any]:
@@ -133,12 +142,16 @@ def _coverage_summary(
     rank_signals = (rank_report.get("evidence", {}) or {}).get("signals", {})
     retention_signals = (retention_report.get("evidence", {}) or {}).get("signals", {})
     pair_field_set = set(pair_fields)
+    per_token_pair_field_set = set(per_token_pair_fields)
     column_field_set = set(column_fields)
     matched_field_set = set(matched_fields)
+    intervention_field_set = pair_field_set | per_token_pair_field_set
     matching_fields = {
-        "position_bin": "position_bin" in pair_field_set and "position_bin" in matched_field_set,
-        "token_class": "token_class" in pair_field_set and "token_class" in matched_field_set,
-        "support_frequency": "router_support_count" in pair_field_set
+        "position_bin": "position_bin" in intervention_field_set
+        and "position_bin" in matched_field_set,
+        "token_class": "token_class" in intervention_field_set
+        and "token_class" in matched_field_set,
+        "support_frequency": "router_support_count" in intervention_field_set
         or "router_support_fraction" in column_field_set,
         "residual_norm_or_gain": bool(
             {
@@ -146,16 +159,19 @@ def _coverage_summary(
                 "force_residual_stream_l2_delta",
                 "ablate_residual_stream_l2_delta",
             }
-            & (pair_field_set | column_field_set)
+            & (intervention_field_set | column_field_set)
         ),
         "residual_norm_bin": bool(
-            {"residual_norm", "residual_norm_bin", "residual_gain_bin"} & pair_field_set
+            {"residual_norm", "residual_norm_bin", "residual_gain_bin"}
+            & intervention_field_set
         ),
         "active_rank_proxy": bool(
-            {"active_rank", "active_rank_proxy", "stored_parameter_count"} & pair_field_set
+            {"active_rank", "active_rank_proxy", "stored_parameter_count"}
+            & intervention_field_set
         ),
         "per_token_rows": bool(
-            {"token_index", "position_index", "example_index", "batch_index"} & pair_field_set
+            {"token_index", "position_index", "example_index", "batch_index"}
+            & intervention_field_set
         ),
     }
     controls = {
@@ -191,6 +207,7 @@ def _coverage_summary(
         "variants_present": sorted(variants),
         "variant_count": len(variants),
         "intervention_rows_present": bool(pair_fields),
+        "per_token_intervention_rows_present": bool(per_token_pair_fields),
         "matched_strata_count": matched_evidence.get("matched_strata_count"),
         "matched_strata": matched_evidence.get("matched_strata", []),
         "row_granularity": "per_token"
@@ -288,8 +305,13 @@ def _audit_summary_entry(audit_dir: Path) -> dict[str, Any]:
             row.get("variant") for row in audit.get("variants", []) if isinstance(row, dict)
         ],
         "intervention_rows_present": bool(audit.get("pair_intervention_count")),
+        "per_token_intervention_rows_present": bool(
+            audit.get("per_token_pair_intervention_count")
+        ),
         "strata_coverage": "see pair_interventions.csv",
-        "row_granularity": "aggregate",
+        "row_granularity": "per_token"
+        if audit.get("per_token_pair_intervention_count")
+        else "aggregate",
         "support_churn_fields_present": bool(audit.get("functional_churn")),
         "functional_churn_fields_present": bool(audit.get("functional_churn")),
     }
