@@ -234,6 +234,23 @@ audit while the broader cleanliness/interference claim remains blocked unless
 fixed-support and functional-churn wins each clear at least `80%` of matched
 strata.
 
+After direct per-token pair synergy survives the deconfounded intervention
+audit, run the local null-controlled synergy audit before making a
+causal-cooperation claim or spending Colab/GPU cycles:
+
+```bash
+python -m relaleap.experiments.causal_synergy_null_audit
+```
+
+This writes
+`results/audits/token_larger_topk2_causal_synergy_null_audit/summary.json`,
+`matched_synergy_null_strata.csv`, and `notes.md`. It restricts the observed
+top-k-2 pair-synergy estimate to the same matched strata as the deconfounded
+audit, adds bootstrap uncertainty, compares against a stratified sign-flip null,
+uses the available `fixed_best_support_swap` intervention as an artifact-level
+matched control when present, and keeps `pair_synergy_supported` separate from
+`cleaner_causal_bracket_supported`.
+
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic
 sees nonzero repicking without changing the checked Phase 0 baseline. After the
