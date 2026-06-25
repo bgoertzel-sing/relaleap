@@ -47,6 +47,7 @@ from relaleap.experiments.decision_report import (
     SELECT_RANK_MATCHED_TOPK1_CAUSAL_AUDIT_BRACKET,
     DIAGNOSE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT,
     STOP_TOPK2_CAUSAL_COOPERATION_CLAIM,
+    SELECT_POST_STOP_RANK_MATCHED_TOPK1_CAUSAL_BRACKET,
     DIAGNOSE_RETENTION_CHURN_MICROTEST,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -87,6 +88,7 @@ from relaleap.experiments.decision_report import (
     write_causal_audit_bracket_decision_report,
     write_rank_matched_topk1_causal_bracket_audit_report,
     write_topk2_causal_cooperation_stop_report,
+    write_post_stop_causal_bracket_decision_report,
     write_retention_churn_microtest_decision_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
@@ -428,6 +430,110 @@ class Topk2CausalCooperationStopReportTest(unittest.TestCase):
                     failure["field"]
                     for failure in report["evidence"]["failures"]
                 ],
+            )
+
+
+class PostStopCausalBracketDecisionReportTest(unittest.TestCase):
+    def test_selects_rank_matched_topk1_and_defers_percentile_without_exhaustive_candidates(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            stop_report = tmp_path / "stop" / "decision_report.json"
+            rank_report = tmp_path / "rank" / "decision_report.json"
+            matched_dir = tmp_path / "matched"
+            _write_json(
+                stop_report,
+                {
+                    "status": "pass",
+                    "topk2_causal_cooperation_claim_closed_locally": True,
+                },
+            )
+            _write_json(
+                rank_report,
+                {
+                    "status": "pass",
+                    "rank_matched_topk1_default_causal_audit_bracket": True,
+                    "evidence": {
+                        "metrics": {
+                            "topk2_alpha0_ce_loss": 2.91,
+                            "rank_matched_topk1_alpha0_ce_loss": 2.86,
+                        }
+                    },
+                },
+            )
+            _write_json(
+                matched_dir / "summary.json",
+                {
+                    "status": "pass",
+                    "decision": "prefer_rank_matched_topk1_for_causal_audits",
+                    "evidence": {
+                        "matched_strata_count": 5,
+                        "rank_matched_topk1_router_ce_better_than_topk2": True,
+                    },
+                },
+            )
+
+            report = write_post_stop_causal_bracket_decision_report(
+                stop_report,
+                rank_report,
+                matched_dir,
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                SELECT_POST_STOP_RANK_MATCHED_TOPK1_CAUSAL_BRACKET,
+            )
+            self.assertTrue(
+                report["rank_matched_topk1_default_causal_audit_bracket"]
+            )
+            self.assertFalse(report["support_frequency_candidate_percentile_ready"])
+            self.assertTrue(report["requires_exhaustive_candidate_artifact"])
+            self.assertFalse(report["colab_topk2_replication_warranted"])
+            self.assertIn(
+                "exhaustive all-candidates",
+                report["evidence"]["deferred_percentile_reason"],
+            )
+            self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
+            self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
+
+    def test_missing_matched_strata_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            stop_report = tmp_path / "stop" / "decision_report.json"
+            rank_report = tmp_path / "rank" / "decision_report.json"
+            _write_json(
+                stop_report,
+                {
+                    "status": "pass",
+                    "topk2_causal_cooperation_claim_closed_locally": True,
+                },
+            )
+            _write_json(
+                rank_report,
+                {
+                    "status": "pass",
+                    "rank_matched_topk1_default_causal_audit_bracket": True,
+                },
+            )
+
+            report = write_post_stop_causal_bracket_decision_report(
+                stop_report,
+                rank_report,
+                tmp_path / "missing_matched",
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(
+                report["rank_matched_topk1_default_causal_audit_bracket"]
+            )
+            self.assertIn(
+                "rank_matched_topk1_matched_strata_audit",
+                [failure["field"] for failure in report["evidence"]["failures"]],
             )
 
 
@@ -6317,6 +6423,11 @@ def _write_causal_synergy_anchor_diagnostic(root: Path) -> Path:
         encoding="utf-8",
     )
     return diagnostic_dir
+
+
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
 
 def _write_retention_churn_microtest(

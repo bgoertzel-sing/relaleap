@@ -305,6 +305,23 @@ and `.md`. The report keeps Colab top-k-2 replication deferred unless the local
 sign-flip, selection-control, no-fallback matching, cleanliness, and per-anchor
 checks all support the stronger claim.
 
+After the local stop report closes the broad top-k-2 causal-cooperation claim,
+select the next local causal-audit bracket without rerunning training:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report post-stop-causal-bracket-decision
+```
+
+This writes
+`results/reports/token_larger_post_stop_causal_bracket_decision/decision_report.json`
+and `.md`. The report combines the stop decision, the rank-matched contextual
+top-k-1 bracket report, and the existing top-k-2-vs-top-k-1 matched-strata
+audit. It selects rank-matched contextual top-k-1 as the active local causal
+bracket and explicitly blocks a support-frequency candidate-percentile claim
+until the causal fingerprint artifact writes an exhaustive near-frequency
+nonrouter candidate table rather than sampled controls.
+
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic
 sees nonzero repicking without changing the checked Phase 0 baseline. After the

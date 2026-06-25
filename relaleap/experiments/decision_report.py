@@ -577,6 +577,15 @@ DEFAULT_CAUSAL_SYNERGY_ANCHOR_CONTROL_DIAGNOSTIC_DIR = Path(
 DEFAULT_TOPK2_CAUSAL_COOPERATION_STOP_OUT_DIR = Path(
     "results/reports/token_larger_topk2_causal_cooperation_stop_decision"
 )
+DEFAULT_POST_STOP_CAUSAL_BRACKET_OUT_DIR = Path(
+    "results/reports/token_larger_post_stop_causal_bracket_decision"
+)
+DEFAULT_RANK_MATCHED_TOPK1_MATCHED_STRATA_AUDIT_DIR = Path(
+    "results/audits/token_larger_rank_matched_topk1_vs_topk2_matched_strata_intervention"
+)
+DEFAULT_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT_REPORT = (
+    DEFAULT_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT_OUT_DIR / "decision_report.json"
+)
 DEFAULT_RETENTION_CHURN_MICROTEST_DIR = Path(
     "results/audits/token_larger_retention_churn_microtest"
 )
@@ -702,6 +711,9 @@ DIAGNOSE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT = (
     "diagnose_rank_matched_topk1_causal_bracket_audit"
 )
 STOP_TOPK2_CAUSAL_COOPERATION_CLAIM = "stop_topk2_causal_cooperation_claim"
+SELECT_POST_STOP_RANK_MATCHED_TOPK1_CAUSAL_BRACKET = (
+    "select_post_stop_rank_matched_topk1_causal_bracket"
+)
 DIAGNOSE_RETENTION_CHURN_MICROTEST = "diagnose_retention_churn_microtest"
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -15173,6 +15185,238 @@ def _write_topk2_causal_cooperation_stop_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_post_stop_causal_bracket_decision_report(
+    stop_report_path: Path = DEFAULT_TOPK2_CAUSAL_COOPERATION_STOP_OUT_DIR
+    / "decision_report.json",
+    rank_bracket_report_path: Path = DEFAULT_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT_REPORT,
+    matched_strata_audit_dir: Path = DEFAULT_RANK_MATCHED_TOPK1_MATCHED_STRATA_AUDIT_DIR,
+    out_dir: Path = DEFAULT_POST_STOP_CAUSAL_BRACKET_OUT_DIR,
+) -> dict[str, Any]:
+    """Choose the post-stop causal-audit bracket from completed local artifacts."""
+
+    failures: list[dict[str, Any]] = []
+    stop_report = _read_report_file(
+        stop_report_path,
+        "topk2_stop_report",
+        failures,
+    )
+    rank_report = _read_report_file(
+        rank_bracket_report_path,
+        "rank_matched_topk1_bracket_report",
+        failures,
+    )
+    matched_summary = _read_report_file(
+        matched_strata_audit_dir / "summary.json",
+        "rank_matched_topk1_matched_strata_audit",
+        failures,
+    )
+
+    if stop_report and stop_report.get("status") != "pass":
+        failures.append(
+            {
+                "field": "topk2_stop_report.status",
+                "expected": "pass",
+                "actual": stop_report.get("status"),
+                "path": str(stop_report_path),
+            }
+        )
+    if stop_report and not stop_report.get(
+        "topk2_causal_cooperation_claim_closed_locally"
+    ):
+        failures.append(
+            {
+                "field": "topk2_stop_report.closed_locally",
+                "expected": True,
+                "actual": stop_report.get(
+                    "topk2_causal_cooperation_claim_closed_locally"
+                ),
+                "path": str(stop_report_path),
+            }
+        )
+    if rank_report and rank_report.get("status") != "pass":
+        failures.append(
+            {
+                "field": "rank_matched_topk1_bracket_report.status",
+                "expected": "pass",
+                "actual": rank_report.get("status"),
+                "path": str(rank_bracket_report_path),
+            }
+        )
+    if rank_report and not rank_report.get(
+        "rank_matched_topk1_default_causal_audit_bracket"
+    ):
+        failures.append(
+            {
+                "field": "rank_matched_topk1_bracket_report.default_bracket",
+                "expected": True,
+                "actual": rank_report.get(
+                    "rank_matched_topk1_default_causal_audit_bracket"
+                ),
+                "path": str(rank_bracket_report_path),
+            }
+        )
+    if matched_summary and matched_summary.get("status") != "pass":
+        failures.append(
+            {
+                "field": "rank_matched_topk1_matched_strata_audit.status",
+                "expected": "pass",
+                "actual": matched_summary.get("status"),
+                "path": str(matched_strata_audit_dir / "summary.json"),
+            }
+        )
+    if matched_summary and matched_summary.get("decision") != (
+        "prefer_rank_matched_topk1_for_causal_audits"
+    ):
+        failures.append(
+            {
+                "field": "rank_matched_topk1_matched_strata_audit.decision",
+                "expected": "prefer_rank_matched_topk1_for_causal_audits",
+                "actual": matched_summary.get("decision"),
+                "path": str(matched_strata_audit_dir / "summary.json"),
+            }
+        )
+
+    matched_evidence = (
+        matched_summary.get("evidence", {}) if isinstance(matched_summary, dict) else {}
+    )
+    rank_metrics = (
+        (rank_report.get("evidence", {}) or {}).get("metrics", {})
+        if isinstance(rank_report, dict)
+        else {}
+    )
+    status = "fail" if failures else "pass"
+    selected = status == "pass"
+    if selected:
+        rationale = (
+            "The local top-k-2 causal-cooperation claim is closed, and the "
+            "existing matched-strata audit prefers the rank-matched contextual "
+            "top-k-1 bracket on the CE guardrail. The available sampled-control "
+            "rows are not an exhaustive near-frequency candidate set, so this "
+            "report explicitly defers a support-frequency candidate-percentile "
+            "test until the fingerprint artifact writes all eligible candidates."
+        )
+        next_step = (
+            "extend the causal-column fingerprint artifact with an exhaustive "
+            "near-frequency nonrouter candidate table before running any "
+            "support-frequency candidate-percentile audit"
+        )
+        decision = SELECT_POST_STOP_RANK_MATCHED_TOPK1_CAUSAL_BRACKET
+    else:
+        rationale = (
+            "The completed local stop, rank-matched bracket, or matched-strata "
+            "artifacts are missing or do not support the post-stop bracket "
+            "selection."
+        )
+        next_step = (
+            "repair the failed local causal decision artifact before selecting "
+            "a post-stop causal-audit bracket"
+        )
+        decision = INSUFFICIENT_EVIDENCE
+
+    report = {
+        "status": status,
+        "decision": decision,
+        "rank_matched_topk1_default_causal_audit_bracket": selected,
+        "support_frequency_candidate_percentile_ready": False,
+        "requires_exhaustive_candidate_artifact": True,
+        "colab_topk2_replication_warranted": False,
+        "topk2_causal_cooperation_claim_supported": False,
+        "keep_contextual_router_default": selected,
+        "evidence": {
+            "stop_report_path": str(stop_report_path),
+            "rank_bracket_report_path": str(rank_bracket_report_path),
+            "matched_strata_audit_dir": str(matched_strata_audit_dir),
+            "matched_strata_evidence": matched_evidence,
+            "rank_matched_topk1_metrics": rank_metrics,
+            "failures": failures,
+            "deferred_percentile_reason": (
+                "Existing control rows are sampled audit controls, not an "
+                "exhaustive all-candidates table over near-frequency nonrouter "
+                "supports."
+            ),
+        },
+        "rationale": rationale,
+        "next_step": next_step,
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_post_stop_causal_bracket_markdown(out_dir / "decision_report.md", report)
+    return report
+
+
+def _read_report_file(
+    path: Path,
+    field: str,
+    failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not path.is_file():
+        failures.append(
+            {
+                "field": field,
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(path),
+            }
+        )
+        return {}
+    return _read_json_object(path)
+
+
+def _write_post_stop_causal_bracket_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    lines = [
+        "# Post-Stop Causal Bracket Decision",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        "- Rank-matched top-k-1 default causal-audit bracket: "
+        f"`{report['rank_matched_topk1_default_causal_audit_bracket']}`",
+        "- Support-frequency candidate-percentile ready: "
+        f"`{report['support_frequency_candidate_percentile_ready']}`",
+        "- Requires exhaustive candidate artifact: "
+        f"`{report['requires_exhaustive_candidate_artifact']}`",
+        "- Colab top-k-2 replication warranted: "
+        f"`{report['colab_topk2_replication_warranted']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        f"- Stop report: `{report['evidence']['stop_report_path']}`",
+        f"- Rank bracket report: `{report['evidence']['rank_bracket_report_path']}`",
+        f"- Matched-strata audit: `{report['evidence']['matched_strata_audit_dir']}`",
+        "- Deferred percentile reason: "
+        f"`{report['evidence']['deferred_percentile_reason']}`",
+        "",
+        "## Matched-Strata Metrics",
+        "",
+        "| Metric | Value |",
+        "| --- | --- |",
+    ]
+    for key, value in report["evidence"]["matched_strata_evidence"].items():
+        if key == "failures":
+            continue
+        lines.append(f"| `{key}` | `{value}` |")
+    if report["evidence"]["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in report["evidence"]["failures"]:
+            lines.append(
+                "- "
+                f"`{failure.get('field')}` expected "
+                f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                f"at `{failure.get('path', '')}`"
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def write_retention_churn_microtest_decision_report(
     audit_dir: Path = DEFAULT_RETENTION_CHURN_MICROTEST_DIR,
     out_dir: Path = DEFAULT_RETENTION_CHURN_MICROTEST_OUT_DIR,
@@ -15964,6 +16208,7 @@ def main() -> None:
             "causal-audit-bracket-decision",
             "rank-matched-topk1-causal-bracket-audit",
             "topk2-causal-cooperation-stop",
+            "post-stop-causal-bracket-decision",
             "retention-churn-microtest-decision",
         ),
         default="pinned-support",
@@ -16424,6 +16669,19 @@ def main() -> None:
             args.out or DEFAULT_TOPK2_CAUSAL_COOPERATION_STOP_OUT_DIR,
             anchor_diagnostic_dir=args.comparison_dir
             or DEFAULT_CAUSAL_SYNERGY_ANCHOR_CONTROL_DIAGNOSTIC_DIR,
+        )
+    elif args.report == "post-stop-causal-bracket-decision":
+        report = write_post_stop_causal_bracket_decision_report(
+            args.decision_report[0]
+            if args.decision_report
+            else DEFAULT_TOPK2_CAUSAL_COOPERATION_STOP_OUT_DIR
+            / "decision_report.json",
+            args.decision_report[1]
+            if args.decision_report and len(args.decision_report) > 1
+            else DEFAULT_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT_REPORT,
+            args.comparison_dir
+            or DEFAULT_RANK_MATCHED_TOPK1_MATCHED_STRATA_AUDIT_DIR,
+            args.out or DEFAULT_POST_STOP_CAUSAL_BRACKET_OUT_DIR,
         )
     elif args.report == "retention-churn-microtest-decision":
         report = write_retention_churn_microtest_decision_report(
