@@ -419,6 +419,22 @@ is cleanly gated. The current local packet passes with decision
 `context_gate_reduces_offcontext_interference`; this is a local source-artifact
 result rather than a backend-stable reusable singleton claim.
 
+After the local decomposition packet exists, decide whether it is claim-changing
+enough to spend one bounded backend validation run:
+
+```bash
+python -m relaleap.experiments.active_topk1_post_decomposition_decision_report
+```
+
+This writes
+`results/reports/token_larger_active_topk1_post_decomposition_decision/summary.json`,
+`decision_sources.csv`, and `notes.md`. It consumes the local decomposition
+packet, the active top-k-1 backend provenance manifest, the functional-retention
+audit, and the external strategy review when present. Under the current local
+packet, the report recommends bounded RunPod validation when
+`RELALEAP_GPU_BACKEND=runpod`, while still recording
+`broad_reusable_singleton_claim_excluded`.
+
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled
 synergy audit before making a causal-cooperation claim or spending Colab/GPU
