@@ -339,6 +339,22 @@ transfer probes plus A-to-B versus B-to-A finite-update commutator evidence;
 the report can treat a favorable commutator as bracket evidence, but still
 blocks a causal-retention claim while singleton gain remains negative.
 
+To check whether the negative singleton-gain blocker is a matched-strata
+artifact or a broader top-k-1 failure mode, run:
+
+```bash
+python -m relaleap.experiments.active_topk1_singleton_gain_regret_diagnostic
+```
+
+This writes
+`results/audits/token_larger_active_rank_matched_topk1_singleton_gain_regret_diagnostic/summary.json`,
+`singleton_gain_by_context.csv`, `singleton_gain_by_stratum.csv`, and
+`notes.md`. It consumes the source per-token causal-column fingerprint rows and
+the deconfounded exact-context matching packet, compares raw, matched, and
+unmatched context-level singleton gain/regret, and emits decision labels such as
+`likely_real_singleton_gain_failure_mode`, `matching_artifact_possible`, and
+`mixed_singleton_gain_evidence`.
+
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled
 synergy audit before making a causal-cooperation claim or spending Colab/GPU
