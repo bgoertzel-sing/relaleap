@@ -275,6 +275,22 @@ logit churn, and residual-stream churn while retaining top-k-2 only as the
 closed reference condition. A passing packet establishes measurement coverage,
 not a separability claim by itself.
 
+After the active top-k-1 separability packet exists, run the bounded local
+retention/churn probe for the same active bracket:
+
+```bash
+python -m relaleap.experiments.active_topk1_retention_churn_probe
+```
+
+This writes
+`results/audits/token_larger_active_rank_matched_topk1_retention_churn_probe/summary.json`,
+`variant_metrics.csv`, `phase_metrics.csv`, and `notes.md`. It reruns the
+local anchor/transfer retention microtest, requires the active top-k-1
+separability packet as source evidence, and compares rank-matched contextual
+top-k-1 against the promoted contextual top-k-2 reference and a norm-matched
+dense active-rank control. A passing probe supports top-k-1 as the local
+retention/churn bracket, but does not establish singleton causal separability.
+
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled
 synergy audit before making a causal-cooperation claim or spending Colab/GPU
