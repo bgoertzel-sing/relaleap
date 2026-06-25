@@ -1,0 +1,113 @@
+{
+  "aggregates": {
+    "all_packets_pass": true,
+    "all_required_variants_present": true,
+    "finite_update_commutator_present_all_packets": true,
+    "max_topk2_transfer_improvement_minus_topk1": -0.018293142318725586,
+    "mean_topk2_commutator_anchor_logit_mse": 0.24207507818937302,
+    "mean_topk2_commutator_transfer_logit_mse": 0.24667634814977646,
+    "mean_topk2_logit_churn_minus_topk1": 0.020138300955295563,
+    "mean_topk2_logit_mse_drift": 0.16101789474487305,
+    "mean_topk2_support_churn": 0.85546875,
+    "mean_topk2_support_churn_minus_topk1": 0.849609375,
+    "mean_topk2_transfer_ce_improvement": 0.9277406930923462,
+    "mean_topk2_transfer_improvement_over_dense": 0.5137364864349365,
+    "min_topk2_support_churn": 0.8125,
+    "min_topk2_support_churn_minus_topk1": 0.8046875,
+    "min_topk2_transfer_improvement_over_dense": 0.48139703273773193
+  },
+  "artifacts": {
+    "notes_md": "results/reports/token_larger_promoted_topk2_retention_reference_audit/notes.md",
+    "probe_metrics_csv": "results/reports/token_larger_promoted_topk2_retention_reference_audit/probe_metrics.csv",
+    "summary_json": "results/reports/token_larger_promoted_topk2_retention_reference_audit/summary.json"
+  },
+  "decision": "promoted_topk2_router_default_retention_reference",
+  "failures": [],
+  "gate_audit_dir": "results/audits/token_larger_active_topk1_context_gate_suppression_calibration",
+  "gate_summary": {
+    "decision": "deployable_context_gate_suppression_calibration_failed",
+    "next_step": "keep top-k-1 singletons diagnostic-only and return the main architecture evidence loop to contextual top-k-2 support routing",
+    "present": true,
+    "status": "pass",
+    "summary_path": "results/audits/token_larger_active_topk1_context_gate_suppression_calibration/summary.json"
+  },
+  "next_step": "run one local no-training audit on the promoted contextual top-k-2 router that targets support-selection quality rather than reusable singleton gating or low-churn retention",
+  "out_dir": "results/reports/token_larger_promoted_topk2_retention_reference_audit",
+  "probe_dirs": [
+    "results/audits/token_larger_active_rank_matched_topk1_retention_churn_probe",
+    "results/audits/token_larger_active_rank_matched_topk1_retention_churn_probe_seed2"
+  ],
+  "probe_rows": [
+    {
+      "config_path": "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+      "decision": "active_topk1_retention_churn_probe_established",
+      "dense_transfer_ce_improvement": 0.42224669456481934,
+      "finite_update_commutator_present": true,
+      "packet": "seed1",
+      "probe_dir": "results/audits/token_larger_active_rank_matched_topk1_retention_churn_probe",
+      "required_variants_present": true,
+      "status": "pass",
+      "summary_path": "results/audits/token_larger_active_rank_matched_topk1_retention_churn_probe/summary.json",
+      "summary_present": true,
+      "topk1_anchor_logit_mse_drift": 0.13784439861774445,
+      "topk1_anchor_support_churn_after_transfer": 0.00390625,
+      "topk1_transfer_ce_improvement": 0.9219368696212769,
+      "topk2_anchor_ce_drift": -0.894456148147583,
+      "topk2_anchor_logit_mse_drift": 0.16618593037128448,
+      "topk2_anchor_residual_stream_l2_drift": 4.678168296813965,
+      "topk2_anchor_support_churn_after_transfer": 0.8984375,
+      "topk2_commutator_anchor_logit_mse": 0.20244745910167694,
+      "topk2_commutator_anchor_residual_stream_l2": 4.145750999450684,
+      "topk2_commutator_transfer_logit_mse": 0.2038411945104599,
+      "topk2_commutator_transfer_residual_stream_l2": 4.117044925689697,
+      "topk2_logit_churn_minus_topk1": 0.02834153175354004,
+      "topk2_support_churn_minus_topk1": 0.89453125,
+      "topk2_transfer_ce_improvement": 0.9036437273025513,
+      "topk2_transfer_improvement_minus_topk1": -0.018293142318725586,
+      "topk2_transfer_improvement_over_dense": 0.48139703273773193
+    },
+    {
+      "config_path": "configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2.yaml",
+      "decision": "active_topk1_retention_churn_probe_established",
+      "dense_transfer_ce_improvement": 0.40576171875,
+      "finite_update_commutator_present": true,
+      "packet": "seed2",
+      "probe_dir": "results/audits/token_larger_active_rank_matched_topk1_retention_churn_probe_seed2",
+      "required_variants_present": true,
+      "status": "pass",
+      "summary_path": "results/audits/token_larger_active_rank_matched_topk1_retention_churn_probe_seed2/summary.json",
+      "summary_present": true,
+      "topk1_anchor_logit_mse_drift": 0.14391478896141052,
+      "topk1_anchor_support_churn_after_transfer": 0.0078125,
+      "topk1_transfer_ce_improvement": 0.994930624961853,
+      "topk2_anchor_ce_drift": -0.9360860586166382,
+      "topk2_anchor_logit_mse_drift": 0.1558498591184616,
+      "topk2_anchor_residual_stream_l2_drift": 4.5982584953308105,
+      "topk2_anchor_support_churn_after_transfer": 0.8125,
+      "topk2_commutator_anchor_logit_mse": 0.2817026972770691,
+      "topk2_commutator_anchor_residual_stream_l2": 5.948947906494141,
+      "topk2_commutator_transfer_logit_mse": 0.289511501789093,
+      "topk2_commutator_transfer_residual_stream_l2": 6.0395941734313965,
+      "topk2_logit_churn_minus_topk1": 0.011935070157051086,
+      "topk2_support_churn_minus_topk1": 0.8046875,
+      "topk2_transfer_ce_improvement": 0.9518376588821411,
+      "topk2_transfer_improvement_minus_topk1": -0.043092966079711914,
+      "topk2_transfer_improvement_over_dense": 0.5460759401321411
+    }
+  ],
+  "rationale": "The context-gate suppression audit failed, so top-k-1 singleton gating stays diagnostic-only. The existing retention/churn packets still support keeping promoted contextual top-k-2 as the main router default for CE and support-selection evidence, but not as a low-churn causal-retention mechanism: top-k-2 improves transfer CE over the dense control while showing high support churn and larger finite-update commutator drift than the rank-matched top-k-1 bracket.",
+  "signals": {
+    "topk1_context_gate_failed": true,
+    "topk2_low_churn_retention_claim_supported": false,
+    "topk2_router_default_reference_supported": true,
+    "topk2_support_churn_high": true,
+    "topk2_support_churn_higher_than_topk1": true,
+    "topk2_transfer_beats_dense_control": true,
+    "topk2_transfer_not_better_than_topk1": true
+  },
+  "status": "pass",
+  "thresholds": {
+    "high_churn_threshold": 0.5,
+    "min_transfer_improvement_over_dense": 0.0
+  }
+}
