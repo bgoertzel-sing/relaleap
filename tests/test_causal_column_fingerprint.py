@@ -149,6 +149,16 @@ outputs:
             self.assertIn("control_support", pair_rows[0])
             self.assertIn("support_count_difference", pair_rows[0])
             self.assertIn("fixed_support_loss_difference", pair_rows[0])
+            self.assertIn("control_match_status", pair_rows[0])
+            self.assertIn("control_candidate_count", pair_rows[0])
+            self.assertIn(
+                "control_exact_support_count_candidate_count",
+                pair_rows[0],
+            )
+            self.assertIn(
+                "control_near_support_count_candidate_count",
+                pair_rows[0],
+            )
             self.assertTrue(
                 {"all", "even", "odd"}.issubset(
                     {row["position_bin"] for row in pair_rows}
@@ -172,6 +182,9 @@ outputs:
             ]
             self.assertTrue(any(row["anchor_support"] for row in control_pair_rows))
             self.assertTrue(any(row["control_support"] for row in control_pair_rows))
+            self.assertTrue(
+                any(row["control_match_status"] for row in control_pair_rows)
+            )
 
             with (
                 tmp_path / "fingerprint" / "per_token_pair_interventions.csv"
@@ -194,6 +207,8 @@ outputs:
             self.assertIn("control_support", per_token_rows[0])
             self.assertIn("support_count_difference", per_token_rows[0])
             self.assertIn("fixed_support_loss_difference", per_token_rows[0])
+            self.assertIn("control_match_status", per_token_rows[0])
+            self.assertIn("control_candidate_count", per_token_rows[0])
             self.assertTrue(
                 {"low", "mid", "high"} & {row["residual_norm_bin"] for row in per_token_rows}
             )
@@ -210,6 +225,9 @@ outputs:
             ]
             self.assertTrue(any(row["anchor_support"] for row in control_token_rows))
             self.assertTrue(any(row["control_support"] for row in control_token_rows))
+            self.assertTrue(
+                any(row["control_match_status"] for row in control_token_rows)
+            )
 
     def test_causal_column_fingerprint_can_include_rank_matched_topk1(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

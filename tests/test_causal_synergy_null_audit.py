@@ -48,6 +48,14 @@ class CausalSynergyNullAuditTest(unittest.TestCase):
                 diagnostics["fixed_support_loss_difference_mean"],
                 0.02,
             )
+            self.assertEqual(
+                diagnostics["control_match_status_counts"],
+                {"exact_support_count_candidate_available": 6},
+            )
+            self.assertAlmostEqual(
+                diagnostics["control_exact_support_count_candidate_count_mean"],
+                2.0,
+            )
             self.assertTrue((root / "null_audit" / "summary.json").is_file())
             self.assertTrue(
                 (root / "null_audit" / "matched_synergy_null_strata.csv").is_file()
@@ -63,6 +71,10 @@ class CausalSynergyNullAuditTest(unittest.TestCase):
             )
             self.assertIn(
                 "control_fixed_support_loss_difference_mean",
+                strata_rows[0],
+            )
+            self.assertIn(
+                "control_match_status_counts",
                 strata_rows[0],
             )
             self.assertTrue((root / "null_audit" / "notes.md").is_file())
@@ -142,6 +154,10 @@ def _write_artifacts(
         "control_support",
         "support_count_difference",
         "fixed_support_loss_difference",
+        "control_match_status",
+        "control_exact_support_count_candidate_count",
+        "control_near_support_count_candidate_count",
+        "control_min_support_count_abs_difference_available",
         "pair_gain",
         "singleton_left_gain",
         "singleton_right_gain",
@@ -162,6 +178,10 @@ def _write_artifacts(
                 support_count,
                 support_count_difference=0,
                 fixed_support_loss_difference=0.0,
+                control_match_status="",
+                exact_candidate_count="",
+                near_candidate_count="",
+                min_support_count_difference="",
                 pair_gain=0.3,
                 singleton_left_gain=0.05,
                 singleton_right_gain=0.05,
@@ -178,6 +198,10 @@ def _write_artifacts(
                 support_count,
                 support_count_difference=-1,
                 fixed_support_loss_difference=0.02,
+                control_match_status="exact_support_count_candidate_available",
+                exact_candidate_count=2,
+                near_candidate_count=3,
+                min_support_count_difference=0,
                 pair_gain=0.11,
                 singleton_left_gain=0.05,
                 singleton_right_gain=0.05,
@@ -213,6 +237,10 @@ def _per_token_row(
     *,
     support_count_difference: int,
     fixed_support_loss_difference: float,
+    control_match_status: str,
+    exact_candidate_count: object,
+    near_candidate_count: object,
+    min_support_count_difference: object,
     pair_gain: float,
     singleton_left_gain: float,
     singleton_right_gain: float,
@@ -228,6 +256,10 @@ def _per_token_row(
         "control_support": "2,3",
         "support_count_difference": support_count_difference,
         "fixed_support_loss_difference": fixed_support_loss_difference,
+        "control_match_status": control_match_status,
+        "control_exact_support_count_candidate_count": exact_candidate_count,
+        "control_near_support_count_candidate_count": near_candidate_count,
+        "control_min_support_count_abs_difference_available": min_support_count_difference,
         "pair_gain": pair_gain,
         "singleton_left_gain": singleton_left_gain,
         "singleton_right_gain": singleton_right_gain,

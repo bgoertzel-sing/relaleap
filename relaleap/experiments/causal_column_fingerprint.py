@@ -35,6 +35,7 @@ DEFAULT_OUT_DIR = Path(
 )
 DEFAULT_LOAD_BALANCE_WEIGHTS = (0.0, 0.0125)
 DEFAULT_MAX_PAIR_ROWS = 8
+SUPPORT_FREQUENCY_NEAR_COUNT_DELTA = 1
 
 
 def run_causal_column_fingerprint(
@@ -661,6 +662,17 @@ def _pair_fingerprint_rows(
                         "fixed_support_loss_difference"
                     ),
                     "control_match_rank": selected.get("control_match_rank"),
+                    "control_match_status": selected.get("control_match_status"),
+                    "control_candidate_count": selected.get("control_candidate_count"),
+                    "control_exact_support_count_candidate_count": selected.get(
+                        "control_exact_support_count_candidate_count"
+                    ),
+                    "control_near_support_count_candidate_count": selected.get(
+                        "control_near_support_count_candidate_count"
+                    ),
+                    "control_min_support_count_abs_difference_available": selected.get(
+                        "control_min_support_count_abs_difference_available"
+                    ),
                     "position_bin": position_bin,
                     "token_class": token_class,
                     "router_support_count": selected["router_support_count"],
@@ -917,6 +929,19 @@ def _per_token_pair_fingerprint_rows(
                             "fixed_support_loss_difference"
                         ),
                         "control_match_rank": selected.get("control_match_rank"),
+                        "control_match_status": selected.get("control_match_status"),
+                        "control_candidate_count": selected.get(
+                            "control_candidate_count"
+                        ),
+                        "control_exact_support_count_candidate_count": selected.get(
+                            "control_exact_support_count_candidate_count"
+                        ),
+                        "control_near_support_count_candidate_count": selected.get(
+                            "control_near_support_count_candidate_count"
+                        ),
+                        "control_min_support_count_abs_difference_available": selected.get(
+                            "control_min_support_count_abs_difference_available"
+                        ),
                         "batch_index": batch_index,
                         "position_index": position_index,
                         "token_index": batch_index * (int(hidden.shape[1]) - 1)
@@ -1403,6 +1428,13 @@ def _selected_pair_interventions(
         intervention="fixed_support_frequency_matched_control",
         prefer_nonrouter=False,
         score_fn=lambda candidate, anchor: (
+            0
+            if abs(
+                support_counts.get(str(candidate["support_key"]), 0)
+                - int(anchor["router_support_count"])
+            )
+            <= SUPPORT_FREQUENCY_NEAR_COUNT_DELTA
+            else 1,
             abs(
                 support_counts.get(str(candidate["support_key"]), 0)
                 - int(anchor["router_support_count"])
@@ -1483,6 +1515,11 @@ def _matched_control_pair_rows(
     while anchors and len(control_rows) < target_count:
         anchor = anchors[anchor_index % len(anchors)]
         ranked = sorted(candidates, key=lambda row: score_fn(row, anchor))
+        candidate_diagnostics = _control_candidate_diagnostics(
+            candidates,
+            anchor,
+            support_counts,
+        )
         for match_rank, row in enumerate(ranked, start=1):
             key = str(row["support_key"])
             if key in control_keys:
@@ -1491,12 +1528,50 @@ def _matched_control_pair_rows(
             control_row = dict(row)
             control_row["control_anchor"] = anchor
             control_row["control_match_rank"] = match_rank
+            control_row.update(candidate_diagnostics)
             control_rows.append(control_row)
             break
         anchor_index += 1
         if anchor_index > len(anchors) + len(candidates):
             break
     return control_rows
+
+
+def _control_candidate_diagnostics(
+    candidates: list[dict[str, Any]],
+    anchor: dict[str, Any],
+    support_counts: dict[str, int],
+) -> dict[str, Any]:
+    anchor_support_count = int(anchor.get("router_support_count", 0))
+    differences = [
+        abs(
+            int(support_counts.get(str(candidate["support_key"]), 0))
+            - anchor_support_count
+        )
+        for candidate in candidates
+    ]
+    exact_count = sum(1 for difference in differences if difference == 0)
+    near_count = sum(
+        1
+        for difference in differences
+        if difference <= SUPPORT_FREQUENCY_NEAR_COUNT_DELTA
+    )
+    min_difference = min(differences) if differences else None
+    if exact_count:
+        match_status = "exact_support_count_candidate_available"
+    elif near_count:
+        match_status = "near_support_count_candidate_available"
+    elif differences:
+        match_status = "loose_support_count_fallback"
+    else:
+        match_status = "unmatched_no_candidate"
+    return {
+        "control_match_status": match_status,
+        "control_candidate_count": len(candidates),
+        "control_exact_support_count_candidate_count": exact_count,
+        "control_near_support_count_candidate_count": near_count,
+        "control_min_support_count_abs_difference_available": min_difference,
+    }
 
 
 def _anchor_loss(anchor: dict[str, Any], rows_by_key: dict[str, dict[str, Any]]) -> float:
@@ -1528,6 +1603,17 @@ def _control_match_metadata(
         "control_fixed_support_loss": control_loss,
         "fixed_support_loss_difference": control_loss - anchor_loss,
         "control_match_rank": row.get("control_match_rank"),
+        "control_match_status": row.get("control_match_status"),
+        "control_candidate_count": row.get("control_candidate_count"),
+        "control_exact_support_count_candidate_count": row.get(
+            "control_exact_support_count_candidate_count"
+        ),
+        "control_near_support_count_candidate_count": row.get(
+            "control_near_support_count_candidate_count"
+        ),
+        "control_min_support_count_abs_difference_available": row.get(
+            "control_min_support_count_abs_difference_available"
+        ),
     }
 
 
@@ -1703,6 +1789,11 @@ _PAIR_FIELDNAMES = [
     "control_fixed_support_loss",
     "fixed_support_loss_difference",
     "control_match_rank",
+    "control_match_status",
+    "control_candidate_count",
+    "control_exact_support_count_candidate_count",
+    "control_near_support_count_candidate_count",
+    "control_min_support_count_abs_difference_available",
     "position_bin",
     "token_class",
     "router_support_count",
@@ -1737,6 +1828,11 @@ _PER_TOKEN_PAIR_FIELDNAMES = [
     "control_fixed_support_loss",
     "fixed_support_loss_difference",
     "control_match_rank",
+    "control_match_status",
+    "control_candidate_count",
+    "control_exact_support_count_candidate_count",
+    "control_near_support_count_candidate_count",
+    "control_min_support_count_abs_difference_available",
     "batch_index",
     "position_index",
     "token_index",

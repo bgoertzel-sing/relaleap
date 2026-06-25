@@ -277,6 +277,21 @@ def _stratum_stats(
                     if row.get("control_support") or row.get("support")
                 }
             ),
+            "control_exact_support_count_candidate_count_mean": _mean(
+                _field_values(stratum_rows, "control_exact_support_count_candidate_count")
+            ),
+            "control_near_support_count_candidate_count_mean": _mean(
+                _field_values(stratum_rows, "control_near_support_count_candidate_count")
+            ),
+            "control_min_support_count_abs_difference_available_mean": _mean(
+                _field_values(
+                    stratum_rows,
+                    "control_min_support_count_abs_difference_available",
+                )
+            ),
+            "control_match_status_counts": _value_counts(
+                row.get("control_match_status") for row in stratum_rows
+            ),
         }
     return stats
 
@@ -425,6 +440,21 @@ def _summary_rows(
             "control_fixed_support_loss_difference_abs_mean": ctl.get(
                 "fixed_support_loss_difference_abs_mean"
             ),
+            "control_exact_support_count_candidate_count_mean": ctl.get(
+                "control_exact_support_count_candidate_count_mean"
+            ),
+            "control_near_support_count_candidate_count_mean": ctl.get(
+                "control_near_support_count_candidate_count_mean"
+            ),
+            "control_min_support_count_abs_difference_available_mean": ctl.get(
+                "control_min_support_count_abs_difference_available_mean"
+            ),
+            "control_match_status_counts": json.dumps(
+                ctl.get("control_match_status_counts"),
+                sort_keys=True,
+            )
+            if ctl.get("control_match_status_counts") is not None
+            else None,
             "control_anchor_support_count": ctl.get("anchor_support_count"),
             "control_support_count": ctl.get("control_support_count"),
             "observed_minus_control_pair_synergy": (
@@ -446,6 +476,10 @@ def _control_match_stats(control_stats: list[dict[str, Any]]) -> dict[str, Any]:
             "fixed_support_loss_difference_abs_mean": None,
             "matched_anchor_support_count": 0,
             "matched_control_support_count": 0,
+            "control_exact_support_count_candidate_count_mean": None,
+            "control_near_support_count_candidate_count_mean": None,
+            "control_min_support_count_abs_difference_available_mean": None,
+            "control_match_status_counts": {},
         }
     return {
         "support_count_difference_mean": _mean(
@@ -481,6 +515,45 @@ def _control_match_stats(control_stats: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "matched_control_support_count": sum(
             int(stat.get("control_support_count") or 0) for stat in control_stats
+        ),
+        "control_exact_support_count_candidate_count_mean": _mean(
+            [
+                value
+                for stat in control_stats
+                if (
+                    value := stat.get(
+                        "control_exact_support_count_candidate_count_mean"
+                    )
+                )
+                is not None
+            ]
+        ),
+        "control_near_support_count_candidate_count_mean": _mean(
+            [
+                value
+                for stat in control_stats
+                if (
+                    value := stat.get(
+                        "control_near_support_count_candidate_count_mean"
+                    )
+                )
+                is not None
+            ]
+        ),
+        "control_min_support_count_abs_difference_available_mean": _mean(
+            [
+                value
+                for stat in control_stats
+                if (
+                    value := stat.get(
+                        "control_min_support_count_abs_difference_available_mean"
+                    )
+                )
+                is not None
+            ]
+        ),
+        "control_match_status_counts": _merge_counts(
+            stat.get("control_match_status_counts", {}) for stat in control_stats
         ),
     }
 
@@ -576,6 +649,26 @@ def _field_values(rows: list[dict[str, str]], field: str) -> list[float]:
     ]
 
 
+def _value_counts(values: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        if value is None or value == "":
+            continue
+        key = str(value)
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _merge_counts(counts_list: Any) -> dict[str, int]:
+    merged: dict[str, int] = {}
+    for counts in counts_list:
+        if not isinstance(counts, dict):
+            continue
+        for key, value in counts.items():
+            merged[str(key)] = merged.get(str(key), 0) + int(value)
+    return dict(sorted(merged.items()))
+
+
 def _optional_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -662,6 +755,10 @@ _FIELDNAMES = [
     "control_support_count_difference_abs_mean",
     "control_fixed_support_loss_difference_mean",
     "control_fixed_support_loss_difference_abs_mean",
+    "control_exact_support_count_candidate_count_mean",
+    "control_near_support_count_candidate_count_mean",
+    "control_min_support_count_abs_difference_available_mean",
+    "control_match_status_counts",
     "control_anchor_support_count",
     "control_support_count",
     "observed_minus_control_pair_synergy",
