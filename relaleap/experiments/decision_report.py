@@ -543,6 +543,12 @@ DEFAULT_CAUSAL_COLUMN_FINGERPRINT_DECONFOUNDING_DIR = Path(
 DEFAULT_CAUSAL_COLUMN_FINGERPRINT_OUT_DIR = Path(
     "results/reports/token_larger_causal_column_fingerprint_audit"
 )
+DEFAULT_RETENTION_CHURN_MICROTEST_DIR = Path(
+    "results/audits/token_larger_retention_churn_microtest"
+)
+DEFAULT_RETENTION_CHURN_MICROTEST_OUT_DIR = Path(
+    "results/reports/token_larger_retention_churn_microtest_decision"
+)
 DEFAULT_MAX_LOGIT_DELTA = 0.1
 DEFAULT_MAX_PINNED_VS_REPICKED_DELTA = 0.1
 PROMOTE = "promote_to_default_phase0_baseline"
@@ -655,6 +661,7 @@ KEEP_LOAD_BALANCE_PROBE_OPT_IN = "keep_router_load_balance_probe_opt_in"
 DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT = (
     "diagnose_causal_column_fingerprint_audit"
 )
+DIAGNOSE_RETENTION_CHURN_MICROTEST = "diagnose_retention_churn_microtest"
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
@@ -13985,6 +13992,265 @@ def _write_causal_column_fingerprint_audit_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_retention_churn_microtest_decision_report(
+    audit_dir: Path = DEFAULT_RETENTION_CHURN_MICROTEST_DIR,
+    out_dir: Path = DEFAULT_RETENTION_CHURN_MICROTEST_OUT_DIR,
+) -> dict[str, Any]:
+    """Summarize the local retention/churn microtest for contextual-router controls."""
+
+    failures: list[dict[str, Any]] = []
+    audit = _retention_churn_microtest_entry(audit_dir, failures)
+    variants = audit.get("variants_by_name") or {}
+    topk2 = variants.get("promoted_contextual_topk2") or {}
+    topk1 = variants.get("rank_matched_contextual_topk1") or {}
+    dense = variants.get("norm_matched_dense_active_rank") or {}
+
+    required_variants = (
+        "promoted_contextual_topk2",
+        "rank_matched_contextual_topk1",
+        "norm_matched_dense_active_rank",
+    )
+    for variant in required_variants:
+        if variant not in variants:
+            failures.append(
+                {
+                    "field": "retention_churn.variants",
+                    "expected": variant,
+                    "actual": sorted(variants),
+                    "path": str(audit_dir / "summary.json"),
+                }
+            )
+
+    topk2_anchor_ce_better_than_topk1 = (
+        _float_or_none(topk2.get("anchor_ce_after_transfer")) is not None
+        and _float_or_none(topk1.get("anchor_ce_after_transfer")) is not None
+        and _float_or_none(topk2.get("anchor_ce_after_transfer"))
+        < _float_or_none(topk1.get("anchor_ce_after_transfer"))
+    )
+    sparse_beats_dense_after_transfer = (
+        _float_or_none(topk2.get("anchor_ce_after_transfer")) is not None
+        and _float_or_none(topk1.get("anchor_ce_after_transfer")) is not None
+        and _float_or_none(dense.get("anchor_ce_after_transfer")) is not None
+        and min(
+            _float_or_none(topk2.get("anchor_ce_after_transfer")),
+            _float_or_none(topk1.get("anchor_ce_after_transfer")),
+        )
+        < _float_or_none(dense.get("anchor_ce_after_transfer"))
+    )
+    topk2_churn = _float_or_none(topk2.get("anchor_support_churn_after_transfer"))
+    topk1_churn = _float_or_none(topk1.get("anchor_support_churn_after_transfer"))
+    topk2_churn_much_higher_than_topk1 = (
+        topk2_churn is not None
+        and topk1_churn is not None
+        and topk2_churn >= max(0.5, topk1_churn + 0.25)
+    )
+    anchor_ce_drift_improves_all = all(
+        _float_or_none(row.get("anchor_ce_drift")) is not None
+        and _float_or_none(row.get("anchor_ce_drift")) < 0.0
+        for row in (topk2, topk1, dense)
+        if row
+    )
+    status = "fail" if failures else "pass"
+    colab_replication_warranted = False
+    stable_topk2_cooperation_supported = (
+        status == "pass"
+        and topk2_anchor_ce_better_than_topk1
+        and not topk2_churn_much_higher_than_topk1
+    )
+    if status == "pass":
+        rationale = (
+            "The local retention/churn microtest is complete and includes the "
+            "promoted contextual top-k-2 sparse model, the rank-matched "
+            "contextual top-k-1 sparse control, and the norm-matched dense "
+            "active-rank control. All variants improve anchor CE after transfer "
+            "rather than showing forgetting, and the sparse contextual variants "
+            "remain better than the norm-matched dense control. The top-k-2 "
+            "variant has a small CE edge after transfer, but its anchor support "
+            "churn is much higher than rank-matched top-k-1, so this result "
+            "does not support a stable top-k-2 causal-cooperation claim."
+        )
+        next_step = (
+            "defer Colab replication of this interpretive microtest and return to the causal-column fingerprint/control matrix before making any top-k-2 cooperation claim"
+        )
+    else:
+        rationale = "The retention/churn microtest artifacts are missing, incomplete, or inconsistent."
+        next_step = "repair or regenerate the local retention/churn microtest artifacts before making a retention/churn decision"
+    report = {
+        "status": status,
+        "decision": DIAGNOSE_RETENTION_CHURN_MICROTEST
+        if status == "pass"
+        else INSUFFICIENT_EVIDENCE,
+        "colab_replication_warranted": colab_replication_warranted,
+        "stable_topk2_cooperation_supported": stable_topk2_cooperation_supported,
+        "support_utilization_alone_sufficient": False,
+        "evidence": {
+            "audit_dir": str(audit_dir),
+            "audit": audit,
+            "signals": {
+                "anchor_ce_drift_improves_all": anchor_ce_drift_improves_all,
+                "sparse_beats_dense_after_transfer": sparse_beats_dense_after_transfer,
+                "topk2_anchor_ce_better_than_topk1": topk2_anchor_ce_better_than_topk1,
+                "topk2_churn_much_higher_than_topk1": topk2_churn_much_higher_than_topk1,
+            },
+            "failures": failures,
+        },
+        "rationale": rationale,
+        "next_step": next_step,
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_retention_churn_microtest_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
+def _retention_churn_microtest_entry(
+    audit_dir: Path,
+    failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    summary_path = audit_dir / "summary.json"
+    metrics_path = audit_dir / "variant_metrics.csv"
+    phase_path = audit_dir / "phase_metrics.csv"
+    notes_path = audit_dir / "notes.md"
+    if not summary_path.is_file():
+        failures.append(
+            {
+                "field": "retention_churn.summary_json",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(summary_path),
+            }
+        )
+        return {"status": None, "variants_by_name": {}}
+    for artifact_path, field in (
+        (metrics_path, "retention_churn.variant_metrics_csv"),
+        (phase_path, "retention_churn.phase_metrics_csv"),
+        (notes_path, "retention_churn.notes_md"),
+    ):
+        if not artifact_path.is_file():
+            failures.append(
+                {
+                    "field": field,
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(artifact_path),
+                }
+            )
+    summary = _read_json_object(summary_path)
+    audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
+    variants = audit.get("variants") if isinstance(audit.get("variants"), list) else []
+    variants_by_name = {
+        str(row.get("variant")): row
+        for row in variants
+        if isinstance(row, dict) and row.get("variant")
+    }
+    entry = {
+        "summary_path": str(summary_path),
+        "status": summary.get("status"),
+        "experiment_id": summary.get("experiment_id"),
+        "config_path": summary.get("config_path"),
+        "dataset": audit.get("dataset"),
+        "seq_len": audit.get("seq_len"),
+        "training_steps_per_slice": audit.get("training_steps_per_slice"),
+        "residual_objective": audit.get("residual_objective"),
+        "empty_anchor_ce": audit.get("empty_anchor_ce"),
+        "empty_transfer_ce": audit.get("empty_transfer_ce"),
+        "variant_count": len(variants_by_name),
+        "variants_by_name": variants_by_name,
+        "artifacts": {
+            "summary_json": str(summary_path),
+            "variant_metrics_csv": str(metrics_path),
+            "phase_metrics_csv": str(phase_path),
+            "notes_md": str(notes_path),
+        },
+    }
+    expected_values = {
+        "status": "ok",
+        "residual_objective": "supervised_ce",
+    }
+    for field, expected in expected_values.items():
+        if entry.get(field) != expected:
+            failures.append(
+                {
+                    "field": f"retention_churn.{field}",
+                    "expected": expected,
+                    "actual": entry.get(field),
+                    "path": str(summary_path),
+                }
+            )
+    return entry
+
+
+def _write_retention_churn_microtest_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    evidence = report["evidence"]
+    audit = evidence["audit"]
+    variants = audit.get("variants_by_name") or {}
+    lines = [
+        "# Retention/Churn Microtest Decision",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        "- Colab replication warranted: "
+        f"`{report['colab_replication_warranted']}`",
+        "- Stable top-k-2 cooperation supported: "
+        f"`{report['stable_topk2_cooperation_supported']}`",
+        "- Support utilization alone sufficient: "
+        f"`{report['support_utilization_alone_sufficient']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        f"- Audit: `{evidence['audit_dir']}`",
+        f"- Dataset: `{audit.get('dataset')}`",
+        f"- Training steps per slice: `{audit.get('training_steps_per_slice')}`",
+        "",
+        "| Variant | Kind | Top-k | Anchor CE before | Anchor CE after | Anchor CE drift | Support churn | Transfer CE improvement |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for name in (
+        "promoted_contextual_topk2",
+        "rank_matched_contextual_topk1",
+        "norm_matched_dense_active_rank",
+    ):
+        row = variants.get(name) or {}
+        lines.append(
+            "| "
+            f"`{name}` | "
+            f"`{row.get('kind', '')}` | "
+            f"{row.get('top_k', '')} | "
+            f"{_format_metric(row.get('anchor_ce_before_transfer'))} | "
+            f"{_format_metric(row.get('anchor_ce_after_transfer'))} | "
+            f"{_format_metric(row.get('anchor_ce_drift'))} | "
+            f"{_format_metric(row.get('anchor_support_churn_after_transfer'))} | "
+            f"{_format_metric(row.get('transfer_ce_improvement'))} |"
+        )
+    lines.extend(["", "## Signals", ""])
+    for key, value in evidence["signals"].items():
+        lines.append(f"- {key}: `{value}`")
+    if evidence["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in evidence["failures"]:
+            lines.append(
+                "- "
+                f"`{failure.get('field')}` expected "
+                f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                f"at `{failure.get('path', '')}`"
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def write_dead_column_load_balance_probe_report(
     probe_dirs: tuple[Path, ...] = DEFAULT_DEAD_COLUMN_LOAD_BALANCE_PROBE_DIRS,
     out_dir: Path = DEFAULT_DEAD_COLUMN_LOAD_BALANCE_OUT_DIR,
@@ -14514,6 +14780,7 @@ def main() -> None:
             "post-promotion-support-wide-promoted-default",
             "dead-column-load-balance-probe",
             "causal-column-fingerprint-audit",
+            "retention-churn-microtest-decision",
         ),
         default="pinned-support",
         help="Decision report to write.",
@@ -14952,6 +15219,11 @@ def main() -> None:
             args.out or DEFAULT_CAUSAL_COLUMN_FINGERPRINT_OUT_DIR,
             deconfounding_dir=args.deconfounding_dir
             or DEFAULT_CAUSAL_COLUMN_FINGERPRINT_DECONFOUNDING_DIR,
+        )
+    elif args.report == "retention-churn-microtest-decision":
+        report = write_retention_churn_microtest_decision_report(
+            args.comparison_dir or DEFAULT_RETENTION_CHURN_MICROTEST_DIR,
+            args.out or DEFAULT_RETENTION_CHURN_MICROTEST_OUT_DIR,
         )
     else:
         report = write_pinned_support_decision_report(

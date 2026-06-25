@@ -44,6 +44,7 @@ from relaleap.experiments.decision_report import (
     CONFIRM_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT,
     KEEP_LOAD_BALANCE_PROBE_OPT_IN,
     DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT,
+    DIAGNOSE_RETENTION_CHURN_MICROTEST,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
     STOP_CONFIDENCE_PENALTY_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -80,6 +81,7 @@ from relaleap.experiments.decision_report import (
     write_post_promotion_support_wide_promoted_default_report,
     write_dead_column_load_balance_probe_report,
     write_causal_column_fingerprint_audit_report,
+    write_retention_churn_microtest_decision_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
     write_pc_residual_objective_diagnostics_report,
@@ -176,6 +178,57 @@ class CausalColumnFingerprintAuditReportTest(unittest.TestCase):
             self.assertTrue(signals["rank_matched_topk1_fingerprint_present"])
             self.assertFalse(report["causal_column_claim_supported"])
             self.assertIn("rank-matched top-k-1 fingerprints", report["rationale"])
+
+
+class RetentionChurnMicrotestDecisionReportTest(unittest.TestCase):
+    def test_high_topk2_churn_keeps_colab_replication_deferred(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            audit_dir = tmp_path / "retention_churn"
+            _write_retention_churn_microtest(audit_dir)
+
+            report = write_retention_churn_microtest_decision_report(
+                audit_dir,
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["decision"], DIAGNOSE_RETENTION_CHURN_MICROTEST)
+            self.assertFalse(report["colab_replication_warranted"])
+            self.assertFalse(report["stable_topk2_cooperation_supported"])
+            self.assertFalse(report["support_utilization_alone_sufficient"])
+            signals = report["evidence"]["signals"]
+            self.assertTrue(signals["anchor_ce_drift_improves_all"])
+            self.assertTrue(signals["sparse_beats_dense_after_transfer"])
+            self.assertTrue(signals["topk2_anchor_ce_better_than_topk1"])
+            self.assertTrue(signals["topk2_churn_much_higher_than_topk1"])
+            self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
+            self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
+
+    def test_missing_retention_variant_fails_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            audit_dir = tmp_path / "retention_churn"
+            _write_retention_churn_microtest(
+                audit_dir,
+                include_dense=False,
+            )
+
+            report = write_retention_churn_microtest_decision_report(
+                audit_dir,
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertIn(
+                "norm_matched_dense_active_rank",
+                [
+                    failure["expected"]
+                    for failure in report["evidence"]["failures"]
+                    if failure["field"] == "retention_churn.variants"
+                ],
+            )
 
 
 class PinnedSupportDecisionReportTest(unittest.TestCase):
@@ -5879,6 +5932,76 @@ def _write_causal_deconfounding_audit(
     )
     (audit_dir / "variant_metrics.csv").write_text(
         "variant,ce_loss\nlearned_topk2_contextual,2.91\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
+
+
+def _write_retention_churn_microtest(
+    audit_dir: Path,
+    *,
+    include_dense: bool = True,
+) -> None:
+    audit_dir.mkdir(parents=True)
+    variants = [
+        {
+            "variant": "promoted_contextual_topk2",
+            "kind": "sparse",
+            "top_k": 2,
+            "anchor_ce_before_transfer": 2.85,
+            "anchor_ce_after_transfer": 1.95,
+            "anchor_ce_drift": -0.90,
+            "anchor_support_churn_after_transfer": 0.91,
+            "transfer_ce_improvement": 0.90,
+        },
+        {
+            "variant": "rank_matched_contextual_topk1",
+            "kind": "sparse",
+            "top_k": 1,
+            "anchor_ce_before_transfer": 2.88,
+            "anchor_ce_after_transfer": 1.99,
+            "anchor_ce_drift": -0.89,
+            "anchor_support_churn_after_transfer": 0.01,
+            "transfer_ce_improvement": 0.92,
+        },
+    ]
+    if include_dense:
+        variants.append(
+            {
+                "variant": "norm_matched_dense_active_rank",
+                "kind": "dense",
+                "top_k": 0,
+                "anchor_ce_before_transfer": 3.25,
+                "anchor_ce_after_transfer": 2.84,
+                "anchor_ce_drift": -0.41,
+                "anchor_support_churn_after_transfer": "",
+                "transfer_ce_improvement": 0.42,
+            }
+        )
+    summary = {
+        "status": "ok",
+        "experiment_id": "token_larger_retention_churn_microtest",
+        "config_path": "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+        "audit": {
+            "dataset": "tiny_shakespeare_word",
+            "seq_len": 64,
+            "training_steps_per_slice": 50,
+            "residual_objective": "supervised_ce",
+            "empty_anchor_ce": 4.1,
+            "empty_transfer_ce": 4.2,
+            "variants": variants,
+        },
+    }
+    (audit_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "variant_metrics.csv").write_text(
+        "variant,anchor_ce_drift\npromoted_contextual_topk2,-0.9\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "phase_metrics.csv").write_text(
+        "variant,split,phase,ce_loss\npromoted_contextual_topk2,anchor,after_transfer_training,1.95\n",
         encoding="utf-8",
     )
     (audit_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
