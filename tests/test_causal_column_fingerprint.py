@@ -81,6 +81,14 @@ outputs:
                 audit["pair_intervention_counts"],
             )
             self.assertIn(
+                "fixed_singleton_gain_matched_nonrouter_control",
+                audit["pair_intervention_counts"],
+            )
+            self.assertIn(
+                "fixed_residual_norm_matched_nonrouter_control",
+                audit["pair_intervention_counts"],
+            )
+            self.assertIn(
                 "fixed_support_frequency_matched_control",
                 audit["per_token_pair_intervention_counts"],
             )
@@ -90,6 +98,14 @@ outputs:
             )
             self.assertIn(
                 "fixed_random_nonrouter_control",
+                audit["per_token_pair_intervention_counts"],
+            )
+            self.assertIn(
+                "fixed_singleton_gain_matched_nonrouter_control",
+                audit["per_token_pair_intervention_counts"],
+            )
+            self.assertIn(
+                "fixed_residual_norm_matched_nonrouter_control",
                 audit["per_token_pair_intervention_counts"],
             )
             self.assertEqual(len(audit["heldout_stability"]), 2)
@@ -182,6 +198,8 @@ outputs:
                     "fixed_support_frequency_matched_control",
                     "fixed_loss_matched_nonrouter_control",
                     "fixed_random_nonrouter_control",
+                    "fixed_singleton_gain_matched_nonrouter_control",
+                    "fixed_residual_norm_matched_nonrouter_control",
                 }.issubset({row["intervention"] for row in pair_rows})
             )
             control_pair_rows = [
@@ -200,6 +218,22 @@ outputs:
                 if row["intervention"] == "fixed_random_nonrouter_control"
             ]
             self.assertTrue(any(row["anchor_support"] for row in random_pair_rows))
+            singleton_gain_pair_rows = [
+                row
+                for row in pair_rows
+                if row["intervention"]
+                == "fixed_singleton_gain_matched_nonrouter_control"
+            ]
+            self.assertTrue(
+                any(row["anchor_support"] for row in singleton_gain_pair_rows)
+            )
+            residual_norm_pair_rows = [
+                row
+                for row in pair_rows
+                if row["intervention"]
+                == "fixed_residual_norm_matched_nonrouter_control"
+            ]
+            self.assertTrue(any(row["anchor_support"] for row in residual_norm_pair_rows))
             best_swap_rows = [
                 row
                 for row in pair_rows
@@ -240,6 +274,8 @@ outputs:
                     "fixed_support_frequency_matched_control",
                     "fixed_loss_matched_nonrouter_control",
                     "fixed_random_nonrouter_control",
+                    "fixed_singleton_gain_matched_nonrouter_control",
+                    "fixed_residual_norm_matched_nonrouter_control",
                 }.issubset({row["intervention"] for row in per_token_rows})
             )
             control_token_rows = [
@@ -258,6 +294,22 @@ outputs:
                 if row["intervention"] == "fixed_random_nonrouter_control"
             ]
             self.assertTrue(any(row["anchor_support"] for row in random_token_rows))
+            singleton_gain_token_rows = [
+                row
+                for row in per_token_rows
+                if row["intervention"]
+                == "fixed_singleton_gain_matched_nonrouter_control"
+            ]
+            self.assertTrue(
+                any(row["anchor_support"] for row in singleton_gain_token_rows)
+            )
+            residual_norm_token_rows = [
+                row
+                for row in per_token_rows
+                if row["intervention"]
+                == "fixed_residual_norm_matched_nonrouter_control"
+            ]
+            self.assertTrue(any(row["anchor_support"] for row in residual_norm_token_rows))
             best_swap_token_rows = [
                 row
                 for row in per_token_rows

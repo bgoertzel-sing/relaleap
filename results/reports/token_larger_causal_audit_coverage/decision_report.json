@@ -49,9 +49,9 @@
     "rank_matched_topk1_router_ce_better_than_topk2": true,
     "row_granularity": "per_token",
     "support_churn_fields_present": true,
-    "topk2_ce_deficit_vs_rank_matched_topk1": 0.04594707489013672,
+    "topk2_ce_deficit_vs_rank_matched_topk1": 0.04594683647155762,
     "topk2_functional_churn_cleaner_than_topk1": true,
-    "topk2_pair_synergy_mean_across_strata": 0.18841657638549805,
+    "topk2_pair_synergy_mean_across_strata": 0.18841660618782044,
     "variant_count": 3,
     "variants_present": [
       "baseline",
@@ -75,7 +75,7 @@
       }
     ],
     "ce_guardrail": {
-      "current_topk2_deficit": 0.04594707489013672,
+      "current_topk2_deficit": 0.04594683647155762,
       "interpretation": "CE is a guardrail; do not promote top-k-2 cooperation from coarse positive synergy alone."
     },
     "match_or_bin_by": [
@@ -96,7 +96,7 @@
   "next_step": "run the no-training residual-norm/active-rank/support-stratum matched top-k-2 versus rank-matched top-k-1 causal audit",
   "out_dir": "results/reports/token_larger_causal_audit_coverage",
   "platform": "macOS-26.5.1-x86_64-i386-64bit",
-  "runtime_seconds": 1.4562,
+  "runtime_seconds": 2.2498,
   "source_artifacts": [
     {
       "functional_churn_fields_present": true,

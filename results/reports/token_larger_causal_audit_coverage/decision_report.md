@@ -5,7 +5,7 @@
 - Source artifacts: `9`
 - Row granularity: `per_token`
 - Matched strata count: `5`
-- Top-k-2 CE deficit vs rank-matched top-k-1: `0.04594707489013672`
+- Top-k-2 CE deficit vs rank-matched top-k-1: `0.04594683647155762`
 - Missing fields: `[]`
 - Missing controls: `[]`
 

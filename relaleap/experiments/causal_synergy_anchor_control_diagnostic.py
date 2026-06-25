@@ -33,6 +33,8 @@ DEFAULT_OUT_DIR = Path(
 DEFAULT_CONTROL_INTERVENTIONS = (
     "fixed_support_frequency_matched_control",
     "fixed_random_nonrouter_control",
+    "fixed_singleton_gain_matched_nonrouter_control",
+    "fixed_residual_norm_matched_nonrouter_control",
     "fixed_loss_matched_nonrouter_control",
     "fixed_best_support_swap",
 )

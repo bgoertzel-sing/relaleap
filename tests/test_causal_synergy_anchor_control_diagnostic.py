@@ -32,7 +32,7 @@ class CausalSynergyAnchorControlDiagnosticTest(unittest.TestCase):
             )
             evidence = summary["evidence"]
             self.assertEqual(evidence["anchor_count"], 2)
-            self.assertEqual(evidence["paired_control_token_count"], 10)
+            self.assertEqual(evidence["paired_control_token_count"], 14)
             support_frequency = evidence["control_summaries"][
                 "fixed_support_frequency_matched_control"
             ]
@@ -48,6 +48,16 @@ class CausalSynergyAnchorControlDiagnosticTest(unittest.TestCase):
             ]
             self.assertTrue(random_nonrouter["supported"])
             self.assertEqual(random_nonrouter["control_role"], "selection_control")
+            singleton_gain = evidence["control_summaries"][
+                "fixed_singleton_gain_matched_nonrouter_control"
+            ]
+            self.assertTrue(singleton_gain["supported"])
+            self.assertEqual(singleton_gain["control_role"], "selection_control")
+            residual_norm = evidence["control_summaries"][
+                "fixed_residual_norm_matched_nonrouter_control"
+            ]
+            self.assertTrue(residual_norm["supported"])
+            self.assertEqual(residual_norm["control_role"], "selection_control")
             best_swap = evidence["control_summaries"]["fixed_best_support_swap"]
             self.assertTrue(best_swap["supported"])
             self.assertEqual(best_swap["control_role"], "selection_control")
@@ -71,7 +81,7 @@ class CausalSynergyAnchorControlDiagnosticTest(unittest.TestCase):
                 encoding="utf-8",
             ) as handle:
                 rows = list(csv.DictReader(handle))
-            self.assertEqual(len(rows), 10)
+            self.assertEqual(len(rows), 14)
             self.assertIn("observed_minus_control_pair_synergy", rows[0])
             self.assertIn("control_match_status", rows[0])
 
@@ -241,6 +251,44 @@ def _write_artifacts(
                 fixed_support_loss_difference=0.03,
                 control_match_rank=1,
                 control_match_status="random_nonrouter_candidate",
+                include_synergy=include_synergy,
+            )
+        )
+        rows.append(
+            _row(
+                "fixed_singleton_gain_matched_nonrouter_control",
+                "3,7",
+                anchor,
+                "3,7",
+                token_index,
+                position_bin,
+                token_class,
+                norm_bin,
+                support_count,
+                synergy - 0.035,
+                support_count_difference=-1,
+                fixed_support_loss_difference=0.015,
+                control_match_rank=1,
+                control_match_status="singleton_gain_matched_nonrouter_candidate",
+                include_synergy=include_synergy,
+            )
+        )
+        rows.append(
+            _row(
+                "fixed_residual_norm_matched_nonrouter_control",
+                "1,6",
+                anchor,
+                "1,6",
+                token_index,
+                position_bin,
+                token_class,
+                norm_bin,
+                support_count,
+                synergy - 0.025,
+                support_count_difference=-1,
+                fixed_support_loss_difference=0.025,
+                control_match_rank=1,
+                control_match_status="residual_norm_matched_nonrouter_candidate",
                 include_synergy=include_synergy,
             )
         )

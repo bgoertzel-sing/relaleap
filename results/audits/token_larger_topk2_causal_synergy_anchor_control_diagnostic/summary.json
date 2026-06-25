@@ -13,6 +13,8 @@
     "control_interventions": [
       "fixed_support_frequency_matched_control",
       "fixed_random_nonrouter_control",
+      "fixed_singleton_gain_matched_nonrouter_control",
+      "fixed_residual_norm_matched_nonrouter_control",
       "fixed_loss_matched_nonrouter_control",
       "fixed_best_support_swap"
     ],
@@ -20,6 +22,8 @@
       "fixed_best_support_swap": "selection_control",
       "fixed_loss_matched_nonrouter_control": "outcome_proximal_loss_matched_secondary_bound",
       "fixed_random_nonrouter_control": "selection_control",
+      "fixed_residual_norm_matched_nonrouter_control": "selection_control",
+      "fixed_singleton_gain_matched_nonrouter_control": "selection_control",
       "fixed_support_frequency_matched_control": "selection_control"
     },
     "control_summaries": {
@@ -31,14 +35,14 @@
         "control_role": "selection_control",
         "control_support_count": 7,
         "control_supports_per_anchor_mean": 1.0,
-        "fixed_support_loss_difference_abs_mean": 0.10556966696047748,
-        "fixed_support_loss_difference_mean": -0.10556966696047748,
+        "fixed_support_loss_difference_abs_mean": 0.1055698132549457,
+        "fixed_support_loss_difference_mean": -0.1055698132549457,
         "observed_minus_control_anchor_ci": [
-          -0.08052670955657959,
-          0.08881896612595538
+          -0.0805267017820607,
+          0.08881901234996561
         ],
-        "observed_minus_control_anchor_mean": -0.022072919567476083,
-        "observed_minus_control_token_mean": -0.02244772993879967,
+        "observed_minus_control_anchor_mean": -0.022072887822776593,
+        "observed_minus_control_token_mean": -0.022447700265865077,
         "positive_anchor_fraction": 0.2857142857142857,
         "support_count_difference_abs_mean": 12.15629522431259,
         "support_count_difference_mean": -12.15629522431259,
@@ -53,14 +57,14 @@
         "control_role": "outcome_proximal_loss_matched_secondary_bound",
         "control_support_count": 18,
         "control_supports_per_anchor_mean": 2.25,
-        "fixed_support_loss_difference_abs_mean": 0.022589616840315026,
-        "fixed_support_loss_difference_mean": 0.020736321992539334,
+        "fixed_support_loss_difference_abs_mean": 0.02258966679211246,
+        "fixed_support_loss_difference_mean": 0.02073627258076133,
         "observed_minus_control_anchor_ci": [
-          -0.04483595101729683,
-          0.12901425938452443
+          -0.044835974340853485,
+          0.1290143112982473
         ],
-        "observed_minus_control_anchor_mean": 0.023411178667687833,
-        "observed_minus_control_token_mean": 0.022880639657293818,
+        "observed_minus_control_anchor_mean": 0.02341121659570437,
+        "observed_minus_control_token_mean": 0.022880674353542307,
         "positive_anchor_fraction": 0.625,
         "support_count_difference_abs_mean": 14.144960362400907,
         "support_count_difference_mean": -14.144960362400907,
@@ -75,15 +79,59 @@
         "control_role": "selection_control",
         "control_support_count": 18,
         "control_supports_per_anchor_mean": 2.25,
-        "fixed_support_loss_difference_abs_mean": 0.06652186411018415,
-        "fixed_support_loss_difference_mean": 0.05309540148094583,
+        "fixed_support_loss_difference_abs_mean": 0.06652196833393446,
+        "fixed_support_loss_difference_mean": 0.05309550570469616,
         "observed_minus_control_anchor_ci": [
-          -0.04833325172992463,
-          0.07965420811407027
+          -0.04833325553447642,
+          0.0796541408185036
         ],
-        "observed_minus_control_anchor_mean": 0.003074020456700495,
-        "observed_minus_control_token_mean": 0.009614655817621562,
+        "observed_minus_control_anchor_mean": 0.0030740219864336784,
+        "observed_minus_control_token_mean": 0.009614657437679856,
         "positive_anchor_fraction": 0.375,
+        "support_count_difference_abs_mean": 14.144960362400907,
+        "support_count_difference_mean": -14.144960362400907,
+        "supported": false,
+        "token_pair_count": 1766
+      },
+      "fixed_residual_norm_matched_nonrouter_control": {
+        "anchor_count": 8,
+        "control_match_status_counts": {
+          "loose_support_count_fallback": 1766
+        },
+        "control_role": "selection_control",
+        "control_support_count": 18,
+        "control_supports_per_anchor_mean": 2.25,
+        "fixed_support_loss_difference_abs_mean": 0.07955280084707189,
+        "fixed_support_loss_difference_mean": 0.07930774434911571,
+        "observed_minus_control_anchor_ci": [
+          -0.06385935778203218,
+          0.040453508496284485
+        ],
+        "observed_minus_control_anchor_mean": -0.013791523362875048,
+        "observed_minus_control_token_mean": -0.012157110503683814,
+        "positive_anchor_fraction": 0.375,
+        "support_count_difference_abs_mean": 14.144960362400907,
+        "support_count_difference_mean": -14.144960362400907,
+        "supported": false,
+        "token_pair_count": 1766
+      },
+      "fixed_singleton_gain_matched_nonrouter_control": {
+        "anchor_count": 8,
+        "control_match_status_counts": {
+          "loose_support_count_fallback": 1766
+        },
+        "control_role": "selection_control",
+        "control_support_count": 18,
+        "control_supports_per_anchor_mean": 2.25,
+        "fixed_support_loss_difference_abs_mean": 0.1014866623711073,
+        "fixed_support_loss_difference_mean": 0.09542107987106858,
+        "observed_minus_control_anchor_ci": [
+          -0.018802365531092106,
+          0.16941096588056914
+        ],
+        "observed_minus_control_anchor_mean": 0.07873584872939457,
+        "observed_minus_control_token_mean": 0.08628318790401229,
+        "positive_anchor_fraction": 0.875,
         "support_count_difference_abs_mean": 14.144960362400907,
         "support_count_difference_mean": -14.144960362400907,
         "supported": false,
@@ -97,14 +145,14 @@
         "control_role": "selection_control",
         "control_support_count": 18,
         "control_supports_per_anchor_mean": 2.25,
-        "fixed_support_loss_difference_abs_mean": 0.06256760665271452,
-        "fixed_support_loss_difference_mean": 0.05938038172565257,
+        "fixed_support_loss_difference_abs_mean": 0.0625676336536861,
+        "fixed_support_loss_difference_mean": 0.05938040872662416,
         "observed_minus_control_anchor_ci": [
-          -0.053186478112873276,
-          0.039165874642710534
+          -0.05318649066121955,
+          0.03916588617909339
         ],
-        "observed_minus_control_anchor_mean": -0.005433964640456773,
-        "observed_minus_control_token_mean": -0.002126226878787221,
+        "observed_minus_control_anchor_mean": -0.005433960014080038,
+        "observed_minus_control_token_mean": -0.0021262189135006033,
         "positive_anchor_fraction": 0.5,
         "support_count_difference_abs_mean": 9.03454133635334,
         "support_count_difference_mean": -9.03454133635334,
@@ -123,12 +171,12 @@
     ],
     "observed_anchor_token_count": 787,
     "observed_intervention": "fixed_dominant_router_support",
-    "paired_control_token_count": 5989,
+    "paired_control_token_count": 9521,
     "source_audit_dir": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1",
     "variant": "baseline"
   },
   "out_dir": "results/audits/token_larger_topk2_causal_synergy_anchor_control_diagnostic",
   "platform": "macOS-26.5.1-x86_64-i386-64bit",
-  "runtime_seconds": 1.0262,
+  "runtime_seconds": 1.2487,
   "status": "pass"
 }

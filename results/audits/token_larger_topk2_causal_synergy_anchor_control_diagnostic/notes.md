@@ -5,21 +5,29 @@
 - Source audit: `results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1`
 - Deconfounded audit: `results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention`
 - Observed anchor-token rows: `787`
-- Paired control-token rows: `5989`
+- Paired control-token rows: `9521`
 - Anchor count: `8`
-- `fixed_support_frequency_matched_control` anchor mean delta: `-0.005433964640456773`
-- `fixed_support_frequency_matched_control` anchor CI: `[-0.053186478112873276, 0.039165874642710534]`
+- `fixed_support_frequency_matched_control` anchor mean delta: `-0.005433960014080038`
+- `fixed_support_frequency_matched_control` anchor CI: `[-0.05318649066121955, 0.03916588617909339]`
 - `fixed_support_frequency_matched_control` supported: `False`
 - `fixed_support_frequency_matched_control` control role: `selection_control`
-- `fixed_random_nonrouter_control` anchor mean delta: `0.003074020456700495`
-- `fixed_random_nonrouter_control` anchor CI: `[-0.04833325172992463, 0.07965420811407027]`
+- `fixed_random_nonrouter_control` anchor mean delta: `0.0030740219864336784`
+- `fixed_random_nonrouter_control` anchor CI: `[-0.04833325553447642, 0.0796541408185036]`
 - `fixed_random_nonrouter_control` supported: `False`
 - `fixed_random_nonrouter_control` control role: `selection_control`
-- `fixed_loss_matched_nonrouter_control` anchor mean delta: `0.023411178667687833`
-- `fixed_loss_matched_nonrouter_control` anchor CI: `[-0.04483595101729683, 0.12901425938452443]`
+- `fixed_singleton_gain_matched_nonrouter_control` anchor mean delta: `0.07873584872939457`
+- `fixed_singleton_gain_matched_nonrouter_control` anchor CI: `[-0.018802365531092106, 0.16941096588056914]`
+- `fixed_singleton_gain_matched_nonrouter_control` supported: `False`
+- `fixed_singleton_gain_matched_nonrouter_control` control role: `selection_control`
+- `fixed_residual_norm_matched_nonrouter_control` anchor mean delta: `-0.013791523362875048`
+- `fixed_residual_norm_matched_nonrouter_control` anchor CI: `[-0.06385935778203218, 0.040453508496284485]`
+- `fixed_residual_norm_matched_nonrouter_control` supported: `False`
+- `fixed_residual_norm_matched_nonrouter_control` control role: `selection_control`
+- `fixed_loss_matched_nonrouter_control` anchor mean delta: `0.02341121659570437`
+- `fixed_loss_matched_nonrouter_control` anchor CI: `[-0.044835974340853485, 0.1290143112982473]`
 - `fixed_loss_matched_nonrouter_control` supported: `False`
 - `fixed_loss_matched_nonrouter_control` control role: `outcome_proximal_loss_matched_secondary_bound`
-- `fixed_best_support_swap` anchor mean delta: `-0.022072919567476083`
-- `fixed_best_support_swap` anchor CI: `[-0.08052670955657959, 0.08881896612595538]`
+- `fixed_best_support_swap` anchor mean delta: `-0.022072887822776593`
+- `fixed_best_support_swap` anchor CI: `[-0.0805267017820607, 0.08881901234996561]`
 - `fixed_best_support_swap` supported: `False`
 - `fixed_best_support_swap` control role: `selection_control`

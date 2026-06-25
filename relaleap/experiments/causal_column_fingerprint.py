@@ -227,6 +227,20 @@ def run_causal_column_fingerprint(
                     )
                     for pair in _all_pairs(int(spec["num_columns"]))
                 ]
+                singleton_gain_by_column = _singleton_gain_by_column(
+                    base=base,
+                    residual=residual,
+                    hidden=hidden,
+                    targets=targets,
+                    vocab_size=vocab_size,
+                    empty_loss=empty_loss,
+                    router_loss=router_loss,
+                )
+                _enrich_pair_control_features(
+                    fixed_rows,
+                    column_values=values,
+                    singleton_gain_by_column=singleton_gain_by_column,
+                )
                 selected_pairs = _selected_pair_interventions(
                     fixed_rows=fixed_rows,
                     router_support=router_support,
@@ -1529,7 +1543,113 @@ def _selected_pair_interventions(
             "router_support_count": support_counts.get(key, 0),
             **_control_match_metadata(row, anchor, support_counts),
         }
-    return list(selected.values())[: max_pair_rows * 20]
+    for row in _matched_control_pair_rows(
+        fixed_rows=fixed_rows,
+        support_counts=support_counts,
+        anchors=anchors,
+        selected=selected,
+        max_pair_rows=max_pair_rows,
+        intervention="fixed_singleton_gain_matched_nonrouter_control",
+        prefer_nonrouter=True,
+        score_fn=lambda candidate, anchor: (
+            abs(
+                float(candidate.get("singleton_gain_sum", 0.0))
+                - _anchor_feature(anchor, rows_by_key, "singleton_gain_sum")
+            ),
+            abs(
+                support_counts.get(str(candidate["support_key"]), 0)
+                - int(anchor["router_support_count"])
+            ),
+            str(candidate["support_key"]),
+        ),
+    ):
+        key = str(row["support_key"])
+        anchor = row["control_anchor"]
+        selected[f"singleton_gain_matched_control_{key}"] = {
+            "intervention": "fixed_singleton_gain_matched_nonrouter_control",
+            "support": row["support"],
+            "router_support_count": support_counts.get(key, 0),
+            **_control_match_metadata(row, anchor, support_counts),
+        }
+    for row in _matched_control_pair_rows(
+        fixed_rows=fixed_rows,
+        support_counts=support_counts,
+        anchors=anchors,
+        selected=selected,
+        max_pair_rows=max_pair_rows,
+        intervention="fixed_residual_norm_matched_nonrouter_control",
+        prefer_nonrouter=True,
+        score_fn=lambda candidate, anchor: (
+            abs(
+                float(candidate.get("pair_value_norm", 0.0))
+                - _anchor_feature(anchor, rows_by_key, "pair_value_norm")
+            ),
+            abs(
+                support_counts.get(str(candidate["support_key"]), 0)
+                - int(anchor["router_support_count"])
+            ),
+            str(candidate["support_key"]),
+        ),
+    ):
+        key = str(row["support_key"])
+        anchor = row["control_anchor"]
+        selected[f"residual_norm_matched_control_{key}"] = {
+            "intervention": "fixed_residual_norm_matched_nonrouter_control",
+            "support": row["support"],
+            "router_support_count": support_counts.get(key, 0),
+            **_control_match_metadata(row, anchor, support_counts),
+        }
+    return list(selected.values())[: max_pair_rows * 28]
+
+
+def _singleton_gain_by_column(
+    *,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    empty_loss: float,
+    router_loss: float,
+) -> dict[int, float]:
+    rows = [
+        _score_for_support(
+            base,
+            residual,
+            hidden,
+            targets,
+            vocab_size,
+            support=(column,),
+            empty_loss=empty_loss,
+            router_loss=router_loss,
+        )
+        for column in range(residual.num_columns)
+    ]
+    return {int(row["support"][0]): float(row["gain_from_empty"]) for row in rows}
+
+
+def _enrich_pair_control_features(
+    rows: list[dict[str, Any]],
+    *,
+    column_values: Any,
+    singleton_gain_by_column: dict[int, float],
+) -> None:
+    for row in rows:
+        support = tuple(int(part) for part in row["support"])
+        row["singleton_gain_sum"] = sum(
+            singleton_gain_by_column.get(column, 0.0) for column in support
+        )
+        pair_value = column_values[list(support)].sum(dim=0)
+        row["pair_value_norm"] = float(pair_value.norm().item())
+
+
+def _anchor_feature(
+    anchor: dict[str, Any],
+    rows_by_key: dict[str, dict[str, Any]],
+    field: str,
+) -> float:
+    key = _support_key(tuple(int(part) for part in anchor["support"]))
+    return float(rows_by_key[key].get(field, 0.0))
 
 
 def _round_robin_anchor(
