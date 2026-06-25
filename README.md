@@ -322,6 +322,25 @@ bracket and explicitly blocks a support-frequency candidate-percentile claim
 until the causal fingerprint artifact writes an exhaustive near-frequency
 nonrouter candidate table rather than sampled controls.
 
+To refresh that candidate denominator artifact without Colab/GPU replication,
+rerun the causal-column fingerprint command locally:
+
+```bash
+python -m relaleap.experiments.causal_column_fingerprint \
+  --config configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml \
+  --out results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_support_frequency_candidates \
+  --load-balance-weights 0.0 \
+  --max-pair-rows 8
+```
+
+This writes `support_frequency_candidate_controls.csv` alongside the existing
+fingerprint artifacts. The table enumerates all nonrouter fixed-pair candidates
+for each sampled router anchor, records exact/near support-count caliper
+eligibility, marks unmatched candidates as excluded from the primary percentile
+denominator instead of falling back loosely, and includes loss, singleton-gain,
+residual-norm, random-rank, and pair-synergy fields for future percentile
+audits.
+
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic
 sees nonzero repicking without changing the checked Phase 0 baseline. After the

@@ -35,7 +35,7 @@ model:
     layers: 1
     hidden_dim: 32
   columns:
-    num_columns: 4
+    num_columns: 8
     atoms_per_column: 2
     top_k: 2
     insertion_sites: 1
@@ -60,14 +60,23 @@ outputs:
 
             self.assertEqual(summary["status"], "ok")
             audit = summary["audit"]
-            self.assertEqual(audit["num_columns"], 4)
+            self.assertEqual(audit["num_columns"], 8)
             self.assertEqual(audit["top_k"], 2)
             self.assertEqual(audit["support_router"], "contextual_mlp")
             self.assertEqual(audit["load_balance_weights"], [0.0, 0.01])
             self.assertEqual(len(audit["variants"]), 2)
-            self.assertEqual(audit["column_fingerprint_count"], 8)
+            self.assertEqual(audit["column_fingerprint_count"], 16)
             self.assertGreater(audit["pair_intervention_count"], 0)
             self.assertGreater(audit["per_token_pair_intervention_count"], 0)
+            self.assertGreater(audit["support_frequency_candidate_control_count"], 0)
+            self.assertGreater(
+                audit["support_frequency_candidate_controls"]["candidate_row_count"],
+                0,
+            )
+            self.assertEqual(
+                audit["support_frequency_candidate_controls"]["unmatched_policy"],
+                "exclude_from_primary_percentile_denominator_no_loose_fallback",
+            )
             self.assertIn(
                 "fixed_support_frequency_matched_control",
                 audit["pair_intervention_counts"],
@@ -130,7 +139,7 @@ outputs:
             saved = json.loads(
                 (tmp_path / "fingerprint" / "summary.json").read_text()
             )
-            self.assertEqual(saved["audit"]["column_fingerprint_count"], 8)
+            self.assertEqual(saved["audit"]["column_fingerprint_count"], 16)
             self.assertTrue(
                 (tmp_path / "fingerprint" / "column_fingerprints.csv").is_file()
             )
@@ -142,6 +151,11 @@ outputs:
                     tmp_path / "fingerprint" / "per_token_pair_interventions.csv"
                 ).is_file()
             )
+            self.assertTrue(
+                (
+                    tmp_path / "fingerprint" / "support_frequency_candidate_controls.csv"
+                ).is_file()
+            )
             self.assertTrue((tmp_path / "fingerprint" / "notes.md").is_file())
 
             with (tmp_path / "fingerprint" / "column_fingerprints.csv").open(
@@ -149,7 +163,7 @@ outputs:
                 encoding="utf-8",
             ) as handle:
                 column_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(column_rows), 8)
+            self.assertEqual(len(column_rows), 16)
             self.assertIn("ablate_loss_delta", column_rows[0])
             self.assertIn("force_loss_delta", column_rows[0])
             self.assertIn("force_residual_stream_l2_delta", column_rows[0])
@@ -263,6 +277,52 @@ outputs:
                 and row["control_support"]
             ]
             self.assertTrue(best_swap_rows)
+
+            with (
+                tmp_path / "fingerprint" / "support_frequency_candidate_controls.csv"
+            ).open(newline="", encoding="utf-8") as handle:
+                candidate_rows = list(csv.DictReader(handle))
+            self.assertGreater(len(candidate_rows), 0)
+            self.assertIn("anchor_support", candidate_rows[0])
+            self.assertIn("candidate_support", candidate_rows[0])
+            self.assertIn("candidate_is_nonrouter", candidate_rows[0])
+            self.assertIn("within_support_count_caliper", candidate_rows[0])
+            self.assertIn(
+                "included_in_primary_percentile_denominator",
+                candidate_rows[0],
+            )
+            self.assertIn("candidate_pair_synergy", candidate_rows[0])
+            self.assertIn("pair_synergy_difference", candidate_rows[0])
+            self.assertIn("loss_match_rank_within_caliper", candidate_rows[0])
+            self.assertIn(
+                "singleton_gain_match_rank_within_caliper",
+                candidate_rows[0],
+            )
+            self.assertIn(
+                "residual_norm_match_rank_within_caliper",
+                candidate_rows[0],
+            )
+            self.assertIn("random_nonrouter_rank_within_caliper", candidate_rows[0])
+            self.assertTrue(
+                all(row["candidate_is_nonrouter"] == "True" for row in candidate_rows)
+            )
+            denominator_rows = [
+                row
+                for row in candidate_rows
+                if row["included_in_primary_percentile_denominator"] == "True"
+            ]
+            self.assertEqual(
+                len(denominator_rows),
+                audit["support_frequency_candidate_controls"][
+                    "calipered_candidate_row_count"
+                ],
+            )
+            self.assertFalse(
+                any(
+                    row["candidate_match_status"] == "loose_support_count_fallback"
+                    for row in candidate_rows
+                )
+            )
 
             with (
                 tmp_path / "fingerprint" / "per_token_pair_interventions.csv"

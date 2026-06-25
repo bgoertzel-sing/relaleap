@@ -114,6 +114,7 @@ def run_causal_column_fingerprint(
     column_rows: list[dict[str, Any]] = []
     pair_rows: list[dict[str, Any]] = []
     per_token_pair_rows: list[dict[str, Any]] = []
+    support_frequency_candidate_rows: list[dict[str, Any]] = []
     variant_summaries: list[dict[str, Any]] = []
     control_sampling_summaries: list[dict[str, Any]] = []
     stability_summaries: list[dict[str, Any]] = []
@@ -249,6 +250,16 @@ def run_causal_column_fingerprint(
                     variant=str(spec["variant"]),
                     control_sampling_summaries=control_sampling_summaries,
                 )
+                support_frequency_candidate_rows.extend(
+                    _support_frequency_candidate_control_rows(
+                        fixed_rows=fixed_rows,
+                        router_support=router_support,
+                        selected_pairs=selected_pairs,
+                        max_pair_rows=max_pair_rows,
+                        variant=str(spec["variant"]),
+                        load_balance_weight=float(spec["load_balance_weight"]),
+                    )
+                )
                 pair_rows.extend(
                     _pair_fingerprint_rows(
                         base=base,
@@ -377,6 +388,11 @@ def run_causal_column_fingerprint(
         _PER_TOKEN_PAIR_FIELDNAMES,
         per_token_pair_rows,
     )
+    _write_csv(
+        out_dir / "support_frequency_candidate_controls.csv",
+        _SUPPORT_FREQUENCY_CANDIDATE_FIELDNAMES,
+        support_frequency_candidate_rows,
+    )
     summary = {
         "status": "ok",
         "experiment_id": f"{experiment_id}_causal_column_fingerprint",
@@ -402,9 +418,15 @@ def run_causal_column_fingerprint(
             "column_fingerprint_count": len(column_rows),
             "pair_intervention_count": len(pair_rows),
             "per_token_pair_intervention_count": len(per_token_pair_rows),
+            "support_frequency_candidate_control_count": len(
+                support_frequency_candidate_rows
+            ),
             "pair_intervention_counts": _intervention_counts(pair_rows),
             "per_token_pair_intervention_counts": _intervention_counts(
                 per_token_pair_rows
+            ),
+            "support_frequency_candidate_controls": _candidate_control_summary(
+                support_frequency_candidate_rows
             ),
             "control_sampling": control_sampling_summaries,
             "variants": variant_summaries,
@@ -423,6 +445,9 @@ def run_causal_column_fingerprint(
             "pair_interventions_csv": str(out_dir / "pair_interventions.csv"),
             "per_token_pair_interventions_csv": str(
                 out_dir / "per_token_pair_interventions.csv"
+            ),
+            "support_frequency_candidate_controls_csv": str(
+                out_dir / "support_frequency_candidate_controls.csv"
             ),
             "notes_md": str(out_dir / "notes.md"),
         },
@@ -1816,6 +1841,231 @@ def _matched_control_pair_rows(
     return control_rows
 
 
+def _support_frequency_candidate_control_rows(
+    *,
+    fixed_rows: list[dict[str, Any]],
+    router_support: Any,
+    selected_pairs: list[dict[str, Any]],
+    max_pair_rows: int,
+    variant: str,
+    load_balance_weight: float,
+) -> list[dict[str, Any]]:
+    """Enumerate all near-frequency nonrouter candidates for sampled anchors."""
+
+    support_counts = _router_support_counts(router_support)
+    rows_by_key = {str(row["support_key"]): row for row in fixed_rows}
+    anchors = [
+        selected
+        for selected in selected_pairs
+        if selected.get("intervention") == "fixed_dominant_router_support"
+    ][:max_pair_rows]
+    if not anchors:
+        anchors = [
+            selected
+            for selected in selected_pairs
+            if selected.get("intervention") == "fixed_best_support_swap"
+        ][:max_pair_rows]
+    candidate_rows: list[dict[str, Any]] = []
+    for anchor_index, anchor in enumerate(anchors):
+        anchor_support = tuple(int(part) for part in anchor["support"])
+        anchor_key = _support_key(anchor_support)
+        anchor_row = rows_by_key.get(anchor_key)
+        if anchor_row is None:
+            continue
+        anchor_support_count = int(anchor.get("router_support_count", 0))
+        anchor_loss = float(anchor_row["loss"])
+        anchor_singleton_gain_sum = float(anchor_row.get("singleton_gain_sum", 0.0))
+        anchor_pair_value_norm = float(anchor_row.get("pair_value_norm", 0.0))
+        anchor_pair_gain = float(anchor_row.get("gain_from_empty", 0.0))
+        anchor_pair_synergy = anchor_pair_gain - anchor_singleton_gain_sum
+        candidates = [
+            row
+            for row in fixed_rows
+            if str(row["support_key"]) != anchor_key
+            and int(support_counts.get(str(row["support_key"]), 0)) == 0
+        ]
+        diagnostics = _control_candidate_diagnostics(
+            candidates,
+            anchor,
+            support_counts,
+        )
+        near_candidates = _support_frequency_calipered_candidates(
+            candidates,
+            anchor,
+            support_counts,
+        )
+        rank_maps = _candidate_rank_maps(
+            near_candidates,
+            anchor_key=anchor_key,
+            anchor_loss=anchor_loss,
+            anchor_singleton_gain_sum=anchor_singleton_gain_sum,
+            anchor_pair_value_norm=anchor_pair_value_norm,
+        )
+        for candidate in candidates:
+            candidate_key = str(candidate["support_key"])
+            candidate_support_count = int(support_counts.get(candidate_key, 0))
+            support_count_difference = candidate_support_count - anchor_support_count
+            support_count_abs_difference = abs(support_count_difference)
+            within_caliper = (
+                support_count_abs_difference <= SUPPORT_FREQUENCY_NEAR_COUNT_DELTA
+            )
+            candidate_singleton_gain_sum = float(
+                candidate.get("singleton_gain_sum", 0.0)
+            )
+            candidate_pair_gain = float(candidate.get("gain_from_empty", 0.0))
+            candidate_rows.append(
+                {
+                    "variant": variant,
+                    "load_balance_weight": load_balance_weight,
+                    "anchor_index": anchor_index,
+                    "anchor_intervention": anchor.get("intervention"),
+                    "anchor_support": anchor_key,
+                    "candidate_support": candidate_key,
+                    "candidate_is_nonrouter": candidate_support_count == 0,
+                    "support_count_caliper": SUPPORT_FREQUENCY_NEAR_COUNT_DELTA,
+                    "within_support_count_caliper": within_caliper,
+                    "candidate_match_status": (
+                        _support_frequency_match_status(
+                            candidate,
+                            anchor,
+                            support_counts,
+                        )
+                        if within_caliper
+                        else "unmatched_excluded_by_support_count_caliper"
+                    ),
+                    "anchor_router_support_count": anchor_support_count,
+                    "candidate_router_support_count": candidate_support_count,
+                    "support_count_difference": support_count_difference,
+                    "support_count_abs_difference": support_count_abs_difference,
+                    "candidate_pool_count": diagnostics["control_candidate_count"],
+                    "exact_support_count_candidate_count": diagnostics[
+                        "control_exact_support_count_candidate_count"
+                    ],
+                    "near_support_count_candidate_count": diagnostics[
+                        "control_near_support_count_candidate_count"
+                    ],
+                    "min_support_count_abs_difference_available": diagnostics[
+                        "control_min_support_count_abs_difference_available"
+                    ],
+                    "calipered_candidate_count": len(near_candidates),
+                    "included_in_primary_percentile_denominator": within_caliper,
+                    "anchor_fixed_support_loss": anchor_loss,
+                    "candidate_fixed_support_loss": float(candidate["loss"]),
+                    "fixed_support_loss_difference": float(candidate["loss"])
+                    - anchor_loss,
+                    "anchor_pair_gain": anchor_pair_gain,
+                    "candidate_pair_gain": candidate_pair_gain,
+                    "pair_gain_difference": candidate_pair_gain - anchor_pair_gain,
+                    "anchor_singleton_gain_sum": anchor_singleton_gain_sum,
+                    "candidate_singleton_gain_sum": candidate_singleton_gain_sum,
+                    "singleton_gain_sum_difference": candidate_singleton_gain_sum
+                    - anchor_singleton_gain_sum,
+                    "anchor_pair_synergy": anchor_pair_synergy,
+                    "candidate_pair_synergy": candidate_pair_gain
+                    - candidate_singleton_gain_sum,
+                    "pair_synergy_difference": (
+                        candidate_pair_gain
+                        - candidate_singleton_gain_sum
+                        - anchor_pair_synergy
+                    ),
+                    "anchor_pair_value_norm": anchor_pair_value_norm,
+                    "candidate_pair_value_norm": float(
+                        candidate.get("pair_value_norm", 0.0)
+                    ),
+                    "pair_value_norm_difference": float(
+                        candidate.get("pair_value_norm", 0.0)
+                    )
+                    - anchor_pair_value_norm,
+                    "loss_match_rank_within_caliper": rank_maps[
+                        "loss"
+                    ].get(candidate_key),
+                    "singleton_gain_match_rank_within_caliper": rank_maps[
+                        "singleton_gain"
+                    ].get(candidate_key),
+                    "residual_norm_match_rank_within_caliper": rank_maps[
+                        "residual_norm"
+                    ].get(candidate_key),
+                    "random_nonrouter_rank_within_caliper": rank_maps[
+                        "random"
+                    ].get(candidate_key),
+                    "stable_random_score": _stable_control_score(
+                        anchor_key,
+                        candidate_key,
+                    ),
+                }
+            )
+    return candidate_rows
+
+
+def _candidate_rank_maps(
+    candidates: list[dict[str, Any]],
+    *,
+    anchor_key: str,
+    anchor_loss: float,
+    anchor_singleton_gain_sum: float,
+    anchor_pair_value_norm: float,
+) -> dict[str, dict[str, int]]:
+    def ranks(key_fn: Any) -> dict[str, int]:
+        ranked = sorted(candidates, key=key_fn)
+        return {str(row["support_key"]): index for index, row in enumerate(ranked, 1)}
+
+    return {
+        "loss": ranks(
+            lambda row: (
+                abs(float(row["loss"]) - anchor_loss),
+                str(row["support_key"]),
+            )
+        ),
+        "singleton_gain": ranks(
+            lambda row: (
+                abs(
+                    float(row.get("singleton_gain_sum", 0.0))
+                    - anchor_singleton_gain_sum
+                ),
+                str(row["support_key"]),
+            )
+        ),
+        "residual_norm": ranks(
+            lambda row: (
+                abs(float(row.get("pair_value_norm", 0.0)) - anchor_pair_value_norm),
+                str(row["support_key"]),
+            )
+        ),
+        "random": ranks(
+            lambda row: (
+                _stable_control_score(anchor_key, str(row["support_key"])),
+                str(row["support_key"]),
+            )
+        ),
+    }
+
+
+def _candidate_control_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    anchors = {
+        (str(row.get("variant")), int(row.get("anchor_index", -1)))
+        for row in rows
+    }
+    calipered_count = sum(
+        1 for row in rows if bool(row.get("within_support_count_caliper"))
+    )
+    exact_count = sum(
+        1 for row in rows if row.get("candidate_match_status") == "exact_support_count_match"
+    )
+    near_count = sum(
+        1 for row in rows if row.get("candidate_match_status") == "near_support_count_match"
+    )
+    return {
+        "candidate_row_count": len(rows),
+        "anchor_count": len(anchors),
+        "calipered_candidate_row_count": calipered_count,
+        "exact_support_count_match_row_count": exact_count,
+        "near_support_count_match_row_count": near_count,
+        "unmatched_candidate_row_count": len(rows) - calipered_count,
+        "support_count_caliper": SUPPORT_FREQUENCY_NEAR_COUNT_DELTA,
+        "unmatched_policy": "exclude_from_primary_percentile_denominator_no_loose_fallback",
+    }
+
+
 def _support_frequency_calipered_candidates(
     candidates: list[dict[str, Any]],
     anchor: dict[str, Any],
@@ -2183,6 +2433,49 @@ _PER_TOKEN_PAIR_FIELDNAMES = [
     "active_rank_proxy",
 ]
 
+_SUPPORT_FREQUENCY_CANDIDATE_FIELDNAMES = [
+    "variant",
+    "load_balance_weight",
+    "anchor_index",
+    "anchor_intervention",
+    "anchor_support",
+    "candidate_support",
+    "candidate_is_nonrouter",
+    "support_count_caliper",
+    "within_support_count_caliper",
+    "candidate_match_status",
+    "anchor_router_support_count",
+    "candidate_router_support_count",
+    "support_count_difference",
+    "support_count_abs_difference",
+    "candidate_pool_count",
+    "exact_support_count_candidate_count",
+    "near_support_count_candidate_count",
+    "min_support_count_abs_difference_available",
+    "calipered_candidate_count",
+    "included_in_primary_percentile_denominator",
+    "anchor_fixed_support_loss",
+    "candidate_fixed_support_loss",
+    "fixed_support_loss_difference",
+    "anchor_pair_gain",
+    "candidate_pair_gain",
+    "pair_gain_difference",
+    "anchor_singleton_gain_sum",
+    "candidate_singleton_gain_sum",
+    "singleton_gain_sum_difference",
+    "anchor_pair_synergy",
+    "candidate_pair_synergy",
+    "pair_synergy_difference",
+    "anchor_pair_value_norm",
+    "candidate_pair_value_norm",
+    "pair_value_norm_difference",
+    "loss_match_rank_within_caliper",
+    "singleton_gain_match_rank_within_caliper",
+    "residual_norm_match_rank_within_caliper",
+    "random_nonrouter_rank_within_caliper",
+    "stable_random_score",
+]
+
 
 def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -2204,6 +2497,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Column fingerprint rows: `{audit['column_fingerprint_count']}`",
         f"- Pair intervention rows: `{audit['pair_intervention_count']}`",
         f"- Per-token pair intervention rows: `{audit['per_token_pair_intervention_count']}`",
+        "- Support-frequency candidate-control rows: "
+        f"`{audit['support_frequency_candidate_control_count']}`",
         f"- Pair synergy sign convention: {audit['pair_synergy_sign_convention']}",
         "",
         "## Variant Summary",
