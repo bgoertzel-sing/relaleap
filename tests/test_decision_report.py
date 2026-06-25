@@ -123,6 +123,18 @@ class CausalColumnFingerprintAuditReportTest(unittest.TestCase):
             self.assertTrue(signals["random_fixed_topk2_worse_than_learned"])
             self.assertTrue(signals["norm_matched_dense_worse_than_learned"])
             self.assertTrue(signals["rank_matched_topk1_ce_better_than_topk2"])
+            self.assertFalse(signals["exact_pair_synergy_supported"])
+            self.assertFalse(signals["token_position_pair_strata_present"])
+            self.assertFalse(signals["topk2_cooperation_supported_by_pair_gate"])
+            pair_gate = report["evidence"]["pair_claim_gate"]
+            self.assertFalse(pair_gate["exact_pair_synergy_supported"])
+            self.assertTrue(pair_gate["topk2_support_width_only"])
+            self.assertTrue(
+                any(
+                    "singleton" in field
+                    for field in pair_gate["missing_exact_intervention_fields"]
+                )
+            )
             self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
             self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
 
@@ -178,6 +190,34 @@ class CausalColumnFingerprintAuditReportTest(unittest.TestCase):
             self.assertTrue(signals["rank_matched_topk1_fingerprint_present"])
             self.assertFalse(report["causal_column_claim_supported"])
             self.assertIn("rank-matched top-k-1 fingerprints", report["rationale"])
+
+    def test_report_detects_exact_pair_synergy_when_artifact_supports_it(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            audit_dir = tmp_path / "fingerprint"
+            deconfounding_dir = tmp_path / "deconfounding"
+            _write_causal_fingerprint_audit(
+                audit_dir,
+                include_stability=True,
+                include_rank_matched_topk1=True,
+                include_exact_pair_synergy=True,
+            )
+            _write_causal_deconfounding_audit(deconfounding_dir)
+
+            report = write_causal_column_fingerprint_audit_report(
+                audit_dir,
+                tmp_path / "report",
+                deconfounding_dir=deconfounding_dir,
+            )
+
+            signals = report["evidence"]["signals"]
+            pair_gate = report["evidence"]["pair_claim_gate"]
+            self.assertTrue(signals["exact_pair_synergy_supported"])
+            self.assertTrue(signals["token_position_pair_strata_present"])
+            self.assertTrue(signals["topk2_cooperation_supported_by_pair_gate"])
+            self.assertEqual(pair_gate["exact_pair_synergy_count"], 2)
+            self.assertGreater(pair_gate["exact_pair_synergy_mean"], 0.0)
+            self.assertFalse(report["causal_column_claim_supported"])
 
 
 class RetentionChurnMicrotestDecisionReportTest(unittest.TestCase):
@@ -5808,6 +5848,7 @@ def _write_causal_fingerprint_audit(
     *,
     include_stability: bool = False,
     include_rank_matched_topk1: bool = False,
+    include_exact_pair_synergy: bool = False,
 ) -> None:
     audit_dir.mkdir(parents=True)
     variants = [
@@ -5866,10 +5907,16 @@ def _write_causal_fingerprint_audit(
         column_rows,
         encoding="utf-8",
     )
-    (audit_dir / "pair_interventions.csv").write_text(
-        "variant,support,fixed_support_loss_delta\nbaseline,\"0,1\",0.1\n",
-        encoding="utf-8",
-    )
+    if include_exact_pair_synergy:
+        pair_rows = (
+            "variant,intervention,support,fixed_support_loss_delta,empty_loss,"
+            "singleton_left_loss,singleton_right_loss,pair_loss,position_bin\n"
+            "baseline,fixed_dominant_router_support,\"0,1\",0.1,3.0,2.8,2.85,2.5,early\n"
+            "baseline,fixed_best_support_swap,\"0,2\",0.05,3.0,2.9,2.8,2.55,late\n"
+        )
+    else:
+        pair_rows = "variant,support,fixed_support_loss_delta\nbaseline,\"0,1\",0.1\n"
+    (audit_dir / "pair_interventions.csv").write_text(pair_rows, encoding="utf-8")
     (audit_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
 
 

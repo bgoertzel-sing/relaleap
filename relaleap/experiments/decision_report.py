@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from pathlib import Path
 from typing import Any
@@ -13606,6 +13607,7 @@ def write_causal_column_fingerprint_audit_report(
     fingerprint = _causal_column_fingerprint_entry(audit_dir, failures)
     deconfounding = _causal_column_deconfounding_entry(deconfounding_dir, failures)
     baseline = fingerprint.get("baseline_variant") or {}
+    pair_claim_gate = _causal_pair_claim_gate(audit_dir)
     controls = deconfounding.get("controls") or {}
     topk1 = controls.get("rank_matched_topk1_contextual") or {}
     random_topk2 = controls.get("random_fixed_topk2") or {}
@@ -13654,11 +13656,15 @@ def write_causal_column_fingerprint_audit_report(
     has_rank_matched_fingerprints = bool(
         fingerprint.get("rank_matched_topk1_fingerprint_present")
     )
+    exact_pair_synergy_supported = bool(
+        pair_claim_gate.get("exact_pair_synergy_supported")
+    )
     causal_column_claim_supported = (
         not failures
         and nontrivial_ablation
         and has_stability_evidence
         and has_rank_matched_fingerprints
+        and exact_pair_synergy_supported
         and not topk1_ce_better
     )
     status = "fail" if failures else "pass"
@@ -13674,10 +13680,12 @@ def write_causal_column_fingerprint_audit_report(
                 "the rank-matched top-k-1 contextual control has better CE; if "
                 "top-k-1 fingerprints are equal or cleaner, top-k-2 should be "
                 "treated as a support-width convenience rather than a causal "
-                "cooperation result."
+                "cooperation result. The pairwise claim gate also fails closed "
+                "unless the audit contains exact empty, singleton, and pair "
+                "interventions on the same examples."
             )
             next_step = (
-                "run a small local retention/churn microtest comparing promoted contextual top-k-2, rank-matched contextual top-k-1, and norm-matched dense controls before Colab replication"
+                "extend the causal column fingerprint audit schema to write same-batch empty, singleton, and pair intervention gains plus token/position strata, then rerun the local report before Colab replication"
             )
         else:
             rationale = (
@@ -13707,6 +13715,7 @@ def write_causal_column_fingerprint_audit_report(
             "audit_dir": str(audit_dir),
             "deconfounding_dir": str(deconfounding_dir),
             "fingerprint": fingerprint,
+            "pair_claim_gate": pair_claim_gate,
             "deconfounding": deconfounding,
             "signals": {
                 "nontrivial_ablation": nontrivial_ablation,
@@ -13715,6 +13724,13 @@ def write_causal_column_fingerprint_audit_report(
                 "rank_matched_topk1_ce_better_than_topk2": topk1_ce_better,
                 "heldout_stability_present": has_stability_evidence,
                 "rank_matched_topk1_fingerprint_present": has_rank_matched_fingerprints,
+                "exact_pair_synergy_supported": exact_pair_synergy_supported,
+                "token_position_pair_strata_present": bool(
+                    pair_claim_gate.get("token_position_pair_strata_present")
+                ),
+                "topk2_cooperation_supported_by_pair_gate": bool(
+                    pair_claim_gate.get("topk2_cooperation_supported")
+                ),
             },
             "failures": failures,
         },
@@ -13828,6 +13844,160 @@ def _causal_column_fingerprint_entry(
     return entry
 
 
+def _causal_pair_claim_gate(audit_dir: Path) -> dict[str, Any]:
+    pair_path = audit_dir / "pair_interventions.csv"
+    if not pair_path.is_file():
+        return {
+            "status": "missing_pair_interventions",
+            "exact_pair_synergy_supported": False,
+            "topk2_cooperation_supported": False,
+            "topk2_support_width_only": True,
+            "prefer_rank_matched_topk1_for_causal_audits": True,
+            "reason": "pair_interventions.csv is missing",
+        }
+    with pair_path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    fieldnames = set(rows[0].keys()) if rows else set()
+    baseline_rows = [row for row in rows if row.get("variant") == "baseline"]
+    dominant_rows = [
+        row
+        for row in baseline_rows
+        if row.get("intervention") == "fixed_dominant_router_support"
+    ]
+    best_swap_rows = [
+        row
+        for row in baseline_rows
+        if row.get("intervention") == "fixed_best_support_swap"
+    ]
+
+    exact_synergies = _exact_pair_synergies(rows)
+    exact_pair_synergy_supported = bool(exact_synergies)
+    positive_synergy_fraction = (
+        None
+        if not exact_synergies
+        else sum(1 for value in exact_synergies if value > 0.0) / len(exact_synergies)
+    )
+    mean_synergy = _mean(exact_synergies)
+    token_position_pair_strata_present = bool(
+        {"position_bin", "token_class"} & fieldnames
+        or {"batch_index", "position_index"} <= fieldnames
+    )
+    topk2_cooperation_supported = (
+        exact_pair_synergy_supported
+        and mean_synergy is not None
+        and mean_synergy > 0.0
+        and positive_synergy_fraction is not None
+        and positive_synergy_fraction >= 0.5
+        and token_position_pair_strata_present
+    )
+    missing_exact_fields = sorted(
+        {
+            "empty_loss",
+            "singleton_left_loss",
+            "singleton_right_loss",
+            "pair_loss",
+        }
+        - fieldnames
+    )
+    return {
+        "status": "pass" if rows else "empty_pair_interventions",
+        "pair_intervention_rows": len(rows),
+        "baseline_pair_intervention_rows": len(baseline_rows),
+        "dominant_router_pair_rows": len(dominant_rows),
+        "best_fixed_pair_rows": len(best_swap_rows),
+        "dominant_router_fixed_loss_delta_mean": _mean(
+            _float_values(dominant_rows, "fixed_support_loss_delta")
+        ),
+        "dominant_router_fixed_loss_delta_min": _min_or_none(
+            _float_values(dominant_rows, "fixed_support_loss_delta")
+        ),
+        "dominant_router_fixed_loss_delta_max": _max_or_none(
+            _float_values(dominant_rows, "fixed_support_loss_delta")
+        ),
+        "best_fixed_loss_delta_mean": _mean(
+            _float_values(best_swap_rows, "fixed_support_loss_delta")
+        ),
+        "best_fixed_loss_delta_min": _min_or_none(
+            _float_values(best_swap_rows, "fixed_support_loss_delta")
+        ),
+        "best_fixed_loss_delta_max": _max_or_none(
+            _float_values(best_swap_rows, "fixed_support_loss_delta")
+        ),
+        "negative_fixed_loss_delta_count": sum(
+            1
+            for value in _float_values(baseline_rows, "fixed_support_loss_delta")
+            if value < 0.0
+        ),
+        "exact_pair_synergy_supported": exact_pair_synergy_supported,
+        "exact_pair_synergy_count": len(exact_synergies),
+        "exact_pair_synergy_mean": mean_synergy,
+        "exact_pair_synergy_min": _min_or_none(exact_synergies),
+        "exact_pair_synergy_max": _max_or_none(exact_synergies),
+        "exact_pair_positive_synergy_fraction": positive_synergy_fraction,
+        "token_position_pair_strata_present": token_position_pair_strata_present,
+        "topk2_cooperation_supported": topk2_cooperation_supported,
+        "topk2_support_width_only": not topk2_cooperation_supported,
+        "prefer_rank_matched_topk1_for_causal_audits": not topk2_cooperation_supported,
+        "missing_exact_intervention_fields": missing_exact_fields,
+        "reason": (
+            "Exact pair synergy is available."
+            if exact_pair_synergy_supported
+            else "Current pair artifacts contain fixed-pair deltas relative to the learned router, not same-batch empty/singleton/pair gains, so pairwise cooperation is not inferable."
+        ),
+    }
+
+
+def _exact_pair_synergies(rows: list[dict[str, Any]]) -> list[float]:
+    values: list[float] = []
+    for row in rows:
+        direct = _float_or_none(row.get("pair_synergy"))
+        if direct is not None:
+            values.append(direct)
+            continue
+        pair_gain = _float_or_none(row.get("pair_gain"))
+        left_gain = _float_or_none(row.get("singleton_left_gain"))
+        right_gain = _float_or_none(row.get("singleton_right_gain"))
+        if pair_gain is not None and left_gain is not None and right_gain is not None:
+            values.append(pair_gain - left_gain - right_gain)
+            continue
+        empty_loss = _float_or_none(row.get("empty_loss"))
+        pair_loss = _float_or_none(row.get("pair_loss"))
+        left_loss = _float_or_none(row.get("singleton_left_loss"))
+        right_loss = _float_or_none(row.get("singleton_right_loss"))
+        if (
+            empty_loss is not None
+            and pair_loss is not None
+            and left_loss is not None
+            and right_loss is not None
+        ):
+            pair_gain = empty_loss - pair_loss
+            left_gain = empty_loss - left_loss
+            right_gain = empty_loss - right_loss
+            values.append(pair_gain - left_gain - right_gain)
+    return values
+
+
+def _float_values(rows: list[dict[str, Any]], field: str) -> list[float]:
+    values: list[float] = []
+    for row in rows:
+        value = _float_or_none(row.get(field))
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def _mean(values: list[float]) -> float | None:
+    return None if not values else sum(values) / len(values)
+
+
+def _min_or_none(values: list[float]) -> float | None:
+    return None if not values else min(values)
+
+
+def _max_or_none(values: list[float]) -> float | None:
+    return None if not values else max(values)
+
+
 def _causal_column_deconfounding_entry(
     deconfounding_dir: Path,
     failures: list[dict[str, Any]],
@@ -13899,6 +14069,7 @@ def _write_causal_column_fingerprint_audit_markdown(
 ) -> None:
     evidence = report["evidence"]
     fingerprint = evidence["fingerprint"]
+    pair_claim_gate = evidence["pair_claim_gate"]
     baseline = fingerprint.get("baseline_variant") or {}
     controls = evidence["deconfounding"].get("controls") or {}
     lines = [
@@ -13947,10 +14118,39 @@ def _write_causal_column_fingerprint_audit_markdown(
     lines.extend(
         [
             "",
-        "## Deconfounding Controls",
-        "",
-        "| Variant | CE | Residual norm | Used columns | Unique supports | Oracle regret |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+            "## Pairwise Claim Gate",
+            "",
+            f"- Status: `{pair_claim_gate.get('status')}`",
+            "- Exact pair synergy supported: "
+            f"`{pair_claim_gate.get('exact_pair_synergy_supported')}`",
+            "- Token/position pair strata present: "
+            f"`{pair_claim_gate.get('token_position_pair_strata_present')}`",
+            "- Top-k-2 cooperation supported by pair gate: "
+            f"`{pair_claim_gate.get('topk2_cooperation_supported')}`",
+            "- Top-k-2 support-width-only interpretation: "
+            f"`{pair_claim_gate.get('topk2_support_width_only')}`",
+            "- Prefer rank-matched top-k-1 for causal audits: "
+            f"`{pair_claim_gate.get('prefer_rank_matched_topk1_for_causal_audits')}`",
+            "- Reason: "
+            f"{pair_claim_gate.get('reason')}",
+            "",
+            "| Pair subset | Rows | Mean fixed loss delta | Min | Max |",
+            "| --- | ---: | ---: | ---: | ---: |",
+            "| Dominant router pairs | "
+            f"{pair_claim_gate.get('dominant_router_pair_rows')} | "
+            f"{_format_metric(pair_claim_gate.get('dominant_router_fixed_loss_delta_mean'))} | "
+            f"{_format_metric(pair_claim_gate.get('dominant_router_fixed_loss_delta_min'))} | "
+            f"{_format_metric(pair_claim_gate.get('dominant_router_fixed_loss_delta_max'))} |",
+            "| Best fixed support swaps | "
+            f"{pair_claim_gate.get('best_fixed_pair_rows')} | "
+            f"{_format_metric(pair_claim_gate.get('best_fixed_loss_delta_mean'))} | "
+            f"{_format_metric(pair_claim_gate.get('best_fixed_loss_delta_min'))} | "
+            f"{_format_metric(pair_claim_gate.get('best_fixed_loss_delta_max'))} |",
+            "",
+            "## Deconfounding Controls",
+            "",
+            "| Variant | CE | Residual norm | Used columns | Unique supports | Oracle regret |",
+            "| --- | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for name in (
