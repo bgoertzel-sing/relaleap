@@ -318,6 +318,23 @@ local retention/churn stability bracket only; it keeps the negative singleton
 gain caveat from the source separability packet and does not reopen the closed
 top-k-2 causal-cooperation claim.
 
+To turn the completed seed-1/seed-2 probe packets into a fail-closed
+functional-retention decision packet without rerunning training:
+
+```bash
+python -m relaleap.experiments.active_topk1_functional_retention_audit
+```
+
+This writes
+`results/reports/token_larger_active_topk1_functional_retention_audit/summary.json`,
+`packet_metrics.csv`, and `notes.md`. It separates support identity churn,
+functional/logit churn, causal singleton-gain status, and CE guardrails, and
+uses explicit decision labels such as `functional_retention_bracket_only`,
+`functional_retention_claim_supported`, `blocked_by_negative_singleton_gain`,
+and `blocked_by_control_match_failure`. The current packets are one-order
+A-to-B transfer probes, so finite-update A-to-B versus B-to-A commutator claims
+remain deferred unless a future microtest writes that evidence.
+
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled
 synergy audit before making a causal-cooperation claim or spending Colab/GPU
