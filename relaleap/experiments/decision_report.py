@@ -535,7 +535,7 @@ DEFAULT_DEAD_COLUMN_LOAD_BALANCE_OUT_DIR = Path(
     "results/reports/dead_column_load_balance_probe"
 )
 DEFAULT_CAUSAL_COLUMN_FINGERPRINT_AUDIT_DIR = Path(
-    "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_low_weight_bracket"
+    "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1"
 )
 DEFAULT_CAUSAL_COLUMN_FINGERPRINT_DECONFOUNDING_DIR = Path(
     "results/audits/token_larger_support_deconfounding_controls"
