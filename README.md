@@ -303,6 +303,21 @@ python -m relaleap.experiments.active_topk1_retention_churn_probe \
 This uses the same active top-k-1 separability packet as source evidence and
 only changes the local retention/churn microtest seed.
 
+After seed-1 and seed-2 active top-k-1 retention/churn probe packets exist,
+summarize their local stability without rerunning training:
+
+```bash
+python -m relaleap.experiments.active_topk1_retention_churn_summary
+```
+
+This writes
+`results/reports/token_larger_active_rank_matched_topk1_retention_churn_stability/summary.json`,
+`probe_metrics.csv`, and `notes.md`. It requires both probe packets to pass
+their active-bracket gates and records rank-matched contextual top-k-1 as a
+local retention/churn stability bracket only; it keeps the negative singleton
+gain caveat from the source separability packet and does not reopen the closed
+top-k-2 causal-cooperation claim.
+
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled
 synergy audit before making a causal-cooperation claim or spending Colab/GPU
