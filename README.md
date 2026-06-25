@@ -291,6 +291,18 @@ top-k-1 against the promoted contextual top-k-2 reference and a norm-matched
 dense active-rank control. A passing probe supports top-k-1 as the local
 retention/churn bracket, but does not establish singleton causal separability.
 
+To check whether that low-churn signal is seed-stable before treating it as a
+settled bracket result, run the seed-2 repeat:
+
+```bash
+python -m relaleap.experiments.active_topk1_retention_churn_probe \
+  --config configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2.yaml \
+  --out results/audits/token_larger_active_rank_matched_topk1_retention_churn_probe_seed2
+```
+
+This uses the same active top-k-1 separability packet as source evidence and
+only changes the local retention/churn microtest seed.
+
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled
 synergy audit before making a causal-cooperation claim or spending Colab/GPU
