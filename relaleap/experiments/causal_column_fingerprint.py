@@ -226,6 +226,7 @@ def run_causal_column_fingerprint(
                         vocab_size=vocab_size,
                         variant=str(spec["variant"]),
                         load_balance_weight=float(spec["load_balance_weight"]),
+                        empty_loss=empty_loss,
                         router_hidden=router_hidden,
                         router_logits=router_logits,
                         router_loss=router_loss,
@@ -442,6 +443,7 @@ def _pair_fingerprint_rows(
     vocab_size: int,
     variant: str,
     load_balance_weight: float,
+    empty_loss: float,
     router_hidden: Any,
     router_logits: Any,
     router_loss: float,
@@ -449,28 +451,121 @@ def _pair_fingerprint_rows(
     selected_pairs: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     rows = []
+    empty_logits = base.decode(hidden)
+    token_class_masks = _token_class_masks(targets)
+    strata: list[tuple[str, str, list[int] | None, Any | None]] = [
+        ("all", "all", None, None),
+        (
+            "even",
+            "all",
+            [index for index in range(int(hidden.shape[1]) - 1) if index % 2 == 0],
+            None,
+        ),
+        (
+            "odd",
+            "all",
+            [index for index in range(int(hidden.shape[1]) - 1) if index % 2 == 1],
+            None,
+        ),
+    ]
+    strata.extend(
+        ("all", token_class, None, token_mask)
+        for token_class, token_mask in token_class_masks
+    )
     for selected in selected_pairs:
         support = tuple(int(part) for part in selected["support"])
+        left_support = (support[0],)
+        right_support = (support[1],)
         fixed_hidden = residual(hidden, support_indices=_fixed_support(hidden, support))
         fixed_logits = base.decode(fixed_hidden)
         fixed_loss = _ce_loss(fixed_logits, targets, vocab_size)
-        rows.append(
-            {
-                "variant": variant,
-                "load_balance_weight": load_balance_weight,
-                "intervention": selected["intervention"],
-                "support": _support_key(support),
-                "router_support_count": selected["router_support_count"],
-                "fixed_support_loss": fixed_loss,
-                "fixed_support_loss_delta": fixed_loss - router_loss,
-                "fixed_support_logit_mse": _mse_delta(fixed_logits, router_logits),
-                "fixed_support_residual_stream_l2_delta": _stream_l2_delta(
-                    fixed_hidden,
-                    router_hidden,
-                ),
-                "pair_value_cosine": _pair_value_cosine(column_values, support),
-            }
+        left_hidden = residual(
+            hidden,
+            support_indices=_fixed_support(hidden, left_support),
         )
+        right_hidden = residual(
+            hidden,
+            support_indices=_fixed_support(hidden, right_support),
+        )
+        left_logits = base.decode(left_hidden)
+        right_logits = base.decode(right_hidden)
+        for position_bin, token_class, position_indices, token_mask in strata:
+            if position_indices is None and token_mask is None:
+                row_empty_loss = empty_loss
+                row_router_loss = router_loss
+                row_pair_loss = fixed_loss
+                row_left_loss = _ce_loss(left_logits, targets, vocab_size)
+                row_right_loss = _ce_loss(right_logits, targets, vocab_size)
+                logit_mse = _mse_delta(fixed_logits, router_logits)
+                stream_l2 = _stream_l2_delta(fixed_hidden, router_hidden)
+            else:
+                row_empty_loss = _ce_loss_filtered(
+                    empty_logits,
+                    targets,
+                    vocab_size,
+                    position_indices=position_indices,
+                    token_mask=token_mask,
+                )
+                row_router_loss = _ce_loss_filtered(
+                    router_logits,
+                    targets,
+                    vocab_size,
+                    position_indices=position_indices,
+                    token_mask=token_mask,
+                )
+                row_pair_loss = _ce_loss_filtered(
+                    fixed_logits,
+                    targets,
+                    vocab_size,
+                    position_indices=position_indices,
+                    token_mask=token_mask,
+                )
+                row_left_loss = _ce_loss_filtered(
+                    left_logits,
+                    targets,
+                    vocab_size,
+                    position_indices=position_indices,
+                    token_mask=token_mask,
+                )
+                row_right_loss = _ce_loss_filtered(
+                    right_logits,
+                    targets,
+                    vocab_size,
+                    position_indices=position_indices,
+                    token_mask=token_mask,
+                )
+                logit_mse = None
+                stream_l2 = None
+            pair_gain = row_empty_loss - row_pair_loss
+            singleton_left_gain = row_empty_loss - row_left_loss
+            singleton_right_gain = row_empty_loss - row_right_loss
+            rows.append(
+                {
+                    "variant": variant,
+                    "load_balance_weight": load_balance_weight,
+                    "intervention": selected["intervention"],
+                    "support": _support_key(support),
+                    "position_bin": position_bin,
+                    "token_class": token_class,
+                    "router_support_count": selected["router_support_count"],
+                    "empty_loss": row_empty_loss,
+                    "router_loss": row_router_loss,
+                    "singleton_left_loss": row_left_loss,
+                    "singleton_right_loss": row_right_loss,
+                    "pair_loss": row_pair_loss,
+                    "singleton_left_gain": singleton_left_gain,
+                    "singleton_right_gain": singleton_right_gain,
+                    "pair_gain": pair_gain,
+                    "pair_synergy": (
+                        pair_gain - singleton_left_gain - singleton_right_gain
+                    ),
+                    "fixed_support_loss": row_pair_loss,
+                    "fixed_support_loss_delta": row_pair_loss - row_router_loss,
+                    "fixed_support_logit_mse": logit_mse,
+                    "fixed_support_residual_stream_l2_delta": stream_l2,
+                    "pair_value_cosine": _pair_value_cosine(column_values, support),
+                }
+            )
     return rows
 
 
@@ -625,6 +720,78 @@ def _ce_loss_subset(
         position = torch.tensor(positions, dtype=torch.long, device=logits.device)
         losses = losses.index_select(1, position)
     return float(losses.mean().detach().item())
+
+
+def _ce_loss_filtered(
+    logits: Any,
+    targets: Any,
+    vocab_size: int,
+    *,
+    position_indices: list[int] | None = None,
+    token_mask: Any | None = None,
+) -> float:
+    import torch
+    import torch.nn.functional as F
+
+    losses = F.cross_entropy(
+        logits[:, :-1, :].reshape(-1, vocab_size),
+        targets[:, :-1].reshape(-1),
+        reduction="none",
+    ).reshape(logits.shape[0], logits.shape[1] - 1)
+    mask = torch.ones_like(losses, dtype=torch.bool)
+    if position_indices is not None:
+        position_mask = torch.zeros_like(mask)
+        positions = [
+            int(index)
+            for index in position_indices
+            if 0 <= int(index) < int(logits.shape[1]) - 1
+        ]
+        if positions:
+            position = torch.tensor(positions, dtype=torch.long, device=logits.device)
+            position_mask.index_fill_(1, position, True)
+            mask = mask & position_mask
+    if token_mask is not None:
+        mask = mask & token_mask.to(device=logits.device, dtype=torch.bool)
+    selected = losses[mask]
+    if selected.numel() == 0:
+        return _ce_loss_subset(
+            logits,
+            targets,
+            vocab_size,
+            position_indices=position_indices,
+        )
+    return float(selected.mean().detach().item())
+
+
+def _token_class_masks(targets: Any) -> list[tuple[str, Any]]:
+    import torch
+
+    target_tokens = targets[:, :-1].detach()
+    unique, counts = torch.unique(target_tokens.reshape(-1), return_counts=True)
+    if int(unique.numel()) < 2:
+        return []
+    ordered = sorted(
+        (
+            (int(count.item()), int(token.item()))
+            for token, count in zip(unique.cpu(), counts.cpu())
+        ),
+        key=lambda item: (-item[0], item[1]),
+    )
+    split = max(1, len(ordered) // 2)
+    classes = [
+        ("common_target", [token for _, token in ordered[:split]]),
+        ("rare_target", [token for _, token in ordered[split:]]),
+    ]
+    masks = []
+    for name, token_ids in classes:
+        if not token_ids:
+            continue
+        mask = torch.zeros_like(target_tokens, dtype=torch.bool)
+        for token_id in token_ids:
+            mask = mask | (target_tokens == int(token_id))
+        if bool(mask.any().item()):
+            masks.append((name, mask))
+    return masks
 
 
 def _ablate_column_hidden(
@@ -805,7 +972,18 @@ _PAIR_FIELDNAMES = [
     "load_balance_weight",
     "intervention",
     "support",
+    "position_bin",
+    "token_class",
     "router_support_count",
+    "empty_loss",
+    "router_loss",
+    "singleton_left_loss",
+    "singleton_right_loss",
+    "pair_loss",
+    "singleton_left_gain",
+    "singleton_right_gain",
+    "pair_gain",
+    "pair_synergy",
     "fixed_support_loss",
     "fixed_support_loss_delta",
     "fixed_support_logit_mse",

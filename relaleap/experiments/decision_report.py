@@ -13670,23 +13670,45 @@ def write_causal_column_fingerprint_audit_report(
     status = "fail" if failures else "pass"
     if status == "pass":
         if has_stability_evidence and has_rank_matched_fingerprints:
-            rationale = (
-                "The promoted tokenized contextual top-k-2 audit has nontrivial "
-                "column ablation fingerprints, held-out split-stability evidence, "
-                "and rank-matched top-k-1 fingerprints. It is also bracketed by "
-                "the requested controls: random fixed top-k-2 is much worse, and "
-                "the norm-matched dense active-rank control is worse than learned "
-                "sparse top-k-2. The evidence still stays conservative because "
-                "the rank-matched top-k-1 contextual control has better CE; if "
-                "top-k-1 fingerprints are equal or cleaner, top-k-2 should be "
-                "treated as a support-width convenience rather than a causal "
-                "cooperation result. The pairwise claim gate also fails closed "
-                "unless the audit contains exact empty, singleton, and pair "
-                "interventions on the same examples."
-            )
-            next_step = (
-                "extend the causal column fingerprint audit schema to write same-batch empty, singleton, and pair intervention gains plus token/position strata, then rerun the local report before Colab replication"
-            )
+            if exact_pair_synergy_supported:
+                rationale = (
+                    "The promoted tokenized contextual top-k-2 audit has "
+                    "nontrivial column ablation fingerprints, held-out "
+                    "split-stability evidence, rank-matched top-k-1 fingerprints, "
+                    "and exact same-batch pair synergy/additivity rows. It is "
+                    "also bracketed by the requested controls: random fixed "
+                    "top-k-2 is much worse, and the norm-matched dense "
+                    "active-rank control is worse than learned sparse top-k-2. "
+                    "The evidence still stays conservative because the "
+                    "rank-matched top-k-1 contextual control has better CE; "
+                    "until top-k-2 also beats or explains that control and "
+                    "functional churn is acceptable, top-k-2 should be treated "
+                    "as promising pairwise support evidence rather than a "
+                    "causal cooperation result."
+                )
+                next_step = (
+                    "add functional-churn and rank-matched top-k-1 pair-fingerprint comparisons to the local causal-column audit before Colab replication or any top-k-2 cooperation claim"
+                )
+            else:
+                rationale = (
+                    "The promoted tokenized contextual top-k-2 audit has "
+                    "nontrivial column ablation fingerprints, held-out "
+                    "split-stability evidence, and rank-matched top-k-1 "
+                    "fingerprints. It is also bracketed by the requested "
+                    "controls: random fixed top-k-2 is much worse, and the "
+                    "norm-matched dense active-rank control is worse than "
+                    "learned sparse top-k-2. The evidence still stays "
+                    "conservative because the rank-matched top-k-1 contextual "
+                    "control has better CE; if top-k-1 fingerprints are equal "
+                    "or cleaner, top-k-2 should be treated as a support-width "
+                    "convenience rather than a causal cooperation result. The "
+                    "pairwise claim gate also fails closed unless the audit "
+                    "contains exact empty, singleton, and pair interventions "
+                    "on the same examples."
+                )
+                next_step = (
+                    "extend the causal column fingerprint audit schema to write same-batch empty, singleton, and pair intervention gains plus token/position strata, then rerun the local report before Colab replication"
+                )
         else:
             rationale = (
                 "The promoted tokenized contextual top-k-2 audit has nontrivial "

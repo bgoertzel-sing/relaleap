@@ -106,7 +106,24 @@ outputs:
                 pair_rows = list(csv.DictReader(handle))
             self.assertGreater(len(pair_rows), 0)
             self.assertIn("fixed_support_loss_delta", pair_rows[0])
+            self.assertIn("empty_loss", pair_rows[0])
+            self.assertIn("singleton_left_loss", pair_rows[0])
+            self.assertIn("singleton_right_loss", pair_rows[0])
+            self.assertIn("pair_loss", pair_rows[0])
+            self.assertIn("pair_gain", pair_rows[0])
+            self.assertIn("pair_synergy", pair_rows[0])
+            self.assertIn("position_bin", pair_rows[0])
             self.assertIn("pair_value_cosine", pair_rows[0])
+            self.assertTrue(
+                {"all", "even", "odd"}.issubset(
+                    {row["position_bin"] for row in pair_rows}
+                )
+            )
+            self.assertTrue(
+                {"common_target", "rare_target"}.issubset(
+                    {row["token_class"] for row in pair_rows}
+                )
+            )
 
     def test_causal_column_fingerprint_can_include_rank_matched_topk1(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
