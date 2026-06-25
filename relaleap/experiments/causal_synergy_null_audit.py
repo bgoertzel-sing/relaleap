@@ -210,7 +210,7 @@ def _stratum_stats(
     for row in rows:
         if row.get("variant") != variant or row.get("intervention") != intervention:
             continue
-        support_count = int(_optional_float(row.get("router_support_count")) or 0)
+        support_count = _matching_router_support_count(row)
         key = (
             str(row.get("position_bin")),
             str(row.get("token_class")),
@@ -294,6 +294,14 @@ def _stratum_stats(
             ),
         }
     return stats
+
+
+def _matching_router_support_count(row: dict[str, str]) -> int:
+    if row.get("anchor_support"):
+        anchor_count = _optional_float(row.get("anchor_router_support_count"))
+        if anchor_count is not None:
+            return int(anchor_count)
+    return int(_optional_float(row.get("router_support_count")) or 0)
 
 
 def _null_evidence(

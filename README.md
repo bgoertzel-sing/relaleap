@@ -252,20 +252,27 @@ matched control when present, and keeps `pair_synergy_supported` separate from
 `cleaner_causal_bracket_supported`.
 
 After refreshing the causal-column fingerprint artifact with matched control
-pairs, run the stronger support-frequency control check before any Colab repeat
-or causal-cooperation claim:
+pairs, run stronger anchored control checks before any Colab repeat or
+causal-cooperation claim:
 
 ```bash
 python -m relaleap.experiments.causal_synergy_null_audit \
   --control-intervention fixed_support_frequency_matched_control \
   --out results/audits/token_larger_topk2_causal_synergy_null_audit_support_frequency_control
+python -m relaleap.experiments.causal_synergy_null_audit \
+  --control-intervention fixed_random_nonrouter_control \
+  --out results/audits/token_larger_topk2_causal_synergy_null_audit_random_nonrouter_control
+python -m relaleap.experiments.causal_synergy_null_audit \
+  --control-intervention fixed_loss_matched_nonrouter_control \
+  --out results/audits/token_larger_topk2_causal_synergy_null_audit_loss_matched_control
 ```
 
 This uses the same no-training matched-strata audit but compares the observed
-router-selected top-k-2 pair synergy against fixed top-k-2 pairs with similar
-router support frequency. The current local artifact fails this stronger
-control while still passing the sign-flip and `fixed_best_support_swap` checks,
-so broad top-k-2 causal-cooperation claims remain blocked.
+router-selected top-k-2 pair synergy against fixed top-k-2 controls matched on
+their observed anchor context. The current local artifact fails the
+`fixed_best_support_swap`, support-frequency, random nonrouter, and loss-matched
+control checks despite passing the sign-flip null, so broad top-k-2
+causal-cooperation claims remain blocked.
 
 To inspect whether that failure is local to a single artifact-level control or
 holds per observed anchor across the sampled nonrouter controls in the same
@@ -280,8 +287,8 @@ This writes
 `per_anchor_control_deltas.csv`, and `notes.md`. It pairs each sampled control
 token row back to its observed router-selected anchor token row, reports
 observed-minus-control pair-synergy distributions by anchor, and keeps
-support-frequency selection controls separate from loss-matched
-outcome-proximal controls.
+support-frequency, random nonrouter, and best-swap selection controls separate
+from loss-matched outcome-proximal controls.
 
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic

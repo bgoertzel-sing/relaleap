@@ -1,0 +1,85 @@
+{
+  "artifacts": {
+    "matched_synergy_null_strata_csv": "results/audits/token_larger_topk2_causal_synergy_null_audit_loss_matched_control/matched_synergy_null_strata.csv",
+    "notes_md": "results/audits/token_larger_topk2_causal_synergy_null_audit_loss_matched_control/notes.md",
+    "summary_json": "results/audits/token_larger_topk2_causal_synergy_null_audit_loss_matched_control/summary.json"
+  },
+  "audit_dir": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1",
+  "decision": "pair_synergy_not_supported_against_local_control_null",
+  "deconfounded_dir": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention",
+  "evidence": {
+    "artifact_control_supported": false,
+    "bootstrap_samples": 1000,
+    "bootstrap_seed": 17,
+    "ce_guardrail_passed": true,
+    "ce_guardrail_tolerance": 0.05,
+    "ci_level": 0.95,
+    "cleaner_causal_bracket_supported": false,
+    "cleaner_fraction_threshold": 0.8,
+    "control_available": true,
+    "control_intervention": "fixed_loss_matched_nonrouter_control",
+    "control_match_diagnostics": {
+      "control_exact_support_count_candidate_count_mean": 0.0,
+      "control_match_status_counts": {
+        "loose_support_count_fallback": 1889
+      },
+      "control_min_support_count_abs_difference_available_mean": 14.387944797028771,
+      "control_near_support_count_candidate_count_mean": 0.0,
+      "fixed_support_loss_difference_abs_mean": 0.026246953046150632,
+      "fixed_support_loss_difference_mean": 0.02461125465358546,
+      "matched_anchor_support_count": 110,
+      "matched_control_support_count": 238,
+      "matched_strata_overlap_fraction": 1.0,
+      "support_count_difference_abs_mean": 14.387944797028771,
+      "support_count_difference_mean": -14.387944797028771
+    },
+    "control_matched_strata_count": 28,
+    "control_note": "`fixed_loss_matched_nonrouter_control` is an artifact-level matched control, not a retraining control.",
+    "control_pair_synergy_mean": 0.19700345692118854,
+    "deconfounded_dir": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention",
+    "failures": [],
+    "matched_dimensions": [
+      "position_bin",
+      "token_class",
+      "residual_norm_bin",
+      "residual_gain_bin",
+      "support_count_bin"
+    ],
+    "matched_observed_strata_count": 28,
+    "matched_observed_tokens": 787,
+    "null_controls": [
+      "stratified sign-flip null centered at zero synergy",
+      "artifact control intervention `fixed_loss_matched_nonrouter_control` when present"
+    ],
+    "observed_deconfounded_pair_synergy_ci": [
+      0.13735730787661957,
+      0.2003492391602108
+    ],
+    "observed_deconfounded_pair_synergy_mean": 0.168768299405619,
+    "observed_intervention": "fixed_dominant_router_support",
+    "observed_minus_control_synergy_ci": [
+      -0.06325837034683039,
+      0.006816609792298603
+    ],
+    "observed_minus_control_synergy_mean": -0.028235157515569476,
+    "observed_positive_strata_fraction": 1.0,
+    "pair_synergy_supported": false,
+    "sign_flip_null_ci": [
+      -0.0632615849666563,
+      0.06732211086419156
+    ],
+    "sign_flip_null_mean": 0.00021014393617802202,
+    "sign_flip_one_sided_p_value": 0.000999000999000999,
+    "sign_flip_synergy_supported": true,
+    "source_audit_dir": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1",
+    "topk1_variant": "rank_matched_topk1_contextual",
+    "topk2_ce_deficit_vs_topk1": 0.04594707489013672,
+    "topk2_fixed_support_cleaner_strata_fraction": 0.7037037037037037,
+    "topk2_functional_churn_cleaner_strata_fraction": 0.7407407407407407,
+    "topk2_variant": "baseline"
+  },
+  "out_dir": "results/audits/token_larger_topk2_causal_synergy_null_audit_loss_matched_control",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "runtime_seconds": 0.7519,
+  "status": "pass"
+}

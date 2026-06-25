@@ -77,11 +77,19 @@ outputs:
                 audit["pair_intervention_counts"],
             )
             self.assertIn(
+                "fixed_random_nonrouter_control",
+                audit["pair_intervention_counts"],
+            )
+            self.assertIn(
                 "fixed_support_frequency_matched_control",
                 audit["per_token_pair_intervention_counts"],
             )
             self.assertIn(
                 "fixed_loss_matched_nonrouter_control",
+                audit["per_token_pair_intervention_counts"],
+            )
+            self.assertIn(
+                "fixed_random_nonrouter_control",
                 audit["per_token_pair_intervention_counts"],
             )
             self.assertEqual(len(audit["heldout_stability"]), 2)
@@ -173,6 +181,7 @@ outputs:
                 {
                     "fixed_support_frequency_matched_control",
                     "fixed_loss_matched_nonrouter_control",
+                    "fixed_random_nonrouter_control",
                 }.issubset({row["intervention"] for row in pair_rows})
             )
             control_pair_rows = [
@@ -185,6 +194,20 @@ outputs:
             self.assertTrue(
                 any(row["control_match_status"] for row in control_pair_rows)
             )
+            random_pair_rows = [
+                row
+                for row in pair_rows
+                if row["intervention"] == "fixed_random_nonrouter_control"
+            ]
+            self.assertTrue(any(row["anchor_support"] for row in random_pair_rows))
+            best_swap_rows = [
+                row
+                for row in pair_rows
+                if row["intervention"] == "fixed_best_support_swap"
+                and row["anchor_support"]
+                and row["control_support"]
+            ]
+            self.assertTrue(best_swap_rows)
 
             with (
                 tmp_path / "fingerprint" / "per_token_pair_interventions.csv"
@@ -216,6 +239,7 @@ outputs:
                 {
                     "fixed_support_frequency_matched_control",
                     "fixed_loss_matched_nonrouter_control",
+                    "fixed_random_nonrouter_control",
                 }.issubset({row["intervention"] for row in per_token_rows})
             )
             control_token_rows = [
@@ -228,6 +252,20 @@ outputs:
             self.assertTrue(
                 any(row["control_match_status"] for row in control_token_rows)
             )
+            random_token_rows = [
+                row
+                for row in per_token_rows
+                if row["intervention"] == "fixed_random_nonrouter_control"
+            ]
+            self.assertTrue(any(row["anchor_support"] for row in random_token_rows))
+            best_swap_token_rows = [
+                row
+                for row in per_token_rows
+                if row["intervention"] == "fixed_best_support_swap"
+                and row["anchor_support"]
+                and row["control_support"]
+            ]
+            self.assertTrue(best_swap_token_rows)
 
     def test_causal_column_fingerprint_can_include_rank_matched_topk1(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

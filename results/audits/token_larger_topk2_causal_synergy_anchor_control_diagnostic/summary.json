@@ -1,0 +1,134 @@
+{
+  "artifacts": {
+    "notes_md": "results/audits/token_larger_topk2_causal_synergy_anchor_control_diagnostic/notes.md",
+    "per_anchor_control_deltas_csv": "results/audits/token_larger_topk2_causal_synergy_anchor_control_diagnostic/per_anchor_control_deltas.csv",
+    "summary_json": "results/audits/token_larger_topk2_causal_synergy_anchor_control_diagnostic/summary.json"
+  },
+  "audit_dir": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1",
+  "decision": "anchor_pair_synergy_not_supported_against_selection_controls",
+  "deconfounded_dir": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention",
+  "evidence": {
+    "anchor_count": 8,
+    "ci_level": 0.95,
+    "control_interventions": [
+      "fixed_support_frequency_matched_control",
+      "fixed_random_nonrouter_control",
+      "fixed_loss_matched_nonrouter_control",
+      "fixed_best_support_swap"
+    ],
+    "control_notes": {
+      "fixed_best_support_swap": "selection_control",
+      "fixed_loss_matched_nonrouter_control": "outcome_proximal_loss_matched_secondary_bound",
+      "fixed_random_nonrouter_control": "selection_control",
+      "fixed_support_frequency_matched_control": "selection_control"
+    },
+    "control_summaries": {
+      "fixed_best_support_swap": {
+        "anchor_count": 7,
+        "control_match_status_counts": {
+          "exact_support_count_candidate_available": 691
+        },
+        "control_role": "selection_control",
+        "control_support_count": 7,
+        "control_supports_per_anchor_mean": 1.0,
+        "fixed_support_loss_difference_abs_mean": 0.10556966696047748,
+        "fixed_support_loss_difference_mean": -0.10556966696047748,
+        "observed_minus_control_anchor_ci": [
+          -0.08052670955657959,
+          0.08881896612595538
+        ],
+        "observed_minus_control_anchor_mean": -0.022072919567476083,
+        "observed_minus_control_token_mean": -0.02244772993879967,
+        "positive_anchor_fraction": 0.2857142857142857,
+        "support_count_difference_abs_mean": 12.15629522431259,
+        "support_count_difference_mean": -12.15629522431259,
+        "supported": false,
+        "token_pair_count": 691
+      },
+      "fixed_loss_matched_nonrouter_control": {
+        "anchor_count": 8,
+        "control_match_status_counts": {
+          "loose_support_count_fallback": 1766
+        },
+        "control_role": "outcome_proximal_loss_matched_secondary_bound",
+        "control_support_count": 18,
+        "control_supports_per_anchor_mean": 2.25,
+        "fixed_support_loss_difference_abs_mean": 0.022589616840315026,
+        "fixed_support_loss_difference_mean": 0.020736321992539334,
+        "observed_minus_control_anchor_ci": [
+          -0.04483595101729683,
+          0.12901425938452443
+        ],
+        "observed_minus_control_anchor_mean": 0.023411178667687833,
+        "observed_minus_control_token_mean": 0.022880639657293818,
+        "positive_anchor_fraction": 0.625,
+        "support_count_difference_abs_mean": 14.144960362400907,
+        "support_count_difference_mean": -14.144960362400907,
+        "supported": false,
+        "token_pair_count": 1766
+      },
+      "fixed_random_nonrouter_control": {
+        "anchor_count": 8,
+        "control_match_status_counts": {
+          "loose_support_count_fallback": 1766
+        },
+        "control_role": "selection_control",
+        "control_support_count": 18,
+        "control_supports_per_anchor_mean": 2.25,
+        "fixed_support_loss_difference_abs_mean": 0.06652186411018415,
+        "fixed_support_loss_difference_mean": 0.05309540148094583,
+        "observed_minus_control_anchor_ci": [
+          -0.04833325172992463,
+          0.07965420811407027
+        ],
+        "observed_minus_control_anchor_mean": 0.003074020456700495,
+        "observed_minus_control_token_mean": 0.009614655817621562,
+        "positive_anchor_fraction": 0.375,
+        "support_count_difference_abs_mean": 14.144960362400907,
+        "support_count_difference_mean": -14.144960362400907,
+        "supported": false,
+        "token_pair_count": 1766
+      },
+      "fixed_support_frequency_matched_control": {
+        "anchor_count": 8,
+        "control_match_status_counts": {
+          "loose_support_count_fallback": 1766
+        },
+        "control_role": "selection_control",
+        "control_support_count": 18,
+        "control_supports_per_anchor_mean": 2.25,
+        "fixed_support_loss_difference_abs_mean": 0.06256760665271452,
+        "fixed_support_loss_difference_mean": 0.05938038172565257,
+        "observed_minus_control_anchor_ci": [
+          -0.053186478112873276,
+          0.039165874642710534
+        ],
+        "observed_minus_control_anchor_mean": -0.005433964640456773,
+        "observed_minus_control_token_mean": -0.002126226878787221,
+        "positive_anchor_fraction": 0.5,
+        "support_count_difference_abs_mean": 9.03454133635334,
+        "support_count_difference_mean": -9.03454133635334,
+        "supported": false,
+        "token_pair_count": 1766
+      }
+    },
+    "deconfounded_dir": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention",
+    "failures": [],
+    "matched_dimensions": [
+      "position_bin",
+      "token_class",
+      "residual_norm_bin",
+      "residual_gain_bin",
+      "support_count_bin"
+    ],
+    "observed_anchor_token_count": 787,
+    "observed_intervention": "fixed_dominant_router_support",
+    "paired_control_token_count": 5989,
+    "source_audit_dir": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1",
+    "variant": "baseline"
+  },
+  "out_dir": "results/audits/token_larger_topk2_causal_synergy_anchor_control_diagnostic",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "runtime_seconds": 1.0262,
+  "status": "pass"
+}

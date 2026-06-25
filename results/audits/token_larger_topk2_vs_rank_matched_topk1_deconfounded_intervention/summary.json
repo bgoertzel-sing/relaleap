@@ -1,0 +1,51 @@
+{
+  "artifacts": {
+    "matched_deconfounded_strata_csv": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention/matched_deconfounded_strata.csv",
+    "notes_md": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention/notes.md",
+    "summary_json": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention/summary.json"
+  },
+  "audit_dir": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1",
+  "decision": "topk2_pair_synergy_survives_deconfounding_but_cleanliness_bar_fails",
+  "evidence": {
+    "active_rank_matching_note": "active_rank_proxy is reported as a bracket dimension, not exact-matched, because promoted top-k-2 and rank-matched top-k-1 have structurally different active-rank proxies in this artifact.",
+    "ce_guardrail_passed": true,
+    "ce_guardrail_tolerance": 0.05,
+    "coarse_topk2_pair_synergy_mean": 0.18841657638549805,
+    "coarse_topk2_pair_synergy_positive_fraction": 1.0,
+    "deconfounded_topk2_pair_synergy_mean": 0.18339446802263767,
+    "deconfounded_topk2_pair_synergy_positive_strata_fraction": 0.9629629629629629,
+    "failures": [],
+    "matched_deconfounded_strata_count": 54,
+    "matched_deconfounded_tokens_topk1": 2014,
+    "matched_deconfounded_tokens_topk2": 1396,
+    "matched_dimensions": [
+      "position_bin",
+      "token_class",
+      "residual_norm_bin",
+      "residual_gain_bin",
+      "support_count_bin"
+    ],
+    "matched_strata_dir": "results/audits/token_larger_rank_matched_topk1_vs_topk2_matched_strata_intervention",
+    "min_rows_per_side": 1,
+    "per_token_pair_synergy_available": true,
+    "reported_bracket_dimensions": [
+      "active_rank_proxy"
+    ],
+    "source_audit_dir": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1",
+    "topk1_alpha0_ce_loss": 2.8664543628692627,
+    "topk1_variant": "rank_matched_topk1_contextual",
+    "topk2_alpha0_ce_loss": 2.9124014377593994,
+    "topk2_ce_deficit_vs_topk1": 0.04594707489013672,
+    "topk2_fixed_delta_minus_topk1_mean": -0.22483390948866877,
+    "topk2_fixed_support_cleaner_strata_fraction": 0.7037037037037037,
+    "topk2_functional_churn_cleaner_strata_fraction": 0.7407407407407407,
+    "topk2_logit_mse_minus_topk1_mean": -0.03353773377860789,
+    "topk2_residual_l2_delta_minus_topk1_mean": -0.7833848660941849,
+    "topk2_variant": "baseline"
+  },
+  "matched_strata_dir": "results/audits/token_larger_rank_matched_topk1_vs_topk2_matched_strata_intervention",
+  "out_dir": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "runtime_seconds": 0.6468,
+  "status": "pass"
+}

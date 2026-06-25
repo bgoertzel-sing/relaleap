@@ -1,0 +1,269 @@
+{
+  "artifacts": {
+    "decision_report_json": "results/reports/token_larger_causal_audit_coverage/decision_report.json",
+    "decision_report_md": "results/reports/token_larger_causal_audit_coverage/decision_report.md"
+  },
+  "audit_dir": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1",
+  "coverage": {
+    "controls_available": {
+      "norm_matched_dense": true,
+      "promoted_topk2": true,
+      "random_support": true,
+      "rank_matched_topk1": true,
+      "retention_dense_control": true
+    },
+    "functional_churn_fields": [
+      "adjacent_support_changed_count",
+      "adjacent_support_identity_churn_fraction",
+      "adjacent_support_position_count",
+      "load_balance_weight",
+      "previous_support_changed_logit_mse_mean",
+      "previous_support_changed_residual_l2_mean",
+      "previous_support_changed_to_retained_logit_mse_ratio",
+      "previous_support_changed_to_retained_residual_l2_ratio",
+      "previous_support_retained_logit_mse_mean",
+      "previous_support_retained_residual_l2_mean",
+      "variant"
+    ],
+    "intervention_rows_present": true,
+    "matched_strata": [
+      "all|all",
+      "all|common_target",
+      "all|rare_target",
+      "even|all",
+      "odd|all"
+    ],
+    "matched_strata_count": 5,
+    "matching_fields": {
+      "active_rank_proxy": true,
+      "per_token_rows": true,
+      "position_bin": true,
+      "residual_norm_bin": true,
+      "residual_norm_or_gain": true,
+      "support_frequency": true,
+      "token_class": true
+    },
+    "missing_controls_for_deconfounded_matrix": [],
+    "missing_fields_for_deconfounded_no_training_audit": [],
+    "per_token_intervention_rows_present": true,
+    "rank_matched_topk1_router_ce_better_than_topk2": true,
+    "row_granularity": "per_token",
+    "support_churn_fields_present": true,
+    "topk2_ce_deficit_vs_rank_matched_topk1": 0.04594707489013672,
+    "topk2_functional_churn_cleaner_than_topk1": true,
+    "topk2_pair_synergy_mean_across_strata": 0.18841657638549805,
+    "variant_count": 3,
+    "variants_present": [
+      "baseline",
+      "load_balance_0.0125",
+      "rank_matched_topk1_contextual"
+    ]
+  },
+  "decision": "existing_artifacts_sufficient_for_next_no_training_audit",
+  "matched_strata_dir": "results/audits/token_larger_rank_matched_topk1_vs_topk2_matched_strata_intervention",
+  "next_no_training_causal_audit_matrix": {
+    "brackets": [
+      {
+        "name": "promoted_contextual_topk2",
+        "role": "test whether pair synergy survives CE deficit after deconfounding",
+        "variant": "baseline"
+      },
+      {
+        "name": "rank_matched_contextual_topk1",
+        "role": "CE-clean causal-audit bracket",
+        "variant": "rank_matched_topk1_contextual"
+      }
+    ],
+    "ce_guardrail": {
+      "current_topk2_deficit": 0.04594707489013672,
+      "interpretation": "CE is a guardrail; do not promote top-k-2 cooperation from coarse positive synergy alone."
+    },
+    "match_or_bin_by": [
+      "position_bin",
+      "token_class",
+      "support_frequency_or_dominance",
+      "residual_norm_or_gain_bin",
+      "active_rank_proxy"
+    ],
+    "metrics": [
+      "alpha0_ce_loss",
+      "pair_synergy_or_singleton_gain",
+      "fixed_support_loss_delta",
+      "support_identity_churn",
+      "changed_support_logit_mse"
+    ]
+  },
+  "next_step": "run the no-training residual-norm/active-rank/support-stratum matched top-k-2 versus rank-matched top-k-1 causal audit",
+  "out_dir": "results/reports/token_larger_causal_audit_coverage",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "runtime_seconds": 1.4562,
+  "source_artifacts": [
+    {
+      "functional_churn_fields_present": true,
+      "intervention_rows_present": true,
+      "name": "causal_fingerprint_summary",
+      "path": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1/summary.json",
+      "per_token_intervention_rows_present": true,
+      "present": true,
+      "row_granularity": "per_token",
+      "strata_coverage": "see pair_interventions.csv",
+      "support_churn_fields_present": true,
+      "variants_present": [
+        "baseline",
+        "load_balance_0.0125",
+        "rank_matched_topk1_contextual"
+      ]
+    },
+    {
+      "active_rank_or_stored_parameter_fields_present": false,
+      "functional_churn_fields_present": true,
+      "intervention_rows_present": true,
+      "name": "pair_interventions",
+      "path": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1/pair_interventions.csv",
+      "present": true,
+      "residual_norm_or_gain_fields_present": true,
+      "row_granularity": "aggregate",
+      "strata_coverage": {
+        "position_bin": [
+          "all",
+          "even",
+          "odd"
+        ],
+        "token_class": [
+          "all",
+          "common_target",
+          "rare_target"
+        ]
+      },
+      "support_churn_fields_present": true,
+      "variants_present": [
+        "baseline",
+        "load_balance_0.0125",
+        "rank_matched_topk1_contextual"
+      ]
+    },
+    {
+      "active_rank_or_stored_parameter_fields_present": true,
+      "functional_churn_fields_present": true,
+      "intervention_rows_present": true,
+      "name": "per_token_pair_interventions",
+      "path": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1/per_token_pair_interventions.csv",
+      "present": true,
+      "residual_norm_or_gain_fields_present": true,
+      "row_granularity": "per_token",
+      "strata_coverage": {
+        "position_bin": [
+          "even",
+          "odd"
+        ],
+        "token_class": [
+          "common_target",
+          "rare_target"
+        ]
+      },
+      "support_churn_fields_present": true,
+      "variants_present": [
+        "baseline",
+        "load_balance_0.0125",
+        "rank_matched_topk1_contextual"
+      ]
+    },
+    {
+      "active_rank_or_stored_parameter_fields_present": false,
+      "functional_churn_fields_present": true,
+      "intervention_rows_present": false,
+      "name": "column_fingerprints",
+      "path": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1/column_fingerprints.csv",
+      "present": true,
+      "residual_norm_or_gain_fields_present": true,
+      "row_granularity": "aggregate",
+      "strata_coverage": {
+        "position_bin": [],
+        "token_class": []
+      },
+      "support_churn_fields_present": true,
+      "variants_present": [
+        "baseline",
+        "load_balance_0.0125",
+        "rank_matched_topk1_contextual"
+      ]
+    },
+    {
+      "functional_churn_fields_present": true,
+      "intervention_rows_present": true,
+      "name": "matched_strata_audit",
+      "path": "results/audits/token_larger_rank_matched_topk1_vs_topk2_matched_strata_intervention/summary.json",
+      "present": true,
+      "row_granularity": "aggregate",
+      "strata_coverage": [
+        "all|all",
+        "all|common_target",
+        "all|rare_target",
+        "even|all",
+        "odd|all"
+      ],
+      "support_churn_fields_present": true,
+      "variants_present": [
+        "baseline",
+        "rank_matched_topk1_contextual"
+      ]
+    },
+    {
+      "decision": "diagnose_causal_column_fingerprint_audit",
+      "dense_control_available": true,
+      "intervention_rows_present": false,
+      "name": "causal_fingerprint_report",
+      "path": "results/reports/token_larger_causal_column_fingerprint_stability_topk1_audit/decision_report.json",
+      "present": true,
+      "random_support_control_available": true,
+      "rank_matched_control_available": true,
+      "row_granularity": "aggregate",
+      "status": "pass",
+      "strata_coverage": "decision report aggregate",
+      "variants_present": []
+    },
+    {
+      "decision": "select_rank_matched_topk1_causal_audit_bracket",
+      "dense_control_available": true,
+      "intervention_rows_present": true,
+      "name": "causal_audit_bracket_decision",
+      "path": "results/reports/token_larger_causal_audit_bracket_decision/decision_report.json",
+      "present": true,
+      "random_support_control_available": true,
+      "rank_matched_control_available": true,
+      "row_granularity": "aggregate",
+      "status": "pass",
+      "strata_coverage": "decision report aggregate",
+      "variants_present": []
+    },
+    {
+      "decision": "diagnose_rank_matched_topk1_causal_bracket_audit",
+      "dense_control_available": false,
+      "intervention_rows_present": true,
+      "name": "rank_matched_topk1_bracket_report",
+      "path": "results/reports/token_larger_rank_matched_topk1_causal_bracket_audit/decision_report.json",
+      "present": true,
+      "random_support_control_available": false,
+      "rank_matched_control_available": true,
+      "row_granularity": "aggregate",
+      "status": "pass",
+      "strata_coverage": "decision report aggregate",
+      "variants_present": []
+    },
+    {
+      "decision": "diagnose_retention_churn_microtest",
+      "dense_control_available": true,
+      "intervention_rows_present": false,
+      "name": "retention_churn_microtest_report",
+      "path": "results/reports/token_larger_retention_churn_microtest_decision/decision_report.json",
+      "present": true,
+      "random_support_control_available": false,
+      "rank_matched_control_available": false,
+      "row_granularity": "aggregate",
+      "status": "pass",
+      "strata_coverage": "decision report aggregate",
+      "variants_present": []
+    }
+  ],
+  "status": "pass"
+}

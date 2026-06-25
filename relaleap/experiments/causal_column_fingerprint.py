@@ -1409,6 +1409,30 @@ def _selected_pair_interventions(
             }
     for row in sorted(fixed_rows, key=lambda item: float(item["loss"]))[:max_pair_rows]:
         key = str(row["support_key"])
+        anchor = _round_robin_anchor(
+            list(selected.values()),
+            selected_count=len(
+                [
+                    value
+                    for value in selected.values()
+                    if value.get("intervention") == "fixed_best_support_swap"
+                ]
+            ),
+        )
+        candidate_diagnostics = _control_candidate_diagnostics(
+            [candidate for candidate in fixed_rows if str(candidate["support_key"]) != key],
+            anchor,
+            support_counts,
+        ) if anchor is not None else {}
+        enriched_row = dict(row)
+        enriched_row["control_match_rank"] = len(
+            [
+                value
+                for value in selected.values()
+                if value.get("intervention") == "fixed_best_support_swap"
+            ]
+        ) + 1
+        enriched_row.update(candidate_diagnostics)
         selected.setdefault(
             f"best_fixed_{key}",
             {
@@ -1416,6 +1440,11 @@ def _selected_pair_interventions(
                 "support": row["support"],
                 "router_support_count": support_counts.get(key, 0),
                 "fixed_support_loss": float(row["loss"]),
+                **(
+                    _control_match_metadata(enriched_row, anchor, support_counts)
+                    if anchor is not None
+                    else {}
+                ),
             },
         )
     anchors = list(selected.values())
@@ -1476,7 +1505,56 @@ def _selected_pair_interventions(
             "router_support_count": support_counts.get(key, 0),
             **_control_match_metadata(row, anchor, support_counts),
         }
-    return list(selected.values())[: max_pair_rows * 10]
+    for row in _matched_control_pair_rows(
+        fixed_rows=fixed_rows,
+        support_counts=support_counts,
+        anchors=anchors,
+        selected=selected,
+        max_pair_rows=max_pair_rows,
+        intervention="fixed_random_nonrouter_control",
+        prefer_nonrouter=True,
+        score_fn=lambda candidate, anchor: (
+            _stable_control_score(
+                str(anchor.get("support")),
+                str(candidate["support_key"]),
+            ),
+            str(candidate["support_key"]),
+        ),
+    ):
+        key = str(row["support_key"])
+        anchor = row["control_anchor"]
+        selected[f"random_nonrouter_control_{key}"] = {
+            "intervention": "fixed_random_nonrouter_control",
+            "support": row["support"],
+            "router_support_count": support_counts.get(key, 0),
+            **_control_match_metadata(row, anchor, support_counts),
+        }
+    return list(selected.values())[: max_pair_rows * 20]
+
+
+def _round_robin_anchor(
+    anchors: list[dict[str, Any]],
+    *,
+    selected_count: int,
+) -> dict[str, Any] | None:
+    usable = [
+        anchor
+        for anchor in anchors
+        if anchor.get("intervention") == "fixed_dominant_router_support"
+    ]
+    if not usable:
+        usable = anchors
+    if not usable:
+        return None
+    return usable[selected_count % len(usable)]
+
+
+def _stable_control_score(anchor_key: str, candidate_key: str) -> int:
+    text = f"{anchor_key}|{candidate_key}"
+    score = 0
+    for char in text:
+        score = ((score * 131) + ord(char)) % 1_000_003
+    return score
 
 
 def _matched_control_pair_rows(

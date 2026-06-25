@@ -23,7 +23,7 @@
     "topk1_variant": "rank_matched_topk1_contextual",
     "topk2_alpha0_ce_loss": 2.9124014377593994,
     "topk2_changed_support_logit_mse": 0.2979166805744171,
-    "topk2_fixed_delta_minus_topk1_mean_across_strata": -0.19087308645248413,
+    "topk2_fixed_delta_minus_topk1_mean_across_strata": -0.19087306261062623,
     "topk2_fixed_support_cleaner_than_topk1_strata_fraction": 1.0,
     "topk2_functional_churn_cleaner_than_topk1": true,
     "topk2_pair_synergy_mean_across_strata": 0.18841657638549805,
@@ -33,6 +33,6 @@
   },
   "out_dir": "results/audits/token_larger_rank_matched_topk1_vs_topk2_matched_strata_intervention",
   "platform": "macOS-26.5.1-x86_64-i386-64bit",
-  "runtime_seconds": 0.006,
+  "runtime_seconds": 0.0123,
   "status": "pass"
 }
