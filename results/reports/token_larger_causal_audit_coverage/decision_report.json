@@ -46,10 +46,16 @@
     "missing_controls_for_deconfounded_matrix": [],
     "missing_fields_for_deconfounded_no_training_audit": [],
     "per_token_intervention_rows_present": true,
+    "post_stop_rank_matched_topk1_active": true,
+    "post_stop_topk2_claim_supported": false,
     "rank_matched_topk1_router_ce_better_than_topk2": true,
     "row_granularity": "per_token",
     "support_churn_fields_present": true,
-    "topk2_ce_deficit_vs_rank_matched_topk1": 0.04594683647155762,
+    "support_frequency_candidate_calipered_count": 0,
+    "support_frequency_candidate_percentile_identified": false,
+    "support_frequency_candidate_percentile_ready": false,
+    "support_frequency_candidate_unmatched_count": 1880,
+    "topk2_ce_deficit_vs_rank_matched_topk1": 0.045946598052978516,
     "topk2_functional_churn_cleaner_than_topk1": true,
     "topk2_pair_synergy_mean_across_strata": 0.18841660618782044,
     "variant_count": 3,
@@ -59,24 +65,28 @@
       "rank_matched_topk1_contextual"
     ]
   },
-  "decision": "existing_artifacts_sufficient_for_next_no_training_audit",
+  "decision": "rank_matched_topk1_active_post_stop_bracket",
   "matched_strata_dir": "results/audits/token_larger_rank_matched_topk1_vs_topk2_matched_strata_intervention",
   "next_no_training_causal_audit_matrix": {
-    "brackets": [
+    "active_bracket": {
+      "name": "rank_matched_contextual_topk1",
+      "role": "active local causal-audit bracket after the local top-k-2 causal-cooperation stop decision",
+      "variant": "rank_matched_topk1_contextual"
+    },
+    "available_comparators": [
       {
         "name": "promoted_contextual_topk2",
-        "role": "test whether pair synergy survives CE deficit after deconfounding",
+        "role": "empirically useful support-routing default; not an active causal-cooperation bracket",
         "variant": "baseline"
-      },
-      {
-        "name": "rank_matched_contextual_topk1",
-        "role": "CE-clean causal-audit bracket",
-        "variant": "rank_matched_topk1_contextual"
       }
     ],
+    "blocked_claims": {
+      "support_frequency_candidate_percentile": true,
+      "topk2_causal_cooperation": true
+    },
     "ce_guardrail": {
-      "current_topk2_deficit": 0.04594683647155762,
-      "interpretation": "CE is a guardrail; do not promote top-k-2 cooperation from coarse positive synergy alone."
+      "current_topk2_deficit": 0.045946598052978516,
+      "interpretation": "CE remains a guardrail; the active causal bracket is top-k-1 unless no-fallback top-k-2 selection controls become identified and supportive."
     },
     "match_or_bin_by": [
       "position_bin",
@@ -87,16 +97,16 @@
     ],
     "metrics": [
       "alpha0_ce_loss",
-      "pair_synergy_or_singleton_gain",
+      "singleton_gain",
       "fixed_support_loss_delta",
       "support_identity_churn",
       "changed_support_logit_mse"
     ]
   },
-  "next_step": "run the no-training residual-norm/active-rank/support-stratum matched top-k-2 versus rank-matched top-k-1 causal audit",
+  "next_step": "use rank-matched contextual top-k-1 as the active local causal bracket and keep top-k-2 causal-cooperation and support-frequency percentile claims blocked",
   "out_dir": "results/reports/token_larger_causal_audit_coverage",
   "platform": "macOS-26.5.1-x86_64-i386-64bit",
-  "runtime_seconds": 2.2498,
+  "runtime_seconds": 2.3054,
   "source_artifacts": [
     {
       "functional_churn_fields_present": true,
@@ -256,6 +266,20 @@
       "intervention_rows_present": false,
       "name": "retention_churn_microtest_report",
       "path": "results/reports/token_larger_retention_churn_microtest_decision/decision_report.json",
+      "present": true,
+      "random_support_control_available": false,
+      "rank_matched_control_available": false,
+      "row_granularity": "aggregate",
+      "status": "pass",
+      "strata_coverage": "decision report aggregate",
+      "variants_present": []
+    },
+    {
+      "decision": "select_post_stop_rank_matched_topk1_causal_bracket",
+      "dense_control_available": false,
+      "intervention_rows_present": false,
+      "name": "post_stop_causal_bracket_decision",
+      "path": "results/reports/token_larger_post_stop_causal_bracket_decision/decision_report.json",
       "present": true,
       "random_support_control_available": false,
       "rank_matched_control_available": false,

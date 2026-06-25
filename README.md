@@ -201,7 +201,14 @@ residual/gain fields, support/functional churn fields, and random/dense/rank
 controls available across the existing source artifacts, then emits one of
 `existing_artifacts_sufficient_for_next_no_training_audit`,
 `specific_missing_fields_require_artifact_extension`, or
-`new_training_required_for_deconfounded_causal_matrix`.
+`new_training_required_for_deconfounded_causal_matrix`. When the post-stop
+causal-bracket decision report exists, the coverage report consumes it as the
+later source of truth and emits `rank_matched_topk1_active_post_stop_bracket`
+instead of sending the loop back to a top-k-2 causal-cooperation audit. In that
+state, rank-matched contextual top-k-1 is the active local causal bracket, while
+top-k-2 causal-cooperation and support-frequency candidate-percentile claims
+remain blocked unless no-fallback support-frequency controls become identified
+and supportive.
 The causal-column fingerprint audit now also writes
 `per_token_pair_interventions.csv` with batch/position/token indices,
 residual-norm and residual-gain bins, support-frequency fields, and an

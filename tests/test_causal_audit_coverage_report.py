@@ -9,6 +9,7 @@ from pathlib import Path
 from relaleap.experiments.causal_audit_coverage_report import (
     EXISTING_ARTIFACTS_SUFFICIENT,
     NEW_TRAINING_REQUIRED,
+    RANK_MATCHED_TOPK1_ACTIVE_POST_STOP,
     SPECIFIC_MISSING_FIELDS,
     write_causal_audit_coverage_report,
 )
@@ -30,6 +31,7 @@ class CausalAuditCoverageReportTest(unittest.TestCase):
                 bracket_report_path=reports["bracket"],
                 rank_matched_report_path=reports["rank"],
                 retention_report_path=reports["retention"],
+                post_stop_report_path=root / "missing_post_stop_report.json",
             )
 
             self.assertEqual(report["status"], "pass")
@@ -67,6 +69,7 @@ class CausalAuditCoverageReportTest(unittest.TestCase):
                 bracket_report_path=reports["bracket"],
                 rank_matched_report_path=reports["rank"],
                 retention_report_path=reports["retention"],
+                post_stop_report_path=root / "missing_post_stop_report.json",
             )
 
             self.assertEqual(report["decision"], EXISTING_ARTIFACTS_SUFFICIENT)
@@ -97,12 +100,51 @@ class CausalAuditCoverageReportTest(unittest.TestCase):
                 bracket_report_path=reports["bracket"],
                 rank_matched_report_path=reports["rank"],
                 retention_report_path=reports["retention"],
+                post_stop_report_path=root / "missing_post_stop_report.json",
             )
 
             self.assertEqual(report["decision"], NEW_TRAINING_REQUIRED)
             self.assertIn(
                 "norm_matched_dense",
                 report["coverage"]["missing_controls_for_deconfounded_matrix"],
+            )
+
+    def test_post_stop_report_selects_rank_matched_topk1_active_bracket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            reports = _write_source_artifacts(
+                root,
+                include_per_token_fields=True,
+                include_active_rank=True,
+                include_residual_norm_bin=True,
+                include_post_stop=True,
+            )
+
+            report = write_causal_audit_coverage_report(
+                root / "fingerprint",
+                root / "matched",
+                root / "coverage",
+                causal_fingerprint_report_path=reports["fingerprint"],
+                bracket_report_path=reports["bracket"],
+                rank_matched_report_path=reports["rank"],
+                retention_report_path=reports["retention"],
+                post_stop_report_path=reports["post_stop"],
+            )
+
+            self.assertEqual(report["decision"], RANK_MATCHED_TOPK1_ACTIVE_POST_STOP)
+            coverage = report["coverage"]
+            self.assertTrue(coverage["post_stop_rank_matched_topk1_active"])
+            self.assertFalse(
+                coverage["support_frequency_candidate_percentile_identified"]
+            )
+            matrix = report["next_no_training_causal_audit_matrix"]
+            self.assertEqual(
+                matrix["active_bracket"]["variant"],
+                "rank_matched_topk1_contextual",
+            )
+            self.assertTrue(matrix["blocked_claims"]["topk2_causal_cooperation"])
+            self.assertTrue(
+                matrix["blocked_claims"]["support_frequency_candidate_percentile"]
             )
 
 
@@ -113,6 +155,7 @@ def _write_source_artifacts(
     include_active_rank: bool = False,
     include_residual_norm_bin: bool = False,
     include_dense_control: bool = True,
+    include_post_stop: bool = False,
 ) -> dict[str, Path]:
     audit_dir = root / "fingerprint"
     matched_dir = root / "matched"
@@ -313,11 +356,37 @@ def _write_source_artifacts(
         + "\n",
         encoding="utf-8",
     )
+    post_stop = root / "post_stop_report.json"
+    if include_post_stop:
+        post_stop.write_text(
+            json.dumps(
+                {
+                    "status": "pass",
+                    "decision": "select_post_stop_rank_matched_topk1_causal_bracket",
+                    "rank_matched_topk1_default_causal_audit_bracket": True,
+                    "topk2_causal_cooperation_claim_supported": False,
+                    "support_frequency_candidate_percentile_ready": False,
+                    "support_frequency_candidate_percentile_identified": False,
+                    "evidence": {
+                        "support_frequency_candidate_artifact": {
+                            "artifact_ready": True,
+                            "candidate_row_count": 1880,
+                            "calipered_candidate_row_count": 0,
+                            "unmatched_candidate_row_count": 1880,
+                        }
+                    },
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     return {
         "fingerprint": fingerprint,
         "bracket": bracket,
         "rank": rank,
         "retention": retention,
+        "post_stop": post_stop,
     }
 
 

@@ -29,11 +29,15 @@ DEFAULT_RANK_MATCHED_REPORT = Path(
 DEFAULT_RETENTION_REPORT = Path(
     "results/reports/token_larger_retention_churn_microtest_decision/decision_report.json"
 )
+DEFAULT_POST_STOP_BRACKET_REPORT = Path(
+    "results/reports/token_larger_post_stop_causal_bracket_decision/decision_report.json"
+)
 DEFAULT_OUT_DIR = Path("results/reports/token_larger_causal_audit_coverage")
 
 EXISTING_ARTIFACTS_SUFFICIENT = "existing_artifacts_sufficient_for_next_no_training_audit"
 SPECIFIC_MISSING_FIELDS = "specific_missing_fields_require_artifact_extension"
 NEW_TRAINING_REQUIRED = "new_training_required_for_deconfounded_causal_matrix"
+RANK_MATCHED_TOPK1_ACTIVE_POST_STOP = "rank_matched_topk1_active_post_stop_bracket"
 
 TOPK2_VARIANT = "baseline"
 TOPK1_VARIANT = "rank_matched_topk1_contextual"
@@ -48,6 +52,7 @@ def write_causal_audit_coverage_report(
     bracket_report_path: Path = DEFAULT_BRACKET_REPORT,
     rank_matched_report_path: Path = DEFAULT_RANK_MATCHED_REPORT,
     retention_report_path: Path = DEFAULT_RETENTION_REPORT,
+    post_stop_report_path: Path = DEFAULT_POST_STOP_BRACKET_REPORT,
 ) -> dict[str, Any]:
     """Write a decision-bearing ledger for the next no-training causal audit."""
 
@@ -65,6 +70,7 @@ def write_causal_audit_coverage_report(
         _report_entry(bracket_report_path, "causal_audit_bracket_decision"),
         _report_entry(rank_matched_report_path, "rank_matched_topk1_bracket_report"),
         _report_entry(retention_report_path, "retention_churn_microtest_report"),
+        _report_entry(post_stop_report_path, "post_stop_causal_bracket_decision"),
     ]
 
     audit_summary = _read_json_if_present(audit_dir / "summary.json")
@@ -73,6 +79,7 @@ def write_causal_audit_coverage_report(
     bracket_report = _read_json_if_present(bracket_report_path)
     rank_report = _read_json_if_present(rank_matched_report_path)
     retention_report = _read_json_if_present(retention_report_path)
+    post_stop_report = _read_json_if_present(post_stop_report_path)
     pair_fields = _csv_fieldnames(audit_dir / "pair_interventions.csv")
     per_token_pair_fields = _csv_fieldnames(
         audit_dir / "per_token_pair_interventions.csv"
@@ -87,6 +94,7 @@ def write_causal_audit_coverage_report(
         bracket_report,
         rank_report,
         retention_report,
+        post_stop_report,
         pair_fields,
         per_token_pair_fields,
         column_fields,
@@ -126,6 +134,7 @@ def _coverage_summary(
     bracket_report: dict[str, Any],
     rank_report: dict[str, Any],
     retention_report: dict[str, Any],
+    post_stop_report: dict[str, Any],
     pair_fields: list[str],
     per_token_pair_fields: list[str],
     column_fields: list[str],
@@ -141,6 +150,12 @@ def _coverage_summary(
     matched_evidence = matched_summary.get("evidence", {})
     rank_signals = (rank_report.get("evidence", {}) or {}).get("signals", {})
     retention_signals = (retention_report.get("evidence", {}) or {}).get("signals", {})
+    post_stop_evidence = post_stop_report.get("evidence", {})
+    support_candidate = (
+        post_stop_evidence.get("support_frequency_candidate_artifact", {})
+        if isinstance(post_stop_evidence, dict)
+        else {}
+    )
     pair_field_set = set(pair_fields)
     per_token_pair_field_set = set(per_token_pair_fields)
     column_field_set = set(column_fields)
@@ -234,12 +249,37 @@ def _coverage_summary(
         "rank_matched_topk1_router_ce_better_than_topk2": matched_evidence.get(
             "rank_matched_topk1_router_ce_better_than_topk2"
         ),
+        "post_stop_rank_matched_topk1_active": bool(
+            post_stop_report.get("status") == "pass"
+            and post_stop_report.get("rank_matched_topk1_default_causal_audit_bracket")
+        ),
+        "post_stop_topk2_claim_supported": bool(
+            post_stop_report.get("topk2_causal_cooperation_claim_supported")
+        ),
+        "support_frequency_candidate_percentile_ready": bool(
+            post_stop_report.get("support_frequency_candidate_percentile_ready")
+        ),
+        "support_frequency_candidate_percentile_identified": bool(
+            post_stop_report.get("support_frequency_candidate_percentile_identified")
+        ),
+        "support_frequency_candidate_calipered_count": support_candidate.get(
+            "calipered_candidate_row_count"
+        ),
+        "support_frequency_candidate_unmatched_count": support_candidate.get(
+            "unmatched_candidate_row_count"
+        ),
         "missing_fields_for_deconfounded_no_training_audit": required_missing_fields,
         "missing_controls_for_deconfounded_matrix": required_missing_controls,
     }
 
 
 def _coverage_decision(coverage: dict[str, Any]) -> tuple[str, str, str]:
+    if coverage["post_stop_rank_matched_topk1_active"]:
+        return (
+            RANK_MATCHED_TOPK1_ACTIVE_POST_STOP,
+            "pass",
+            "use rank-matched contextual top-k-1 as the active local causal bracket and keep top-k-2 causal-cooperation and support-frequency percentile claims blocked",
+        )
     if coverage["missing_controls_for_deconfounded_matrix"]:
         return (
             NEW_TRAINING_REQUIRED,
@@ -260,6 +300,49 @@ def _coverage_decision(coverage: dict[str, Any]) -> tuple[str, str, str]:
 
 
 def _next_matrix(coverage: dict[str, Any]) -> dict[str, Any]:
+    if coverage["post_stop_rank_matched_topk1_active"]:
+        return {
+            "active_bracket": {
+                "name": "rank_matched_contextual_topk1",
+                "variant": TOPK1_VARIANT,
+                "role": "active local causal-audit bracket after the local top-k-2 causal-cooperation stop decision",
+            },
+            "blocked_claims": {
+                "topk2_causal_cooperation": not coverage[
+                    "post_stop_topk2_claim_supported"
+                ],
+                "support_frequency_candidate_percentile": not coverage[
+                    "support_frequency_candidate_percentile_identified"
+                ],
+            },
+            "available_comparators": [
+                {
+                    "name": "promoted_contextual_topk2",
+                    "variant": TOPK2_VARIANT,
+                    "role": "empirically useful support-routing default; not an active causal-cooperation bracket",
+                }
+            ],
+            "match_or_bin_by": [
+                "position_bin",
+                "token_class",
+                "support_frequency_or_dominance",
+                "residual_norm_or_gain_bin",
+                "active_rank_proxy",
+            ],
+            "metrics": [
+                "alpha0_ce_loss",
+                "singleton_gain",
+                "fixed_support_loss_delta",
+                "support_identity_churn",
+                "changed_support_logit_mse",
+            ],
+            "ce_guardrail": {
+                "current_topk2_deficit": coverage[
+                    "topk2_ce_deficit_vs_rank_matched_topk1"
+                ],
+                "interpretation": "CE remains a guardrail; the active causal bracket is top-k-1 unless no-fallback top-k-2 selection controls become identified and supportive.",
+            },
+        }
     return {
         "brackets": [
             {
@@ -454,6 +537,9 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
         f"- Top-k-2 CE deficit vs rank-matched top-k-1: `{coverage['topk2_ce_deficit_vs_rank_matched_topk1']}`",
         f"- Missing fields: `{coverage['missing_fields_for_deconfounded_no_training_audit']}`",
         f"- Missing controls: `{coverage['missing_controls_for_deconfounded_matrix']}`",
+        f"- Post-stop rank-matched top-k-1 active: `{coverage['post_stop_rank_matched_topk1_active']}`",
+        "- Support-frequency candidate-percentile identified: "
+        f"`{coverage['support_frequency_candidate_percentile_identified']}`",
         "",
         "## Controls",
         "",
@@ -465,11 +551,15 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
         lines.append(f"- {key}: `{value}`")
     lines.extend(["", "## Next Matrix", ""])
     matrix = report["next_no_training_causal_audit_matrix"]
-    lines.append(
-        "- Brackets: `"
-        + ", ".join(row["name"] for row in matrix["brackets"])
-        + "`"
-    )
+    if "active_bracket" in matrix:
+        lines.append(f"- Active bracket: `{matrix['active_bracket']['name']}`")
+        lines.append(f"- Blocked claims: `{matrix['blocked_claims']}`")
+    else:
+        lines.append(
+            "- Brackets: `"
+            + ", ".join(row["name"] for row in matrix["brackets"])
+            + "`"
+        )
     lines.append("- Match/bin by: `" + ", ".join(matrix["match_or_bin_by"]) + "`")
     lines.extend(["", "## Next Step", "", report["next_step"], ""])
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -493,6 +583,9 @@ def main() -> None:
     parser.add_argument(
         "--retention-report", type=Path, default=DEFAULT_RETENTION_REPORT
     )
+    parser.add_argument(
+        "--post-stop-report", type=Path, default=DEFAULT_POST_STOP_BRACKET_REPORT
+    )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     args = parser.parse_args()
     report = write_causal_audit_coverage_report(
@@ -503,6 +596,7 @@ def main() -> None:
         bracket_report_path=args.bracket_report,
         rank_matched_report_path=args.rank_matched_report,
         retention_report_path=args.retention_report,
+        post_stop_report_path=args.post_stop_report,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     if report["status"] != "pass":
