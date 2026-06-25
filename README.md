@@ -372,6 +372,23 @@ closed when required source fields are missing. The current source artifact does
 not include random or exhaustive singleton rows, so this diagnostic is a
 reconciliation input rather than a causal singleton claim by itself.
 
+To reconcile the selected, logged-oracle, forced/off-context, and missing
+random/exhaustive singleton controls under one gain sign convention, run:
+
+```bash
+python -m relaleap.experiments.active_topk1_singleton_reconciliation_audit
+```
+
+This writes
+`results/audits/token_larger_active_rank_matched_topk1_singleton_reconciliation_audit/summary.json`,
+`singleton_reconciliation_by_context.csv`,
+`singleton_reconciliation_by_stratum.csv`, and `notes.md`. It treats
+`singleton_gain = empty_loss - fixed_support_loss`, reports exact context
+denominators for in-context router-selected singletons, same-context
+logged-oracle singleton alternatives, forced/off-context dominant singleton
+rows, and random/exhaustive controls, and keeps random/exhaustive controls
+explicitly missing when the source artifact does not contain them.
+
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled
 synergy audit before making a causal-cooperation claim or spending Colab/GPU
