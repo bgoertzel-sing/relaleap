@@ -187,6 +187,22 @@ fixed-singleton rows are absent, and keeps the causal-cooperation claim
 conservative unless top-k-2 wins on matched-strata synergy, fixed-support
 cleanliness, functional churn, and router CE.
 
+To decide whether the existing causal-audit artifacts are already sufficient for
+the next no-training top-k-2 versus rank-matched top-k-1 deconfounding audit, run:
+
+```bash
+python -m relaleap.experiments.causal_audit_coverage_report
+```
+
+This source-artifact coverage report writes
+`results/reports/token_larger_causal_audit_coverage/decision_report.json` and
+`.md`. It lists the variants, intervention rows, strata, row granularity,
+residual/gain fields, support/functional churn fields, and random/dense/rank
+controls available across the existing source artifacts, then emits one of
+`existing_artifacts_sufficient_for_next_no_training_audit`,
+`specific_missing_fields_require_artifact_extension`, or
+`new_training_required_for_deconfounded_causal_matrix`.
+
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic
 sees nonzero repicking without changing the checked Phase 0 baseline. After the
