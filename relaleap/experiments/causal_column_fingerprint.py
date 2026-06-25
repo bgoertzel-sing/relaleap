@@ -114,6 +114,7 @@ def run_causal_column_fingerprint(
     pair_rows: list[dict[str, Any]] = []
     variant_summaries: list[dict[str, Any]] = []
     stability_summaries: list[dict[str, Any]] = []
+    functional_churn_summaries: list[dict[str, Any]] = []
     variant_specs = [
         {
             "variant": _variant_name(weight),
@@ -198,6 +199,18 @@ def run_causal_column_fingerprint(
                     router_support=router_support,
                 )
             )
+            functional_churn_summaries.append(
+                _functional_churn_summary(
+                    base=base,
+                    residual=residual,
+                    hidden=hidden,
+                    variant=str(spec["variant"]),
+                    load_balance_weight=float(spec["load_balance_weight"]),
+                    router_hidden=router_hidden,
+                    router_logits=router_logits,
+                    router_support=router_support,
+                )
+            )
             if int(spec["top_k"]) == 2:
                 fixed_rows = [
                     _score_for_support(
@@ -232,6 +245,34 @@ def run_causal_column_fingerprint(
                         router_loss=router_loss,
                         column_values=values,
                         selected_pairs=selected_pairs,
+                    )
+                )
+            elif int(spec["top_k"]) == 1:
+                selected_singletons = _selected_singleton_interventions(
+                    hidden=hidden,
+                    residual=residual,
+                    base=base,
+                    targets=targets,
+                    vocab_size=vocab_size,
+                    router_loss=router_loss,
+                    router_support=router_support,
+                    max_pair_rows=max_pair_rows,
+                )
+                pair_rows.extend(
+                    _singleton_intervention_rows(
+                        base=base,
+                        residual=residual,
+                        hidden=hidden,
+                        targets=targets,
+                        vocab_size=vocab_size,
+                        variant=str(spec["variant"]),
+                        load_balance_weight=float(spec["load_balance_weight"]),
+                        empty_loss=empty_loss,
+                        router_hidden=router_hidden,
+                        router_logits=router_logits,
+                        router_loss=router_loss,
+                        column_values=values,
+                        selected_singletons=selected_singletons,
                     )
                 )
             variant_summaries.append(
@@ -306,6 +347,7 @@ def run_causal_column_fingerprint(
             "pair_intervention_count": len(pair_rows),
             "variants": variant_summaries,
             "heldout_stability": stability_summaries,
+            "functional_churn": functional_churn_summaries,
         },
         "artifacts": {
             "summary_json": str(out_dir / "summary.json"),
@@ -569,6 +611,109 @@ def _pair_fingerprint_rows(
     return rows
 
 
+def _singleton_intervention_rows(
+    *,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    variant: str,
+    load_balance_weight: float,
+    empty_loss: float,
+    router_hidden: Any,
+    router_logits: Any,
+    router_loss: float,
+    column_values: Any,
+    selected_singletons: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows = []
+    empty_logits = base.decode(hidden)
+    token_class_masks = _token_class_masks(targets)
+    strata: list[tuple[str, str, list[int] | None, Any | None]] = [
+        ("all", "all", None, None),
+        (
+            "even",
+            "all",
+            [index for index in range(int(hidden.shape[1]) - 1) if index % 2 == 0],
+            None,
+        ),
+        (
+            "odd",
+            "all",
+            [index for index in range(int(hidden.shape[1]) - 1) if index % 2 == 1],
+            None,
+        ),
+    ]
+    strata.extend(
+        ("all", token_class, None, token_mask)
+        for token_class, token_mask in token_class_masks
+    )
+    for selected in selected_singletons:
+        support = (int(selected["support"][0]),)
+        fixed_hidden = residual(hidden, support_indices=_fixed_support(hidden, support))
+        fixed_logits = base.decode(fixed_hidden)
+        fixed_loss = _ce_loss(fixed_logits, targets, vocab_size)
+        for position_bin, token_class, position_indices, token_mask in strata:
+            if position_indices is None and token_mask is None:
+                row_empty_loss = empty_loss
+                row_router_loss = router_loss
+                row_singleton_loss = fixed_loss
+                logit_mse = _mse_delta(fixed_logits, router_logits)
+                stream_l2 = _stream_l2_delta(fixed_hidden, router_hidden)
+            else:
+                row_empty_loss = _ce_loss_filtered(
+                    empty_logits,
+                    targets,
+                    vocab_size,
+                    position_indices=position_indices,
+                    token_mask=token_mask,
+                )
+                row_router_loss = _ce_loss_filtered(
+                    router_logits,
+                    targets,
+                    vocab_size,
+                    position_indices=position_indices,
+                    token_mask=token_mask,
+                )
+                row_singleton_loss = _ce_loss_filtered(
+                    fixed_logits,
+                    targets,
+                    vocab_size,
+                    position_indices=position_indices,
+                    token_mask=token_mask,
+                )
+                logit_mse = None
+                stream_l2 = None
+            singleton_gain = row_empty_loss - row_singleton_loss
+            rows.append(
+                {
+                    "variant": variant,
+                    "load_balance_weight": load_balance_weight,
+                    "intervention": selected["intervention"],
+                    "support": _support_key(support),
+                    "position_bin": position_bin,
+                    "token_class": token_class,
+                    "router_support_count": selected["router_support_count"],
+                    "empty_loss": row_empty_loss,
+                    "router_loss": row_router_loss,
+                    "singleton_left_loss": row_singleton_loss,
+                    "singleton_right_loss": None,
+                    "pair_loss": None,
+                    "singleton_left_gain": singleton_gain,
+                    "singleton_right_gain": None,
+                    "pair_gain": None,
+                    "pair_synergy": None,
+                    "fixed_support_loss": row_singleton_loss,
+                    "fixed_support_loss_delta": row_singleton_loss - row_router_loss,
+                    "fixed_support_logit_mse": logit_mse,
+                    "fixed_support_residual_stream_l2_delta": stream_l2,
+                    "pair_value_cosine": _singleton_value_norm(column_values, support),
+                }
+            )
+    return rows
+
+
 def _column_stability_summary(
     *,
     base: Any,
@@ -646,6 +791,76 @@ def _column_stability_summary(
             batch_right,
         ),
     }
+
+
+def _functional_churn_summary(
+    *,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    variant: str,
+    load_balance_weight: float,
+    router_hidden: Any,
+    router_logits: Any,
+    router_support: Any,
+) -> dict[str, Any]:
+    import torch
+
+    previous_support = torch.cat(
+        [router_support[:, :1, :], router_support[:, :-1, :]],
+        dim=1,
+    )
+    previous_hidden = residual(hidden, support_indices=previous_support)
+    previous_logits = base.decode(previous_hidden)
+    sorted_support = torch.sort(router_support, dim=-1).values
+    sorted_previous_support = torch.sort(previous_support, dim=-1).values
+    changed = (
+        sorted_support[:, 1:, :] != sorted_previous_support[:, 1:, :]
+    ).any(dim=-1)
+    retained = ~changed
+    logit_mse = (previous_logits - router_logits).pow(2).mean(dim=-1)[:, 1:]
+    stream_l2 = (previous_hidden - router_hidden).norm(dim=-1)[:, 1:]
+
+    changed_logit = _masked_mean(logit_mse, changed)
+    retained_logit = _masked_mean(logit_mse, retained)
+    changed_stream = _masked_mean(stream_l2, changed)
+    retained_stream = _masked_mean(stream_l2, retained)
+    total_positions = int(changed.numel())
+    changed_count = int(changed.sum().item())
+    return {
+        "variant": variant,
+        "load_balance_weight": load_balance_weight,
+        "adjacent_support_identity_churn_fraction": (
+            changed_count / total_positions if total_positions else 0.0
+        ),
+        "adjacent_support_changed_count": changed_count,
+        "adjacent_support_position_count": total_positions,
+        "previous_support_changed_logit_mse_mean": changed_logit,
+        "previous_support_retained_logit_mse_mean": retained_logit,
+        "previous_support_changed_residual_l2_mean": changed_stream,
+        "previous_support_retained_residual_l2_mean": retained_stream,
+        "previous_support_changed_to_retained_logit_mse_ratio": _safe_ratio(
+            changed_logit,
+            retained_logit,
+        ),
+        "previous_support_changed_to_retained_residual_l2_ratio": _safe_ratio(
+            changed_stream,
+            retained_stream,
+        ),
+    }
+
+
+def _masked_mean(values: Any, mask: Any) -> float | None:
+    selected = values[mask]
+    if int(selected.numel()) == 0:
+        return None
+    return float(selected.mean().detach().item())
+
+
+def _safe_ratio(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or abs(float(denominator)) <= 1e-12:
+        return None
+    return float(numerator) / float(denominator)
 
 
 def _ablate_delta_vector(
@@ -867,6 +1082,49 @@ def _selected_pair_interventions(
     return list(selected.values())[: max_pair_rows * 2]
 
 
+def _selected_singleton_interventions(
+    *,
+    hidden: Any,
+    residual: Any,
+    base: Any,
+    targets: Any,
+    vocab_size: int,
+    router_loss: float,
+    router_support: Any,
+    max_pair_rows: int,
+) -> list[dict[str, Any]]:
+    support_counts = _router_support_counts(router_support)
+    selected: dict[str, dict[str, Any]] = {}
+    for key, count in list(support_counts.items())[:max_pair_rows]:
+        support = tuple(int(part) for part in key.split(",") if part != "")
+        if len(support) == 1:
+            selected[f"dominant_router_{len(selected) + 1}"] = {
+                "intervention": "fixed_dominant_router_singleton",
+                "support": support,
+                "router_support_count": count,
+            }
+
+    fixed_rows = []
+    for column in range(residual.num_columns):
+        support = (column,)
+        fixed_hidden = residual(hidden, support_indices=_fixed_support(hidden, support))
+        fixed_loss = _ce_loss(base.decode(fixed_hidden), targets, vocab_size)
+        fixed_rows.append({"support": support, "loss_delta": fixed_loss - router_loss})
+    for row in sorted(fixed_rows, key=lambda item: float(item["loss_delta"]))[
+        :max_pair_rows
+    ]:
+        key = _support_key(row["support"])
+        selected.setdefault(
+            f"best_fixed_{key}",
+            {
+                "intervention": "fixed_best_singleton_swap",
+                "support": row["support"],
+                "router_support_count": support_counts.get(key, 0),
+            },
+        )
+    return list(selected.values())[: max_pair_rows * 2]
+
+
 def _router_support_counts(router_support: Any) -> dict[str, int]:
     counts: dict[str, int] = {}
     for pair in router_support.reshape(-1, router_support.shape[-1]).detach().cpu().tolist():
@@ -889,6 +1147,12 @@ def _pair_value_cosine(column_values: Any, support: tuple[int, ...]) -> float | 
             eps=1e-12,
         ).item()
     )
+
+
+def _singleton_value_norm(column_values: Any, support: tuple[int, ...]) -> float | None:
+    if len(support) != 1:
+        return None
+    return float(column_values[support[0]].norm().item())
 
 
 def _mse_delta(left: Any, right: Any) -> float:

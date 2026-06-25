@@ -13608,6 +13608,7 @@ def write_causal_column_fingerprint_audit_report(
     deconfounding = _causal_column_deconfounding_entry(deconfounding_dir, failures)
     baseline = fingerprint.get("baseline_variant") or {}
     pair_claim_gate = _causal_pair_claim_gate(audit_dir)
+    functional_churn = _functional_churn_gate(fingerprint)
     controls = deconfounding.get("controls") or {}
     topk1 = controls.get("rank_matched_topk1_contextual") or {}
     random_topk2 = controls.get("random_fixed_topk2") or {}
@@ -13659,35 +13660,48 @@ def write_causal_column_fingerprint_audit_report(
     exact_pair_synergy_supported = bool(
         pair_claim_gate.get("exact_pair_synergy_supported")
     )
+    rank_matched_topk1_intervention_present = bool(
+        pair_claim_gate.get("rank_matched_topk1_intervention_present")
+    )
+    functional_churn_present = bool(functional_churn.get("functional_churn_present"))
+    functional_churn_acceptable = bool(
+        functional_churn.get("functional_churn_acceptable")
+    )
     causal_column_claim_supported = (
         not failures
         and nontrivial_ablation
         and has_stability_evidence
         and has_rank_matched_fingerprints
         and exact_pair_synergy_supported
+        and rank_matched_topk1_intervention_present
+        and functional_churn_acceptable
         and not topk1_ce_better
     )
     status = "fail" if failures else "pass"
     if status == "pass":
         if has_stability_evidence and has_rank_matched_fingerprints:
-            if exact_pair_synergy_supported:
+            if (
+                exact_pair_synergy_supported
+                and rank_matched_topk1_intervention_present
+                and functional_churn_present
+            ):
                 rationale = (
                     "The promoted tokenized contextual top-k-2 audit has "
                     "nontrivial column ablation fingerprints, held-out "
                     "split-stability evidence, rank-matched top-k-1 fingerprints, "
-                    "and exact same-batch pair synergy/additivity rows. It is "
-                    "also bracketed by the requested controls: random fixed "
-                    "top-k-2 is much worse, and the norm-matched dense "
-                    "active-rank control is worse than learned sparse top-k-2. "
-                    "The evidence still stays conservative because the "
-                    "rank-matched top-k-1 contextual control has better CE; "
-                    "until top-k-2 also beats or explains that control and "
-                    "functional churn is acceptable, top-k-2 should be treated "
-                    "as promising pairwise support evidence rather than a "
-                    "causal cooperation result."
+                    "exact same-batch pair synergy/additivity rows, rank-matched "
+                    "top-k-1 support-intervention rows, and adjacent functional "
+                    "churn diagnostics. It is also bracketed by the requested "
+                    "controls: random fixed top-k-2 is much worse, and the "
+                    "norm-matched dense active-rank control is worse than learned "
+                    "sparse top-k-2. The evidence still stays conservative because "
+                    "the rank-matched top-k-1 contextual control has better CE; "
+                    "unless top-k-2 beats or explains that control and functional "
+                    "churn is acceptable, top-k-2 remains pairwise support evidence "
+                    "rather than a causal cooperation result."
                 )
                 next_step = (
-                    "add functional-churn and rank-matched top-k-1 pair-fingerprint comparisons to the local causal-column audit before Colab replication or any top-k-2 cooperation claim"
+                    "use the local causal-column claim gate to choose a single follow-up: replicate only if top-k-2 pair synergy remains stronger than rank-matched top-k-1 intervention behavior and functional churn is acceptable; otherwise keep top-k-1 as the cleaner causal-audit bracket"
                 )
             else:
                 rationale = (
@@ -13704,10 +13718,11 @@ def write_causal_column_fingerprint_audit_report(
                     "convenience rather than a causal cooperation result. The "
                     "pairwise claim gate also fails closed unless the audit "
                     "contains exact empty, singleton, and pair interventions "
-                    "on the same examples."
+                    "on the same examples, rank-matched top-k-1 intervention "
+                    "rows, and adjacent functional-churn diagnostics."
                 )
                 next_step = (
-                    "extend the causal column fingerprint audit schema to write same-batch empty, singleton, and pair intervention gains plus token/position strata, then rerun the local report before Colab replication"
+                    "extend the causal column fingerprint audit schema to write same-batch pair synergy, rank-matched top-k-1 intervention rows, and functional-churn diagnostics, then rerun the local report before Colab replication"
                 )
         else:
             rationale = (
@@ -13738,6 +13753,7 @@ def write_causal_column_fingerprint_audit_report(
             "deconfounding_dir": str(deconfounding_dir),
             "fingerprint": fingerprint,
             "pair_claim_gate": pair_claim_gate,
+            "functional_churn_gate": functional_churn,
             "deconfounding": deconfounding,
             "signals": {
                 "nontrivial_ablation": nontrivial_ablation,
@@ -13747,6 +13763,9 @@ def write_causal_column_fingerprint_audit_report(
                 "heldout_stability_present": has_stability_evidence,
                 "rank_matched_topk1_fingerprint_present": has_rank_matched_fingerprints,
                 "exact_pair_synergy_supported": exact_pair_synergy_supported,
+                "rank_matched_topk1_intervention_present": rank_matched_topk1_intervention_present,
+                "functional_churn_present": functional_churn_present,
+                "functional_churn_acceptable": functional_churn_acceptable,
                 "token_position_pair_strata_present": bool(
                     pair_claim_gate.get("token_position_pair_strata_present")
                 ),
@@ -13811,6 +13830,11 @@ def _causal_column_fingerprint_entry(
         if isinstance(audit.get("heldout_stability"), list)
         else []
     )
+    functional_churn = (
+        audit.get("functional_churn")
+        if isinstance(audit.get("functional_churn"), list)
+        else []
+    )
     baseline = next(
         (
             row
@@ -13833,6 +13857,7 @@ def _causal_column_fingerprint_entry(
         "baseline_variant": baseline,
         "heldout_stability": heldout_stability,
         "heldout_stability_present": bool(heldout_stability),
+        "functional_churn": functional_churn,
         "rank_matched_topk1_fingerprint_present": any(
             isinstance(row, dict)
             and "topk1" in str(row.get("variant", ""))
@@ -13881,6 +13906,9 @@ def _causal_pair_claim_gate(audit_dir: Path) -> dict[str, Any]:
         rows = list(csv.DictReader(handle))
     fieldnames = set(rows[0].keys()) if rows else set()
     baseline_rows = [row for row in rows if row.get("variant") == "baseline"]
+    rank_matched_topk1_rows = [
+        row for row in rows if row.get("variant") == "rank_matched_topk1_contextual"
+    ]
     dominant_rows = [
         row
         for row in baseline_rows
@@ -13925,6 +13953,14 @@ def _causal_pair_claim_gate(audit_dir: Path) -> dict[str, Any]:
         "status": "pass" if rows else "empty_pair_interventions",
         "pair_intervention_rows": len(rows),
         "baseline_pair_intervention_rows": len(baseline_rows),
+        "rank_matched_topk1_intervention_rows": len(rank_matched_topk1_rows),
+        "rank_matched_topk1_intervention_present": bool(rank_matched_topk1_rows),
+        "rank_matched_topk1_fixed_loss_delta_mean": _mean(
+            _float_values(rank_matched_topk1_rows, "fixed_support_loss_delta")
+        ),
+        "rank_matched_topk1_singleton_gain_mean": _mean(
+            _float_values(rank_matched_topk1_rows, "singleton_left_gain")
+        ),
         "dominant_router_pair_rows": len(dominant_rows),
         "best_fixed_pair_rows": len(best_swap_rows),
         "dominant_router_fixed_loss_delta_mean": _mean(
@@ -13965,6 +14001,64 @@ def _causal_pair_claim_gate(audit_dir: Path) -> dict[str, Any]:
             "Exact pair synergy is available."
             if exact_pair_synergy_supported
             else "Current pair artifacts contain fixed-pair deltas relative to the learned router, not same-batch empty/singleton/pair gains, so pairwise cooperation is not inferable."
+        ),
+    }
+
+
+def _functional_churn_gate(fingerprint: dict[str, Any]) -> dict[str, Any]:
+    rows = fingerprint.get("functional_churn")
+    if not isinstance(rows, list) or not rows:
+        return {
+            "functional_churn_present": False,
+            "functional_churn_acceptable": False,
+            "reason": "functional churn diagnostics are missing",
+        }
+    baseline = next(
+        (
+            row
+            for row in rows
+            if isinstance(row, dict) and row.get("variant") == "baseline"
+        ),
+        {},
+    )
+    topk1 = next(
+        (
+            row
+            for row in rows
+            if isinstance(row, dict)
+            and row.get("variant") == "rank_matched_topk1_contextual"
+        ),
+        {},
+    )
+    baseline_ratio = _float_or_none(
+        baseline.get("previous_support_changed_to_retained_logit_mse_ratio")
+    )
+    topk1_ratio = _float_or_none(
+        topk1.get("previous_support_changed_to_retained_logit_mse_ratio")
+    )
+    baseline_logit = _float_or_none(
+        baseline.get("previous_support_changed_logit_mse_mean")
+    )
+    topk1_logit = _float_or_none(topk1.get("previous_support_changed_logit_mse_mean"))
+    acceptable = (
+        bool(baseline)
+        and baseline_logit is not None
+        and (
+            baseline_ratio is None
+            or baseline_ratio <= 10.0
+            or (topk1_logit is not None and baseline_logit <= topk1_logit)
+        )
+    )
+    return {
+        "functional_churn_present": bool(baseline),
+        "rank_matched_topk1_functional_churn_present": bool(topk1),
+        "functional_churn_acceptable": acceptable,
+        "baseline": baseline,
+        "rank_matched_topk1": topk1,
+        "reason": (
+            "Baseline functional churn is present and within the conservative ratio/top-k-1 comparison gate."
+            if acceptable
+            else "Functional churn is missing, high relative to retained-support positions, or not cleaner than the rank-matched top-k-1 bracket."
         ),
     }
 
@@ -14092,6 +14186,7 @@ def _write_causal_column_fingerprint_audit_markdown(
     evidence = report["evidence"]
     fingerprint = evidence["fingerprint"]
     pair_claim_gate = evidence["pair_claim_gate"]
+    functional_churn_gate = evidence.get("functional_churn_gate") or {}
     baseline = fingerprint.get("baseline_variant") or {}
     controls = evidence["deconfounding"].get("controls") or {}
     lines = [
@@ -14153,6 +14248,8 @@ def _write_causal_column_fingerprint_audit_markdown(
             f"`{pair_claim_gate.get('topk2_support_width_only')}`",
             "- Prefer rank-matched top-k-1 for causal audits: "
             f"`{pair_claim_gate.get('prefer_rank_matched_topk1_for_causal_audits')}`",
+            "- Rank-matched top-k-1 intervention rows: "
+            f"`{pair_claim_gate.get('rank_matched_topk1_intervention_rows')}`",
             "- Reason: "
             f"{pair_claim_gate.get('reason')}",
             "",
@@ -14168,6 +14265,25 @@ def _write_causal_column_fingerprint_audit_markdown(
             f"{_format_metric(pair_claim_gate.get('best_fixed_loss_delta_mean'))} | "
             f"{_format_metric(pair_claim_gate.get('best_fixed_loss_delta_min'))} | "
             f"{_format_metric(pair_claim_gate.get('best_fixed_loss_delta_max'))} |",
+            "",
+            "## Functional Churn",
+            "",
+            f"- Present: `{functional_churn_gate.get('functional_churn_present')}`",
+            f"- Acceptable: `{functional_churn_gate.get('functional_churn_acceptable')}`",
+            f"- Reason: {functional_churn_gate.get('reason')}",
+            "",
+            "| Variant | Identity churn | Changed logit MSE | Retained logit MSE | Changed/retained ratio |",
+            "| --- | ---: | ---: | ---: | ---: |",
+            "| Baseline top-k-2 | "
+            f"{_format_metric((functional_churn_gate.get('baseline') or {}).get('adjacent_support_identity_churn_fraction'))} | "
+            f"{_format_metric((functional_churn_gate.get('baseline') or {}).get('previous_support_changed_logit_mse_mean'))} | "
+            f"{_format_metric((functional_churn_gate.get('baseline') or {}).get('previous_support_retained_logit_mse_mean'))} | "
+            f"{_format_metric((functional_churn_gate.get('baseline') or {}).get('previous_support_changed_to_retained_logit_mse_ratio'))} |",
+            "| Rank-matched top-k-1 | "
+            f"{_format_metric((functional_churn_gate.get('rank_matched_topk1') or {}).get('adjacent_support_identity_churn_fraction'))} | "
+            f"{_format_metric((functional_churn_gate.get('rank_matched_topk1') or {}).get('previous_support_changed_logit_mse_mean'))} | "
+            f"{_format_metric((functional_churn_gate.get('rank_matched_topk1') or {}).get('previous_support_retained_logit_mse_mean'))} | "
+            f"{_format_metric((functional_churn_gate.get('rank_matched_topk1') or {}).get('previous_support_changed_to_retained_logit_mse_ratio'))} |",
             "",
             "## Deconfounding Controls",
             "",

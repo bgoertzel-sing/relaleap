@@ -68,6 +68,7 @@ outputs:
             self.assertEqual(audit["column_fingerprint_count"], 8)
             self.assertGreater(audit["pair_intervention_count"], 0)
             self.assertEqual(len(audit["heldout_stability"]), 2)
+            self.assertEqual(len(audit["functional_churn"]), 2)
             self.assertIn(
                 "position_ablate_delta_correlation",
                 audit["heldout_stability"][0],
@@ -75,6 +76,14 @@ outputs:
             self.assertIn(
                 "batch_ablate_delta_correlation",
                 audit["heldout_stability"][0],
+            )
+            self.assertIn(
+                "adjacent_support_identity_churn_fraction",
+                audit["functional_churn"][0],
+            )
+            self.assertIn(
+                "previous_support_changed_logit_mse_mean",
+                audit["functional_churn"][0],
             )
 
             saved = json.loads(
@@ -176,6 +185,19 @@ model:
             self.assertEqual(variants[1]["num_columns"], 8)
             self.assertEqual(summary["audit"]["column_fingerprint_count"], 12)
             self.assertEqual(len(summary["audit"]["heldout_stability"]), 2)
+            self.assertEqual(len(summary["audit"]["functional_churn"]), 2)
+            with (tmp_path / "fingerprint" / "pair_interventions.csv").open(
+                newline="",
+                encoding="utf-8",
+            ) as handle:
+                pair_rows = list(csv.DictReader(handle))
+            self.assertTrue(
+                any(
+                    row["variant"] == "rank_matched_topk1_contextual"
+                    and row["intervention"] == "fixed_dominant_router_singleton"
+                    for row in pair_rows
+                )
+            )
 
     def test_causal_column_fingerprint_requires_top_k_two(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

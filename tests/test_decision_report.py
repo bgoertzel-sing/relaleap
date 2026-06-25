@@ -126,6 +126,8 @@ class CausalColumnFingerprintAuditReportTest(unittest.TestCase):
             self.assertFalse(signals["exact_pair_synergy_supported"])
             self.assertFalse(signals["token_position_pair_strata_present"])
             self.assertFalse(signals["topk2_cooperation_supported_by_pair_gate"])
+            self.assertFalse(signals["rank_matched_topk1_intervention_present"])
+            self.assertFalse(signals["functional_churn_present"])
             pair_gate = report["evidence"]["pair_claim_gate"]
             self.assertFalse(pair_gate["exact_pair_synergy_supported"])
             self.assertTrue(pair_gate["topk2_support_width_only"])
@@ -175,6 +177,7 @@ class CausalColumnFingerprintAuditReportTest(unittest.TestCase):
                 audit_dir,
                 include_stability=True,
                 include_rank_matched_topk1=True,
+                include_functional_churn=True,
             )
             _write_causal_deconfounding_audit(deconfounding_dir)
 
@@ -201,6 +204,8 @@ class CausalColumnFingerprintAuditReportTest(unittest.TestCase):
                 include_stability=True,
                 include_rank_matched_topk1=True,
                 include_exact_pair_synergy=True,
+                include_topk1_interventions=True,
+                include_functional_churn=True,
             )
             _write_causal_deconfounding_audit(deconfounding_dir)
 
@@ -214,6 +219,8 @@ class CausalColumnFingerprintAuditReportTest(unittest.TestCase):
             pair_gate = report["evidence"]["pair_claim_gate"]
             self.assertTrue(signals["exact_pair_synergy_supported"])
             self.assertTrue(signals["token_position_pair_strata_present"])
+            self.assertTrue(signals["rank_matched_topk1_intervention_present"])
+            self.assertTrue(signals["functional_churn_present"])
             self.assertTrue(signals["topk2_cooperation_supported_by_pair_gate"])
             self.assertEqual(pair_gate["exact_pair_synergy_count"], 2)
             self.assertGreater(pair_gate["exact_pair_synergy_mean"], 0.0)
@@ -5849,6 +5856,8 @@ def _write_causal_fingerprint_audit(
     include_stability: bool = False,
     include_rank_matched_topk1: bool = False,
     include_exact_pair_synergy: bool = False,
+    include_topk1_interventions: bool = False,
+    include_functional_churn: bool = False,
 ) -> None:
     audit_dir.mkdir(parents=True)
     variants = [
@@ -5896,6 +5905,23 @@ def _write_causal_fingerprint_audit(
                 "batch_ablate_delta_correlation": 0.7,
             },
         ]
+    if include_functional_churn:
+        summary["audit"]["functional_churn"] = [
+            {
+                "variant": "baseline",
+                "adjacent_support_identity_churn_fraction": 0.9,
+                "previous_support_changed_logit_mse_mean": 0.01,
+                "previous_support_retained_logit_mse_mean": 0.002,
+                "previous_support_changed_to_retained_logit_mse_ratio": 5.0,
+            },
+            {
+                "variant": "rank_matched_topk1_contextual",
+                "adjacent_support_identity_churn_fraction": 0.1,
+                "previous_support_changed_logit_mse_mean": 0.02,
+                "previous_support_retained_logit_mse_mean": 0.003,
+                "previous_support_changed_to_retained_logit_mse_ratio": 6.7,
+            },
+        ]
     (audit_dir / "summary.json").write_text(
         json.dumps(summary, indent=2) + "\n",
         encoding="utf-8",
@@ -5914,6 +5940,12 @@ def _write_causal_fingerprint_audit(
             "baseline,fixed_dominant_router_support,\"0,1\",0.1,3.0,2.8,2.85,2.5,early\n"
             "baseline,fixed_best_support_swap,\"0,2\",0.05,3.0,2.9,2.8,2.55,late\n"
         )
+        if include_topk1_interventions:
+            pair_rows += (
+                "rank_matched_topk1_contextual,fixed_dominant_router_singleton,"
+                "\"0\",0.03,3.0,2.7,,,"
+                "early\n"
+            )
     else:
         pair_rows = "variant,support,fixed_support_loss_delta\nbaseline,\"0,1\",0.1\n"
     (audit_dir / "pair_interventions.csv").write_text(pair_rows, encoding="utf-8")
