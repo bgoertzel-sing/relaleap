@@ -364,6 +364,10 @@ This writes
 `support_frequency_candidate_controls.csv`, counts unmatched candidates by
 failed caliper dimension, reports nearest-neighbor distance distributions, and
 marks relaxed-caliper counts as exploratory rather than claim-bearing.
+The post-stop causal bracket decision report consumes this diagnostic when it
+exists, so the support-frequency candidate-percentile branch is explicitly
+closed under the current no-fallback evidence instead of merely deferred as a
+missing denominator.
 
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic

@@ -480,6 +480,7 @@ class PostStopCausalBracketDecisionReportTest(unittest.TestCase):
                 matched_dir,
                 tmp_path / "report",
                 tmp_path / "missing_candidates",
+                tmp_path / "missing_blocker_diagnostic.json",
             )
 
             self.assertEqual(report["status"], "pass")
@@ -564,6 +565,7 @@ class PostStopCausalBracketDecisionReportTest(unittest.TestCase):
                 matched_dir,
                 tmp_path / "report",
                 candidate_dir,
+                tmp_path / "missing_blocker_diagnostic.json",
             )
 
             candidate = report["evidence"]["support_frequency_candidate_artifact"]
@@ -578,6 +580,119 @@ class PostStopCausalBracketDecisionReportTest(unittest.TestCase):
             self.assertEqual(candidate["candidate_row_count"], 1880)
             self.assertEqual(candidate["calipered_candidate_row_count"], 0)
             self.assertIn("locally unidentified", candidate["reason"])
+
+    def test_consumes_blocker_diagnostic_and_closes_percentile_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            stop_report = tmp_path / "stop" / "decision_report.json"
+            rank_report = tmp_path / "rank" / "decision_report.json"
+            matched_dir = tmp_path / "matched"
+            candidate_dir = tmp_path / "candidate"
+            blocker_path = tmp_path / "blocker" / "summary.json"
+            _write_json(
+                stop_report,
+                {
+                    "status": "pass",
+                    "topk2_causal_cooperation_claim_closed_locally": True,
+                },
+            )
+            _write_json(
+                rank_report,
+                {
+                    "status": "pass",
+                    "rank_matched_topk1_default_causal_audit_bracket": True,
+                    "evidence": {"metrics": {}},
+                },
+            )
+            _write_json(
+                matched_dir / "summary.json",
+                {
+                    "status": "pass",
+                    "decision": "prefer_rank_matched_topk1_for_causal_audits",
+                    "evidence": {"matched_strata_count": 5},
+                },
+            )
+            _write_json(
+                candidate_dir / "summary.json",
+                {
+                    "status": "ok",
+                    "audit": {
+                        "support_frequency_candidate_controls": {
+                            "anchor_count": 8,
+                            "candidate_row_count": 1880,
+                            "calipered_candidate_row_count": 0,
+                            "exact_support_count_match_row_count": 0,
+                            "near_support_count_match_row_count": 0,
+                            "unmatched_candidate_row_count": 1880,
+                            "support_count_caliper": 1,
+                            "unmatched_policy": (
+                                "exclude_from_primary_percentile_denominator_"
+                                "no_loose_fallback"
+                            ),
+                        }
+                    },
+                },
+            )
+            (candidate_dir / "support_frequency_candidate_controls.csv").write_text(
+                "variant,anchor_index,candidate_match_status\n",
+                encoding="utf-8",
+            )
+            _write_json(
+                blocker_path,
+                {
+                    "status": "pass",
+                    "decision": (
+                        "support_frequency_percentile_claim_remains_blocked_"
+                        "by_support_count_caliper"
+                    ),
+                    "evidence": {
+                        "claim_bearing": False,
+                        "candidate_row_count": 1880,
+                        "calipered_candidate_row_count": 0,
+                        "unmatched_candidate_row_count": 1880,
+                        "failed_caliper_dimension_counts": {
+                            "support_count_caliper": 1880
+                        },
+                        "per_anchor_nearest_neighbor_summary": {
+                            "support_count_abs_difference": {
+                                "count": 8,
+                                "min": 11.0,
+                                "median": 12.5,
+                            }
+                        },
+                        "relaxed_support_count_caliper_diagnostics": [
+                            {
+                                "support_count_caliper": 8,
+                                "candidate_row_count": 0,
+                            },
+                            {
+                                "support_count_caliper": 16,
+                                "candidate_row_count": 1645,
+                            },
+                        ],
+                    },
+                },
+            )
+
+            report = write_post_stop_causal_bracket_decision_report(
+                stop_report,
+                rank_report,
+                matched_dir,
+                tmp_path / "report",
+                candidate_dir,
+                blocker_path,
+            )
+
+            blocker = report["evidence"]["support_frequency_blocker_diagnostic"]
+            self.assertEqual(report["status"], "pass")
+            self.assertTrue(blocker["diagnostic_ready"])
+            self.assertTrue(blocker["blocks_percentile_claim"])
+            self.assertFalse(report["support_frequency_candidate_percentile_ready"])
+            self.assertIn("scientifically blocked", report["rationale"])
+            self.assertIn("active-bracket local causal audit", report["next_step"])
+            self.assertEqual(
+                blocker["nearest_support_count_distance_summary"]["median"], 12.5
+            )
 
     def test_missing_matched_strata_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -604,6 +719,8 @@ class PostStopCausalBracketDecisionReportTest(unittest.TestCase):
                 rank_report,
                 tmp_path / "missing_matched",
                 tmp_path / "report",
+                tmp_path / "missing_candidates",
+                tmp_path / "missing_blocker_diagnostic.json",
             )
 
             self.assertEqual(report["status"], "fail")

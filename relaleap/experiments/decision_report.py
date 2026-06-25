@@ -583,6 +583,9 @@ DEFAULT_POST_STOP_CAUSAL_BRACKET_OUT_DIR = Path(
 DEFAULT_SUPPORT_FREQUENCY_CANDIDATE_AUDIT_DIR = Path(
     "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_support_frequency_candidates"
 )
+DEFAULT_SUPPORT_FREQUENCY_BLOCKER_DIAGNOSTIC_REPORT = Path(
+    "results/reports/token_larger_support_frequency_blocker_diagnostic/summary.json"
+)
 DEFAULT_RANK_MATCHED_TOPK1_MATCHED_STRATA_AUDIT_DIR = Path(
     "results/audits/token_larger_rank_matched_topk1_vs_topk2_matched_strata_intervention"
 )
@@ -15195,6 +15198,7 @@ def write_post_stop_causal_bracket_decision_report(
     matched_strata_audit_dir: Path = DEFAULT_RANK_MATCHED_TOPK1_MATCHED_STRATA_AUDIT_DIR,
     out_dir: Path = DEFAULT_POST_STOP_CAUSAL_BRACKET_OUT_DIR,
     support_frequency_candidate_audit_dir: Path = DEFAULT_SUPPORT_FREQUENCY_CANDIDATE_AUDIT_DIR,
+    support_frequency_blocker_diagnostic_path: Path = DEFAULT_SUPPORT_FREQUENCY_BLOCKER_DIAGNOSTIC_REPORT,
 ) -> dict[str, Any]:
     """Choose the post-stop causal-audit bracket from completed local artifacts."""
 
@@ -15291,10 +15295,30 @@ def write_post_stop_causal_bracket_decision_report(
     support_candidate_gate = _support_frequency_candidate_percentile_gate(
         support_frequency_candidate_audit_dir
     )
+    support_blocker_diagnostic = _support_frequency_blocker_diagnostic_gate(
+        support_frequency_blocker_diagnostic_path
+    )
     status = "fail" if failures else "pass"
     selected = status == "pass"
     if selected:
-        if support_candidate_gate["artifact_ready"]:
+        if support_blocker_diagnostic["blocks_percentile_claim"]:
+            rationale = (
+                "The local top-k-2 causal-cooperation claim is closed, and the "
+                "existing matched-strata audit prefers the rank-matched contextual "
+                "top-k-1 bracket on the CE guardrail. The exhaustive "
+                "support-frequency candidate table is artifact-ready, and the "
+                "blocker diagnostic confirms that no candidates fall inside the "
+                "declared no-fallback support-count caliper; nearest candidates "
+                "remain well outside that caliper, so the support-frequency "
+                "candidate-percentile branch is scientifically blocked under the "
+                "current evidence."
+            )
+            next_step = (
+                "run the active-bracket local causal audit with rank-matched "
+                "contextual top-k-1 as the default causal bracket and keep "
+                "top-k-2/support-frequency percentile claims blocked"
+            )
+        elif support_candidate_gate["artifact_ready"]:
             rationale = (
                 "The local top-k-2 causal-cooperation claim is closed, and the "
                 "existing matched-strata audit prefers the rank-matched "
@@ -15359,6 +15383,7 @@ def write_post_stop_causal_bracket_decision_report(
             "matched_strata_evidence": matched_evidence,
             "rank_matched_topk1_metrics": rank_metrics,
             "support_frequency_candidate_artifact": support_candidate_gate,
+            "support_frequency_blocker_diagnostic": support_blocker_diagnostic,
             "failures": failures,
             "deferred_percentile_reason": support_candidate_gate["reason"],
         },
@@ -15372,6 +15397,86 @@ def write_post_stop_causal_bracket_decision_report(
     )
     _write_post_stop_causal_bracket_markdown(out_dir / "decision_report.md", report)
     return report
+
+
+def _support_frequency_blocker_diagnostic_gate(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {
+            "diagnostic_ready": False,
+            "blocks_percentile_claim": False,
+            "summary_json": str(path),
+            "status": None,
+            "decision": None,
+            "claim_bearing": None,
+            "candidate_row_count": 0,
+            "calipered_candidate_row_count": 0,
+            "unmatched_candidate_row_count": 0,
+            "failed_caliper_dimension_counts": {},
+            "nearest_support_count_distance_summary": None,
+            "relaxed_support_count_caliper_diagnostics": [],
+            "reason": "No support-frequency blocker diagnostic summary is present.",
+        }
+    summary = _read_json_object(path)
+    evidence = (
+        summary.get("evidence", {}) if isinstance(summary.get("evidence"), dict) else {}
+    )
+    nearest = (
+        evidence.get("per_anchor_nearest_neighbor_summary", {})
+        if isinstance(evidence.get("per_anchor_nearest_neighbor_summary"), dict)
+        else {}
+    )
+    nearest_support_count = nearest.get("support_count_abs_difference")
+    decision = summary.get("decision")
+    diagnostic_ready = (
+        summary.get("status") == "pass"
+        and evidence.get("claim_bearing") is False
+        and int(evidence.get("candidate_row_count") or 0) > 0
+    )
+    blocks_percentile_claim = (
+        diagnostic_ready
+        and decision
+        == "support_frequency_percentile_claim_remains_blocked_by_support_count_caliper"
+        and int(evidence.get("calipered_candidate_row_count") or 0) == 0
+    )
+    if blocks_percentile_claim:
+        reason = (
+            "The non-claim blocker diagnostic confirms all candidate rows are "
+            "excluded by the support-count caliper under the no-loose-fallback "
+            "policy."
+        )
+    elif diagnostic_ready:
+        reason = (
+            "The non-claim blocker diagnostic is available but does not close "
+            "the support-frequency percentile branch."
+        )
+    else:
+        reason = (
+            "The support-frequency blocker diagnostic is present but is not a "
+            "passing non-claim diagnostic with candidate rows."
+        )
+    return {
+        "diagnostic_ready": diagnostic_ready,
+        "blocks_percentile_claim": blocks_percentile_claim,
+        "summary_json": str(path),
+        "status": summary.get("status"),
+        "decision": decision,
+        "claim_bearing": evidence.get("claim_bearing"),
+        "candidate_row_count": int(evidence.get("candidate_row_count") or 0),
+        "calipered_candidate_row_count": int(
+            evidence.get("calipered_candidate_row_count") or 0
+        ),
+        "unmatched_candidate_row_count": int(
+            evidence.get("unmatched_candidate_row_count") or 0
+        ),
+        "failed_caliper_dimension_counts": evidence.get(
+            "failed_caliper_dimension_counts", {}
+        ),
+        "nearest_support_count_distance_summary": nearest_support_count,
+        "relaxed_support_count_caliper_diagnostics": evidence.get(
+            "relaxed_support_count_caliper_diagnostics", []
+        ),
+        "reason": reason,
+    }
 
 
 def _support_frequency_candidate_percentile_gate(audit_dir: Path) -> dict[str, Any]:
@@ -15499,6 +15604,8 @@ def _write_post_stop_causal_bracket_markdown(
         f"`{report['evidence']['deferred_percentile_reason']}`",
         "- Support-frequency candidate artifact: "
         f"`{report['evidence']['support_frequency_candidate_artifact']['audit_dir']}`",
+        "- Support-frequency blocker diagnostic: "
+        f"`{report['evidence']['support_frequency_blocker_diagnostic']['summary_json']}`",
         "",
         "## Support-Frequency Candidate Denominator",
         "",
@@ -15507,6 +15614,19 @@ def _write_post_stop_causal_bracket_markdown(
     ]
     for key, value in report["evidence"][
         "support_frequency_candidate_artifact"
+    ].items():
+        lines.append(f"| `{key}` | `{value}` |")
+    lines.extend(
+        [
+            "",
+            "## Support-Frequency Blocker Diagnostic",
+            "",
+            "| Metric | Value |",
+            "| --- | --- |",
+        ]
+    )
+    for key, value in report["evidence"][
+        "support_frequency_blocker_diagnostic"
     ].items():
         lines.append(f"| `{key}` | `{value}` |")
     lines.extend(
