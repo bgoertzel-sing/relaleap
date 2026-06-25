@@ -171,6 +171,22 @@ This opt-in diagnostic writes `summary.json`, `variant_metrics.csv`, and
 `notes.md` for the baseline and several load-balance weights. It does not change
 the promoted default router policy or any checked Phase 0 baseline.
 
+After a causal-column fingerprint audit that includes the rank-matched
+contextual top-k-1 bracket, compare promoted top-k-2 and rank-matched top-k-1
+on the existing token/position-stratified intervention rows without retraining:
+
+```bash
+python -m relaleap.experiments.matched_strata_intervention_audit \
+  --audit-dir results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1 \
+  --out results/audits/token_larger_rank_matched_topk1_vs_topk2_matched_strata_intervention
+```
+
+This post-hoc audit writes `summary.json`, `matched_strata.csv`, and `notes.md`.
+It fails closed when the top-k-2 fixed-pair rows or rank-matched top-k-1
+fixed-singleton rows are absent, and keeps the causal-cooperation claim
+conservative unless top-k-2 wins on matched-strata synergy, fixed-support
+cleanliness, functional churn, and router CE.
+
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic
 sees nonzero repicking without changing the checked Phase 0 baseline. After the
