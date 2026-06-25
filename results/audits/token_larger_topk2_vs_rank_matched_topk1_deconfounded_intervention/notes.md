@@ -1,20 +1,28 @@
 # Deconfounded Intervention Audit
 
 - Status: `pass`
-- Decision: `topk2_pair_synergy_survives_deconfounding_but_cleanliness_bar_fails`
+- Decision: `topk2_comparative_causal_cooperation_not_supported`
 - Source audit: `results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1`
 - CE guardrail tolerance: `0.05`
-- Matched deconfounded strata: `54`
+- Matched deconfounded strata: `46`
+- Exact matched token contexts: `210`
+- Top-k-2 exact contexts: `252`
+- Rank-matched top-k-1 exact contexts: `252`
+- Unmatched top-k-2 contexts: `42`
+- Unmatched rank-matched top-k-1 contexts: `42`
 - Top-k-2 alpha-0 CE: `2.912400960922241`
 - Rank-matched top-k-1 alpha-0 CE: `2.8664543628692627`
 - Top-k-2 CE deficit: `0.045946598052978516`
 - CE guardrail passed: `True`
-- Top-k-2 fixed delta minus top-k-1 mean: `-0.22839185517858007`
-- Top-k-2 fixed-support cleaner strata fraction: `0.7037037037037037`
-- Top-k-2 logit MSE minus top-k-1 mean: `-0.03314708607632408`
-- Top-k-2 functional-churn cleaner strata fraction: `0.7407407407407407`
+- Top-k-2 fixed delta minus top-k-1 mean: `-0.11065725482778503`
+- Top-k-2 fixed-support cleaner strata fraction: `0.6521739130434783`
+- Top-k-2 logit MSE minus top-k-1 mean: `-0.020957987900887456`
+- Top-k-2 functional-churn cleaner strata fraction: `0.6086956521739131`
+- Top-k-2 incremental pair gain minus top-k-1 singleton mean: `0.02732963073529254`
+- Top-k-2 incremental pair-gain positive strata fraction: `0.6521739130434783`
 - Coarse top-k-2 pair synergy mean: `0.18841659426689147`
 - Per-token pair synergy available: `True`
-- Deconfounded top-k-2 pair synergy mean: `0.18415304337912486`
-- Deconfounded top-k-2 pair synergy positive strata fraction: `0.9444444444444444`
+- Deconfounded top-k-2 pair synergy mean: `0.2138559982398792`
+- Deconfounded top-k-2 pair synergy positive strata fraction: `0.9130434782608695`
 - Active-rank note: active_rank_proxy is reported as a bracket dimension, not exact-matched, because promoted top-k-2 and rank-matched top-k-1 have structurally different active-rank proxies in this artifact.
+- Exact-context note: top-k-2 and rank-matched top-k-1 rows are first paired by exact batch_index/position_index/token_index/target_token context, then summarized inside matched position/token/residual/support-count strata.

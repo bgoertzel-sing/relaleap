@@ -30,13 +30,27 @@ class DeconfoundedInterventionAuditTest(unittest.TestCase):
             )
             evidence = summary["evidence"]
             self.assertEqual(evidence["matched_deconfounded_strata_count"], 2)
+            self.assertEqual(evidence["matched_exact_context_count"], 2)
             self.assertTrue(evidence["ce_guardrail_passed"])
             self.assertLess(evidence["topk2_fixed_delta_minus_topk1_mean"], 0.0)
             self.assertLess(evidence["topk2_logit_mse_minus_topk1_mean"], 0.0)
+            self.assertGreater(
+                evidence[
+                    "topk2_incremental_pair_gain_minus_topk1_singleton_mean"
+                ],
+                0.0,
+            )
+            self.assertEqual(
+                evidence["topk2_incremental_pair_gain_positive_strata_fraction"],
+                1.0,
+            )
             self.assertFalse(evidence["per_token_pair_synergy_available"])
             self.assertTrue((root / "deconfounded" / "summary.json").is_file())
             self.assertTrue(
                 (root / "deconfounded" / "matched_deconfounded_strata.csv").is_file()
+            )
+            self.assertTrue(
+                (root / "deconfounded" / "paired_exact_context_deltas.csv").is_file()
             )
             self.assertTrue((root / "deconfounded" / "notes.md").is_file())
 
@@ -54,7 +68,7 @@ class DeconfoundedInterventionAuditTest(unittest.TestCase):
             self.assertEqual(summary["status"], "pass")
             self.assertEqual(
                 summary["decision"],
-                "topk2_coarse_synergy_not_supported_after_deconfounding",
+                "topk2_comparative_causal_cooperation_not_supported",
             )
             self.assertLess(
                 summary["evidence"]["topk2_fixed_support_cleaner_strata_fraction"],
@@ -86,6 +100,10 @@ class DeconfoundedInterventionAuditTest(unittest.TestCase):
             self.assertGreater(evidence["deconfounded_topk2_pair_synergy_mean"], 0.0)
             self.assertEqual(
                 evidence["deconfounded_topk2_pair_synergy_positive_strata_fraction"],
+                1.0,
+            )
+            self.assertEqual(
+                evidence["topk2_incremental_pair_gain_positive_strata_fraction"],
                 1.0,
             )
 
@@ -154,10 +172,16 @@ def _write_source_audit(
     fields = [
         "variant",
         "intervention",
+        "batch_index",
+        "position_index",
+        "token_index",
+        "target_token",
         "position_bin",
         "token_class",
         "router_support_count",
         "router_loss",
+        "pair_gain",
+        "singleton_left_gain",
         "fixed_support_loss_delta",
         "fixed_support_logit_mse",
         "fixed_support_residual_stream_l2_delta",
@@ -179,9 +203,15 @@ def _write_source_audit(
             "low",
             "low",
             10,
+            0.5,
+            0.1,
             topk2_delta,
             topk2_mse,
             2,
+            batch_index=0,
+            position_index=0,
+            token_index=100,
+            target_token="a",
             include_active_rank=include_active_rank,
             pair_synergy=0.15 if include_per_token_synergy else None,
         ),
@@ -193,9 +223,15 @@ def _write_source_audit(
             "low",
             "low",
             11,
+            None,
+            0.1,
             0.5,
             0.3,
             1,
+            batch_index=0,
+            position_index=0,
+            token_index=100,
+            target_token="a",
             include_active_rank=include_active_rank,
             pair_synergy=None,
         ),
@@ -207,9 +243,15 @@ def _write_source_audit(
             "mid",
             "high",
             20,
+            0.7,
+            0.2,
             topk2_delta,
             topk2_mse,
             2,
+            batch_index=0,
+            position_index=1,
+            token_index=101,
+            target_token="b",
             include_active_rank=include_active_rank,
             pair_synergy=0.25 if include_per_token_synergy else None,
         ),
@@ -221,9 +263,15 @@ def _write_source_audit(
             "mid",
             "high",
             20,
+            None,
+            0.2,
             0.6,
             0.4,
             1,
+            batch_index=0,
+            position_index=1,
+            token_index=101,
+            target_token="b",
             include_active_rank=include_active_rank,
             pair_synergy=None,
         ),
@@ -239,20 +287,32 @@ def _per_token_row(
     residual_norm_bin: str,
     residual_gain_bin: str,
     router_support_count: int,
+    pair_gain: float | None,
+    singleton_left_gain: float,
     fixed_delta: float,
     logit_mse: float,
     active_rank_proxy: int,
     *,
+    batch_index: int,
+    position_index: int,
+    token_index: int,
+    target_token: str,
     include_active_rank: bool,
     pair_synergy: float | None,
 ) -> dict[str, object]:
     row: dict[str, object] = {
         "variant": variant,
         "intervention": intervention,
+        "batch_index": batch_index,
+        "position_index": position_index,
+        "token_index": token_index,
+        "target_token": target_token,
         "position_bin": position_bin,
         "token_class": token_class,
         "router_support_count": router_support_count,
         "router_loss": 2.0,
+        "pair_gain": "" if pair_gain is None else pair_gain,
+        "singleton_left_gain": singleton_left_gain,
         "fixed_support_loss_delta": fixed_delta,
         "fixed_support_logit_mse": logit_mse,
         "fixed_support_residual_stream_l2_delta": 1.0,

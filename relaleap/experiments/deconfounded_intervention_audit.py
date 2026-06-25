@@ -27,6 +27,7 @@ TOPK1_VARIANT = "rank_matched_topk1_contextual"
 TOPK2_INTERVENTION = "fixed_dominant_router_support"
 TOPK1_INTERVENTION = "fixed_dominant_router_singleton"
 CE_GUARDRAIL_TOLERANCE = 0.05
+CONTEXT_FIELDS = ("batch_index", "position_index", "token_index", "target_token")
 
 
 def run_deconfounded_intervention_audit(
@@ -92,9 +93,13 @@ def run_deconfounded_intervention_audit(
         )
 
     required_fields = {
+        *CONTEXT_FIELDS,
         "position_bin",
         "token_class",
         "router_support_count",
+        "router_loss",
+        "pair_gain",
+        "singleton_left_gain",
         "fixed_support_loss_delta",
         "fixed_support_logit_mse",
         "fixed_support_residual_stream_l2_delta",
@@ -130,11 +135,20 @@ def run_deconfounded_intervention_audit(
             "because promoted top-k-2 and rank-matched top-k-1 have structurally "
             "different active-rank proxies in this artifact."
         ),
+        "exact_context_matching_note": (
+            "top-k-2 and rank-matched top-k-1 rows are first paired by exact "
+            "batch_index/position_index/token_index/target_token context, then "
+            "summarized inside matched position/token/residual/support-count strata."
+        ),
     }
 
     if not failures:
         support_count_bins = _support_count_bins(topk2_rows + topk1_rows)
-        matched_rows = _matched_deconfounded_rows(
+        (
+            matched_rows,
+            paired_context_rows,
+            context_matching_evidence,
+        ) = _matched_deconfounded_rows(
             topk2_rows,
             topk1_rows,
             support_count_bins=support_count_bins,
@@ -159,13 +173,21 @@ def run_deconfounded_intervention_audit(
                     ce_guardrail_tolerance=ce_guardrail_tolerance,
                 )
             )
+            evidence.update(context_matching_evidence)
             decision = _deconfounded_decision(evidence)
+    else:
+        paired_context_rows = []
 
     if failures:
         evidence["failures"] = failures
 
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_csv(out_dir / "matched_deconfounded_strata.csv", _FIELDNAMES, matched_rows)
+    _write_csv(
+        out_dir / "paired_exact_context_deltas.csv",
+        _CONTEXT_FIELDNAMES,
+        paired_context_rows,
+    )
     summary = {
         "status": status,
         "decision": decision,
@@ -179,6 +201,9 @@ def run_deconfounded_intervention_audit(
             "summary_json": str(out_dir / "summary.json"),
             "matched_deconfounded_strata_csv": str(
                 out_dir / "matched_deconfounded_strata.csv"
+            ),
+            "paired_exact_context_deltas_csv": str(
+                out_dir / "paired_exact_context_deltas.csv"
             ),
             "notes_md": str(out_dir / "notes.md"),
         },
@@ -197,9 +222,31 @@ def _matched_deconfounded_rows(
     *,
     support_count_bins: dict[int, str],
     min_rows_per_side: int,
-) -> list[dict[str, Any]]:
-    topk2_by_stratum = _aggregate_by_stratum(topk2_rows, support_count_bins)
-    topk1_by_stratum = _aggregate_by_stratum(topk1_rows, support_count_bins)
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    topk2_by_context = _aggregate_by_context_stratum(topk2_rows, support_count_bins)
+    topk1_by_context = _aggregate_by_context_stratum(topk1_rows, support_count_bins)
+    shared_context_strata = sorted(set(topk2_by_context) & set(topk1_by_context))
+    topk2_contexts = {context for context, _stratum in topk2_by_context}
+    topk1_contexts = {context for context, _stratum in topk1_by_context}
+    matched_contexts = {context for context, _stratum in shared_context_strata}
+    paired_context_stratum_rows = _paired_context_stratum_rows(
+        shared_context_strata,
+        topk2_by_context,
+        topk1_by_context,
+    )
+    paired_context_rows = _aggregate_paired_context_rows(paired_context_stratum_rows)
+    topk2_by_stratum = _aggregate_matched_contexts_by_stratum(
+        {
+            context_stratum: topk2_by_context[context_stratum]
+            for context_stratum in shared_context_strata
+        }
+    )
+    topk1_by_stratum = _aggregate_matched_contexts_by_stratum(
+        {
+            context_stratum: topk1_by_context[context_stratum]
+            for context_stratum in shared_context_strata
+        }
+    )
     rows: list[dict[str, Any]] = []
     for stratum in sorted(set(topk2_by_stratum) & set(topk1_by_stratum)):
         topk2 = topk2_by_stratum[stratum]
@@ -224,12 +271,19 @@ def _matched_deconfounded_rows(
             "support_count_bin": support_count_bin,
             "topk2_active_rank_proxy": topk2["active_rank_proxy"],
             "topk1_active_rank_proxy": topk1["active_rank_proxy"],
+            "matched_exact_context_count": topk2["context_count"],
             "topk2_row_count": topk2["row_count"],
             "topk1_row_count": topk1["row_count"],
             "topk2_router_support_count_mean": topk2["router_support_count_mean"],
             "topk1_router_support_count_mean": topk1["router_support_count_mean"],
             "topk2_router_loss_mean": topk2["router_loss_mean"],
             "topk1_router_loss_mean": topk1["router_loss_mean"],
+            "topk2_pair_gain_mean": topk2["pair_gain_mean"],
+            "topk1_singleton_gain_mean": topk1["singleton_left_gain_mean"],
+            "topk2_incremental_pair_gain_minus_topk1_singleton": _difference(
+                topk2["pair_gain_mean"],
+                topk1["singleton_left_gain_mean"],
+            ),
             "topk2_fixed_support_loss_delta_mean": topk2[
                 "fixed_support_loss_delta_mean"
             ],
@@ -263,47 +317,255 @@ def _matched_deconfounded_rows(
             "topk2_pair_synergy_mean": topk2["pair_synergy_mean"],
         }
         rows.append(row)
+    context_evidence = {
+        "topk2_exact_context_count": len(topk2_contexts),
+        "topk1_exact_context_count": len(topk1_contexts),
+        "shared_exact_context_count_before_stratum_match": len(
+            topk2_contexts & topk1_contexts
+        ),
+        "matched_exact_context_count": len(matched_contexts),
+        "unmatched_topk2_context_count": len(topk2_contexts - matched_contexts),
+        "unmatched_topk1_context_count": len(topk1_contexts - matched_contexts),
+        "matched_topk2_context_fraction": (
+            len(matched_contexts) / len(topk2_contexts) if topk2_contexts else None
+        ),
+        "matched_topk1_context_fraction": (
+            len(matched_contexts) / len(topk1_contexts) if topk1_contexts else None
+        ),
+    }
+    return rows, paired_context_rows, context_evidence
+
+
+def _paired_context_stratum_rows(
+    shared_context_strata: list[
+        tuple[tuple[str, str, str, str], tuple[str, str, str, str, str]]
+    ],
+    topk2_by_context: dict[
+        tuple[tuple[str, str, str, str], tuple[str, str, str, str, str]],
+        dict[str, Any],
+    ],
+    topk1_by_context: dict[
+        tuple[tuple[str, str, str, str], tuple[str, str, str, str, str]],
+        dict[str, Any],
+    ],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for context_stratum in shared_context_strata:
+        context, stratum = context_stratum
+        topk2 = topk2_by_context[context_stratum]
+        topk1 = topk1_by_context[context_stratum]
+        (
+            position_bin,
+            token_class,
+            residual_norm_bin,
+            residual_gain_bin,
+            support_count_bin,
+        ) = stratum
+        row = {
+            "batch_index": context[0],
+            "position_index": context[1],
+            "token_index": context[2],
+            "target_token": context[3],
+            "position_bin": position_bin,
+            "token_class": token_class,
+            "residual_norm_bin": residual_norm_bin,
+            "residual_gain_bin": residual_gain_bin,
+            "support_count_bin": support_count_bin,
+            "topk2_row_count": topk2["row_count"],
+            "topk1_row_count": topk1["row_count"],
+            "topk2_router_loss_mean": topk2["router_loss_mean"],
+            "topk1_router_loss_mean": topk1["router_loss_mean"],
+            "topk2_pair_gain_mean": topk2["pair_gain_mean"],
+            "topk1_singleton_gain_mean": topk1["singleton_left_gain_mean"],
+            "topk2_incremental_pair_gain_minus_topk1_singleton": _difference(
+                topk2["pair_gain_mean"],
+                topk1["singleton_left_gain_mean"],
+            ),
+            "topk2_fixed_delta_minus_topk1": _difference(
+                topk2["fixed_support_loss_delta_mean"],
+                topk1["fixed_support_loss_delta_mean"],
+            ),
+            "topk2_logit_mse_minus_topk1": _difference(
+                topk2["fixed_support_logit_mse_mean"],
+                topk1["fixed_support_logit_mse_mean"],
+            ),
+            "topk2_residual_stream_l2_delta_minus_topk1": _difference(
+                topk2["fixed_support_residual_stream_l2_delta_mean"],
+                topk1["fixed_support_residual_stream_l2_delta_mean"],
+            ),
+            "topk2_pair_synergy_mean": topk2["pair_synergy_mean"],
+        }
+        rows.append(row)
     return rows
 
 
-def _aggregate_by_stratum(
+def _aggregate_paired_context_rows(
+    paired_context_stratum_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    buckets: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in paired_context_stratum_rows:
+        context = (
+            str(row["batch_index"]),
+            str(row["position_index"]),
+            str(row["token_index"]),
+            str(row["target_token"]),
+        )
+        buckets[context].append(row)
+    rows: list[dict[str, Any]] = []
+    for context, context_rows in sorted(buckets.items()):
+        rows.append(
+            {
+                "batch_index": context[0],
+                "position_index": context[1],
+                "token_index": context[2],
+                "target_token": context[3],
+                "matched_context_stratum_count": len(context_rows),
+                "position_bins": _joined_stats_values(context_rows, "position_bin"),
+                "token_classes": _joined_stats_values(context_rows, "token_class"),
+                "residual_norm_bins": _joined_stats_values(
+                    context_rows, "residual_norm_bin"
+                ),
+                "residual_gain_bins": _joined_stats_values(
+                    context_rows, "residual_gain_bin"
+                ),
+                "support_count_bins": _joined_stats_values(
+                    context_rows, "support_count_bin"
+                ),
+                "topk2_row_count": sum(int(row["topk2_row_count"]) for row in context_rows),
+                "topk1_row_count": sum(int(row["topk1_row_count"]) for row in context_rows),
+                "topk2_router_loss_mean": _mean_stats(
+                    context_rows, "topk2_router_loss_mean"
+                ),
+                "topk1_router_loss_mean": _mean_stats(
+                    context_rows, "topk1_router_loss_mean"
+                ),
+                "topk2_pair_gain_mean": _mean_stats(
+                    context_rows, "topk2_pair_gain_mean"
+                ),
+                "topk1_singleton_gain_mean": _mean_stats(
+                    context_rows, "topk1_singleton_gain_mean"
+                ),
+                "topk2_incremental_pair_gain_minus_topk1_singleton": _mean_stats(
+                    context_rows,
+                    "topk2_incremental_pair_gain_minus_topk1_singleton",
+                ),
+                "topk2_fixed_delta_minus_topk1": _mean_stats(
+                    context_rows, "topk2_fixed_delta_minus_topk1"
+                ),
+                "topk2_logit_mse_minus_topk1": _mean_stats(
+                    context_rows, "topk2_logit_mse_minus_topk1"
+                ),
+                "topk2_residual_stream_l2_delta_minus_topk1": _mean_stats(
+                    context_rows, "topk2_residual_stream_l2_delta_minus_topk1"
+                ),
+                "topk2_pair_synergy_mean": _mean_stats(
+                    context_rows, "topk2_pair_synergy_mean"
+                ),
+            }
+        )
+    return rows
+
+
+def _aggregate_by_context_stratum(
     rows: list[dict[str, str]],
     support_count_bins: dict[int, str],
+) -> dict[tuple[tuple[str, str, str, str], tuple[str, str, str, str, str]], dict[str, Any]]:
+    buckets: dict[
+        tuple[tuple[str, str, str, str], tuple[str, str, str, str, str]],
+        list[dict[str, str]],
+    ] = defaultdict(list)
+    for row in rows:
+        buckets[(_context_key(row), _stratum_key(row, support_count_bins))].append(row)
+    return {
+        context_stratum: _stats_for_rows(context_rows)
+        for context_stratum, context_rows in buckets.items()
+    }
+
+
+def _aggregate_matched_contexts_by_stratum(
+    context_stats: dict[
+        tuple[tuple[str, str, str, str], tuple[str, str, str, str, str]],
+        dict[str, Any],
+    ]
 ) -> dict[tuple[str, str, str, str, str], dict[str, Any]]:
-    buckets: dict[tuple[str, str, str, str, str], list[dict[str, str]]] = defaultdict(
+    buckets: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = defaultdict(
         list
     )
-    for row in rows:
-        support_count = int(_optional_float(row.get("router_support_count")) or 0)
-        stratum = (
-            str(row.get("position_bin")),
-            str(row.get("token_class")),
-            str(row.get("residual_norm_bin")),
-            str(row.get("residual_gain_bin")),
-            support_count_bins.get(support_count, "unknown"),
-        )
-        buckets[stratum].append(row)
+    for (_context, stratum), stats in context_stats.items():
+        buckets[stratum].append(stats)
     return {
         stratum: {
-            "row_count": len(stratum_rows),
-            "active_rank_proxy": _joined_values(stratum_rows, "active_rank_proxy"),
-            "router_support_count_mean": _mean_field(
-                stratum_rows, "router_support_count"
+            "context_count": len(stats_rows),
+            "row_count": sum(int(row["row_count"]) for row in stats_rows),
+            "active_rank_proxy": ",".join(
+                sorted(
+                    {
+                        value
+                        for row in stats_rows
+                        for value in str(row["active_rank_proxy"]).split(",")
+                        if value
+                    }
+                )
             ),
-            "router_loss_mean": _mean_field(stratum_rows, "router_loss"),
-            "fixed_support_loss_delta_mean": _mean_field(
-                stratum_rows, "fixed_support_loss_delta"
+            "router_support_count_mean": _mean_stats(
+                stats_rows, "router_support_count_mean"
             ),
-            "fixed_support_logit_mse_mean": _mean_field(
-                stratum_rows, "fixed_support_logit_mse"
+            "router_loss_mean": _mean_stats(stats_rows, "router_loss_mean"),
+            "pair_gain_mean": _mean_stats(stats_rows, "pair_gain_mean"),
+            "singleton_left_gain_mean": _mean_stats(
+                stats_rows, "singleton_left_gain_mean"
             ),
-            "fixed_support_residual_stream_l2_delta_mean": _mean_field(
-                stratum_rows, "fixed_support_residual_stream_l2_delta"
+            "fixed_support_loss_delta_mean": _mean_stats(
+                stats_rows, "fixed_support_loss_delta_mean"
             ),
-            "pair_synergy_mean": _mean_field(stratum_rows, "pair_synergy"),
+            "fixed_support_logit_mse_mean": _mean_stats(
+                stats_rows, "fixed_support_logit_mse_mean"
+            ),
+            "fixed_support_residual_stream_l2_delta_mean": _mean_stats(
+                stats_rows, "fixed_support_residual_stream_l2_delta_mean"
+            ),
+            "pair_synergy_mean": _mean_stats(stats_rows, "pair_synergy_mean"),
         }
-        for stratum, stratum_rows in buckets.items()
+        for stratum, stats_rows in buckets.items()
     }
+
+
+def _stats_for_rows(rows: list[dict[str, str]]) -> dict[str, Any]:
+    return {
+        "row_count": len(rows),
+        "active_rank_proxy": _joined_values(rows, "active_rank_proxy"),
+        "router_support_count_mean": _mean_field(rows, "router_support_count"),
+        "router_loss_mean": _mean_field(rows, "router_loss"),
+        "pair_gain_mean": _mean_field(rows, "pair_gain"),
+        "singleton_left_gain_mean": _mean_field(rows, "singleton_left_gain"),
+        "fixed_support_loss_delta_mean": _mean_field(
+            rows, "fixed_support_loss_delta"
+        ),
+        "fixed_support_logit_mse_mean": _mean_field(
+            rows, "fixed_support_logit_mse"
+        ),
+        "fixed_support_residual_stream_l2_delta_mean": _mean_field(
+            rows, "fixed_support_residual_stream_l2_delta"
+        ),
+        "pair_synergy_mean": _mean_field(rows, "pair_synergy"),
+    }
+
+
+def _context_key(row: dict[str, str]) -> tuple[str, str, str, str]:
+    return tuple(str(row.get(field)) for field in CONTEXT_FIELDS)  # type: ignore[return-value]
+
+
+def _stratum_key(
+    row: dict[str, str], support_count_bins: dict[int, str]
+) -> tuple[str, str, str, str, str]:
+    support_count = int(_optional_float(row.get("router_support_count")) or 0)
+    return (
+        str(row.get("position_bin")),
+        str(row.get("token_class")),
+        str(row.get("residual_norm_bin")),
+        str(row.get("residual_gain_bin")),
+        support_count_bins.get(support_count, "unknown"),
+    )
 
 
 def _deconfounded_evidence(
@@ -342,6 +604,11 @@ def _deconfounded_evidence(
         for row in matched_rows
         if row["topk2_residual_stream_l2_delta_minus_topk1"] is not None
     ]
+    incremental_pair_gain_differences = [
+        row["topk2_incremental_pair_gain_minus_topk1_singleton"]
+        for row in matched_rows
+        if row["topk2_incremental_pair_gain_minus_topk1_singleton"] is not None
+    ]
     per_token_synergies = [
         row["topk2_pair_synergy_mean"]
         for row in matched_rows
@@ -356,6 +623,9 @@ def _deconfounded_evidence(
     coarse_synergies = [value for value in coarse_synergies if value is not None]
     return {
         "matched_deconfounded_strata_count": len(matched_rows),
+        "matched_exact_context_count": sum(
+            int(row["matched_exact_context_count"]) for row in matched_rows
+        ),
         "matched_deconfounded_tokens_topk2": sum(
             int(row["topk2_row_count"]) for row in matched_rows
         ),
@@ -385,6 +655,12 @@ def _deconfounded_evidence(
             value < 0.0 for value in logit_mse_differences
         ),
         "topk2_residual_l2_delta_minus_topk1_mean": _mean(residual_l2_differences),
+        "topk2_incremental_pair_gain_minus_topk1_singleton_mean": _mean(
+            incremental_pair_gain_differences
+        ),
+        "topk2_incremental_pair_gain_positive_strata_fraction": _fraction(
+            value > 0.0 for value in incremental_pair_gain_differences
+        ),
         "coarse_topk2_pair_synergy_mean": _mean(coarse_synergies),
         "coarse_topk2_pair_synergy_positive_fraction": _fraction(
             value > 0.0 for value in coarse_synergies
@@ -412,11 +688,13 @@ def _deconfounded_decision(evidence: dict[str, Any]) -> str:
         evidence["per_token_pair_synergy_available"]
         and evidence["deconfounded_topk2_pair_synergy_positive_strata_fraction"] is not None
         and evidence["deconfounded_topk2_pair_synergy_positive_strata_fraction"] >= 0.8
+        and evidence["topk2_incremental_pair_gain_positive_strata_fraction"] is not None
+        and evidence["topk2_incremental_pair_gain_positive_strata_fraction"] >= 0.8
     )
     if synergy_survives and evidence["ce_guardrail_passed"]:
         return "topk2_pair_synergy_survives_deconfounding_but_cleanliness_bar_fails"
     if evidence["ce_guardrail_passed"]:
-        return "topk2_coarse_synergy_not_supported_after_deconfounding"
+        return "topk2_comparative_causal_cooperation_not_supported"
     return "rank_matched_topk1_remains_cleaner_causal_audit_bracket"
 
 
@@ -451,7 +729,21 @@ def _mean_field(rows: list[dict[str, str]], field: str) -> float | None:
     )
 
 
+def _mean_stats(rows: list[dict[str, Any]], field: str) -> float | None:
+    return _mean([row[field] for row in rows if row.get(field) is not None])
+
+
+def _difference(left: float | None, right: float | None) -> float | None:
+    if left is None or right is None:
+        return None
+    return left - right
+
+
 def _joined_values(rows: list[dict[str, str]], field: str) -> str:
+    return ",".join(sorted({str(row.get(field)) for row in rows if row.get(field) != ""}))
+
+
+def _joined_stats_values(rows: list[dict[str, Any]], field: str) -> str:
     return ",".join(sorted({str(row.get(field)) for row in rows if row.get(field) != ""}))
 
 
@@ -502,6 +794,11 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         lines.extend(
             [
                 f"- Matched deconfounded strata: `{evidence['matched_deconfounded_strata_count']}`",
+                f"- Exact matched token contexts: `{evidence['matched_exact_context_count']}`",
+                f"- Top-k-2 exact contexts: `{evidence['topk2_exact_context_count']}`",
+                f"- Rank-matched top-k-1 exact contexts: `{evidence['topk1_exact_context_count']}`",
+                f"- Unmatched top-k-2 contexts: `{evidence['unmatched_topk2_context_count']}`",
+                f"- Unmatched rank-matched top-k-1 contexts: `{evidence['unmatched_topk1_context_count']}`",
                 f"- Top-k-2 alpha-0 CE: `{evidence['topk2_alpha0_ce_loss']}`",
                 f"- Rank-matched top-k-1 alpha-0 CE: `{evidence['topk1_alpha0_ce_loss']}`",
                 f"- Top-k-2 CE deficit: `{evidence['topk2_ce_deficit_vs_topk1']}`",
@@ -510,11 +807,14 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
                 f"- Top-k-2 fixed-support cleaner strata fraction: `{evidence['topk2_fixed_support_cleaner_strata_fraction']}`",
                 f"- Top-k-2 logit MSE minus top-k-1 mean: `{evidence['topk2_logit_mse_minus_topk1_mean']}`",
                 f"- Top-k-2 functional-churn cleaner strata fraction: `{evidence['topk2_functional_churn_cleaner_strata_fraction']}`",
+                f"- Top-k-2 incremental pair gain minus top-k-1 singleton mean: `{evidence['topk2_incremental_pair_gain_minus_topk1_singleton_mean']}`",
+                f"- Top-k-2 incremental pair-gain positive strata fraction: `{evidence['topk2_incremental_pair_gain_positive_strata_fraction']}`",
                 f"- Coarse top-k-2 pair synergy mean: `{evidence['coarse_topk2_pair_synergy_mean']}`",
                 f"- Per-token pair synergy available: `{evidence['per_token_pair_synergy_available']}`",
                 f"- Deconfounded top-k-2 pair synergy mean: `{evidence['deconfounded_topk2_pair_synergy_mean']}`",
                 f"- Deconfounded top-k-2 pair synergy positive strata fraction: `{evidence['deconfounded_topk2_pair_synergy_positive_strata_fraction']}`",
                 f"- Active-rank note: {evidence['active_rank_matching_note']}",
+                f"- Exact-context note: {evidence['exact_context_matching_note']}",
             ]
         )
     else:
@@ -532,12 +832,16 @@ _FIELDNAMES = [
     "support_count_bin",
     "topk2_active_rank_proxy",
     "topk1_active_rank_proxy",
+    "matched_exact_context_count",
     "topk2_row_count",
     "topk1_row_count",
     "topk2_router_support_count_mean",
     "topk1_router_support_count_mean",
     "topk2_router_loss_mean",
     "topk1_router_loss_mean",
+    "topk2_pair_gain_mean",
+    "topk1_singleton_gain_mean",
+    "topk2_incremental_pair_gain_minus_topk1_singleton",
     "topk2_fixed_support_loss_delta_mean",
     "topk1_fixed_support_loss_delta_mean",
     "topk2_fixed_delta_minus_topk1",
@@ -546,6 +850,30 @@ _FIELDNAMES = [
     "topk2_logit_mse_minus_topk1",
     "topk2_residual_stream_l2_delta_mean",
     "topk1_residual_stream_l2_delta_mean",
+    "topk2_residual_stream_l2_delta_minus_topk1",
+    "topk2_pair_synergy_mean",
+]
+
+_CONTEXT_FIELDNAMES = [
+    "batch_index",
+    "position_index",
+    "token_index",
+    "target_token",
+    "matched_context_stratum_count",
+    "position_bins",
+    "token_classes",
+    "residual_norm_bins",
+    "residual_gain_bins",
+    "support_count_bins",
+    "topk2_row_count",
+    "topk1_row_count",
+    "topk2_router_loss_mean",
+    "topk1_router_loss_mean",
+    "topk2_pair_gain_mean",
+    "topk1_singleton_gain_mean",
+    "topk2_incremental_pair_gain_minus_topk1_singleton",
+    "topk2_fixed_delta_minus_topk1",
+    "topk2_logit_mse_minus_topk1",
     "topk2_residual_stream_l2_delta_minus_topk1",
     "topk2_pair_synergy_mean",
 ]

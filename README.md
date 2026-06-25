@@ -228,22 +228,26 @@ python -m relaleap.experiments.deconfounded_intervention_audit
 
 This writes
 `results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention/summary.json`,
-`matched_deconfounded_strata.csv`, and `notes.md`. It compares promoted
-contextual top-k-2 with rank-matched contextual top-k-1 after matching
-per-token intervention rows by position bin, token class, residual-norm bin,
-residual-gain bin, and router-support-count bin. The active-rank proxy is
-reported as a bracket dimension rather than exact-matched because top-k-2 and
-top-k-1 have structurally different active-rank proxies in the current
-artifact. CE is treated as a guardrail with a default tolerance of `0.05`, and
-the audit reports direct deconfounded per-token pair synergy separately from the
-cleaner causal-bracket claim. Top-k-2 pair synergy can survive the matching
-audit while the broader cleanliness/interference claim remains blocked unless
-fixed-support and functional-churn wins each clear at least `80%` of matched
-strata.
+`matched_deconfounded_strata.csv`, `paired_exact_context_deltas.csv`, and
+`notes.md`. It compares promoted contextual top-k-2 with rank-matched
+contextual top-k-1 by first pairing exact
+`batch_index`/`position_index`/`token_index`/`target_token` contexts, then
+summarizing those paired rows inside position-bin, token-class,
+residual-norm-bin, residual-gain-bin, and router-support-count-bin strata. The
+active-rank proxy is reported as a bracket dimension rather than exact-matched
+because top-k-2 and top-k-1 have structurally different active-rank proxies in
+the current artifact. CE is treated as a guardrail with a default tolerance of
+`0.05`, and the audit reports direct deconfounded per-token pair synergy
+separately from the stricter comparative causal-cooperation claim. Top-k-2
+internal pair synergy is not sufficient unless the incremental top-k-2 pair gain
+also beats the matched rank-matched top-k-1 singleton bracket across at least
+`80%` of matched strata and the fixed-support/functional-churn cleanliness gates
+also pass.
 
-After direct per-token pair synergy survives the deconfounded intervention
-audit, run the local null-controlled synergy audit before making a
-causal-cooperation claim or spending Colab/GPU cycles:
+If direct per-token pair synergy and the incremental matched top-k-2 gain gate
+survive the deconfounded intervention audit, run the local null-controlled
+synergy audit before making a causal-cooperation claim or spending Colab/GPU
+cycles:
 
 ```bash
 python -m relaleap.experiments.causal_synergy_null_audit
