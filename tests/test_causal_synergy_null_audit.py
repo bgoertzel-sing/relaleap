@@ -38,9 +38,32 @@ class CausalSynergyNullAuditTest(unittest.TestCase):
             self.assertTrue(evidence["artifact_control_supported"])
             self.assertFalse(evidence["cleaner_causal_bracket_supported"])
             self.assertGreater(evidence["observed_minus_control_synergy_mean"], 0.0)
+            diagnostics = evidence["control_match_diagnostics"]
+            self.assertEqual(diagnostics["matched_strata_overlap_fraction"], 1.0)
+            self.assertAlmostEqual(
+                diagnostics["support_count_difference_mean"],
+                -1.0,
+            )
+            self.assertAlmostEqual(
+                diagnostics["fixed_support_loss_difference_mean"],
+                0.02,
+            )
             self.assertTrue((root / "null_audit" / "summary.json").is_file())
             self.assertTrue(
                 (root / "null_audit" / "matched_synergy_null_strata.csv").is_file()
+            )
+            with (root / "null_audit" / "matched_synergy_null_strata.csv").open(
+                newline="",
+                encoding="utf-8",
+            ) as handle:
+                strata_rows = list(csv.DictReader(handle))
+            self.assertIn(
+                "control_support_count_difference_mean",
+                strata_rows[0],
+            )
+            self.assertIn(
+                "control_fixed_support_loss_difference_mean",
+                strata_rows[0],
             )
             self.assertTrue((root / "null_audit" / "notes.md").is_file())
 
@@ -115,6 +138,10 @@ def _write_artifacts(
         "position_bin",
         "token_class",
         "router_support_count",
+        "anchor_support",
+        "control_support",
+        "support_count_difference",
+        "fixed_support_loss_difference",
         "pair_gain",
         "singleton_left_gain",
         "singleton_right_gain",
@@ -133,6 +160,8 @@ def _write_artifacts(
                 token_class,
                 norm_bin,
                 support_count,
+                support_count_difference=0,
+                fixed_support_loss_difference=0.0,
                 pair_gain=0.3,
                 singleton_left_gain=0.05,
                 singleton_right_gain=0.05,
@@ -147,6 +176,8 @@ def _write_artifacts(
                 token_class,
                 norm_bin,
                 support_count,
+                support_count_difference=-1,
+                fixed_support_loss_difference=0.02,
                 pair_gain=0.11,
                 singleton_left_gain=0.05,
                 singleton_right_gain=0.05,
@@ -180,6 +211,8 @@ def _per_token_row(
     residual_norm_bin: str,
     router_support_count: int,
     *,
+    support_count_difference: int,
+    fixed_support_loss_difference: float,
     pair_gain: float,
     singleton_left_gain: float,
     singleton_right_gain: float,
@@ -191,6 +224,10 @@ def _per_token_row(
         "position_bin": position_bin,
         "token_class": token_class,
         "router_support_count": router_support_count,
+        "anchor_support": "0,1",
+        "control_support": "2,3",
+        "support_count_difference": support_count_difference,
+        "fixed_support_loss_difference": fixed_support_loss_difference,
         "pair_gain": pair_gain,
         "singleton_left_gain": singleton_left_gain,
         "singleton_right_gain": singleton_right_gain,

@@ -239,6 +239,44 @@ def _stratum_stats(
             "router_support_count_mean": _mean(
                 _field_values(stratum_rows, "router_support_count")
             ),
+            "support_count_difference_mean": _mean(
+                _field_values(stratum_rows, "support_count_difference")
+            ),
+            "support_count_difference_abs_mean": _mean(
+                [
+                    abs(value)
+                    for value in _field_values(
+                        stratum_rows,
+                        "support_count_difference",
+                    )
+                ]
+            ),
+            "fixed_support_loss_difference_mean": _mean(
+                _field_values(stratum_rows, "fixed_support_loss_difference")
+            ),
+            "fixed_support_loss_difference_abs_mean": _mean(
+                [
+                    abs(value)
+                    for value in _field_values(
+                        stratum_rows,
+                        "fixed_support_loss_difference",
+                    )
+                ]
+            ),
+            "anchor_support_count": len(
+                {
+                    row.get("anchor_support")
+                    for row in stratum_rows
+                    if row.get("anchor_support")
+                }
+            ),
+            "control_support_count": len(
+                {
+                    row.get("control_support") or row.get("support")
+                    for row in stratum_rows
+                    if row.get("control_support") or row.get("support")
+                }
+            ),
         }
     return stats
 
@@ -272,6 +310,9 @@ def _null_evidence(
     ]
     observed_minus_control_bootstrap = _bootstrap_means(
         observed_minus_control, bootstrap_samples, rng
+    )
+    control_match_stats = _control_match_stats(
+        [control[key] for key in control_keys]
     )
     deconfounded_evidence = deconfounded_summary.get("evidence", {})
     ce_deficit = deconfounded_evidence.get("topk2_ce_deficit_vs_topk1")
@@ -317,6 +358,12 @@ def _null_evidence(
         "control_pair_synergy_mean": _mean(control_values),
         "observed_minus_control_synergy_mean": _mean(observed_minus_control),
         "observed_minus_control_synergy_ci": list(minus_control_ci),
+        "control_match_diagnostics": {
+            **control_match_stats,
+            "matched_strata_overlap_fraction": (
+                len(control_keys) / len(observed_keys) if observed_keys else None
+            ),
+        },
         "sign_flip_synergy_supported": sign_flip_synergy_supported,
         "artifact_control_supported": artifact_control_supported,
         "topk2_ce_deficit_vs_topk1": ce_deficit,
@@ -366,6 +413,20 @@ def _summary_rows(
             "control_present": key in control_key_set,
             "control_row_count": ctl.get("row_count"),
             "control_pair_synergy_mean": ctl.get("pair_synergy_mean"),
+            "control_support_count_difference_mean": ctl.get(
+                "support_count_difference_mean"
+            ),
+            "control_support_count_difference_abs_mean": ctl.get(
+                "support_count_difference_abs_mean"
+            ),
+            "control_fixed_support_loss_difference_mean": ctl.get(
+                "fixed_support_loss_difference_mean"
+            ),
+            "control_fixed_support_loss_difference_abs_mean": ctl.get(
+                "fixed_support_loss_difference_abs_mean"
+            ),
+            "control_anchor_support_count": ctl.get("anchor_support_count"),
+            "control_support_count": ctl.get("control_support_count"),
             "observed_minus_control_pair_synergy": (
                 obs["pair_synergy_mean"] - ctl["pair_synergy_mean"]
                 if key in control_key_set
@@ -374,6 +435,54 @@ def _summary_rows(
         }
         rows.append(row)
     return rows
+
+
+def _control_match_stats(control_stats: list[dict[str, Any]]) -> dict[str, Any]:
+    if not control_stats:
+        return {
+            "support_count_difference_mean": None,
+            "support_count_difference_abs_mean": None,
+            "fixed_support_loss_difference_mean": None,
+            "fixed_support_loss_difference_abs_mean": None,
+            "matched_anchor_support_count": 0,
+            "matched_control_support_count": 0,
+        }
+    return {
+        "support_count_difference_mean": _mean(
+            [
+                value
+                for stat in control_stats
+                if (value := stat.get("support_count_difference_mean")) is not None
+            ]
+        ),
+        "support_count_difference_abs_mean": _mean(
+            [
+                value
+                for stat in control_stats
+                if (value := stat.get("support_count_difference_abs_mean")) is not None
+            ]
+        ),
+        "fixed_support_loss_difference_mean": _mean(
+            [
+                value
+                for stat in control_stats
+                if (value := stat.get("fixed_support_loss_difference_mean")) is not None
+            ]
+        ),
+        "fixed_support_loss_difference_abs_mean": _mean(
+            [
+                value
+                for stat in control_stats
+                if (value := stat.get("fixed_support_loss_difference_abs_mean")) is not None
+            ]
+        ),
+        "matched_anchor_support_count": sum(
+            int(stat.get("anchor_support_count") or 0) for stat in control_stats
+        ),
+        "matched_control_support_count": sum(
+            int(stat.get("control_support_count") or 0) for stat in control_stats
+        ),
+    }
 
 
 def _read_matched_keys(path: Path) -> set[tuple[str, str, str, str, str]]:
@@ -522,6 +631,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
                 f"- Control synergy mean: `{evidence['control_pair_synergy_mean']}`",
                 f"- Observed-minus-control synergy mean: `{evidence['observed_minus_control_synergy_mean']}`",
                 f"- Observed-minus-control CI: `{evidence['observed_minus_control_synergy_ci']}`",
+                f"- Control match diagnostics: `{evidence['control_match_diagnostics']}`",
                 f"- Pair synergy supported: `{evidence['pair_synergy_supported']}`",
                 f"- Cleaner causal bracket supported: `{evidence['cleaner_causal_bracket_supported']}`",
                 f"- Control note: {evidence['control_note']}",
@@ -548,6 +658,12 @@ _FIELDNAMES = [
     "control_present",
     "control_row_count",
     "control_pair_synergy_mean",
+    "control_support_count_difference_mean",
+    "control_support_count_difference_abs_mean",
+    "control_fixed_support_loss_difference_mean",
+    "control_fixed_support_loss_difference_abs_mean",
+    "control_anchor_support_count",
+    "control_support_count",
     "observed_minus_control_pair_synergy",
 ]
 

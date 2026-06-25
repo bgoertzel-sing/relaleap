@@ -639,6 +639,28 @@ def _pair_fingerprint_rows(
                     "load_balance_weight": load_balance_weight,
                     "intervention": selected["intervention"],
                     "support": _support_key(support),
+                    "anchor_intervention": selected.get("anchor_intervention"),
+                    "anchor_support": selected.get("anchor_support"),
+                    "control_support": selected.get("control_support"),
+                    "anchor_router_support_count": selected.get(
+                        "anchor_router_support_count"
+                    ),
+                    "control_router_support_count": selected.get(
+                        "control_router_support_count"
+                    ),
+                    "support_count_difference": selected.get(
+                        "support_count_difference"
+                    ),
+                    "anchor_fixed_support_loss": selected.get(
+                        "anchor_fixed_support_loss"
+                    ),
+                    "control_fixed_support_loss": selected.get(
+                        "control_fixed_support_loss"
+                    ),
+                    "fixed_support_loss_difference": selected.get(
+                        "fixed_support_loss_difference"
+                    ),
+                    "control_match_rank": selected.get("control_match_rank"),
                     "position_bin": position_bin,
                     "token_class": token_class,
                     "router_support_count": selected["router_support_count"],
@@ -873,6 +895,28 @@ def _per_token_pair_fingerprint_rows(
                         "load_balance_weight": load_balance_weight,
                         "intervention": selected["intervention"],
                         "support": support_key,
+                        "anchor_intervention": selected.get("anchor_intervention"),
+                        "anchor_support": selected.get("anchor_support"),
+                        "control_support": selected.get("control_support"),
+                        "anchor_router_support_count": selected.get(
+                            "anchor_router_support_count"
+                        ),
+                        "control_router_support_count": selected.get(
+                            "control_router_support_count"
+                        ),
+                        "support_count_difference": selected.get(
+                            "support_count_difference"
+                        ),
+                        "anchor_fixed_support_loss": selected.get(
+                            "anchor_fixed_support_loss"
+                        ),
+                        "control_fixed_support_loss": selected.get(
+                            "control_fixed_support_loss"
+                        ),
+                        "fixed_support_loss_difference": selected.get(
+                            "fixed_support_loss_difference"
+                        ),
+                        "control_match_rank": selected.get("control_match_rank"),
                         "batch_index": batch_index,
                         "position_index": position_index,
                         "token_index": batch_index * (int(hidden.shape[1]) - 1)
@@ -1336,6 +1380,7 @@ def _selected_pair_interventions(
                 "intervention": "fixed_dominant_router_support",
                 "support": rows_by_key[key]["support"],
                 "router_support_count": count,
+                "fixed_support_loss": float(rows_by_key[key]["loss"]),
             }
     for row in sorted(fixed_rows, key=lambda item: float(item["loss"]))[:max_pair_rows]:
         key = str(row["support_key"])
@@ -1345,6 +1390,7 @@ def _selected_pair_interventions(
                 "intervention": "fixed_best_support_swap",
                 "support": row["support"],
                 "router_support_count": support_counts.get(key, 0),
+                "fixed_support_loss": float(row["loss"]),
             },
         )
     anchors = list(selected.values())
@@ -1366,10 +1412,12 @@ def _selected_pair_interventions(
         ),
     ):
         key = str(row["support_key"])
+        anchor = row["control_anchor"]
         selected[f"support_frequency_control_{key}"] = {
             "intervention": "fixed_support_frequency_matched_control",
             "support": row["support"],
             "router_support_count": support_counts.get(key, 0),
+            **_control_match_metadata(row, anchor, support_counts),
         }
     for row in _matched_control_pair_rows(
         fixed_rows=fixed_rows,
@@ -1389,10 +1437,12 @@ def _selected_pair_interventions(
         ),
     ):
         key = str(row["support_key"])
+        anchor = row["control_anchor"]
         selected[f"loss_matched_control_{key}"] = {
             "intervention": "fixed_loss_matched_nonrouter_control",
             "support": row["support"],
             "router_support_count": support_counts.get(key, 0),
+            **_control_match_metadata(row, anchor, support_counts),
         }
     return list(selected.values())[: max_pair_rows * 10]
 
@@ -1433,12 +1483,15 @@ def _matched_control_pair_rows(
     while anchors and len(control_rows) < target_count:
         anchor = anchors[anchor_index % len(anchors)]
         ranked = sorted(candidates, key=lambda row: score_fn(row, anchor))
-        for row in ranked:
+        for match_rank, row in enumerate(ranked, start=1):
             key = str(row["support_key"])
             if key in control_keys:
                 continue
             control_keys.add(key)
-            control_rows.append(row)
+            control_row = dict(row)
+            control_row["control_anchor"] = anchor
+            control_row["control_match_rank"] = match_rank
+            control_rows.append(control_row)
             break
         anchor_index += 1
         if anchor_index > len(anchors) + len(candidates):
@@ -1449,6 +1502,33 @@ def _matched_control_pair_rows(
 def _anchor_loss(anchor: dict[str, Any], rows_by_key: dict[str, dict[str, Any]]) -> float:
     key = _support_key(tuple(int(part) for part in anchor["support"]))
     return float(rows_by_key[key]["loss"])
+
+
+def _control_match_metadata(
+    row: dict[str, Any],
+    anchor: dict[str, Any],
+    support_counts: dict[str, int],
+) -> dict[str, Any]:
+    anchor_support = tuple(int(part) for part in anchor["support"])
+    control_support = tuple(int(part) for part in row["support"])
+    anchor_key = _support_key(anchor_support)
+    control_key = _support_key(control_support)
+    anchor_support_count = int(anchor.get("router_support_count", 0))
+    control_support_count = int(support_counts.get(control_key, 0))
+    anchor_loss = float(anchor["fixed_support_loss"])
+    control_loss = float(row["loss"])
+    return {
+        "anchor_intervention": anchor.get("intervention"),
+        "anchor_support": anchor_key,
+        "control_support": control_key,
+        "anchor_router_support_count": anchor_support_count,
+        "control_router_support_count": control_support_count,
+        "support_count_difference": control_support_count - anchor_support_count,
+        "anchor_fixed_support_loss": anchor_loss,
+        "control_fixed_support_loss": control_loss,
+        "fixed_support_loss_difference": control_loss - anchor_loss,
+        "control_match_rank": row.get("control_match_rank"),
+    }
 
 
 def _selected_singleton_interventions(
@@ -1613,6 +1693,16 @@ _PAIR_FIELDNAMES = [
     "load_balance_weight",
     "intervention",
     "support",
+    "anchor_intervention",
+    "anchor_support",
+    "control_support",
+    "anchor_router_support_count",
+    "control_router_support_count",
+    "support_count_difference",
+    "anchor_fixed_support_loss",
+    "control_fixed_support_loss",
+    "fixed_support_loss_difference",
+    "control_match_rank",
     "position_bin",
     "token_class",
     "router_support_count",
@@ -1637,6 +1727,16 @@ _PER_TOKEN_PAIR_FIELDNAMES = [
     "load_balance_weight",
     "intervention",
     "support",
+    "anchor_intervention",
+    "anchor_support",
+    "control_support",
+    "anchor_router_support_count",
+    "control_router_support_count",
+    "support_count_difference",
+    "anchor_fixed_support_loss",
+    "control_fixed_support_loss",
+    "fixed_support_loss_difference",
+    "control_match_rank",
     "batch_index",
     "position_index",
     "token_index",

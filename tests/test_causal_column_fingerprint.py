@@ -145,6 +145,10 @@ outputs:
             self.assertIn("pair_synergy", pair_rows[0])
             self.assertIn("position_bin", pair_rows[0])
             self.assertIn("pair_value_cosine", pair_rows[0])
+            self.assertIn("anchor_support", pair_rows[0])
+            self.assertIn("control_support", pair_rows[0])
+            self.assertIn("support_count_difference", pair_rows[0])
+            self.assertIn("fixed_support_loss_difference", pair_rows[0])
             self.assertTrue(
                 {"all", "even", "odd"}.issubset(
                     {row["position_bin"] for row in pair_rows}
@@ -161,6 +165,13 @@ outputs:
                     "fixed_loss_matched_nonrouter_control",
                 }.issubset({row["intervention"] for row in pair_rows})
             )
+            control_pair_rows = [
+                row
+                for row in pair_rows
+                if row["intervention"] == "fixed_support_frequency_matched_control"
+            ]
+            self.assertTrue(any(row["anchor_support"] for row in control_pair_rows))
+            self.assertTrue(any(row["control_support"] for row in control_pair_rows))
 
             with (
                 tmp_path / "fingerprint" / "per_token_pair_interventions.csv"
@@ -179,6 +190,10 @@ outputs:
             self.assertIn("residual_norm_bin", per_token_rows[0])
             self.assertIn("residual_gain_bin", per_token_rows[0])
             self.assertIn("active_rank_proxy", per_token_rows[0])
+            self.assertIn("anchor_support", per_token_rows[0])
+            self.assertIn("control_support", per_token_rows[0])
+            self.assertIn("support_count_difference", per_token_rows[0])
+            self.assertIn("fixed_support_loss_difference", per_token_rows[0])
             self.assertTrue(
                 {"low", "mid", "high"} & {row["residual_norm_bin"] for row in per_token_rows}
             )
@@ -188,6 +203,13 @@ outputs:
                     "fixed_loss_matched_nonrouter_control",
                 }.issubset({row["intervention"] for row in per_token_rows})
             )
+            control_token_rows = [
+                row
+                for row in per_token_rows
+                if row["intervention"] == "fixed_support_frequency_matched_control"
+            ]
+            self.assertTrue(any(row["anchor_support"] for row in control_token_rows))
+            self.assertTrue(any(row["control_support"] for row in control_token_rows))
 
     def test_causal_column_fingerprint_can_include_rank_matched_topk1(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
