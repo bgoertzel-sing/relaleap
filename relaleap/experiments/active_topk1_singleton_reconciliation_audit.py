@@ -33,6 +33,7 @@ TOPK1_VARIANT = "rank_matched_topk1_contextual"
 SELECTED_INTERVENTION = "fixed_dominant_router_singleton"
 LOGGED_ORACLE_INTERVENTION = "fixed_best_singleton_swap"
 RANDOM_INTERVENTION = "fixed_random_singleton_control"
+EXHAUSTIVE_INTERVENTION = "fixed_exhaustive_singleton"
 CONTEXT_FIELDS = ("batch_index", "position_index", "token_index", "target_token")
 
 CONTEXT_GATED_SINGLETON_EFFICACY_WITH_OFFCONTEXT_INTERFERENCE = (
@@ -220,11 +221,15 @@ def _context_rows(source_rows: list[dict[str, str]]) -> list[dict[str, Any]]:
         ]
         oracle = [row for row in values if row.get("intervention") == LOGGED_ORACLE_INTERVENTION]
         random_rows = [row for row in values if row.get("intervention") == RANDOM_INTERVENTION]
+        exhaustive_rows = [
+            row for row in values if row.get("intervention") == EXHAUSTIVE_INTERVENTION
+        ]
         first = values[0]
         selected_gains = _gains(selected)
         offcontext_gains = _gains(offcontext)
-        oracle_gains = _gains(_best_loss_rows(selected + oracle))
+        oracle_gains = _gains(_best_loss_rows(selected + oracle + exhaustive_rows))
         random_gains = _gains(random_rows)
+        exhaustive_gains = _gains(_best_loss_rows(exhaustive_rows))
         rows.append(
             {
                 "batch_index": context[0],
@@ -237,11 +242,12 @@ def _context_rows(source_rows: list[dict[str, str]]) -> list[dict[str, Any]]:
                 "logged_oracle_row_count": len(oracle),
                 "offcontext_row_count": len(offcontext),
                 "random_singleton_row_count": len(random_rows),
+                "exhaustive_singleton_row_count": len(exhaustive_rows),
                 "selected_singleton_gain_mean": _mean_or_none(selected_gains),
                 "logged_oracle_singleton_gain_mean": _mean_or_none(oracle_gains),
                 "offcontext_fixed_dominant_singleton_gain_mean": _mean_or_none(offcontext_gains),
                 "random_singleton_gain_mean": _mean_or_none(random_gains),
-                "exhaustive_singleton_gain_mean": None,
+                "exhaustive_singleton_gain_mean": _mean_or_none(exhaustive_gains),
                 "selected_positive": _positive_mean(selected_gains),
                 "logged_oracle_positive": _positive_mean(oracle_gains),
                 "offcontext_negative": _negative_mean(offcontext_gains),
@@ -295,6 +301,9 @@ def _build_evidence(
     selected_keys = {_context_key(row) for row in selected_context_rows}
     offcontext_keys = {_context_key(row) for row in offcontext_context_rows}
     random_rows = [row for row in source_rows if row.get("intervention") == RANDOM_INTERVENTION]
+    exhaustive_rows = [
+        row for row in source_rows if row.get("intervention") == EXHAUSTIVE_INTERVENTION
+    ]
     metrics = {
         "source_status": source_summary.get("status"),
         "source_decision": source_summary.get("decision"),
@@ -312,7 +321,12 @@ def _build_evidence(
         "random_singleton_context_count": sum(
             1 for row in context_rows if int(row.get("random_singleton_row_count") or 0) > 0
         ),
-        "exhaustive_singleton_context_count": 0,
+        "exhaustive_singleton_row_count": len(exhaustive_rows),
+        "exhaustive_singleton_context_count": sum(
+            1
+            for row in context_rows
+            if int(row.get("exhaustive_singleton_row_count") or 0) > 0
+        ),
         "selected_singleton_gain_mean": _mean_field(
             selected_context_rows, "selected_singleton_gain_mean"
         ),
@@ -323,6 +337,9 @@ def _build_evidence(
             offcontext_context_rows, "offcontext_fixed_dominant_singleton_gain_mean"
         ),
         "random_singleton_gain_mean": _mean_field(context_rows, "random_singleton_gain_mean"),
+        "exhaustive_singleton_gain_mean": _mean_field(
+            context_rows, "exhaustive_singleton_gain_mean"
+        ),
         "selected_positive_fraction": _fraction(
             bool(row.get("selected_positive")) for row in selected_context_rows
         ),
@@ -344,7 +361,10 @@ def _build_evidence(
         "selected_positive_on_majority": _gt(metrics["selected_positive_fraction"], 0.5),
         "offcontext_negative_on_majority": _gt(metrics["offcontext_negative_fraction"], 0.5),
         "random_singleton_control_present": metrics["random_singleton_row_count"] > 0,
-        "exhaustive_singleton_control_present": False,
+        "exhaustive_singleton_control_present": metrics[
+            "exhaustive_singleton_row_count"
+        ]
+        > 0,
     }
     return {
         "metrics": metrics,
@@ -363,6 +383,8 @@ def _build_evidence(
             "variant": TOPK1_VARIANT,
             "selected_intervention": SELECTED_INTERVENTION,
             "logged_oracle_intervention": LOGGED_ORACLE_INTERVENTION,
+            "random_intervention": RANDOM_INTERVENTION,
+            "exhaustive_intervention": EXHAUSTIVE_INTERVENTION,
             "offcontext_filter": (
                 "dominant-router singleton rows with router_support_matches_fixed == false"
             ),
@@ -379,7 +401,9 @@ def _build_evidence(
                 else "missing: current source artifact does not include random singleton rows"
             ),
             "exhaustive_singleton_context_oracle": (
-                "missing: current source artifact logs a best-singleton swap row, not all singleton rows"
+                "present"
+                if signals["exhaustive_singleton_control_present"]
+                else "missing: current source artifact logs a best-singleton swap row, not all singleton rows"
             ),
         },
     }
@@ -560,6 +584,7 @@ _CONTEXT_FIELDS_OUT = [
     "logged_oracle_row_count",
     "offcontext_row_count",
     "random_singleton_row_count",
+    "exhaustive_singleton_row_count",
     "selected_singleton_gain_mean",
     "logged_oracle_singleton_gain_mean",
     "offcontext_fixed_dominant_singleton_gain_mean",
@@ -583,6 +608,7 @@ _STRATUM_FIELDS_OUT = [
     "logged_oracle_singleton_gain_mean",
     "offcontext_fixed_dominant_singleton_gain_mean",
     "random_singleton_gain_mean",
+    "exhaustive_singleton_gain_mean",
 ]
 
 

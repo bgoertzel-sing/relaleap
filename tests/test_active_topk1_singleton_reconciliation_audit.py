@@ -25,11 +25,19 @@ class ActiveTopk1SingletonReconciliationAuditTest(unittest.TestCase):
                 [
                     _row(0, "fixed_dominant_router_singleton", "2", 0.5, True),
                     _row(0, "fixed_best_singleton_swap", "7", 0.7, False),
+                    _row(0, "fixed_random_singleton_control", "1", 0.1, False),
+                    _row(0, "fixed_exhaustive_singleton", "7", 0.7, False),
+                    _row(0, "fixed_exhaustive_singleton", "8", -0.3, False),
                     _row(0, "fixed_dominant_router_singleton", "8", -0.3, False),
                     _row(1, "fixed_dominant_router_singleton", "3", 0.4, True),
                     _row(1, "fixed_best_singleton_swap", "9", 0.6, False),
+                    _row(1, "fixed_random_singleton_control", "1", 0.2, False),
+                    _row(1, "fixed_exhaustive_singleton", "9", 0.6, False),
+                    _row(1, "fixed_exhaustive_singleton", "6", -0.2, False),
                     _row(1, "fixed_dominant_router_singleton", "6", -0.2, False),
                     _row(2, "fixed_dominant_router_singleton", "4", -0.5, False),
+                    _row(2, "fixed_random_singleton_control", "1", 0.0, False),
+                    _row(2, "fixed_exhaustive_singleton", "4", -0.5, False),
                 ],
             )
             _write_summary(control_dir, {"status": "pass", "decision": "mixed_singleton_control_evidence"})
@@ -57,8 +65,16 @@ class ActiveTopk1SingletonReconciliationAuditTest(unittest.TestCase):
             )
             self.assertEqual(
                 summary["evidence"]["missing_controls"]["random_singleton_control"],
-                "missing: current source artifact does not include random singleton rows",
+                "present",
             )
+            self.assertEqual(
+                summary["evidence"]["missing_controls"][
+                    "exhaustive_singleton_context_oracle"
+                ],
+                "present",
+            )
+            self.assertEqual(metrics["random_singleton_context_count"], 3)
+            self.assertEqual(metrics["exhaustive_singleton_context_count"], 3)
             provenance = summary["evidence"]["provenance"]
             self.assertIn("positive means", provenance["gain_sign_convention"])
             self.assertIsNotNone(provenance["source_per_token_pair_interventions_sha256"])

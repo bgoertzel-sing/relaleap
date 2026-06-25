@@ -216,7 +216,10 @@ active-rank proxy. For top-k-2 fixed-pair interventions it also logs
 singleton-left/singleton-right per-token losses and gains, pair gain, and
 `pair_synergy = pair_gain - singleton_left_gain - singleton_right_gain`, so the
 next no-training residual-norm/active-rank deconfounding audit can test direct
-per-token synergy without new training.
+per-token synergy without new training. When run with
+`--include-rank-matched-topk1`, the active top-k-1 variant also emits
+deterministic random singleton controls and exhaustive singleton rows for the
+same context keys.
 
 After the coverage report emits
 `existing_artifacts_sufficient_for_next_no_training_audit`, run the no-training
@@ -368,12 +371,13 @@ This writes
 `notes.md`. It compares dominant-router singleton rows only where
 `router_support_matches_fixed` is true against the best logged singleton on the
 same context, records artifact hashes and the gain sign convention, and fails
-closed when required source fields are missing. The current source artifact does
-not include random or exhaustive singleton rows, so this diagnostic is a
-reconciliation input rather than a causal singleton claim by itself.
+closed when required source fields are missing. When the source causal-column
+fingerprint has been refreshed after the singleton-control extension, it also
+reports deterministic random singleton controls and the exhaustive same-context
+singleton oracle denominator.
 
-To reconcile the selected, logged-oracle, forced/off-context, and missing
-random/exhaustive singleton controls under one gain sign convention, run:
+To reconcile the selected, logged-oracle, forced/off-context, random, and
+exhaustive singleton controls under one gain sign convention, run:
 
 ```bash
 python -m relaleap.experiments.active_topk1_singleton_reconciliation_audit
@@ -386,8 +390,9 @@ This writes
 `singleton_gain = empty_loss - fixed_support_loss`, reports exact context
 denominators for in-context router-selected singletons, same-context
 logged-oracle singleton alternatives, forced/off-context dominant singleton
-rows, and random/exhaustive controls, and keeps random/exhaustive controls
-explicitly missing when the source artifact does not contain them.
+rows, deterministic random singleton controls, and the exhaustive same-context
+singleton oracle. It still records random/exhaustive controls as missing when
+the source artifact predates the singleton-control extension.
 
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled

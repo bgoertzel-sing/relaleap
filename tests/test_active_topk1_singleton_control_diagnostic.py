@@ -24,10 +24,16 @@ class ActiveTopk1SingletonControlDiagnosticTest(unittest.TestCase):
                 [
                     _row(0, "fixed_dominant_router_singleton", "2", -0.4, 4.4, True),
                     _row(0, "fixed_best_singleton_swap", "7", 0.3, 3.7, False),
+                    _row(0, "fixed_random_singleton_control", "1", 0.1, 3.9, False),
+                    _row(0, "fixed_exhaustive_singleton", "7", 0.3, 3.7, False),
                     _row(1, "fixed_dominant_router_singleton", "2", -0.2, 4.2, True),
                     _row(1, "fixed_best_singleton_swap", "8", 0.4, 3.6, False),
+                    _row(1, "fixed_random_singleton_control", "1", 0.0, 4.0, False),
+                    _row(1, "fixed_exhaustive_singleton", "8", 0.4, 3.6, False),
                     _row(2, "fixed_dominant_router_singleton", "3", -0.3, 4.3, True),
                     _row(2, "fixed_best_singleton_swap", "7", 0.2, 3.8, False),
+                    _row(2, "fixed_random_singleton_control", "1", -0.1, 4.1, False),
+                    _row(2, "fixed_exhaustive_singleton", "7", 0.2, 3.8, False),
                 ],
             )
 
@@ -45,8 +51,16 @@ class ActiveTopk1SingletonControlDiagnosticTest(unittest.TestCase):
             self.assertAlmostEqual(metrics["logged_oracle_singleton_gain_mean"], 0.3)
             self.assertEqual(
                 summary["evidence"]["missing_controls"]["random_singleton_control"],
-                "missing: current source artifact does not include random singleton rows",
+                "present",
             )
+            self.assertEqual(
+                summary["evidence"]["missing_controls"][
+                    "exhaustive_singleton_context_oracle"
+                ],
+                "present",
+            )
+            self.assertEqual(metrics["random_singleton_context_count"], 3)
+            self.assertEqual(metrics["exhaustive_singleton_context_count"], 3)
             provenance = summary["evidence"]["provenance"]
             self.assertEqual(provenance["variant"], "rank_matched_topk1_contextual")
             self.assertIn("positive means", provenance["gain_sign_convention"])

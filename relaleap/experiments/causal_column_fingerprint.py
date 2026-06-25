@@ -2199,9 +2199,11 @@ def _selected_singleton_interventions(
 ) -> list[dict[str, Any]]:
     support_counts = _router_support_counts(router_support)
     selected: dict[str, dict[str, Any]] = {}
+    dominant_supports: list[tuple[int, ...]] = []
     for key, count in list(support_counts.items())[:max_pair_rows]:
         support = tuple(int(part) for part in key.split(",") if part != "")
         if len(support) == 1:
+            dominant_supports.append(support)
             selected[f"dominant_router_{len(selected) + 1}"] = {
                 "intervention": "fixed_dominant_router_singleton",
                 "support": support,
@@ -2226,7 +2228,43 @@ def _selected_singleton_interventions(
                 "router_support_count": support_counts.get(key, 0),
             },
         )
-    return list(selected.values())[: max_pair_rows * 2]
+
+    anchor_key = _support_key(dominant_supports[0]) if dominant_supports else "router"
+    nonrouter_rows = [
+        row
+        for row in fixed_rows
+        if support_counts.get(_support_key(row["support"]), 0) == 0
+    ]
+    if not nonrouter_rows:
+        nonrouter_rows = list(fixed_rows)
+    for row in sorted(
+        nonrouter_rows,
+        key=lambda item: (
+            _stable_control_score(anchor_key, _support_key(item["support"])),
+            _support_key(item["support"]),
+        ),
+    )[:max_pair_rows]:
+        key = _support_key(row["support"])
+        selected.setdefault(
+            f"random_singleton_{key}",
+            {
+                "intervention": "fixed_random_singleton_control",
+                "support": row["support"],
+                "router_support_count": support_counts.get(key, 0),
+            },
+        )
+
+    for row in fixed_rows:
+        key = _support_key(row["support"])
+        selected.setdefault(
+            f"exhaustive_singleton_{key}",
+            {
+                "intervention": "fixed_exhaustive_singleton",
+                "support": row["support"],
+                "router_support_count": support_counts.get(key, 0),
+            },
+        )
+    return list(selected.values())
 
 
 def _router_support_counts(router_support: Any) -> dict[str, int]:

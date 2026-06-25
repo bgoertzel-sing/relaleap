@@ -27,6 +27,7 @@ TOPK1_VARIANT = "rank_matched_topk1_contextual"
 SELECTED_INTERVENTION = "fixed_dominant_router_singleton"
 LOGGED_ORACLE_INTERVENTION = "fixed_best_singleton_swap"
 RANDOM_INTERVENTION = "fixed_random_singleton_control"
+EXHAUSTIVE_INTERVENTION = "fixed_exhaustive_singleton"
 CONTEXT_FIELDS = ("batch_index", "position_index", "token_index", "target_token")
 
 LIKELY_ROUTER_SELECTION_FAILURE = "likely_router_selection_failure"
@@ -62,6 +63,9 @@ def run_active_topk1_singleton_control_diagnostic(
         row for row in topk1_rows if row.get("intervention") == LOGGED_ORACLE_INTERVENTION
     ]
     random_rows = [row for row in topk1_rows if row.get("intervention") == RANDOM_INTERVENTION]
+    exhaustive_rows = [
+        row for row in topk1_rows if row.get("intervention") == EXHAUSTIVE_INTERVENTION
+    ]
 
     required_fields = {
         *CONTEXT_FIELDS,
@@ -122,7 +126,12 @@ def run_active_topk1_singleton_control_diagnostic(
             "before interpreting selected singleton controls"
         )
     else:
-        context_rows = _context_rows(selected_rows, oracle_rows, random_rows)
+        context_rows = _context_rows(
+            selected_rows,
+            oracle_rows,
+            random_rows,
+            exhaustive_rows,
+        )
         if not context_rows:
             failures.append(
                 {
@@ -154,6 +163,7 @@ def run_active_topk1_singleton_control_diagnostic(
                 source_summary=source_summary,
                 context_rows=context_rows,
                 random_rows=random_rows,
+                exhaustive_rows=exhaustive_rows,
                 source_audit_dir=source_audit_dir,
                 regret_threshold=regret_threshold,
             )
@@ -247,10 +257,12 @@ def _context_rows(
     selected_rows: list[dict[str, str]],
     oracle_rows: list[dict[str, str]],
     random_rows: list[dict[str, str]],
+    exhaustive_rows: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     selected_by_context: dict[tuple[str, ...], list[dict[str, str]]] = defaultdict(list)
     alternatives_by_context: dict[tuple[str, ...], list[dict[str, str]]] = defaultdict(list)
     random_by_context: dict[tuple[str, ...], list[dict[str, str]]] = defaultdict(list)
+    exhaustive_by_context: dict[tuple[str, ...], list[dict[str, str]]] = defaultdict(list)
     for row in selected_rows:
         selected_by_context[_context_key(row)].append(row)
         alternatives_by_context[_context_key(row)].append(row)
@@ -258,6 +270,10 @@ def _context_rows(
         alternatives_by_context[_context_key(row)].append(row)
     for row in random_rows:
         random_by_context[_context_key(row)].append(row)
+    for row in exhaustive_rows:
+        key = _context_key(row)
+        exhaustive_by_context[key].append(row)
+        alternatives_by_context[key].append(row)
 
     out_rows = []
     for context, rows in sorted(selected_by_context.items()):
@@ -272,6 +288,14 @@ def _context_rows(
         oracle = min(alternatives, key=lambda row: _float_or_inf(row.get("fixed_support_loss")))
         random_losses = _float_values(random_by_context.get(context, []), "fixed_support_loss")
         random_gains = _float_values(random_by_context.get(context, []), "singleton_left_gain")
+        exhaustive_losses = _float_values(
+            exhaustive_by_context.get(context, []),
+            "fixed_support_loss",
+        )
+        exhaustive_gains = _float_values(
+            exhaustive_by_context.get(context, []),
+            "singleton_left_gain",
+        )
         selected_loss = _float_or_none(selected.get("fixed_support_loss"))
         oracle_loss = _float_or_none(oracle.get("fixed_support_loss"))
         if selected_loss is None or oracle_loss is None:
@@ -303,6 +327,13 @@ def _context_rows(
                 "random_singleton_count": len(random_losses),
                 "random_singleton_loss_mean": _mean_or_none(random_losses),
                 "random_singleton_gain_mean": _mean_or_none(random_gains),
+                "exhaustive_singleton_count": len(exhaustive_losses),
+                "exhaustive_singleton_loss_min": min(exhaustive_losses)
+                if exhaustive_losses
+                else None,
+                "exhaustive_singleton_gain_max": max(exhaustive_gains)
+                if exhaustive_gains
+                else None,
                 "selected_minus_random_loss_mean": (
                     selected_loss - mean(random_losses) if random_losses else None
                 ),
@@ -354,6 +385,7 @@ def _build_evidence(
     source_summary: dict[str, Any],
     context_rows: list[dict[str, Any]],
     random_rows: list[dict[str, str]],
+    exhaustive_rows: list[dict[str, str]],
     source_audit_dir: Path,
     regret_threshold: float,
 ) -> dict[str, Any]:
@@ -383,6 +415,16 @@ def _build_evidence(
             1 for row in context_rows if int(row.get("random_singleton_count") or 0) > 0
         ),
         "random_singleton_row_count": len(random_rows),
+        "exhaustive_singleton_context_count": sum(
+            1
+            for row in context_rows
+            if int(row.get("exhaustive_singleton_count") or 0) > 0
+        ),
+        "exhaustive_singleton_row_count": len(exhaustive_rows),
+        "exhaustive_singleton_gain_max_mean": _mean_field(
+            context_rows,
+            "exhaustive_singleton_gain_max",
+        ),
     }
     signals = {
         "selected_singleton_gain_negative": _lt(
@@ -401,6 +443,10 @@ def _build_evidence(
             metrics["selected_negative_oracle_positive_fraction"], 0.25
         ),
         "random_singleton_control_present": metrics["random_singleton_row_count"] > 0,
+        "exhaustive_singleton_control_present": metrics[
+            "exhaustive_singleton_row_count"
+        ]
+        > 0,
     }
     return {
         "metrics": metrics,
@@ -416,6 +462,7 @@ def _build_evidence(
             "selected_intervention": SELECTED_INTERVENTION,
             "logged_oracle_intervention": LOGGED_ORACLE_INTERVENTION,
             "random_intervention": RANDOM_INTERVENTION,
+            "exhaustive_intervention": EXHAUSTIVE_INTERVENTION,
             "gain_sign_convention": (
                 "singleton_gain = empty_loss - fixed_support_loss; positive means "
                 "the singleton support lowers token loss relative to the empty residual"
@@ -432,7 +479,9 @@ def _build_evidence(
                 else "missing: current source artifact does not include random singleton rows"
             ),
             "exhaustive_singleton_context_oracle": (
-                "missing: logged oracle is limited to source-artifact selected singleton alternatives"
+                "present"
+                if signals["exhaustive_singleton_control_present"]
+                else "missing: logged oracle is limited to source-artifact selected singleton alternatives"
             ),
         },
     }
@@ -601,6 +650,9 @@ _CONTEXT_FIELDS_OUT = [
     "random_singleton_count",
     "random_singleton_loss_mean",
     "random_singleton_gain_mean",
+    "exhaustive_singleton_count",
+    "exhaustive_singleton_loss_min",
+    "exhaustive_singleton_gain_max",
     "selected_minus_random_loss_mean",
     "active_rank_proxy",
     "fixed_support_logit_mse",

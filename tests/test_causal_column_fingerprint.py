@@ -485,6 +485,38 @@ model:
                     for row in pair_rows
                 )
             )
+            self.assertTrue(
+                any(
+                    row["variant"] == "rank_matched_topk1_contextual"
+                    and row["intervention"] == "fixed_random_singleton_control"
+                    for row in pair_rows
+                )
+            )
+            self.assertTrue(
+                any(
+                    row["variant"] == "rank_matched_topk1_contextual"
+                    and row["intervention"] == "fixed_exhaustive_singleton"
+                    for row in pair_rows
+                )
+            )
+            with (
+                tmp_path / "fingerprint" / "per_token_pair_interventions.csv"
+            ).open(newline="", encoding="utf-8") as handle:
+                per_token_rows = list(csv.DictReader(handle))
+            self.assertTrue(
+                any(
+                    row["variant"] == "rank_matched_topk1_contextual"
+                    and row["intervention"] == "fixed_random_singleton_control"
+                    for row in per_token_rows
+                )
+            )
+            self.assertTrue(
+                any(
+                    row["variant"] == "rank_matched_topk1_contextual"
+                    and row["intervention"] == "fixed_exhaustive_singleton"
+                    for row in per_token_rows
+                )
+            )
 
     def test_causal_column_fingerprint_requires_top_k_two(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
