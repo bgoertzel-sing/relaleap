@@ -259,6 +259,22 @@ rank-matched contextual top-k-1 as the primary local causal bracket, keeps
 promoted top-k-2 as a reference condition only, and leaves both top-k-2
 causal-cooperation and support-frequency percentile claims closed.
 
+After the active rank-matched contextual top-k-1 bracket is confirmed, build the
+local top-k-1 separability packet without retraining:
+
+```bash
+python -m relaleap.experiments.active_topk1_causal_separability_audit
+```
+
+This writes
+`results/audits/token_larger_active_rank_matched_topk1_causal_separability/summary.json`,
+`topk1_separability_by_stratum.csv`, `topk1_separability_by_context.csv`, and
+`notes.md`. It consumes the exact-context deconfounded audit and records
+rank-matched top-k-1 singleton gain, fixed-support loss delta, fixed-support
+logit churn, and residual-stream churn while retaining top-k-2 only as the
+closed reference condition. A passing packet establishes measurement coverage,
+not a separability claim by itself.
+
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled
 synergy audit before making a causal-cooperation claim or spending Colab/GPU
