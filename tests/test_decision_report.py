@@ -45,6 +45,7 @@ from relaleap.experiments.decision_report import (
     KEEP_LOAD_BALANCE_PROBE_OPT_IN,
     DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT,
     SELECT_RANK_MATCHED_TOPK1_CAUSAL_AUDIT_BRACKET,
+    DIAGNOSE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT,
     DIAGNOSE_RETENTION_CHURN_MICROTEST,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -83,6 +84,7 @@ from relaleap.experiments.decision_report import (
     write_dead_column_load_balance_probe_report,
     write_causal_column_fingerprint_audit_report,
     write_causal_audit_bracket_decision_report,
+    write_rank_matched_topk1_causal_bracket_audit_report,
     write_retention_churn_microtest_decision_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
@@ -296,6 +298,78 @@ class CausalAuditBracketDecisionReportTest(unittest.TestCase):
                 [
                     failure["field"]
                     for failure in bracket["evidence"]["failures"]
+                ],
+            )
+
+
+class RankMatchedTopk1CausalBracketAuditReportTest(unittest.TestCase):
+    def test_rank_matched_topk1_bracket_audit_passes_with_existing_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            audit_dir = tmp_path / "fingerprint"
+            _write_causal_fingerprint_audit(
+                audit_dir,
+                include_stability=True,
+                include_rank_matched_topk1=True,
+                include_exact_pair_synergy=True,
+                include_topk1_interventions=True,
+                include_functional_churn=True,
+            )
+
+            report = write_rank_matched_topk1_causal_bracket_audit_report(
+                audit_dir,
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                DIAGNOSE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT,
+            )
+            self.assertTrue(report["rank_matched_topk1_causal_bracket_audited"])
+            self.assertTrue(
+                report["rank_matched_topk1_default_causal_audit_bracket"]
+            )
+            self.assertTrue(report["keep_contextual_router_default"])
+            self.assertFalse(report["topk2_causal_cooperation_claim_supported"])
+            self.assertFalse(report["support_utilization_alone_sufficient"])
+            signals = report["evidence"]["signals"]
+            self.assertTrue(signals["rank_matched_topk1_present"])
+            self.assertTrue(signals["rank_matched_topk1_ce_better_than_topk2"])
+            self.assertTrue(signals["rank_matched_topk1_nontrivial_fingerprint"])
+            self.assertTrue(signals["rank_matched_topk1_intervention_present"])
+            self.assertTrue(signals["rank_matched_topk1_functional_churn_present"])
+            self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
+            self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
+
+    def test_missing_rank_matched_topk1_evidence_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            audit_dir = tmp_path / "fingerprint"
+            _write_causal_fingerprint_audit(
+                audit_dir,
+                include_stability=True,
+                include_exact_pair_synergy=True,
+                include_functional_churn=True,
+            )
+
+            report = write_rank_matched_topk1_causal_bracket_audit_report(
+                audit_dir,
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(report["rank_matched_topk1_causal_bracket_audited"])
+            self.assertFalse(
+                report["rank_matched_topk1_default_causal_audit_bracket"]
+            )
+            self.assertFalse(report["keep_contextual_router_default"])
+            self.assertIn(
+                "fingerprint.variants.rank_matched_topk1_contextual",
+                [
+                    failure["field"]
+                    for failure in report["evidence"]["failures"]
                 ],
             )
 

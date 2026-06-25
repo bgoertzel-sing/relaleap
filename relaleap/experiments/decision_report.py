@@ -550,6 +550,9 @@ DEFAULT_CAUSAL_AUDIT_BRACKET_DECISION_REPORT = (
 DEFAULT_CAUSAL_AUDIT_BRACKET_DECISION_OUT_DIR = Path(
     "results/reports/token_larger_causal_audit_bracket_decision"
 )
+DEFAULT_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT_OUT_DIR = Path(
+    "results/reports/token_larger_rank_matched_topk1_causal_bracket_audit"
+)
 DEFAULT_RETENTION_CHURN_MICROTEST_DIR = Path(
     "results/audits/token_larger_retention_churn_microtest"
 )
@@ -670,6 +673,9 @@ DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT = (
 )
 SELECT_RANK_MATCHED_TOPK1_CAUSAL_AUDIT_BRACKET = (
     "select_rank_matched_topk1_causal_audit_bracket"
+)
+DIAGNOSE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT = (
+    "diagnose_rank_matched_topk1_causal_bracket_audit"
 )
 DIAGNOSE_RETENTION_CHURN_MICROTEST = "diagnose_retention_churn_microtest"
 KEEP_OPT_IN = "keep_opt_in"
@@ -13863,6 +13869,7 @@ def _causal_column_fingerprint_entry(
         "support_router": audit.get("support_router"),
         "column_fingerprint_count": audit.get("column_fingerprint_count"),
         "pair_intervention_count": audit.get("pair_intervention_count"),
+        "variants": variants,
         "baseline_variant": baseline,
         "heldout_stability": heldout_stability,
         "heldout_stability_present": bool(heldout_stability),
@@ -14540,6 +14547,233 @@ def _write_causal_audit_bracket_decision_markdown(
         "## Signals",
         "",
     ]
+    for key, value in report["evidence"]["signals"].items():
+        lines.append(f"- {key}: `{value}`")
+    if report["evidence"]["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in report["evidence"]["failures"]:
+            lines.append(
+                "- "
+                f"`{failure.get('field')}` expected "
+                f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                f"at `{failure.get('path', '')}`"
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_rank_matched_topk1_causal_bracket_audit_report(
+    audit_dir: Path = DEFAULT_CAUSAL_COLUMN_FINGERPRINT_AUDIT_DIR,
+    out_dir: Path = DEFAULT_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT_OUT_DIR,
+) -> dict[str, Any]:
+    """Audit the selected rank-matched contextual top-k-1 causal bracket."""
+
+    failures: list[dict[str, Any]] = []
+    fingerprint = _causal_column_fingerprint_entry(audit_dir, failures)
+    pair_gate = _causal_pair_claim_gate(audit_dir)
+    functional_churn = _functional_churn_gate(fingerprint)
+    variants = {
+        str(row.get("variant")): row
+        for row in fingerprint.get("variants", [])
+        if isinstance(row, dict) and row.get("variant")
+    }
+    baseline = variants.get("baseline") or {}
+    topk1 = variants.get("rank_matched_topk1_contextual") or {}
+
+    if not topk1:
+        failures.append(
+            {
+                "field": "fingerprint.variants.rank_matched_topk1_contextual",
+                "expected": "present",
+                "actual": "missing",
+                "path": str(audit_dir / "summary.json"),
+            }
+        )
+    if not pair_gate.get("rank_matched_topk1_intervention_present"):
+        failures.append(
+            {
+                "field": "fingerprint.pair_interventions.rank_matched_topk1",
+                "expected": "intervention rows present",
+                "actual": pair_gate.get("rank_matched_topk1_intervention_rows"),
+                "path": str(audit_dir / "pair_interventions.csv"),
+            }
+        )
+    if not functional_churn.get("rank_matched_topk1_functional_churn_present"):
+        failures.append(
+            {
+                "field": "fingerprint.functional_churn.rank_matched_topk1",
+                "expected": "present",
+                "actual": "missing",
+                "path": str(audit_dir / "summary.json"),
+            }
+        )
+
+    baseline_ce = _float_or_none(baseline.get("alpha0_ce_loss"))
+    topk1_ce = _float_or_none(topk1.get("alpha0_ce_loss"))
+    topk1_ce_better = (
+        baseline_ce is not None and topk1_ce is not None and topk1_ce < baseline_ce
+    )
+    topk1_mean_abs_ablate = _float_or_none(
+        topk1.get("mean_abs_ablate_loss_delta")
+    )
+    baseline_mean_abs_ablate = _float_or_none(
+        baseline.get("mean_abs_ablate_loss_delta")
+    )
+    topk1_has_nontrivial_fingerprint = (
+        topk1_mean_abs_ablate is not None and topk1_mean_abs_ablate > 0.0
+    )
+    topk1_changed_logit_mse = _float_or_none(
+        (functional_churn.get("rank_matched_topk1") or {}).get(
+            "previous_support_changed_logit_mse_mean"
+        )
+    )
+    baseline_changed_logit_mse = _float_or_none(
+        (functional_churn.get("baseline") or {}).get(
+            "previous_support_changed_logit_mse_mean"
+        )
+    )
+    topk1_functional_churn_not_worse = (
+        topk1_changed_logit_mse is not None
+        and (
+            baseline_changed_logit_mse is None
+            or topk1_changed_logit_mse <= baseline_changed_logit_mse
+        )
+    )
+
+    selected = (
+        not failures
+        and topk1_ce_better
+        and topk1_has_nontrivial_fingerprint
+        and bool(pair_gate.get("rank_matched_topk1_intervention_present"))
+    )
+    if failures:
+        status = "fail"
+        decision = INSUFFICIENT_EVIDENCE
+        rationale = (
+            "The selected rank-matched contextual top-k-1 bracket cannot be "
+            "audited because required fingerprint, intervention, or churn "
+            "artifacts are missing."
+        )
+        next_step = (
+            "regenerate the causal-column fingerprint audit with "
+            "--include-rank-matched-topk1 before using top-k-1 as the bracket"
+        )
+    else:
+        status = "pass"
+        decision = DIAGNOSE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT
+        rationale = (
+            "The completed local fingerprint artifact contains rank-matched "
+            "contextual top-k-1 fingerprints, intervention rows, and functional "
+            "churn diagnostics. Top-k-1 has the cleaner CE guardrail than the "
+            "promoted top-k-2 baseline, so this report records top-k-1 as the "
+            "active local causal-audit bracket while preserving the promoted "
+            "contextual router as the support-selection default."
+        )
+        next_step = (
+            "use this rank-matched contextual top-k-1 bracket for the next "
+            "causal intervention audit; do not claim top-k-2 cooperation unless "
+            "future same-batch pair synergy beats this bracket"
+        )
+
+    report = {
+        "status": status,
+        "decision": decision,
+        "rank_matched_topk1_causal_bracket_audited": selected,
+        "rank_matched_topk1_default_causal_audit_bracket": selected,
+        "keep_contextual_router_default": status == "pass",
+        "topk2_causal_cooperation_claim_supported": False,
+        "support_utilization_alone_sufficient": False,
+        "evidence": {
+            "audit_dir": str(audit_dir),
+            "fingerprint": fingerprint,
+            "pair_claim_gate": pair_gate,
+            "functional_churn_gate": functional_churn,
+            "signals": {
+                "rank_matched_topk1_present": bool(topk1),
+                "rank_matched_topk1_ce_better_than_topk2": topk1_ce_better,
+                "rank_matched_topk1_nontrivial_fingerprint": (
+                    topk1_has_nontrivial_fingerprint
+                ),
+                "rank_matched_topk1_intervention_present": bool(
+                    pair_gate.get("rank_matched_topk1_intervention_present")
+                ),
+                "rank_matched_topk1_functional_churn_present": bool(
+                    functional_churn.get(
+                        "rank_matched_topk1_functional_churn_present"
+                    )
+                ),
+                "rank_matched_topk1_functional_churn_not_worse_than_topk2": (
+                    topk1_functional_churn_not_worse
+                ),
+            },
+            "metrics": {
+                "topk2_alpha0_ce_loss": baseline_ce,
+                "rank_matched_topk1_alpha0_ce_loss": topk1_ce,
+                "topk2_mean_abs_ablate_loss_delta": baseline_mean_abs_ablate,
+                "rank_matched_topk1_mean_abs_ablate_loss_delta": (
+                    topk1_mean_abs_ablate
+                ),
+                "topk2_changed_support_logit_mse": baseline_changed_logit_mse,
+                "rank_matched_topk1_changed_support_logit_mse": (
+                    topk1_changed_logit_mse
+                ),
+                "rank_matched_topk1_fixed_loss_delta_mean": pair_gate.get(
+                    "rank_matched_topk1_fixed_loss_delta_mean"
+                ),
+                "rank_matched_topk1_singleton_gain_mean": pair_gate.get(
+                    "rank_matched_topk1_singleton_gain_mean"
+                ),
+            },
+            "failures": failures,
+        },
+        "rationale": rationale,
+        "next_step": next_step,
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_rank_matched_topk1_causal_bracket_audit_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
+def _write_rank_matched_topk1_causal_bracket_audit_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    metrics = report["evidence"]["metrics"]
+    lines = [
+        "# Rank-Matched Top-k-1 Causal Bracket Audit",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        "- Rank-matched top-k-1 bracket audited: "
+        f"`{report['rank_matched_topk1_causal_bracket_audited']}`",
+        "- Rank-matched top-k-1 default causal-audit bracket: "
+        f"`{report['rank_matched_topk1_default_causal_audit_bracket']}`",
+        "- Keep contextual router default: "
+        f"`{report['keep_contextual_router_default']}`",
+        "- Top-k-2 causal cooperation claim supported: "
+        f"`{report['topk2_causal_cooperation_claim_supported']}`",
+        "- Support utilization alone sufficient: "
+        f"`{report['support_utilization_alone_sufficient']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Metrics",
+        "",
+        "| Metric | Value |",
+        "| --- | ---: |",
+    ]
+    for key, value in metrics.items():
+        lines.append(f"| `{key}` | {_format_metric(value)} |")
+    lines.extend(["", "## Signals", ""])
     for key, value in report["evidence"]["signals"].items():
         lines.append(f"- {key}: `{value}`")
     if report["evidence"]["failures"]:
@@ -15344,6 +15578,7 @@ def main() -> None:
             "dead-column-load-balance-probe",
             "causal-column-fingerprint-audit",
             "causal-audit-bracket-decision",
+            "rank-matched-topk1-causal-bracket-audit",
             "retention-churn-microtest-decision",
         ),
         default="pinned-support",
@@ -15790,6 +16025,11 @@ def main() -> None:
             if args.decision_report
             else DEFAULT_CAUSAL_AUDIT_BRACKET_DECISION_REPORT,
             args.out or DEFAULT_CAUSAL_AUDIT_BRACKET_DECISION_OUT_DIR,
+        )
+    elif args.report == "rank-matched-topk1-causal-bracket-audit":
+        report = write_rank_matched_topk1_causal_bracket_audit_report(
+            args.comparison_dir or DEFAULT_CAUSAL_COLUMN_FINGERPRINT_AUDIT_DIR,
+            args.out or DEFAULT_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT_OUT_DIR,
         )
     elif args.report == "retention-churn-microtest-decision":
         report = write_retention_churn_microtest_decision_report(
