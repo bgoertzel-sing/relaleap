@@ -351,6 +351,20 @@ audits. The current refreshed local artifact is present but has zero candidates
 inside the declared support-count caliper, so the post-stop report classifies
 the candidate-percentile bracket as artifact-ready but locally unidentified.
 
+To diagnose that blocker without changing the claim gate, run the local
+non-claim support-frequency blocker diagnostic:
+
+```bash
+python -m relaleap.experiments.support_frequency_blocker_diagnostic
+```
+
+This writes
+`results/reports/token_larger_support_frequency_blocker_diagnostic/summary.json`,
+`per_anchor_blockers.csv`, and `notes.md`. It consumes the existing
+`support_frequency_candidate_controls.csv`, counts unmatched candidates by
+failed caliper dimension, reports nearest-neighbor distance distributions, and
+marks relaxed-caliper counts as exploratory rather than claim-bearing.
+
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic
 sees nonzero repicking without changing the checked Phase 0 baseline. After the
