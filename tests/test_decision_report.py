@@ -46,6 +46,7 @@ from relaleap.experiments.decision_report import (
     DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT,
     SELECT_RANK_MATCHED_TOPK1_CAUSAL_AUDIT_BRACKET,
     DIAGNOSE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT,
+    STOP_TOPK2_CAUSAL_COOPERATION_CLAIM,
     DIAGNOSE_RETENTION_CHURN_MICROTEST,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -85,6 +86,7 @@ from relaleap.experiments.decision_report import (
     write_causal_column_fingerprint_audit_report,
     write_causal_audit_bracket_decision_report,
     write_rank_matched_topk1_causal_bracket_audit_report,
+    write_topk2_causal_cooperation_stop_report,
     write_retention_churn_microtest_decision_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
@@ -367,6 +369,61 @@ class RankMatchedTopk1CausalBracketAuditReportTest(unittest.TestCase):
             self.assertFalse(report["keep_contextual_router_default"])
             self.assertIn(
                 "fingerprint.variants.rank_matched_topk1_contextual",
+                [
+                    failure["field"]
+                    for failure in report["evidence"]["failures"]
+                ],
+            )
+
+
+class Topk2CausalCooperationStopReportTest(unittest.TestCase):
+    def test_calipered_local_controls_close_broad_topk2_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            null_dirs = _write_causal_synergy_null_summaries(tmp_path)
+            anchor_dir = _write_causal_synergy_anchor_diagnostic(tmp_path)
+
+            report = write_topk2_causal_cooperation_stop_report(
+                null_dirs,
+                tmp_path / "report",
+                anchor_diagnostic_dir=anchor_dir,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                STOP_TOPK2_CAUSAL_COOPERATION_CLAIM,
+            )
+            self.assertTrue(report["topk2_causal_cooperation_claim_closed_locally"])
+            self.assertFalse(report["topk2_causal_cooperation_claim_supported"])
+            self.assertFalse(report["colab_topk2_replication_warranted"])
+            self.assertTrue(report["keep_contextual_router_default"])
+            signals = report["evidence"]["signals"]
+            self.assertTrue(signals["sign_flip_synergy_supported"])
+            self.assertTrue(signals["best_swap_rejects_topk2"])
+            self.assertTrue(signals["no_fallback_controls_unidentified"])
+            self.assertTrue(signals["no_fallback_anchor_controls_unidentified"])
+            self.assertTrue(signals["cleaner_gates_fail"])
+            self.assertTrue(signals["anchor_rejects_claim"])
+            self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
+            self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
+
+    def test_missing_null_artifact_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            anchor_dir = _write_causal_synergy_anchor_diagnostic(tmp_path)
+
+            report = write_topk2_causal_cooperation_stop_report(
+                (tmp_path / "missing_null",),
+                tmp_path / "report",
+                anchor_diagnostic_dir=anchor_dir,
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(report["topk2_causal_cooperation_claim_closed_locally"])
+            self.assertIn(
+                "causal_synergy_null.summary",
                 [
                     failure["field"]
                     for failure in report["evidence"]["failures"]
@@ -6161,6 +6218,105 @@ def _write_causal_deconfounding_audit(
         encoding="utf-8",
     )
     (audit_dir / "notes.md").write_text("# Notes\n", encoding="utf-8")
+
+
+def _write_causal_synergy_null_summaries(root: Path) -> tuple[Path, ...]:
+    controls = (
+        ("best_swap", "fixed_best_support_swap", True, 28, -0.0627, [-0.1054, -0.0168]),
+        (
+            "support_frequency",
+            "fixed_support_frequency_matched_control",
+            False,
+            0,
+            None,
+            [None, None],
+        ),
+        ("random", "fixed_random_nonrouter_control", False, 0, None, [None, None]),
+        (
+            "loss",
+            "fixed_loss_matched_nonrouter_control",
+            False,
+            0,
+            None,
+            [None, None],
+        ),
+        (
+            "singleton_gain",
+            "fixed_singleton_gain_matched_nonrouter_control",
+            False,
+            0,
+            None,
+            [None, None],
+        ),
+        (
+            "residual_norm",
+            "fixed_residual_norm_matched_nonrouter_control",
+            False,
+            0,
+            None,
+            [None, None],
+        ),
+    )
+    dirs = []
+    for dirname, control, available, strata_count, control_mean, control_ci in controls:
+        audit_dir = root / dirname
+        audit_dir.mkdir(parents=True)
+        summary = {
+            "status": "pass",
+            "decision": "pair_synergy_not_supported_against_local_control_null"
+            if control == "fixed_best_support_swap"
+            else "pair_synergy_requires_artifact_random_pair_controls",
+            "evidence": {
+                "control_intervention": control,
+                "control_available": available,
+                "control_matched_strata_count": strata_count,
+                "pair_synergy_supported": False,
+                "sign_flip_synergy_supported": True,
+                "observed_deconfounded_pair_synergy_mean": 0.1672,
+                "observed_deconfounded_pair_synergy_ci": [0.1349, 0.1994],
+                "observed_minus_control_synergy_mean": control_mean,
+                "observed_minus_control_synergy_ci": control_ci,
+                "topk2_fixed_support_cleaner_strata_fraction": 0.7037,
+                "topk2_functional_churn_cleaner_strata_fraction": 0.7407,
+                "cleaner_fraction_threshold": 0.8,
+            },
+        }
+        (audit_dir / "summary.json").write_text(
+            json.dumps(summary, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        dirs.append(audit_dir)
+    return tuple(dirs)
+
+
+def _write_causal_synergy_anchor_diagnostic(root: Path) -> Path:
+    diagnostic_dir = root / "anchor"
+    diagnostic_dir.mkdir(parents=True)
+    zero_anchor_controls = {
+        control: {"anchor_count": 0, "supported": False}
+        for control in (
+            "fixed_support_frequency_matched_control",
+            "fixed_random_nonrouter_control",
+            "fixed_loss_matched_nonrouter_control",
+            "fixed_singleton_gain_matched_nonrouter_control",
+            "fixed_residual_norm_matched_nonrouter_control",
+        )
+    }
+    zero_anchor_controls["fixed_best_support_swap"] = {
+        "anchor_count": 7,
+        "observed_minus_control_anchor_ci": [-0.08, 0.09],
+        "supported": False,
+    }
+    summary = {
+        "status": "pass",
+        "decision": "anchor_pair_synergy_not_supported_against_selection_controls",
+        "evidence": {"control_summaries": zero_anchor_controls},
+    }
+    (diagnostic_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return diagnostic_dir
 
 
 def _write_retention_churn_microtest(

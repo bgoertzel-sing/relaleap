@@ -553,6 +553,30 @@ DEFAULT_CAUSAL_AUDIT_BRACKET_DECISION_OUT_DIR = Path(
 DEFAULT_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT_OUT_DIR = Path(
     "results/reports/token_larger_rank_matched_topk1_causal_bracket_audit"
 )
+DEFAULT_CAUSAL_SYNERGY_NULL_AUDIT_DIRS = (
+    Path("results/audits/token_larger_topk2_causal_synergy_null_audit"),
+    Path(
+        "results/audits/token_larger_topk2_causal_synergy_null_audit_support_frequency_control"
+    ),
+    Path(
+        "results/audits/token_larger_topk2_causal_synergy_null_audit_random_nonrouter_control"
+    ),
+    Path(
+        "results/audits/token_larger_topk2_causal_synergy_null_audit_loss_matched_control"
+    ),
+    Path(
+        "results/audits/token_larger_topk2_causal_synergy_null_audit_singleton_gain_matched_control"
+    ),
+    Path(
+        "results/audits/token_larger_topk2_causal_synergy_null_audit_residual_norm_matched_control"
+    ),
+)
+DEFAULT_CAUSAL_SYNERGY_ANCHOR_CONTROL_DIAGNOSTIC_DIR = Path(
+    "results/audits/token_larger_topk2_causal_synergy_anchor_control_diagnostic"
+)
+DEFAULT_TOPK2_CAUSAL_COOPERATION_STOP_OUT_DIR = Path(
+    "results/reports/token_larger_topk2_causal_cooperation_stop_decision"
+)
 DEFAULT_RETENTION_CHURN_MICROTEST_DIR = Path(
     "results/audits/token_larger_retention_churn_microtest"
 )
@@ -677,6 +701,7 @@ SELECT_RANK_MATCHED_TOPK1_CAUSAL_AUDIT_BRACKET = (
 DIAGNOSE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT = (
     "diagnose_rank_matched_topk1_causal_bracket_audit"
 )
+STOP_TOPK2_CAUSAL_COOPERATION_CLAIM = "stop_topk2_causal_cooperation_claim"
 DIAGNOSE_RETENTION_CHURN_MICROTEST = "diagnose_retention_churn_microtest"
 KEEP_OPT_IN = "keep_opt_in"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
@@ -14789,6 +14814,365 @@ def _write_rank_matched_topk1_causal_bracket_audit_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_topk2_causal_cooperation_stop_report(
+    null_audit_dirs: tuple[Path, ...] = DEFAULT_CAUSAL_SYNERGY_NULL_AUDIT_DIRS,
+    out_dir: Path = DEFAULT_TOPK2_CAUSAL_COOPERATION_STOP_OUT_DIR,
+    *,
+    anchor_diagnostic_dir: Path = DEFAULT_CAUSAL_SYNERGY_ANCHOR_CONTROL_DIAGNOSTIC_DIR,
+) -> dict[str, Any]:
+    """Close or defer the broad top-k-2 causal-cooperation claim locally."""
+
+    failures: list[dict[str, Any]] = []
+    null_entries = [
+        _causal_synergy_null_entry(null_dir, failures) for null_dir in null_audit_dirs
+    ]
+    anchor_entry = _causal_synergy_anchor_entry(anchor_diagnostic_dir, failures)
+    null_by_control = {
+        str(entry.get("control_intervention")): entry
+        for entry in null_entries
+        if entry.get("control_intervention")
+    }
+    required_controls = {
+        "fixed_best_support_swap",
+        "fixed_support_frequency_matched_control",
+        "fixed_random_nonrouter_control",
+        "fixed_loss_matched_nonrouter_control",
+        "fixed_singleton_gain_matched_nonrouter_control",
+        "fixed_residual_norm_matched_nonrouter_control",
+    }
+    missing_controls = sorted(required_controls.difference(null_by_control))
+    if missing_controls:
+        failures.append(
+            {
+                "field": "causal_synergy_null.controls",
+                "expected": sorted(required_controls),
+                "actual": sorted(null_by_control),
+                "path": [str(path) for path in null_audit_dirs],
+            }
+        )
+
+    best_swap = null_by_control.get("fixed_best_support_swap") or {}
+    best_swap_supported = bool(best_swap.get("pair_synergy_supported"))
+    best_swap_ci = best_swap.get("observed_minus_control_synergy_ci") or [None, None]
+    best_swap_upper = (
+        _float_or_none(best_swap_ci[1])
+        if isinstance(best_swap_ci, list) and len(best_swap_ci) > 1
+        else None
+    )
+    best_swap_rejects_topk2 = (
+        not best_swap_supported
+        and best_swap_upper is not None
+        and best_swap_upper < 0.0
+    )
+
+    no_fallback_controls = [
+        entry
+        for control, entry in null_by_control.items()
+        if control
+        in {
+            "fixed_support_frequency_matched_control",
+            "fixed_random_nonrouter_control",
+            "fixed_loss_matched_nonrouter_control",
+            "fixed_singleton_gain_matched_nonrouter_control",
+            "fixed_residual_norm_matched_nonrouter_control",
+        }
+    ]
+    no_fallback_unidentified = bool(no_fallback_controls) and all(
+        not bool(entry.get("control_available"))
+        and int(entry.get("control_matched_strata_count") or 0) == 0
+        for entry in no_fallback_controls
+    )
+    anchor_controls = anchor_entry.get("control_summaries", {})
+    no_fallback_anchor_unidentified = bool(anchor_controls) and all(
+        int((anchor_controls.get(control) or {}).get("anchor_count") or 0) == 0
+        for control in {
+            "fixed_support_frequency_matched_control",
+            "fixed_random_nonrouter_control",
+            "fixed_loss_matched_nonrouter_control",
+            "fixed_singleton_gain_matched_nonrouter_control",
+            "fixed_residual_norm_matched_nonrouter_control",
+        }
+    )
+    cleaner_threshold = _float_or_none(best_swap.get("cleaner_fraction_threshold"))
+    fixed_cleaner = _float_or_none(best_swap.get("topk2_fixed_support_cleaner_strata_fraction"))
+    churn_cleaner = _float_or_none(best_swap.get("topk2_functional_churn_cleaner_strata_fraction"))
+    cleaner_gates_fail = (
+        cleaner_threshold is not None
+        and fixed_cleaner is not None
+        and churn_cleaner is not None
+        and (fixed_cleaner < cleaner_threshold or churn_cleaner < cleaner_threshold)
+    )
+    sign_flip_supported = bool(best_swap.get("sign_flip_synergy_supported"))
+    anchor_decision = str(anchor_entry.get("decision") or "")
+    anchor_rejects_claim = anchor_decision == (
+        "anchor_pair_synergy_not_supported_against_selection_controls"
+    )
+    stop_claim = (
+        not failures
+        and sign_flip_supported
+        and best_swap_rejects_topk2
+        and no_fallback_unidentified
+        and no_fallback_anchor_unidentified
+        and cleaner_gates_fail
+        and anchor_rejects_claim
+    )
+
+    if failures:
+        status = "fail"
+        decision = INSUFFICIENT_EVIDENCE
+        rationale = (
+            "Required local causal-synergy null or anchor-control artifacts are "
+            "missing or incomplete, so the top-k-2 causal-cooperation claim "
+            "cannot be closed by this report."
+        )
+        next_step = (
+            "regenerate the local causal-synergy null audits and anchor-control "
+            "diagnostic before making the stop decision"
+        )
+    elif stop_claim:
+        status = "pass"
+        decision = STOP_TOPK2_CAUSAL_COOPERATION_CLAIM
+        rationale = (
+            "The visible top-k-2 pair synergy survives only the weak sign-flip "
+            "null. The best-swap selection control is negative, top-k-2 misses "
+            "the fixed-support and functional-churn cleanliness gates, and the "
+            "support-frequency-calipered no-fallback controls are unidentified "
+            "rather than supportive. This locally closes the broad top-k-2 "
+            "causal-cooperation claim while keeping the promoted contextual "
+            "router as an empirical support-routing default."
+        )
+        next_step = (
+            "use rank-matched contextual top-k-1 or a support-frequency "
+            "candidate-percentile bracket for the next local causal audit; do "
+            "not run Colab top-k-2 replication for the closed broad claim"
+        )
+    else:
+        status = "fail"
+        decision = INSUFFICIENT_EVIDENCE
+        rationale = (
+            "The local synergy and anchor-control evidence does not satisfy the "
+            "predeclared stop pattern."
+        )
+        next_step = (
+            "inspect the local causal-synergy null and anchor-control summaries "
+            "before choosing a causal-audit direction"
+        )
+
+    report = {
+        "status": status,
+        "decision": decision,
+        "topk2_causal_cooperation_claim_closed_locally": stop_claim,
+        "topk2_causal_cooperation_claim_supported": False,
+        "colab_topk2_replication_warranted": False,
+        "keep_contextual_router_default": status == "pass",
+        "support_utilization_alone_sufficient": False,
+        "future_causal_audit_bracket": (
+            "rank_matched_topk1_or_support_frequency_candidate_percentile"
+            if stop_claim
+            else None
+        ),
+        "evidence": {
+            "null_audit_dirs": [str(path) for path in null_audit_dirs],
+            "anchor_diagnostic_dir": str(anchor_diagnostic_dir),
+            "signals": {
+                "sign_flip_synergy_supported": sign_flip_supported,
+                "best_swap_rejects_topk2": best_swap_rejects_topk2,
+                "no_fallback_controls_unidentified": no_fallback_unidentified,
+                "no_fallback_anchor_controls_unidentified": (
+                    no_fallback_anchor_unidentified
+                ),
+                "cleaner_gates_fail": cleaner_gates_fail,
+                "anchor_rejects_claim": anchor_rejects_claim,
+            },
+            "metrics": {
+                "observed_deconfounded_pair_synergy_mean": best_swap.get(
+                    "observed_deconfounded_pair_synergy_mean"
+                ),
+                "observed_deconfounded_pair_synergy_ci": best_swap.get(
+                    "observed_deconfounded_pair_synergy_ci"
+                ),
+                "best_swap_observed_minus_control_synergy_mean": best_swap.get(
+                    "observed_minus_control_synergy_mean"
+                ),
+                "best_swap_observed_minus_control_synergy_ci": best_swap_ci,
+                "topk2_fixed_support_cleaner_strata_fraction": fixed_cleaner,
+                "topk2_functional_churn_cleaner_strata_fraction": churn_cleaner,
+                "cleaner_fraction_threshold": cleaner_threshold,
+                "no_fallback_control_matched_strata_counts": {
+                    entry.get("control_intervention"): entry.get(
+                        "control_matched_strata_count"
+                    )
+                    for entry in no_fallback_controls
+                },
+            },
+            "null_controls": null_entries,
+            "anchor_control_summaries": anchor_controls,
+            "failures": failures,
+        },
+        "rationale": rationale,
+        "next_step": next_step,
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_topk2_causal_cooperation_stop_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
+def _causal_synergy_null_entry(
+    audit_dir: Path,
+    failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    summary_path = audit_dir / "summary.json"
+    if not summary_path.is_file():
+        failures.append(
+            {
+                "field": "causal_synergy_null.summary",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(summary_path),
+            }
+        )
+        return {"status": "missing", "audit_dir": str(audit_dir)}
+    summary = _read_json_object(summary_path)
+    if summary.get("status") != "pass":
+        failures.append(
+            {
+                "field": "causal_synergy_null.status",
+                "expected": "pass",
+                "actual": summary.get("status"),
+                "path": str(summary_path),
+            }
+        )
+    evidence = summary.get("evidence", {})
+    if not isinstance(evidence, dict):
+        failures.append(
+            {
+                "field": "causal_synergy_null.evidence",
+                "expected": "object",
+                "actual": type(evidence).__name__,
+                "path": str(summary_path),
+            }
+        )
+        evidence = {}
+    return {
+        "status": summary.get("status"),
+        "decision": summary.get("decision"),
+        "audit_dir": str(audit_dir),
+        "control_intervention": evidence.get("control_intervention"),
+        "control_available": evidence.get("control_available"),
+        "control_matched_strata_count": evidence.get("control_matched_strata_count"),
+        "pair_synergy_supported": evidence.get("pair_synergy_supported"),
+        "sign_flip_synergy_supported": evidence.get("sign_flip_synergy_supported"),
+        "observed_deconfounded_pair_synergy_mean": evidence.get(
+            "observed_deconfounded_pair_synergy_mean"
+        ),
+        "observed_deconfounded_pair_synergy_ci": evidence.get(
+            "observed_deconfounded_pair_synergy_ci"
+        ),
+        "observed_minus_control_synergy_mean": evidence.get(
+            "observed_minus_control_synergy_mean"
+        ),
+        "observed_minus_control_synergy_ci": evidence.get(
+            "observed_minus_control_synergy_ci"
+        ),
+        "topk2_fixed_support_cleaner_strata_fraction": evidence.get(
+            "topk2_fixed_support_cleaner_strata_fraction"
+        ),
+        "topk2_functional_churn_cleaner_strata_fraction": evidence.get(
+            "topk2_functional_churn_cleaner_strata_fraction"
+        ),
+        "cleaner_fraction_threshold": evidence.get("cleaner_fraction_threshold"),
+    }
+
+
+def _causal_synergy_anchor_entry(
+    diagnostic_dir: Path,
+    failures: list[dict[str, Any]],
+) -> dict[str, Any]:
+    summary_path = diagnostic_dir / "summary.json"
+    if not summary_path.is_file():
+        failures.append(
+            {
+                "field": "causal_synergy_anchor.summary",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(summary_path),
+            }
+        )
+        return {"status": "missing", "diagnostic_dir": str(diagnostic_dir)}
+    summary = _read_json_object(summary_path)
+    if summary.get("status") != "pass":
+        failures.append(
+            {
+                "field": "causal_synergy_anchor.status",
+                "expected": "pass",
+                "actual": summary.get("status"),
+                "path": str(summary_path),
+            }
+        )
+    evidence = summary.get("evidence", {})
+    if not isinstance(evidence, dict):
+        evidence = {}
+    return {
+        "status": summary.get("status"),
+        "decision": summary.get("decision"),
+        "diagnostic_dir": str(diagnostic_dir),
+        "control_summaries": evidence.get("control_summaries", {}),
+    }
+
+
+def _write_topk2_causal_cooperation_stop_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    metrics = report["evidence"]["metrics"]
+    lines = [
+        "# Top-k-2 Causal Cooperation Stop Decision",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        "- Top-k-2 causal cooperation claim closed locally: "
+        f"`{report['topk2_causal_cooperation_claim_closed_locally']}`",
+        "- Colab top-k-2 replication warranted: "
+        f"`{report['colab_topk2_replication_warranted']}`",
+        "- Keep contextual router default: "
+        f"`{report['keep_contextual_router_default']}`",
+        "- Future causal-audit bracket: "
+        f"`{report['future_causal_audit_bracket']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Metrics",
+        "",
+        "| Metric | Value |",
+        "| --- | --- |",
+    ]
+    for key, value in metrics.items():
+        lines.append(f"| `{key}` | `{value}` |")
+    lines.extend(["", "## Signals", ""])
+    for key, value in report["evidence"]["signals"].items():
+        lines.append(f"- {key}: `{value}`")
+    if report["evidence"]["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in report["evidence"]["failures"]:
+            lines.append(
+                "- "
+                f"`{failure.get('field')}` expected "
+                f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                f"at `{failure.get('path', '')}`"
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def write_retention_churn_microtest_decision_report(
     audit_dir: Path = DEFAULT_RETENTION_CHURN_MICROTEST_DIR,
     out_dir: Path = DEFAULT_RETENTION_CHURN_MICROTEST_OUT_DIR,
@@ -15579,6 +15963,7 @@ def main() -> None:
             "causal-column-fingerprint-audit",
             "causal-audit-bracket-decision",
             "rank-matched-topk1-causal-bracket-audit",
+            "topk2-causal-cooperation-stop",
             "retention-churn-microtest-decision",
         ),
         default="pinned-support",
@@ -16030,6 +16415,15 @@ def main() -> None:
         report = write_rank_matched_topk1_causal_bracket_audit_report(
             args.comparison_dir or DEFAULT_CAUSAL_COLUMN_FINGERPRINT_AUDIT_DIR,
             args.out or DEFAULT_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT_OUT_DIR,
+        )
+    elif args.report == "topk2-causal-cooperation-stop":
+        report = write_topk2_causal_cooperation_stop_report(
+            tuple(args.decision_report)
+            if args.decision_report
+            else DEFAULT_CAUSAL_SYNERGY_NULL_AUDIT_DIRS,
+            args.out or DEFAULT_TOPK2_CAUSAL_COOPERATION_STOP_OUT_DIR,
+            anchor_diagnostic_dir=args.comparison_dir
+            or DEFAULT_CAUSAL_SYNERGY_ANCHOR_CONTROL_DIAGNOSTIC_DIR,
         )
     elif args.report == "retention-churn-microtest-decision":
         report = write_retention_churn_microtest_decision_report(

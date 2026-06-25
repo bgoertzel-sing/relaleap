@@ -290,6 +290,21 @@ observed-minus-control pair-synergy distributions by anchor, and keeps
 support-frequency, random nonrouter, and best-swap selection controls separate
 from loss-matched outcome-proximal controls.
 
+After the no-fallback support-frequency controls and per-anchor diagnostic are
+refreshed, close or defer the broad top-k-2 causal-cooperation claim with the
+command-driven stop report:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report topk2-causal-cooperation-stop
+```
+
+This writes
+`results/reports/token_larger_topk2_causal_cooperation_stop_decision/decision_report.json`
+and `.md`. The report keeps Colab top-k-2 replication deferred unless the local
+sign-flip, selection-control, no-fallback matching, cleanliness, and per-anchor
+checks all support the stronger claim.
+
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic
 sees nonzero repicking without changing the checked Phase 0 baseline. After the
