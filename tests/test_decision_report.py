@@ -807,10 +807,11 @@ class RetentionChurnMicrotestDecisionReportTest(unittest.TestCase):
             self.assertFalse(report["stable_topk2_cooperation_supported"])
             self.assertFalse(report["support_utilization_alone_sufficient"])
             signals = report["evidence"]["signals"]
-            self.assertTrue(signals["anchor_ce_drift_improves_all"])
+            self.assertFalse(signals["anchor_ce_drift_improves_all"])
             self.assertTrue(signals["sparse_beats_dense_after_transfer"])
             self.assertTrue(signals["topk2_anchor_ce_better_than_topk1"])
             self.assertTrue(signals["topk2_churn_much_higher_than_topk1"])
+            self.assertTrue(signals["random_topk2_support_fixed"])
             self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
             self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
 
@@ -6749,6 +6750,16 @@ def _write_retention_churn_microtest(
             "anchor_ce_drift": -0.89,
             "anchor_support_churn_after_transfer": 0.01,
             "transfer_ce_improvement": 0.92,
+        },
+        {
+            "variant": "random_fixed_topk2",
+            "kind": "sparse_fixed",
+            "top_k": 2,
+            "anchor_ce_before_transfer": 3.02,
+            "anchor_ce_after_transfer": 3.12,
+            "anchor_ce_drift": 0.10,
+            "anchor_support_churn_after_transfer": 0.0,
+            "transfer_ce_improvement": 0.72,
         },
     ]
     if include_dense:

@@ -15929,11 +15929,13 @@ def write_retention_churn_microtest_decision_report(
     variants = audit.get("variants_by_name") or {}
     topk2 = variants.get("promoted_contextual_topk2") or {}
     topk1 = variants.get("rank_matched_contextual_topk1") or {}
+    random_topk2 = variants.get("random_fixed_topk2") or {}
     dense = variants.get("norm_matched_dense_active_rank") or {}
 
     required_variants = (
         "promoted_contextual_topk2",
         "rank_matched_contextual_topk1",
+        "random_fixed_topk2",
         "norm_matched_dense_active_rank",
     )
     for variant in required_variants:
@@ -15970,10 +15972,16 @@ def write_retention_churn_microtest_decision_report(
         and topk1_churn is not None
         and topk2_churn >= max(0.5, topk1_churn + 0.25)
     )
+    random_topk2_support_fixed = (
+        _float_or_none(random_topk2.get("anchor_support_churn_after_transfer"))
+        is not None
+        and _float_or_none(random_topk2.get("anchor_support_churn_after_transfer"))
+        == 0.0
+    )
     anchor_ce_drift_improves_all = all(
         _float_or_none(row.get("anchor_ce_drift")) is not None
         and _float_or_none(row.get("anchor_ce_drift")) < 0.0
-        for row in (topk2, topk1, dense)
+        for row in (topk2, topk1, random_topk2, dense)
         if row
     )
     status = "fail" if failures else "pass"
@@ -15984,12 +15992,19 @@ def write_retention_churn_microtest_decision_report(
         and not topk2_churn_much_higher_than_topk1
     )
     if status == "pass":
+        random_fixed_clause = (
+            "The random fixed top-k-2 control keeps support identity fixed but "
+            "does not improve anchor CE after transfer, which separates fixed "
+            "support bookkeeping from learned support-selection quality."
+            if not anchor_ce_drift_improves_all
+            else "All variants improve anchor CE after transfer rather than showing forgetting."
+        )
         rationale = (
             "The local retention/churn microtest is complete and includes the "
             "promoted contextual top-k-2 sparse model, the rank-matched "
-            "contextual top-k-1 sparse control, and the norm-matched dense "
-            "active-rank control. All variants improve anchor CE after transfer "
-            "rather than showing forgetting, and the sparse contextual variants "
+            "contextual top-k-1 sparse control, the random fixed top-k-2 "
+            "control, and the norm-matched dense active-rank control. "
+            f"{random_fixed_clause} The sparse contextual variants "
             "remain better than the norm-matched dense control. The top-k-2 "
             "variant has a small CE edge after transfer, but its anchor support "
             "churn is much higher than rank-matched top-k-1, so this result "
@@ -16017,6 +16032,7 @@ def write_retention_churn_microtest_decision_report(
                 "sparse_beats_dense_after_transfer": sparse_beats_dense_after_transfer,
                 "topk2_anchor_ce_better_than_topk1": topk2_anchor_ce_better_than_topk1,
                 "topk2_churn_much_higher_than_topk1": topk2_churn_much_higher_than_topk1,
+                "random_topk2_support_fixed": random_topk2_support_fixed,
             },
             "failures": failures,
         },
@@ -16147,6 +16163,7 @@ def _write_retention_churn_microtest_markdown(
     for name in (
         "promoted_contextual_topk2",
         "rank_matched_contextual_topk1",
+        "random_fixed_topk2",
         "norm_matched_dense_active_rank",
     ):
         row = variants.get(name) or {}

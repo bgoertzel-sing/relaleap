@@ -57,11 +57,19 @@ model:
                 [
                     "norm_matched_dense_active_rank",
                     "promoted_contextual_topk2",
+                    "random_fixed_topk2",
                     "rank_matched_contextual_topk1",
                 ],
             )
             self.assertEqual(variants["promoted_contextual_topk2"]["top_k"], 2)
             self.assertEqual(variants["rank_matched_contextual_topk1"]["top_k"], 1)
+            self.assertEqual(variants["random_fixed_topk2"]["kind"], "sparse_fixed")
+            self.assertEqual(
+                variants["random_fixed_topk2"][
+                    "anchor_support_churn_after_transfer"
+                ],
+                0.0,
+            )
             self.assertEqual(variants["norm_matched_dense_active_rank"]["kind"], "dense")
             self.assertIn("anchor_ce_drift", variants["promoted_contextual_topk2"])
             self.assertIn(
@@ -76,7 +84,7 @@ model:
             )
 
             saved = json.loads((tmp_path / "audit" / "summary.json").read_text())
-            self.assertEqual(len(saved["audit"]["variants"]), 3)
+            self.assertEqual(len(saved["audit"]["variants"]), 4)
             self.assertTrue((tmp_path / "audit" / "variant_metrics.csv").is_file())
             self.assertTrue((tmp_path / "audit" / "phase_metrics.csv").is_file())
             self.assertTrue((tmp_path / "audit" / "notes.md").is_file())
@@ -86,7 +94,7 @@ model:
                 encoding="utf-8",
             ) as handle:
                 metric_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(metric_rows), 3)
+            self.assertEqual(len(metric_rows), 4)
             self.assertIn("anchor_logit_mse_drift", metric_rows[0])
             self.assertIn("transfer_ce_improvement", metric_rows[0])
             self.assertIn("commutator_anchor_logit_mse", metric_rows[0])
@@ -103,7 +111,7 @@ model:
                 encoding="utf-8",
             ) as handle:
                 phase_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(phase_rows), 12)
+            self.assertEqual(len(phase_rows), 16)
             self.assertIn("residual_norm_mean", phase_rows[0])
 
     def test_retention_churn_microtest_requires_contextual_topk_two(self) -> None:

@@ -129,6 +129,15 @@ def run_retention_churn_microtest(
             contextual_router_hidden_dim=contextual_router_hidden_dim,
         ),
         _VariantSpec(
+            name="random_fixed_topk2",
+            kind="sparse_fixed",
+            top_k=2,
+            num_columns=num_columns,
+            atoms_per_column=atoms_per_column,
+            support_router="contextual_mlp",
+            contextual_router_hidden_dim=contextual_router_hidden_dim,
+        ),
+        _VariantSpec(
             name="norm_matched_dense_active_rank",
             kind="dense",
             top_k=0,
@@ -263,6 +272,21 @@ def run_retention_churn_microtest(
                 support_router=spec.support_router,
                 contextual_router_hidden_dim=spec.contextual_router_hidden_dim,
             )
+            fixed_anchor_support = None
+            fixed_transfer_support = None
+            if spec.kind == "sparse_fixed":
+                fixed_anchor_support = _random_fixed_support(
+                    shape=anchor_inputs.shape,
+                    num_columns=spec.num_columns,
+                    top_k=spec.top_k,
+                    seed=seed + 10_000 + offset,
+                )
+                fixed_transfer_support = _random_fixed_support(
+                    shape=transfer_inputs.shape,
+                    num_columns=spec.num_columns,
+                    top_k=spec.top_k,
+                    seed=seed + 20_000 + offset,
+                )
             before = {key: value.detach().clone() for key, value in residual.state_dict().items()}
             _train_sparse(
                 base=base,
@@ -272,6 +296,7 @@ def run_retention_churn_microtest(
                 vocab_size=vocab_size,
                 steps=max_steps,
                 learning_rate=learning_rate,
+                support_indices=fixed_anchor_support,
             )
             before_b = {key: value.detach().clone() for key, value in residual.state_dict().items()}
             anchor_before = _sparse_snapshot(
@@ -280,6 +305,7 @@ def run_retention_churn_microtest(
                 inputs=anchor_inputs,
                 targets=anchor_targets,
                 vocab_size=vocab_size,
+                support_indices=fixed_anchor_support,
             )
             if spec.name == "promoted_contextual_topk2":
                 promoted_anchor_residual_norm = float(anchor_before["residual_norm_mean"])
@@ -289,6 +315,7 @@ def run_retention_churn_microtest(
                 inputs=transfer_inputs,
                 targets=transfer_targets,
                 vocab_size=vocab_size,
+                support_indices=fixed_transfer_support,
             )
             _train_sparse(
                 base=base,
@@ -298,6 +325,7 @@ def run_retention_churn_microtest(
                 vocab_size=vocab_size,
                 steps=max_steps,
                 learning_rate=learning_rate,
+                support_indices=fixed_transfer_support,
             )
             anchor_after = _sparse_snapshot(
                 base=base,
@@ -305,6 +333,7 @@ def run_retention_churn_microtest(
                 inputs=anchor_inputs,
                 targets=anchor_targets,
                 vocab_size=vocab_size,
+                support_indices=fixed_anchor_support,
             )
             transfer_after = _sparse_snapshot(
                 base=base,
@@ -312,6 +341,7 @@ def run_retention_churn_microtest(
                 inputs=transfer_inputs,
                 targets=transfer_targets,
                 vocab_size=vocab_size,
+                support_indices=fixed_transfer_support,
             )
             stored_parameters = sum(p.numel() for p in residual.parameters())
             parameter_delta_after_anchor = _state_dict_delta(before, residual)
@@ -334,6 +364,7 @@ def run_retention_churn_microtest(
                 vocab_size=vocab_size,
                 steps=max_steps,
                 learning_rate=learning_rate,
+                support_indices=fixed_transfer_support,
             )
             _train_sparse(
                 base=base,
@@ -343,6 +374,7 @@ def run_retention_churn_microtest(
                 vocab_size=vocab_size,
                 steps=max_steps,
                 learning_rate=learning_rate,
+                support_indices=fixed_anchor_support,
             )
             reverse_anchor_final = _sparse_snapshot(
                 base=base,
@@ -350,6 +382,7 @@ def run_retention_churn_microtest(
                 inputs=anchor_inputs,
                 targets=anchor_targets,
                 vocab_size=vocab_size,
+                support_indices=fixed_anchor_support,
             )
             reverse_transfer_final = _sparse_snapshot(
                 base=base,
@@ -357,6 +390,7 @@ def run_retention_churn_microtest(
                 inputs=transfer_inputs,
                 targets=transfer_targets,
                 vocab_size=vocab_size,
+                support_indices=fixed_transfer_support,
             )
 
         phase_rows.extend(
@@ -473,13 +507,13 @@ def run_retention_churn_microtest(
                 "anchor_ce_drift",
                 "anchor_logit_mse_drift",
                 "anchor_residual_stream_l2_drift",
-            "anchor_support_churn_after_transfer",
-            "transfer_ce_improvement",
-            "commutator_anchor_logit_mse",
-            "commutator_transfer_logit_mse",
-            "commutator_anchor_residual_stream_l2",
-            "commutator_transfer_residual_stream_l2",
-        ],
+                "anchor_support_churn_after_transfer",
+                "transfer_ce_improvement",
+                "commutator_anchor_logit_mse",
+                "commutator_transfer_logit_mse",
+                "commutator_anchor_residual_stream_l2",
+                "commutator_transfer_residual_stream_l2",
+            ],
         },
         "artifacts": {
             "summary_json": str(out_dir / "summary.json"),
@@ -505,6 +539,7 @@ def _train_sparse(
     vocab_size: int,
     steps: int,
     learning_rate: float,
+    support_indices: Any | None = None,
 ) -> None:
     import torch.nn.functional as F
 
@@ -512,7 +547,11 @@ def _train_sparse(
     optimizer = __import__("torch").optim.AdamW(residual.parameters(), lr=learning_rate)
     for _ in range(steps):
         optimizer.zero_grad(set_to_none=True)
-        logits = base(inputs, residual_adapter=residual)
+        if support_indices is None:
+            logits = base(inputs, residual_adapter=residual)
+        else:
+            hidden = base.encode(inputs)
+            logits = base.decode(residual(hidden, support_indices=support_indices))
         loss = F.cross_entropy(
             logits[:, :-1, :].reshape(-1, vocab_size),
             targets[:, :-1].reshape(-1),
@@ -556,10 +595,15 @@ def _sparse_snapshot(
     inputs: Any,
     targets: Any,
     vocab_size: int,
+    support_indices: Any | None = None,
 ) -> dict[str, Any]:
     with __import__("torch").no_grad():
         hidden = base.encode(inputs)
-        output_hidden, support = residual(hidden, return_support=True)
+        output_hidden, support = residual(
+            hidden,
+            support_indices=support_indices,
+            return_support=True,
+        )
         logits = base.decode(output_hidden)
         residual_delta = output_hidden - hidden
         support_audit = _support_audit_from_support(support, residual.num_columns)
@@ -572,6 +616,26 @@ def _sparse_snapshot(
         "used_columns": support_audit["used_columns"],
         "unique_support_sets": support_audit["unique_support_sets"],
     }
+
+
+def _random_fixed_support(
+    *,
+    shape: Any,
+    num_columns: int,
+    top_k: int,
+    seed: int,
+) -> Any:
+    import torch
+
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    scores = torch.rand(
+        int(shape[0]),
+        int(shape[1]),
+        num_columns,
+        generator=generator,
+    )
+    return scores.topk(top_k, dim=-1).indices
 
 
 def _dense_snapshot(
