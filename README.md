@@ -355,6 +355,23 @@ unmatched context-level singleton gain/regret, and emits decision labels such as
 `likely_real_singleton_gain_failure_mode`, `matching_artifact_possible`, and
 `mixed_singleton_gain_evidence`.
 
+To separate in-context router-selected singleton efficacy from off-context
+forced-singleton stress in the same source artifact, run:
+
+```bash
+python -m relaleap.experiments.active_topk1_singleton_control_diagnostic
+```
+
+This writes
+`results/audits/token_larger_active_rank_matched_topk1_singleton_control_diagnostic/summary.json`,
+`singleton_control_by_context.csv`, `singleton_control_by_stratum.csv`, and
+`notes.md`. It compares dominant-router singleton rows only where
+`router_support_matches_fixed` is true against the best logged singleton on the
+same context, records artifact hashes and the gain sign convention, and fails
+closed when required source fields are missing. The current source artifact does
+not include random or exhaustive singleton rows, so this diagnostic is a
+reconciliation input rather than a causal singleton claim by itself.
+
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled
 synergy audit before making a causal-cooperation claim or spending Colab/GPU
