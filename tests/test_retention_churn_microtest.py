@@ -89,6 +89,14 @@ model:
             self.assertEqual(len(metric_rows), 3)
             self.assertIn("anchor_logit_mse_drift", metric_rows[0])
             self.assertIn("transfer_ce_improvement", metric_rows[0])
+            self.assertIn("commutator_anchor_logit_mse", metric_rows[0])
+            self.assertIn("commutator_transfer_logit_mse", metric_rows[0])
+            topk1 = next(
+                row
+                for row in metric_rows
+                if row["variant"] == "rank_matched_contextual_topk1"
+            )
+            self.assertNotEqual(topk1["commutator_anchor_support_churn"], "")
 
             with (tmp_path / "audit" / "phase_metrics.csv").open(
                 newline="",

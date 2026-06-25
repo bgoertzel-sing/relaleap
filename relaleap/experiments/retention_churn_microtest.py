@@ -213,6 +213,47 @@ def run_retention_churn_microtest(
             parameter_delta_after_anchor = _state_dict_delta(before, adapter)
             parameter_delta_during_transfer = _state_dict_delta(before_b, adapter)
             support_columns = ""
+            torch.manual_seed(seed + 100 * offset)
+            reverse_adapter = nn.Sequential(
+                nn.Linear(hidden_dim, int(spec.dense_rank or active_rank), bias=False),
+                nn.Linear(int(spec.dense_rank or active_rank), hidden_dim, bias=False),
+            )
+            nn.init.normal_(reverse_adapter[0].weight, mean=0.0, std=0.02)
+            nn.init.zeros_(reverse_adapter[1].weight)
+            _train_dense(
+                base=base,
+                adapter=reverse_adapter,
+                hidden=transfer_hidden,
+                targets=transfer_targets,
+                vocab_size=vocab_size,
+                steps=max_steps,
+                learning_rate=learning_rate,
+            )
+            _train_dense(
+                base=base,
+                adapter=reverse_adapter,
+                hidden=anchor_hidden,
+                targets=anchor_targets,
+                vocab_size=vocab_size,
+                steps=max_steps,
+                learning_rate=learning_rate,
+            )
+            reverse_anchor_final = _dense_snapshot(
+                base=base,
+                adapter=reverse_adapter,
+                hidden=anchor_hidden,
+                targets=anchor_targets,
+                vocab_size=vocab_size,
+                eval_scale=eval_scale,
+            )
+            reverse_transfer_final = _dense_snapshot(
+                base=base,
+                adapter=reverse_adapter,
+                hidden=transfer_hidden,
+                targets=transfer_targets,
+                vocab_size=vocab_size,
+                eval_scale=eval_scale,
+            )
         else:
             residual = ResidualColumns(
                 hidden_dim=hidden_dim,
@@ -276,6 +317,47 @@ def run_retention_churn_microtest(
             parameter_delta_after_anchor = _state_dict_delta(before, residual)
             parameter_delta_during_transfer = _state_dict_delta(before_b, residual)
             support_columns = spec.num_columns
+            torch.manual_seed(seed + 100 * offset)
+            reverse_residual = ResidualColumns(
+                hidden_dim=hidden_dim,
+                num_columns=spec.num_columns,
+                atoms_per_column=spec.atoms_per_column,
+                top_k=spec.top_k,
+                support_router=spec.support_router,
+                contextual_router_hidden_dim=spec.contextual_router_hidden_dim,
+            )
+            _train_sparse(
+                base=base,
+                residual=reverse_residual,
+                inputs=transfer_inputs,
+                targets=transfer_targets,
+                vocab_size=vocab_size,
+                steps=max_steps,
+                learning_rate=learning_rate,
+            )
+            _train_sparse(
+                base=base,
+                residual=reverse_residual,
+                inputs=anchor_inputs,
+                targets=anchor_targets,
+                vocab_size=vocab_size,
+                steps=max_steps,
+                learning_rate=learning_rate,
+            )
+            reverse_anchor_final = _sparse_snapshot(
+                base=base,
+                residual=reverse_residual,
+                inputs=anchor_inputs,
+                targets=anchor_targets,
+                vocab_size=vocab_size,
+            )
+            reverse_transfer_final = _sparse_snapshot(
+                base=base,
+                residual=reverse_residual,
+                inputs=transfer_inputs,
+                targets=transfer_targets,
+                vocab_size=vocab_size,
+            )
 
         phase_rows.extend(
             _phase_rows(
@@ -330,6 +412,36 @@ def run_retention_churn_microtest(
             "transfer_ce_improvement": (
                 transfer_before["ce_loss"] - transfer_after["ce_loss"]
             ),
+            "commutator_anchor_ce_abs_delta": abs(
+                anchor_after["ce_loss"] - reverse_anchor_final["ce_loss"]
+            ),
+            "commutator_transfer_ce_abs_delta": abs(
+                transfer_after["ce_loss"] - reverse_transfer_final["ce_loss"]
+            ),
+            "commutator_anchor_logit_mse": _mse_delta(
+                anchor_after["logits"],
+                reverse_anchor_final["logits"],
+            ),
+            "commutator_transfer_logit_mse": _mse_delta(
+                transfer_after["logits"],
+                reverse_transfer_final["logits"],
+            ),
+            "commutator_anchor_residual_stream_l2": _stream_l2_delta(
+                anchor_after["residual_delta"],
+                reverse_anchor_final["residual_delta"],
+            ),
+            "commutator_transfer_residual_stream_l2": _stream_l2_delta(
+                transfer_after["residual_delta"],
+                reverse_transfer_final["residual_delta"],
+            ),
+            "commutator_anchor_support_churn": _support_churn(
+                anchor_after.get("support"),
+                reverse_anchor_final.get("support"),
+            ),
+            "commutator_transfer_support_churn": _support_churn(
+                transfer_after.get("support"),
+                reverse_transfer_final.get("support"),
+            ),
             "parameter_delta_after_anchor": parameter_delta_after_anchor,
             "parameter_delta_during_transfer": parameter_delta_during_transfer,
         }
@@ -361,9 +473,13 @@ def run_retention_churn_microtest(
                 "anchor_ce_drift",
                 "anchor_logit_mse_drift",
                 "anchor_residual_stream_l2_drift",
-                "anchor_support_churn_after_transfer",
-                "transfer_ce_improvement",
-            ],
+            "anchor_support_churn_after_transfer",
+            "transfer_ce_improvement",
+            "commutator_anchor_logit_mse",
+            "commutator_transfer_logit_mse",
+            "commutator_anchor_residual_stream_l2",
+            "commutator_transfer_residual_stream_l2",
+        ],
         },
         "artifacts": {
             "summary_json": str(out_dir / "summary.json"),

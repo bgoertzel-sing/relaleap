@@ -52,6 +52,8 @@ class ActiveTopk1RetentionChurnProbeTest(unittest.TestCase):
                 metrics["source_separability_decision"],
                 "active_topk1_causal_separability_audit_established",
             )
+            self.assertTrue(signals["finite_update_commutator_present"])
+            self.assertEqual(metrics["topk1_commutator_anchor_logit_mse"], 0.04)
             self.assertTrue((root / "probe" / "summary.json").is_file())
             self.assertTrue((root / "probe" / "notes.md").is_file())
 
@@ -146,6 +148,10 @@ def _write_microtest_packet(config_path: Path, out_dir: Path) -> dict[str, objec
                     "anchor_residual_stream_l2_drift": 4.6,
                     "anchor_ce_drift": -0.89,
                     "transfer_ce_improvement": 0.90,
+                    "commutator_anchor_logit_mse": 0.08,
+                    "commutator_transfer_logit_mse": 0.07,
+                    "commutator_anchor_residual_stream_l2": 0.8,
+                    "commutator_transfer_residual_stream_l2": 0.7,
                 },
                 {
                     "variant": "rank_matched_contextual_topk1",
@@ -154,11 +160,17 @@ def _write_microtest_packet(config_path: Path, out_dir: Path) -> dict[str, objec
                     "anchor_residual_stream_l2_drift": 4.5,
                     "anchor_ce_drift": -0.88,
                     "transfer_ce_improvement": 0.92,
+                    "commutator_anchor_logit_mse": 0.04,
+                    "commutator_transfer_logit_mse": 0.03,
+                    "commutator_anchor_residual_stream_l2": 0.4,
+                    "commutator_transfer_residual_stream_l2": 0.3,
                 },
                 {
                     "variant": "norm_matched_dense_active_rank",
                     "anchor_ce_drift": -0.42,
                     "transfer_ce_improvement": 0.42,
+                    "commutator_anchor_logit_mse": 0.06,
+                    "commutator_transfer_logit_mse": 0.05,
                 },
             ]
         },

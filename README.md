@@ -290,6 +290,9 @@ separability packet as source evidence, and compares rank-matched contextual
 top-k-1 against the promoted contextual top-k-2 reference and a norm-matched
 dense active-rank control. A passing probe supports top-k-1 as the local
 retention/churn bracket, but does not establish singleton causal separability.
+The probe also records finite-update order-sensitivity evidence by comparing
+the final functions from A-to-B and B-to-A training orders on both anchor and
+transfer slices.
 
 To check whether that low-churn signal is seed-stable before treating it as a
 settled bracket result, run the seed-2 repeat:
@@ -332,8 +335,9 @@ functional/logit churn, causal singleton-gain status, and CE guardrails, and
 uses explicit decision labels such as `functional_retention_bracket_only`,
 `functional_retention_claim_supported`, `blocked_by_negative_singleton_gain`,
 and `blocked_by_control_match_failure`. The current packets are one-order
-A-to-B transfer probes, so finite-update A-to-B versus B-to-A commutator claims
-remain deferred unless a future microtest writes that evidence.
+transfer probes plus A-to-B versus B-to-A finite-update commutator evidence;
+the report can treat a favorable commutator as bracket evidence, but still
+blocks a causal-retention claim while singleton gain remains negative.
 
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled

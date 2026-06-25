@@ -48,6 +48,10 @@ _METRIC_FIELDS = (
     "anchor_residual_stream_l2_drift",
     "anchor_ce_drift",
     "transfer_ce_improvement",
+    "commutator_anchor_logit_mse",
+    "commutator_transfer_logit_mse",
+    "commutator_anchor_residual_stream_l2",
+    "commutator_transfer_residual_stream_l2",
 )
 
 
@@ -110,14 +114,14 @@ def run_active_topk1_functional_retention_audit(
             "The active rank-matched contextual top-k-1 bracket remains useful as "
             "a low-churn functional-retention bracket, but the current packets do "
             "not support a singleton causal-retention claim. The source singleton "
-            "gain is still negative, and the current microtest records A-to-B "
-            "transfer retention rather than a finite-update A-to-B versus B-to-A "
-            "commutator."
+            "gain is still negative, so any finite-update order-sensitivity "
+            "advantage remains bracket evidence rather than a causal-retention "
+            "claim."
         )
         next_step = (
-            "extend the local microtest to include finite-update order sensitivity "
-            "A-to-B versus B-to-A before spending Colab time on a stronger causal "
-            "retention claim"
+            "use the finite-update order-sensitivity evidence to decide whether a "
+            "targeted Colab/GPU repeat is worth running despite the negative "
+            "singleton-gain blocker"
         )
 
     summary = {
@@ -133,7 +137,9 @@ def run_active_topk1_functional_retention_audit(
             "claim_signals": claim_signals,
             "missing_evidence": {
                 "finite_update_commutator": (
-                    "missing: existing packets measure A-to-B retention only"
+                    "present"
+                    if claim_signals["finite_update_commutator_present"]
+                    else "missing: retention/churn probe packets do not expose A-to-B versus B-to-A order metrics"
                 ),
                 "support_jaccard_churn": (
                     "missing: existing packets expose exact support churn only"
@@ -209,6 +215,22 @@ def _packet_row(index: int, probe_dir: Path) -> dict[str, Any]:
         row["topk2_anchor_residual_stream_l2_drift"],
         row["topk1_anchor_residual_stream_l2_drift"],
     )
+    row["commutator_anchor_logit_mse_advantage_topk1_vs_topk2"] = _delta(
+        row["topk2_commutator_anchor_logit_mse"],
+        row["topk1_commutator_anchor_logit_mse"],
+    )
+    row["commutator_transfer_logit_mse_advantage_topk1_vs_topk2"] = _delta(
+        row["topk2_commutator_transfer_logit_mse"],
+        row["topk1_commutator_transfer_logit_mse"],
+    )
+    row["commutator_anchor_logit_mse_advantage_topk1_vs_dense"] = _delta(
+        row["dense_commutator_anchor_logit_mse"],
+        row["topk1_commutator_anchor_logit_mse"],
+    )
+    row["commutator_transfer_logit_mse_advantage_topk1_vs_dense"] = _delta(
+        row["dense_commutator_transfer_logit_mse"],
+        row["topk1_commutator_transfer_logit_mse"],
+    )
     row["transfer_improvement_advantage_topk1_vs_topk2"] = _delta(
         row["topk1_transfer_ce_improvement"],
         row["topk2_transfer_ce_improvement"],
@@ -270,6 +292,12 @@ def _packet_failures(row: dict[str, Any]) -> list[dict[str, Any]]:
         "topk1_transfer_ce_improvement",
         "topk2_transfer_ce_improvement",
         "dense_transfer_ce_improvement",
+        "topk1_commutator_anchor_logit_mse",
+        "topk2_commutator_anchor_logit_mse",
+        "dense_commutator_anchor_logit_mse",
+        "topk1_commutator_transfer_logit_mse",
+        "topk2_commutator_transfer_logit_mse",
+        "dense_commutator_transfer_logit_mse",
         "source_topk1_singleton_gain_mean",
     )
     for field in required_metric_fields:
@@ -302,11 +330,21 @@ def _aggregate(rows: list[dict[str, Any]], *, ce_guardrail: float) -> dict[str, 
         "topk1_transfer_ce_improvement",
         "topk2_transfer_ce_improvement",
         "dense_transfer_ce_improvement",
+        "topk1_commutator_anchor_logit_mse",
+        "topk2_commutator_anchor_logit_mse",
+        "dense_commutator_anchor_logit_mse",
+        "topk1_commutator_transfer_logit_mse",
+        "topk2_commutator_transfer_logit_mse",
+        "dense_commutator_transfer_logit_mse",
         "source_topk1_singleton_gain_mean",
         "source_context_level_topk1_singleton_gain_mean",
         "support_churn_advantage_topk1_vs_topk2",
         "logit_churn_advantage_topk1_vs_topk2",
         "residual_stream_churn_advantage_topk1_vs_topk2",
+        "commutator_anchor_logit_mse_advantage_topk1_vs_topk2",
+        "commutator_transfer_logit_mse_advantage_topk1_vs_topk2",
+        "commutator_anchor_logit_mse_advantage_topk1_vs_dense",
+        "commutator_transfer_logit_mse_advantage_topk1_vs_dense",
         "transfer_improvement_advantage_topk1_vs_topk2",
         "transfer_improvement_advantage_topk1_vs_dense",
     )
@@ -321,6 +359,10 @@ def _aggregate(rows: list[dict[str, Any]], *, ce_guardrail: float) -> dict[str, 
                 "support_churn_advantage_topk1_vs_topk2",
                 "logit_churn_advantage_topk1_vs_topk2",
                 "residual_stream_churn_advantage_topk1_vs_topk2",
+                "commutator_anchor_logit_mse_advantage_topk1_vs_topk2",
+                "commutator_transfer_logit_mse_advantage_topk1_vs_topk2",
+                "commutator_anchor_logit_mse_advantage_topk1_vs_dense",
+                "commutator_transfer_logit_mse_advantage_topk1_vs_dense",
                 "transfer_improvement_advantage_topk1_vs_topk2",
                 "transfer_improvement_advantage_topk1_vs_dense",
             )
@@ -372,7 +414,26 @@ def _claim_signals(
         and row["source_topk1_singleton_gain_mean"] > 0.0
         for row in rows
     )
-    commutator_present = False
+    commutator_present = all(
+        isinstance(row.get(field), float)
+        for row in rows
+        for field in (
+            "topk1_commutator_anchor_logit_mse",
+            "topk2_commutator_anchor_logit_mse",
+            "dense_commutator_anchor_logit_mse",
+            "topk1_commutator_transfer_logit_mse",
+            "topk2_commutator_transfer_logit_mse",
+            "dense_commutator_transfer_logit_mse",
+        )
+    )
+    commutator_not_worse_than_topk2 = commutator_present and all(
+        isinstance(row.get(field), float) and row[field] >= 0.0
+        for row in rows
+        for field in (
+            "commutator_anchor_logit_mse_advantage_topk1_vs_topk2",
+            "commutator_transfer_logit_mse_advantage_topk1_vs_topk2",
+        )
+    )
     claim_supported = all(
         (
             support_churn_cleaner,
@@ -382,6 +443,7 @@ def _claim_signals(
             singleton_gain_positive,
             bool(aggregates["ce_guardrail_all_packets"]),
             commutator_present,
+            commutator_not_worse_than_topk2,
         )
     )
     return {
@@ -392,6 +454,7 @@ def _claim_signals(
         "singleton_gain_positive": singleton_gain_positive,
         "ce_guardrail_all_packets": bool(aggregates["ce_guardrail_all_packets"]),
         "finite_update_commutator_present": commutator_present,
+        "finite_update_commutator_not_worse_than_topk2": commutator_not_worse_than_topk2,
         "claim_supported": claim_supported,
     }
 
@@ -431,6 +494,10 @@ def _write_packet_metrics(path: Path, rows: list[dict[str, Any]]) -> None:
             "support_churn_advantage_topk1_vs_topk2",
             "logit_churn_advantage_topk1_vs_topk2",
             "residual_stream_churn_advantage_topk1_vs_topk2",
+            "commutator_anchor_logit_mse_advantage_topk1_vs_topk2",
+            "commutator_transfer_logit_mse_advantage_topk1_vs_topk2",
+            "commutator_anchor_logit_mse_advantage_topk1_vs_dense",
+            "commutator_transfer_logit_mse_advantage_topk1_vs_dense",
             "transfer_improvement_advantage_topk1_vs_topk2",
             "transfer_improvement_advantage_topk1_vs_dense",
         ]
@@ -458,6 +525,10 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"`{aggregates['min_support_churn_advantage_topk1_vs_topk2']}`",
         "- Minimum logit-churn advantage: "
         f"`{aggregates['min_logit_churn_advantage_topk1_vs_topk2']}`",
+        "- Minimum commutator anchor-logit advantage: "
+        f"`{aggregates['min_commutator_anchor_logit_mse_advantage_topk1_vs_topk2']}`",
+        "- Minimum commutator transfer-logit advantage: "
+        f"`{aggregates['min_commutator_transfer_logit_mse_advantage_topk1_vs_topk2']}`",
         "- Mean source singleton gain: "
         f"`{aggregates['mean_source_topk1_singleton_gain_mean']}`",
         "",
@@ -471,7 +542,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "- Functional/logit churn: anchor logit MSE drift after transfer.",
         "- Causal gain/regret: source singleton gain remains the causal-gain caveat.",
         f"- CE guardrail: positive anchor CE deterioration must stay within `{summary['ce_guardrail']}`.",
-        "- Finite-update commutator: missing from current packets; no A-to-B/B-to-A claim is made.",
+        "- Finite-update commutator: A-to-B versus B-to-A final-function logit MSE when present.",
         "",
         "## Next Step",
         "",

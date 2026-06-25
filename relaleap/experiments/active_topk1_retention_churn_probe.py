@@ -181,6 +181,36 @@ def _build_evidence(
         "dense_transfer_ce_improvement": _float_or_none(
             dense.get("transfer_ce_improvement")
         ),
+        "topk1_commutator_anchor_logit_mse": _float_or_none(
+            topk1.get("commutator_anchor_logit_mse")
+        ),
+        "topk2_commutator_anchor_logit_mse": _float_or_none(
+            topk2.get("commutator_anchor_logit_mse")
+        ),
+        "dense_commutator_anchor_logit_mse": _float_or_none(
+            dense.get("commutator_anchor_logit_mse")
+        ),
+        "topk1_commutator_transfer_logit_mse": _float_or_none(
+            topk1.get("commutator_transfer_logit_mse")
+        ),
+        "topk2_commutator_transfer_logit_mse": _float_or_none(
+            topk2.get("commutator_transfer_logit_mse")
+        ),
+        "dense_commutator_transfer_logit_mse": _float_or_none(
+            dense.get("commutator_transfer_logit_mse")
+        ),
+        "topk1_commutator_anchor_residual_stream_l2": _float_or_none(
+            topk1.get("commutator_anchor_residual_stream_l2")
+        ),
+        "topk2_commutator_anchor_residual_stream_l2": _float_or_none(
+            topk2.get("commutator_anchor_residual_stream_l2")
+        ),
+        "topk1_commutator_transfer_residual_stream_l2": _float_or_none(
+            topk1.get("commutator_transfer_residual_stream_l2")
+        ),
+        "topk2_commutator_transfer_residual_stream_l2": _float_or_none(
+            topk2.get("commutator_transfer_residual_stream_l2")
+        ),
     }
     topk1_churn = metrics["topk1_anchor_support_churn_after_transfer"]
     topk2_churn = metrics["topk2_anchor_support_churn_after_transfer"]
@@ -227,6 +257,17 @@ def _build_evidence(
                 is not None
                 and float(metrics["source_topk1_singleton_gain_mean"]) < 0.0
             ),
+            "finite_update_commutator_present": all(
+                metrics.get(field) is not None
+                for field in (
+                    "topk1_commutator_anchor_logit_mse",
+                    "topk2_commutator_anchor_logit_mse",
+                    "dense_commutator_anchor_logit_mse",
+                    "topk1_commutator_transfer_logit_mse",
+                    "topk2_commutator_transfer_logit_mse",
+                    "dense_commutator_transfer_logit_mse",
+                )
+            ),
         },
         "failures": failures,
     }
@@ -271,6 +312,10 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"`{metrics['topk2_anchor_support_churn_after_transfer']}`",
         f"- Top-k-1 transfer CE improvement: `{metrics['topk1_transfer_ce_improvement']}`",
         f"- Top-k-2 transfer CE improvement: `{metrics['topk2_transfer_ce_improvement']}`",
+        "- Top-k-1 commutator anchor logit MSE: "
+        f"`{metrics['topk1_commutator_anchor_logit_mse']}`",
+        "- Top-k-2 commutator anchor logit MSE: "
+        f"`{metrics['topk2_commutator_anchor_logit_mse']}`",
         "- Source top-k-1 singleton gain mean: "
         f"`{metrics['source_topk1_singleton_gain_mean']}`",
         "",

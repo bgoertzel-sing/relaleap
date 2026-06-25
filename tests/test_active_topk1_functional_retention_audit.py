@@ -35,12 +35,19 @@ class ActiveTopk1FunctionalRetentionAuditTest(unittest.TestCase):
             self.assertTrue(signals["functional_logit_churn_not_higher_than_topk2"])
             self.assertTrue(signals["transfer_improvement_beats_dense_control"])
             self.assertFalse(signals["singleton_gain_positive"])
-            self.assertFalse(signals["finite_update_commutator_present"])
+            self.assertTrue(signals["finite_update_commutator_present"])
+            self.assertTrue(signals["finite_update_commutator_not_worse_than_topk2"])
             self.assertFalse(signals["claim_supported"])
             aggregates = summary["evidence"]["aggregates"]
             self.assertGreater(
                 aggregates["min_support_churn_advantage_topk1_vs_topk2"],
                 0.8,
+            )
+            self.assertGreater(
+                aggregates[
+                    "min_commutator_anchor_logit_mse_advantage_topk1_vs_topk2"
+                ],
+                0.0,
             )
             self.assertTrue((root / "report" / "summary.json").is_file())
             self.assertTrue((root / "report" / "packet_metrics.csv").is_file())
@@ -90,6 +97,12 @@ def _write_probe(
                 "topk1_transfer_ce_improvement": 0.95,
                 "topk2_transfer_ce_improvement": 0.91,
                 "dense_transfer_ce_improvement": 0.42,
+                "topk1_commutator_anchor_logit_mse": 0.04,
+                "topk2_commutator_anchor_logit_mse": 0.08,
+                "dense_commutator_anchor_logit_mse": 0.06,
+                "topk1_commutator_transfer_logit_mse": 0.03,
+                "topk2_commutator_transfer_logit_mse": 0.07,
+                "dense_commutator_transfer_logit_mse": 0.05,
             },
             "signals": {
                 "required_variants_present": True,
