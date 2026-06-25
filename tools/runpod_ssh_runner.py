@@ -82,7 +82,12 @@ def _read_api_key() -> str:
     return key
 
 
-def _api_json(path: str, *, query: dict[str, str] | None = None) -> Any:
+def _api_json(
+    path: str,
+    *,
+    query: dict[str, str] | None = None,
+    method: str = "GET",
+) -> Any:
     api_key = _read_api_key()
     url = RUNPOD_API_URL + path
     if query:
@@ -90,10 +95,12 @@ def _api_json(path: str, *, query: dict[str, str] | None = None) -> Any:
     request = urllib.request.Request(
         url,
         headers={"Authorization": f"Bearer {api_key}"},
+        method=method,
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            return json.load(response)
+            body = response.read().decode("utf-8", "replace")
+            return json.loads(body) if body.strip() else {}
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")
         raise SystemExit(f"RunPod API request failed: HTTP {exc.code}: {body}") from exc
@@ -126,6 +133,20 @@ def _select_pod(pods: list[dict[str, Any]], pod_id: str | None) -> dict[str, Any
         raise SystemExit("No running RunPod pods found.")
     ids = ", ".join(str(pod.get("id")) for pod in running)
     raise SystemExit(f"Multiple running RunPod pods found; pass --pod-id. IDs: {ids}")
+
+
+def _select_single_pod(pods: list[dict[str, Any]], pod_id: str | None) -> dict[str, Any]:
+    if pod_id:
+        for pod in pods:
+            if pod.get("id") == pod_id:
+                return pod
+        raise SystemExit(f"No RunPod pod found with id {pod_id!r}.")
+    if len(pods) == 1:
+        return pods[0]
+    if not pods:
+        raise SystemExit("No RunPod pods found.")
+    ids = ", ".join(str(pod.get("id")) for pod in pods)
+    raise SystemExit(f"Multiple RunPod pods found; pass --pod-id. IDs: {ids}")
 
 
 def _endpoint_from_pod(pod: dict[str, Any]) -> PodEndpoint:
@@ -194,6 +215,42 @@ def _safe_pod_summary(pod: dict[str, Any]) -> dict[str, Any]:
 def command_status(args: argparse.Namespace) -> None:
     pods = _list_pods()
     print(json.dumps([_safe_pod_summary(pod) for pod in pods], indent=2))
+
+
+def _print_lifecycle_result(action: str, pod_id: str, state: str, pod: dict[str, Any]) -> None:
+    print(
+        json.dumps(
+            {
+                "action": action,
+                "podId": pod_id,
+                "state": state,
+                "pod": _safe_pod_summary(pod),
+            },
+            indent=2,
+        )
+    )
+
+
+def command_start(args: argparse.Namespace) -> None:
+    pod = _select_single_pod(_list_pods(), args.pod_id)
+    pod_id = str(pod.get("id"))
+    if pod.get("desiredStatus") == "RUNNING":
+        _print_lifecycle_result("start", pod_id, "noop_already_running", pod)
+        return
+    _api_json(f"/pods/{urllib.parse.quote(pod_id)}/start", method="POST")
+    refreshed = _api_json(f"/pods/{urllib.parse.quote(pod_id)}")
+    _print_lifecycle_result("start", pod_id, "requested", refreshed)
+
+
+def command_stop(args: argparse.Namespace) -> None:
+    pod = _select_single_pod(_list_pods(), args.pod_id)
+    pod_id = str(pod.get("id"))
+    if pod.get("desiredStatus") != "RUNNING":
+        _print_lifecycle_result("stop", pod_id, "noop_not_running", pod)
+        return
+    _api_json(f"/pods/{urllib.parse.quote(pod_id)}/stop", method="POST")
+    refreshed = _api_json(f"/pods/{urllib.parse.quote(pod_id)}")
+    _print_lifecycle_result("stop", pod_id, "requested", refreshed)
 
 
 def command_ssh_command(args: argparse.Namespace) -> None:
@@ -324,6 +381,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="List pods without printing secrets.")
     status.set_defaults(func=command_status)
+
+    start = subparsers.add_parser("start", help="Start/resume an existing pod.")
+    start.add_argument("--pod-id", dest="pod_id", help=argparse.SUPPRESS)
+    start.set_defaults(func=command_start)
+
+    stop = subparsers.add_parser("stop", help="Stop a running pod.")
+    stop.add_argument("--pod-id", dest="pod_id", help=argparse.SUPPRESS)
+    stop.set_defaults(func=command_stop)
 
     ssh_command = subparsers.add_parser("ssh-command", help="Print the full SSH command.")
     ssh_command.set_defaults(func=command_ssh_command)

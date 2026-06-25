@@ -103,6 +103,69 @@ class RunPodSshRunnerTest(unittest.TestCase):
         self.assertNotIn("root@", transport)
         self.assertIn("root@203.0.113.1:/workspace/relaleap/results/", command)
 
+    def test_start_running_pod_is_noop(self) -> None:
+        runner = _load_runner_module()
+        pod = {
+            "id": "pod123",
+            "desiredStatus": "RUNNING",
+            "portMappings": {"22": 22188},
+            "publicIp": "203.0.113.1",
+            "env": {},
+        }
+        api_calls = []
+        original_list_pods = runner._list_pods
+        original_api_json = runner._api_json
+        try:
+            runner._list_pods = lambda: [pod]
+            runner._api_json = lambda path, **kwargs: api_calls.append((path, kwargs))
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                runner.command_start(type("Args", (), {"pod_id": None})())
+        finally:
+            runner._list_pods = original_list_pods
+            runner._api_json = original_api_json
+
+        self.assertEqual(api_calls, [])
+        self.assertIn("noop_already_running", output.getvalue())
+
+    def test_stop_running_pod_posts_stop_and_redacts_summary(self) -> None:
+        runner = _load_runner_module()
+        pod = {
+            "id": "pod123",
+            "desiredStatus": "RUNNING",
+            "portMappings": {"22": 22188},
+            "publicIp": "203.0.113.1",
+            "env": {"JUPYTER_PASSWORD": "secret"},
+        }
+        refreshed = {
+            **pod,
+            "desiredStatus": "EXITED",
+        }
+        api_calls = []
+        original_list_pods = runner._list_pods
+        original_api_json = runner._api_json
+        try:
+            runner._list_pods = lambda: [pod]
+
+            def fake_api_json(path, **kwargs):
+                api_calls.append((path, kwargs))
+                return refreshed
+
+            runner._api_json = fake_api_json
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                runner.command_stop(type("Args", (), {"pod_id": None})())
+        finally:
+            runner._list_pods = original_list_pods
+            runner._api_json = original_api_json
+
+        self.assertEqual(api_calls[0], ("/pods/pod123/stop", {"method": "POST"}))
+        self.assertEqual(api_calls[1], ("/pods/pod123", {}))
+        self.assertIn("requested", output.getvalue())
+        self.assertNotIn("secret", output.getvalue())
+
     def test_setup_snippet_starts_sshd_directly(self) -> None:
         runner = _load_runner_module()
         with tempfile.TemporaryDirectory() as tmpdir:

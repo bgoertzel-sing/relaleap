@@ -19,6 +19,17 @@ The local helper reads that key without printing it:
 python tools/runpod_ssh_runner.py status
 ```
 
+Codex can start or stop an existing pod when Ben explicitly asks:
+
+```bash
+python tools/runpod_ssh_runner.py --pod-id POD_ID start
+python tools/runpod_ssh_runner.py --pod-id POD_ID stop
+```
+
+If exactly one pod exists, `--pod-id` may be omitted. For convenience, the
+helper also accepts `start --pod-id POD_ID` and `stop --pod-id POD_ID`. It
+prints only a redacted pod summary and does not create or delete pods.
+
 The existing test pod is visible through the API and exposes Jupyter plus TCP
 port 22, but SSH is not accepting connections yet. Before automation can sync
 files or run experiments, enable SSH once through the RunPod web terminal.
@@ -98,5 +109,8 @@ directory before treating RunPod output as evidence.
 
 ## Cost Hygiene
 
-The helper does not create, stop, or delete pods automatically. Stop the pod in
-the RunPod console when it is no longer needed.
+The helper does not create or delete pods automatically. The RelaLeap automation
+should prefer RunPod over Colab whenever a RunPod pod is already running and SSH
+is reachable, but it should not start or stop pods on its own. Pod lifecycle
+changes are interaction-level actions: Ben asks Codex to start or stop the pod,
+or Ben uses the RunPod console directly.
