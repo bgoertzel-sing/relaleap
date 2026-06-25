@@ -1,0 +1,43 @@
+{
+  "colab_replication_warranted": false,
+  "decision": "confirm_active_rank_matched_topk1_causal_bracket",
+  "evidence": {
+    "audit_dir": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention",
+    "failures": [],
+    "matched_deconfounded_strata_csv": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention/matched_deconfounded_strata.csv",
+    "metrics": {
+      "ce_guardrail_tolerance": 0.05,
+      "claim_fraction_threshold": 0.8,
+      "deconfounded_topk2_pair_synergy_mean": 0.2138559982398792,
+      "matched_exact_context_count": 210,
+      "matched_topk1_context_fraction": 0.8333333333333334,
+      "matched_topk2_context_fraction": 0.8333333333333334,
+      "topk1_alpha0_ce_loss": 2.8664543628692627,
+      "topk2_alpha0_ce_loss": 2.912400960922241,
+      "topk2_ce_deficit_vs_topk1": 0.045946598052978516,
+      "topk2_fixed_support_cleaner_strata_fraction": 0.6521739130434783,
+      "topk2_functional_churn_cleaner_strata_fraction": 0.6086956521739131,
+      "topk2_incremental_pair_gain_minus_topk1_singleton_mean": 0.02732963073529254,
+      "topk2_incremental_pair_gain_positive_strata_fraction": 0.6521739130434783,
+      "unmatched_topk1_context_count": 42,
+      "unmatched_topk2_context_count": 42
+    },
+    "paired_exact_context_deltas_csv": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention/paired_exact_context_deltas.csv",
+    "signals": {
+      "exact_context_coverage_present": true,
+      "topk1_ce_primary": true,
+      "topk2_comparative_gates_fail": true,
+      "topk2_reference_within_guardrail": true
+    },
+    "source_decision": "topk2_comparative_causal_cooperation_not_supported",
+    "summary_json": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention/summary.json"
+  },
+  "keep_contextual_router_default": true,
+  "next_step": "run a bounded local causal-separability audit for the active rank-matched contextual top-k-1 bracket, with top-k-2 retained only as a reference and support-frequency percentile claims closed",
+  "rank_matched_topk1_primary_causal_bracket": true,
+  "rationale": "The exact-context deconfounded audit is complete and supports using rank-matched contextual top-k-1 as the primary local causal bracket. Top-k-2 stays inside the CE guardrail only narrowly and remains useful as a reference condition, but it misses the incremental-gain, fixed-support cleanliness, and functional-churn gates needed for a comparative causal-cooperation claim.",
+  "status": "pass",
+  "support_frequency_percentile_claim_supported": false,
+  "topk2_causal_cooperation_claim_supported": false,
+  "topk2_reference_condition_only": true
+}

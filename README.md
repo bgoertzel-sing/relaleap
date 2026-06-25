@@ -244,6 +244,21 @@ also beats the matched rank-matched top-k-1 singleton bracket across at least
 `80%` of matched strata and the fixed-support/functional-churn cleanliness gates
 also pass.
 
+After the deconfounded audit closes comparative top-k-2 causal cooperation,
+confirm the active local causal bracket without rerunning training:
+
+```bash
+python -m relaleap.experiments.decision_report \
+  --report active-rank-matched-topk1-causal-bracket-audit
+```
+
+This writes
+`results/reports/token_larger_active_rank_matched_topk1_causal_bracket_audit/decision_report.json`
+and `.md`. It consumes the exact-context deconfounded audit, records
+rank-matched contextual top-k-1 as the primary local causal bracket, keeps
+promoted top-k-2 as a reference condition only, and leaves both top-k-2
+causal-cooperation and support-frequency percentile claims closed.
+
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled
 synergy audit before making a causal-cooperation claim or spending Colab/GPU

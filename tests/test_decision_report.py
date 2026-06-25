@@ -48,6 +48,7 @@ from relaleap.experiments.decision_report import (
     DIAGNOSE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT,
     STOP_TOPK2_CAUSAL_COOPERATION_CLAIM,
     SELECT_POST_STOP_RANK_MATCHED_TOPK1_CAUSAL_BRACKET,
+    CONFIRM_ACTIVE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET,
     DIAGNOSE_RETENTION_CHURN_MICROTEST,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -89,6 +90,7 @@ from relaleap.experiments.decision_report import (
     write_rank_matched_topk1_causal_bracket_audit_report,
     write_topk2_causal_cooperation_stop_report,
     write_post_stop_causal_bracket_decision_report,
+    write_active_rank_matched_topk1_causal_bracket_audit_report,
     write_retention_churn_microtest_decision_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
@@ -730,6 +732,59 @@ class PostStopCausalBracketDecisionReportTest(unittest.TestCase):
             )
             self.assertIn(
                 "rank_matched_topk1_matched_strata_audit",
+                [failure["field"] for failure in report["evidence"]["failures"]],
+            )
+
+
+class ActiveRankMatchedTopk1CausalBracketAuditReportTest(unittest.TestCase):
+    def test_confirms_active_topk1_bracket_from_deconfounded_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            audit_dir = tmp_path / "deconfounded"
+            _write_active_topk1_deconfounded_audit(audit_dir)
+
+            report = write_active_rank_matched_topk1_causal_bracket_audit_report(
+                audit_dir,
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["decision"],
+                CONFIRM_ACTIVE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET,
+            )
+            self.assertTrue(report["rank_matched_topk1_primary_causal_bracket"])
+            self.assertTrue(report["topk2_reference_condition_only"])
+            self.assertFalse(report["topk2_causal_cooperation_claim_supported"])
+            self.assertFalse(report["support_frequency_percentile_claim_supported"])
+            self.assertFalse(report["colab_replication_warranted"])
+            self.assertTrue(report["keep_contextual_router_default"])
+            signals = report["evidence"]["signals"]
+            self.assertTrue(signals["topk1_ce_primary"])
+            self.assertTrue(signals["exact_context_coverage_present"])
+            self.assertTrue(signals["topk2_reference_within_guardrail"])
+            self.assertTrue(signals["topk2_comparative_gates_fail"])
+            metrics = report["evidence"]["metrics"]
+            self.assertEqual(metrics["matched_exact_context_count"], 210)
+            self.assertEqual(metrics["claim_fraction_threshold"], 0.8)
+            self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
+            self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
+
+    def test_missing_deconfounded_audit_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+
+            report = write_active_rank_matched_topk1_causal_bracket_audit_report(
+                tmp_path / "missing_deconfounded",
+                tmp_path / "report",
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertEqual(report["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(report["rank_matched_topk1_primary_causal_bracket"])
+            self.assertFalse(report["keep_contextual_router_default"])
+            self.assertIn(
+                "active_bracket_deconfounded_audit.summary",
                 [failure["field"] for failure in report["evidence"]["failures"]],
             )
 
@@ -6620,6 +6675,47 @@ def _write_causal_synergy_anchor_diagnostic(root: Path) -> Path:
         encoding="utf-8",
     )
     return diagnostic_dir
+
+
+def _write_active_topk1_deconfounded_audit(audit_dir: Path) -> None:
+    audit_dir.mkdir(parents=True)
+    summary = {
+        "status": "pass",
+        "decision": "topk2_comparative_causal_cooperation_not_supported",
+        "evidence": {
+            "ce_guardrail_passed": True,
+            "ce_guardrail_tolerance": 0.05,
+            "topk1_alpha0_ce_loss": 2.8664543628692627,
+            "topk2_alpha0_ce_loss": 2.912400960922241,
+            "topk2_ce_deficit_vs_topk1": 0.045946598052978516,
+            "matched_exact_context_count": 210,
+            "matched_topk1_context_fraction": 0.8333333333333334,
+            "matched_topk2_context_fraction": 0.8333333333333334,
+            "unmatched_topk1_context_count": 42,
+            "unmatched_topk2_context_count": 42,
+            "deconfounded_topk2_pair_synergy_mean": 0.2138559982398792,
+            "topk2_incremental_pair_gain_minus_topk1_singleton_mean": (
+                0.02732963073529254
+            ),
+            "topk2_incremental_pair_gain_positive_strata_fraction": (
+                0.6521739130434783
+            ),
+            "topk2_fixed_support_cleaner_strata_fraction": 0.6521739130434783,
+            "topk2_functional_churn_cleaner_strata_fraction": 0.6086956521739131,
+        },
+    }
+    (audit_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "paired_exact_context_deltas.csv").write_text(
+        "batch_index,position_index,token_index,target_token\n0,0,1,2\n",
+        encoding="utf-8",
+    )
+    (audit_dir / "matched_deconfounded_strata.csv").write_text(
+        "position_bin,token_class,matched_exact_context_count\nall,all,210\n",
+        encoding="utf-8",
+    )
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:

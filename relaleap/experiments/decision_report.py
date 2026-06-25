@@ -592,6 +592,12 @@ DEFAULT_RANK_MATCHED_TOPK1_MATCHED_STRATA_AUDIT_DIR = Path(
 DEFAULT_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT_REPORT = (
     DEFAULT_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT_OUT_DIR / "decision_report.json"
 )
+DEFAULT_ACTIVE_RANK_MATCHED_TOPK1_CAUSAL_AUDIT_DIR = Path(
+    "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention"
+)
+DEFAULT_ACTIVE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_OUT_DIR = Path(
+    "results/reports/token_larger_active_rank_matched_topk1_causal_bracket_audit"
+)
 DEFAULT_RETENTION_CHURN_MICROTEST_DIR = Path(
     "results/audits/token_larger_retention_churn_microtest"
 )
@@ -719,6 +725,9 @@ DIAGNOSE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT = (
 STOP_TOPK2_CAUSAL_COOPERATION_CLAIM = "stop_topk2_causal_cooperation_claim"
 SELECT_POST_STOP_RANK_MATCHED_TOPK1_CAUSAL_BRACKET = (
     "select_post_stop_rank_matched_topk1_causal_bracket"
+)
+CONFIRM_ACTIVE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET = (
+    "confirm_active_rank_matched_topk1_causal_bracket"
 )
 DIAGNOSE_RETENTION_CHURN_MICROTEST = "diagnose_retention_churn_microtest"
 KEEP_OPT_IN = "keep_opt_in"
@@ -15655,6 +15664,260 @@ def _write_post_stop_causal_bracket_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_active_rank_matched_topk1_causal_bracket_audit_report(
+    audit_dir: Path = DEFAULT_ACTIVE_RANK_MATCHED_TOPK1_CAUSAL_AUDIT_DIR,
+    out_dir: Path = DEFAULT_ACTIVE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_OUT_DIR,
+) -> dict[str, Any]:
+    """Confirm the active rank-matched contextual top-k-1 causal bracket."""
+
+    failures: list[dict[str, Any]] = []
+    summary_path = audit_dir / "summary.json"
+    paired_context_path = audit_dir / "paired_exact_context_deltas.csv"
+    matched_strata_path = audit_dir / "matched_deconfounded_strata.csv"
+    if not summary_path.is_file():
+        failures.append(
+            {
+                "field": "active_bracket_deconfounded_audit.summary",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(summary_path),
+            }
+        )
+        summary: dict[str, Any] = {}
+        evidence: dict[str, Any] = {}
+    else:
+        summary = _read_json_object(summary_path)
+        raw_evidence = summary.get("evidence", {})
+        evidence = raw_evidence if isinstance(raw_evidence, dict) else {}
+        if summary.get("status") != "pass":
+            failures.append(
+                {
+                    "field": "active_bracket_deconfounded_audit.status",
+                    "expected": "pass",
+                    "actual": summary.get("status"),
+                    "path": str(summary_path),
+                }
+            )
+        if not evidence:
+            failures.append(
+                {
+                    "field": "active_bracket_deconfounded_audit.evidence",
+                    "expected": "object",
+                    "actual": type(raw_evidence).__name__,
+                    "path": str(summary_path),
+                }
+            )
+    for field, path in (
+        (
+            "active_bracket_deconfounded_audit.paired_exact_context_deltas",
+            paired_context_path,
+        ),
+        (
+            "active_bracket_deconfounded_audit.matched_deconfounded_strata",
+            matched_strata_path,
+        ),
+    ):
+        if not path.is_file():
+            failures.append(
+                {
+                    "field": field,
+                    "expected": "file exists",
+                    "actual": "missing",
+                    "path": str(path),
+                }
+            )
+
+    topk1_ce = _float_or_none(evidence.get("topk1_alpha0_ce_loss"))
+    topk2_ce = _float_or_none(evidence.get("topk2_alpha0_ce_loss"))
+    topk2_ce_deficit = _float_or_none(evidence.get("topk2_ce_deficit_vs_topk1"))
+    ce_tolerance = _float_or_none(evidence.get("ce_guardrail_tolerance"))
+    incremental_positive_fraction = _float_or_none(
+        evidence.get("topk2_incremental_pair_gain_positive_strata_fraction")
+    )
+    fixed_cleaner_fraction = _float_or_none(
+        evidence.get("topk2_fixed_support_cleaner_strata_fraction")
+    )
+    churn_cleaner_fraction = _float_or_none(
+        evidence.get("topk2_functional_churn_cleaner_strata_fraction")
+    )
+    claim_threshold = 0.8
+    topk1_ce_primary = (
+        topk1_ce is not None and topk2_ce is not None and topk1_ce < topk2_ce
+    )
+    exact_context_coverage_present = (
+        _float_or_none(evidence.get("matched_exact_context_count")) is not None
+        and _float_or_none(evidence.get("matched_topk1_context_fraction")) is not None
+        and _float_or_none(evidence.get("matched_topk2_context_fraction")) is not None
+    )
+    topk2_reference_within_guardrail = bool(evidence.get("ce_guardrail_passed"))
+    topk2_comparative_gates_fail = all(
+        value is not None and value < claim_threshold
+        for value in (
+            incremental_positive_fraction,
+            fixed_cleaner_fraction,
+            churn_cleaner_fraction,
+        )
+    )
+    selected = (
+        not failures
+        and topk1_ce_primary
+        and exact_context_coverage_present
+        and topk2_reference_within_guardrail
+        and topk2_comparative_gates_fail
+        and summary.get("decision")
+        == "topk2_comparative_causal_cooperation_not_supported"
+    )
+
+    if selected:
+        status = "pass"
+        decision = CONFIRM_ACTIVE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET
+        rationale = (
+            "The exact-context deconfounded audit is complete and supports "
+            "using rank-matched contextual top-k-1 as the primary local causal "
+            "bracket. Top-k-2 stays inside the CE guardrail only narrowly and "
+            "remains useful as a reference condition, but it misses the "
+            "incremental-gain, fixed-support cleanliness, and functional-churn "
+            "gates needed for a comparative causal-cooperation claim."
+        )
+        next_step = (
+            "run a bounded local causal-separability audit for the active "
+            "rank-matched contextual top-k-1 bracket, with top-k-2 retained "
+            "only as a reference and support-frequency percentile claims closed"
+        )
+    else:
+        status = "fail"
+        decision = INSUFFICIENT_EVIDENCE
+        rationale = (
+            "The active rank-matched top-k-1 bracket cannot be confirmed from "
+            "the current deconfounded audit artifact."
+        )
+        next_step = (
+            "repair or regenerate the exact-context deconfounded audit before "
+            "using top-k-1 as the primary causal bracket"
+        )
+
+    metrics = {
+        "topk1_alpha0_ce_loss": topk1_ce,
+        "topk2_alpha0_ce_loss": topk2_ce,
+        "topk2_ce_deficit_vs_topk1": topk2_ce_deficit,
+        "ce_guardrail_tolerance": ce_tolerance,
+        "matched_exact_context_count": evidence.get("matched_exact_context_count"),
+        "matched_topk1_context_fraction": evidence.get(
+            "matched_topk1_context_fraction"
+        ),
+        "matched_topk2_context_fraction": evidence.get(
+            "matched_topk2_context_fraction"
+        ),
+        "unmatched_topk1_context_count": evidence.get(
+            "unmatched_topk1_context_count"
+        ),
+        "unmatched_topk2_context_count": evidence.get(
+            "unmatched_topk2_context_count"
+        ),
+        "deconfounded_topk2_pair_synergy_mean": evidence.get(
+            "deconfounded_topk2_pair_synergy_mean"
+        ),
+        "topk2_incremental_pair_gain_minus_topk1_singleton_mean": evidence.get(
+            "topk2_incremental_pair_gain_minus_topk1_singleton_mean"
+        ),
+        "topk2_incremental_pair_gain_positive_strata_fraction": (
+            incremental_positive_fraction
+        ),
+        "topk2_fixed_support_cleaner_strata_fraction": fixed_cleaner_fraction,
+        "topk2_functional_churn_cleaner_strata_fraction": churn_cleaner_fraction,
+        "claim_fraction_threshold": claim_threshold,
+    }
+    report = {
+        "status": status,
+        "decision": decision,
+        "rank_matched_topk1_primary_causal_bracket": selected,
+        "topk2_reference_condition_only": status == "pass",
+        "topk2_causal_cooperation_claim_supported": False,
+        "support_frequency_percentile_claim_supported": False,
+        "colab_replication_warranted": False,
+        "keep_contextual_router_default": status == "pass",
+        "evidence": {
+            "audit_dir": str(audit_dir),
+            "summary_json": str(summary_path),
+            "paired_exact_context_deltas_csv": str(paired_context_path),
+            "matched_deconfounded_strata_csv": str(matched_strata_path),
+            "source_decision": summary.get("decision"),
+            "metrics": metrics,
+            "signals": {
+                "topk1_ce_primary": topk1_ce_primary,
+                "exact_context_coverage_present": exact_context_coverage_present,
+                "topk2_reference_within_guardrail": topk2_reference_within_guardrail,
+                "topk2_comparative_gates_fail": topk2_comparative_gates_fail,
+            },
+            "failures": failures,
+        },
+        "rationale": rationale,
+        "next_step": next_step,
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_active_rank_matched_topk1_causal_bracket_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
+def _write_active_rank_matched_topk1_causal_bracket_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    lines = [
+        "# Active Rank-Matched Top-k-1 Causal Bracket Audit",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        "- Rank-matched top-k-1 primary causal bracket: "
+        f"`{report['rank_matched_topk1_primary_causal_bracket']}`",
+        "- Top-k-2 reference condition only: "
+        f"`{report['topk2_reference_condition_only']}`",
+        "- Top-k-2 causal cooperation claim supported: "
+        f"`{report['topk2_causal_cooperation_claim_supported']}`",
+        "- Support-frequency percentile claim supported: "
+        f"`{report['support_frequency_percentile_claim_supported']}`",
+        "- Colab replication warranted: "
+        f"`{report['colab_replication_warranted']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Evidence",
+        "",
+        f"- Audit: `{report['evidence']['audit_dir']}`",
+        f"- Source decision: `{report['evidence']['source_decision']}`",
+        "",
+        "## Metrics",
+        "",
+        "| Metric | Value |",
+        "| --- | ---: |",
+    ]
+    for key, value in report["evidence"]["metrics"].items():
+        lines.append(f"| `{key}` | {_format_metric(value)} |")
+    lines.extend(["", "## Signals", ""])
+    for key, value in report["evidence"]["signals"].items():
+        lines.append(f"- {key}: `{value}`")
+    if report["evidence"]["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in report["evidence"]["failures"]:
+            lines.append(
+                "- "
+                f"`{failure.get('field')}` expected "
+                f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                f"at `{failure.get('path', '')}`"
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def write_retention_churn_microtest_decision_report(
     audit_dir: Path = DEFAULT_RETENTION_CHURN_MICROTEST_DIR,
     out_dir: Path = DEFAULT_RETENTION_CHURN_MICROTEST_OUT_DIR,
@@ -16447,6 +16710,7 @@ def main() -> None:
             "rank-matched-topk1-causal-bracket-audit",
             "topk2-causal-cooperation-stop",
             "post-stop-causal-bracket-decision",
+            "active-rank-matched-topk1-causal-bracket-audit",
             "retention-churn-microtest-decision",
         ),
         default="pinned-support",
@@ -16920,6 +17184,11 @@ def main() -> None:
             args.comparison_dir
             or DEFAULT_RANK_MATCHED_TOPK1_MATCHED_STRATA_AUDIT_DIR,
             args.out or DEFAULT_POST_STOP_CAUSAL_BRACKET_OUT_DIR,
+        )
+    elif args.report == "active-rank-matched-topk1-causal-bracket-audit":
+        report = write_active_rank_matched_topk1_causal_bracket_audit_report(
+            args.comparison_dir or DEFAULT_ACTIVE_RANK_MATCHED_TOPK1_CAUSAL_AUDIT_DIR,
+            args.out or DEFAULT_ACTIVE_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_OUT_DIR,
         )
     elif args.report == "retention-churn-microtest-decision":
         report = write_retention_churn_microtest_decision_report(
