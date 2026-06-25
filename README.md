@@ -337,13 +337,18 @@ This writes
 functional/logit churn, causal singleton-gain status, and CE guardrails, and
 uses explicit decision labels such as `functional_retention_bracket_only`,
 `functional_retention_claim_supported`, `blocked_by_negative_singleton_gain`,
-and `blocked_by_control_match_failure`. The current packets are one-order
-transfer probes plus A-to-B versus B-to-A finite-update commutator evidence;
-the report can treat a favorable commutator as bracket evidence, but still
-blocks a causal-retention claim while singleton gain remains negative.
+`context_gated_singleton_efficacy_with_offcontext_interference`, and
+`blocked_by_control_match_failure`. When the selected/oracle/off-context
+singleton reconciliation audit is present, the functional-retention report uses
+that newer source instead of the stale global negative-singleton blocker. The
+current packets are one-order transfer probes plus A-to-B versus B-to-A
+finite-update commutator evidence; the report can treat a favorable commutator
+as bracket evidence, but still blocks a broad reusable singleton
+causal-retention claim when the reconciliation shows off-context singleton
+interference.
 
-To check whether the negative singleton-gain blocker is a matched-strata
-artifact or a broader top-k-1 failure mode, run:
+To inspect the older fixed-singleton gain/regret packet that motivated the
+singleton reconciliation audit, run:
 
 ```bash
 python -m relaleap.experiments.active_topk1_singleton_gain_regret_diagnostic

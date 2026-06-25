@@ -5,7 +5,7 @@
     "summary_json": "results/reports/token_larger_active_topk1_functional_retention_audit/summary.json"
   },
   "ce_guardrail": 0.05,
-  "claim_status": "blocked_by_negative_singleton_gain",
+  "claim_status": "context_gated_singleton_efficacy_with_offcontext_interference",
   "decision": "functional_retention_bracket_only",
   "evidence": {
     "aggregates": {
@@ -56,7 +56,11 @@
       "finite_update_commutator_not_worse_than_topk2": true,
       "finite_update_commutator_present": true,
       "functional_logit_churn_not_higher_than_topk2": true,
-      "singleton_gain_positive": false,
+      "offcontext_singleton_interference_present": true,
+      "packet_singleton_gain_positive": false,
+      "selected_incontext_singleton_gain_positive": true,
+      "singleton_gain_positive": true,
+      "singleton_reconciliation_present": true,
       "support_identity_churn_cleaner_than_topk2": true,
       "transfer_improvement_beats_dense_control": true,
       "transfer_improvement_not_worse_than_topk2": true
@@ -64,6 +68,7 @@
     "missing_evidence": {
       "finite_update_commutator": "present",
       "oracle_support_regret": "missing from retention/churn probe packets",
+      "singleton_reconciliation": "present",
       "support_jaccard_churn": "missing: existing packets expose exact support churn only"
     },
     "packets": [
@@ -169,15 +174,37 @@
         "transfer_improvement_advantage_topk1_vs_dense": 0.589168906211853,
         "transfer_improvement_advantage_topk1_vs_topk2": 0.043092966079711914
       }
-    ]
+    ],
+    "singleton_reconciliation": {
+      "decision": "context_gated_singleton_efficacy_with_offcontext_interference",
+      "dir": "results/audits/token_larger_active_rank_matched_topk1_singleton_reconciliation_audit",
+      "metrics": {
+        "exhaustive_singleton_gain_mean": 1.4447493151066795,
+        "logged_oracle_singleton_gain_mean": 1.218131066362063,
+        "offcontext_fixed_dominant_singleton_gain_mean": -0.13995217362127335,
+        "random_singleton_gain_mean": 0.0,
+        "selected_singleton_gain_mean": 1.0019046117862065
+      },
+      "signals": {
+        "exhaustive_singleton_control_present": true,
+        "logged_oracle_incontext_positive": true,
+        "offcontext_fixed_dominant_negative": true,
+        "random_singleton_control_present": true,
+        "selected_incontext_positive": true
+      },
+      "status": "pass",
+      "summary_path": "results/audits/token_larger_active_rank_matched_topk1_singleton_reconciliation_audit/summary.json",
+      "summary_present": true
+    }
   },
   "failures": [],
-  "next_step": "use the finite-update order-sensitivity evidence to decide whether a targeted Colab/GPU repeat is worth running despite the negative singleton-gain blocker",
+  "next_step": "use the reconciled functional-retention bracket to choose a bounded backend repeat only if backend-stable retention evidence is needed for the next causal-retention claim",
   "out_dir": "results/reports/token_larger_active_topk1_functional_retention_audit",
   "probe_dirs": [
     "results/audits/token_larger_active_rank_matched_topk1_retention_churn_probe",
     "results/audits/token_larger_active_rank_matched_topk1_retention_churn_probe_seed2"
   ],
-  "rationale": "The active rank-matched contextual top-k-1 bracket remains useful as a low-churn functional-retention bracket, but the current packets do not support a singleton causal-retention claim. The source singleton gain is still negative, so any finite-update order-sensitivity advantage remains bracket evidence rather than a causal-retention claim.",
+  "rationale": "The active rank-matched contextual top-k-1 bracket remains useful as a low-churn functional-retention bracket. The reconciled singleton evidence replaces the stale global negative-singleton blocker with a narrower interpretation: in-context router-selected singletons are beneficial on average, but forced off-context singleton reuse is harmful. That supports context-gated singleton efficacy with off-context interference, not a broad reusable singleton causal-retention claim.",
+  "singleton_reconciliation_dir": "results/audits/token_larger_active_rank_matched_topk1_singleton_reconciliation_audit",
   "status": "pass"
 }

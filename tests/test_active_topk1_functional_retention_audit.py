@@ -11,6 +11,9 @@ from relaleap.experiments.active_topk1_functional_retention_audit import (
     INSUFFICIENT_EVIDENCE,
     run_active_topk1_functional_retention_audit,
 )
+from relaleap.experiments.active_topk1_singleton_reconciliation_audit import (
+    CONTEXT_GATED_SINGLETON_EFFICACY_WITH_OFFCONTEXT_INTERFERENCE,
+)
 
 
 class ActiveTopk1FunctionalRetentionAuditTest(unittest.TestCase):
@@ -24,6 +27,7 @@ class ActiveTopk1FunctionalRetentionAuditTest(unittest.TestCase):
 
             summary = run_active_topk1_functional_retention_audit(
                 probe_dirs=(seed1, seed2),
+                singleton_reconciliation_dir=root / "missing_reconciliation",
                 out_dir=root / "report",
             )
 
@@ -53,6 +57,45 @@ class ActiveTopk1FunctionalRetentionAuditTest(unittest.TestCase):
             self.assertTrue((root / "report" / "packet_metrics.csv").is_file())
             self.assertTrue((root / "report" / "notes.md").is_file())
 
+    def test_audit_prefers_reconciled_singleton_interpretation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            seed1 = root / "seed1"
+            seed2 = root / "seed2"
+            reconciliation = root / "reconciliation"
+            _write_probe(seed1, topk1_churn=0.004, topk2_churn=0.91)
+            _write_probe(seed2, topk1_churn=0.008, topk2_churn=0.81)
+            _write_reconciliation(reconciliation)
+
+            summary = run_active_topk1_functional_retention_audit(
+                probe_dirs=(seed1, seed2),
+                singleton_reconciliation_dir=reconciliation,
+                out_dir=root / "report",
+            )
+
+            self.assertEqual(summary["status"], "pass")
+            self.assertEqual(summary["decision"], FUNCTIONAL_RETENTION_BRACKET_ONLY)
+            self.assertEqual(
+                summary["claim_status"],
+                CONTEXT_GATED_SINGLETON_EFFICACY_WITH_OFFCONTEXT_INTERFERENCE,
+            )
+            signals = summary["evidence"]["claim_signals"]
+            self.assertTrue(signals["singleton_reconciliation_present"])
+            self.assertTrue(signals["singleton_gain_positive"])
+            self.assertFalse(signals["packet_singleton_gain_positive"])
+            self.assertTrue(signals["selected_incontext_singleton_gain_positive"])
+            self.assertTrue(signals["offcontext_singleton_interference_present"])
+            self.assertFalse(signals["claim_supported"])
+            singleton = summary["evidence"]["singleton_reconciliation"]
+            self.assertEqual(singleton["status"], "pass")
+            self.assertEqual(
+                singleton["decision"],
+                CONTEXT_GATED_SINGLETON_EFFICACY_WITH_OFFCONTEXT_INTERFERENCE,
+            )
+            self.assertAlmostEqual(
+                singleton["metrics"]["selected_singleton_gain_mean"], 1.0
+            )
+
     def test_audit_fails_closed_when_packet_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -62,6 +105,7 @@ class ActiveTopk1FunctionalRetentionAuditTest(unittest.TestCase):
 
             summary = run_active_topk1_functional_retention_audit(
                 probe_dirs=(seed1, seed2),
+                singleton_reconciliation_dir=root / "missing_reconciliation",
                 out_dir=root / "report",
             )
 
@@ -110,6 +154,34 @@ def _write_probe(
                 "topk1_logit_churn_not_higher_than_topk2": True,
                 "topk1_transfer_improvement_at_least_topk2": True,
                 "source_singleton_gain_still_negative": True,
+            },
+        },
+    }
+    (out_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_reconciliation(out_dir: Path) -> None:
+    out_dir.mkdir(parents=True)
+    summary = {
+        "status": "pass",
+        "decision": CONTEXT_GATED_SINGLETON_EFFICACY_WITH_OFFCONTEXT_INTERFERENCE,
+        "evidence": {
+            "metrics": {
+                "selected_singleton_gain_mean": 1.0,
+                "logged_oracle_singleton_gain_mean": 1.2,
+                "offcontext_fixed_dominant_singleton_gain_mean": -0.14,
+                "random_singleton_gain_mean": 0.0,
+                "exhaustive_singleton_gain_mean": 1.44,
+            },
+            "signals": {
+                "selected_incontext_positive": True,
+                "logged_oracle_incontext_positive": True,
+                "offcontext_fixed_dominant_negative": True,
+                "random_singleton_control_present": True,
+                "exhaustive_singleton_control_present": True,
             },
         },
     }

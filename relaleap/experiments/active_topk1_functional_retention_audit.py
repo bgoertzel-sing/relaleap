@@ -12,6 +12,10 @@ from typing import Any
 from relaleap.experiments.active_topk1_retention_churn_probe import (
     ACTIVE_TOPK1_RETENTION_CHURN_PROBE_ESTABLISHED,
 )
+from relaleap.experiments.active_topk1_singleton_reconciliation_audit import (
+    CONTEXT_GATED_SINGLETON_EFFICACY_WITH_OFFCONTEXT_INTERFERENCE,
+    DEFAULT_OUT_DIR as DEFAULT_SINGLETON_RECONCILIATION_DIR,
+)
 
 
 DEFAULT_PROBE_DIRS = (
@@ -59,14 +63,16 @@ def run_active_topk1_functional_retention_audit(
     *,
     probe_dirs: tuple[Path, ...] = DEFAULT_PROBE_DIRS,
     out_dir: Path = DEFAULT_OUT_DIR,
+    singleton_reconciliation_dir: Path = DEFAULT_SINGLETON_RECONCILIATION_DIR,
     ce_guardrail: float = 0.05,
 ) -> dict[str, Any]:
     """Summarize completed probe packets as a functional-retention bracket."""
 
     packet_rows = [_packet_row(index, path) for index, path in enumerate(probe_dirs, 1)]
+    singleton_reconciliation = _singleton_reconciliation(singleton_reconciliation_dir)
     failures = [failure for row in packet_rows for failure in _packet_failures(row)]
     aggregates = _aggregate(packet_rows, ce_guardrail=ce_guardrail)
-    claim_signals = _claim_signals(aggregates, packet_rows)
+    claim_signals = _claim_signals(aggregates, packet_rows, singleton_reconciliation)
     enough_packets = len(packet_rows) >= 2
 
     if not enough_packets:
@@ -110,36 +116,64 @@ def run_active_topk1_functional_retention_audit(
         status = "pass"
         decision = FUNCTIONAL_RETENTION_BRACKET_ONLY
         claim_status = _blocked_claim_status(claim_signals)
-        rationale = (
-            "The active rank-matched contextual top-k-1 bracket remains useful as "
-            "a low-churn functional-retention bracket, but the current packets do "
-            "not support a singleton causal-retention claim. The source singleton "
-            "gain is still negative, so any finite-update order-sensitivity "
-            "advantage remains bracket evidence rather than a causal-retention "
-            "claim."
-        )
-        next_step = (
-            "use the finite-update order-sensitivity evidence to decide whether a "
-            "targeted Colab/GPU repeat is worth running despite the negative "
-            "singleton-gain blocker"
-        )
+        if (
+            claim_status
+            == CONTEXT_GATED_SINGLETON_EFFICACY_WITH_OFFCONTEXT_INTERFERENCE
+        ):
+            rationale = (
+                "The active rank-matched contextual top-k-1 bracket remains useful "
+                "as a low-churn functional-retention bracket. The reconciled "
+                "singleton evidence replaces the stale global negative-singleton "
+                "blocker with a narrower interpretation: in-context router-selected "
+                "singletons are beneficial on average, but forced off-context "
+                "singleton reuse is harmful. That supports context-gated singleton "
+                "efficacy with off-context interference, not a broad reusable "
+                "singleton causal-retention claim."
+            )
+            next_step = (
+                "use the reconciled functional-retention bracket to choose a "
+                "bounded backend repeat only if backend-stable retention evidence "
+                "is needed for the next causal-retention claim"
+            )
+        else:
+            rationale = (
+                "The active rank-matched contextual top-k-1 bracket remains useful as "
+                "a low-churn functional-retention bracket, but the current packets do "
+                "not support a singleton causal-retention claim. The source singleton "
+                "gain is still negative and no newer reconciliation packet overrides "
+                "that stale global blocker, so any finite-update order-sensitivity "
+                "advantage remains bracket evidence rather than a causal-retention "
+                "claim."
+            )
+            next_step = (
+                "run or repair the active top-k-1 singleton reconciliation audit "
+                "before deciding whether a targeted Colab/GPU repeat is worth "
+                "running"
+            )
 
     summary = {
         "status": status,
         "decision": decision,
         "claim_status": claim_status,
         "probe_dirs": [str(path) for path in probe_dirs],
+        "singleton_reconciliation_dir": str(singleton_reconciliation_dir),
         "out_dir": str(out_dir),
         "ce_guardrail": ce_guardrail,
         "evidence": {
             "packets": packet_rows,
             "aggregates": aggregates,
             "claim_signals": claim_signals,
+            "singleton_reconciliation": singleton_reconciliation,
             "missing_evidence": {
                 "finite_update_commutator": (
                     "present"
                     if claim_signals["finite_update_commutator_present"]
                     else "missing: retention/churn probe packets do not expose A-to-B versus B-to-A order metrics"
+                ),
+                "singleton_reconciliation": (
+                    "present"
+                    if singleton_reconciliation["status"] == "pass"
+                    else "missing: newer selected/oracle/off-context singleton reconciliation packet is absent or failing"
                 ),
                 "support_jaccard_churn": (
                     "missing: existing packets expose exact support churn only"
@@ -388,6 +422,7 @@ def _aggregate(rows: list[dict[str, Any]], *, ce_guardrail: float) -> dict[str, 
 def _claim_signals(
     aggregates: dict[str, Any],
     rows: list[dict[str, Any]],
+    singleton_reconciliation: dict[str, Any],
 ) -> dict[str, bool]:
     support_churn_cleaner = all(
         isinstance(row.get("support_churn_advantage_topk1_vs_topk2"), float)
@@ -409,10 +444,20 @@ def _claim_signals(
         and row["transfer_improvement_advantage_topk1_vs_dense"] > 0.0
         for row in rows
     )
-    singleton_gain_positive = all(
+    packet_singleton_gain_positive = all(
         isinstance(row.get("source_topk1_singleton_gain_mean"), float)
         and row["source_topk1_singleton_gain_mean"] > 0.0
         for row in rows
+    )
+    reconciliation_passes = singleton_reconciliation["status"] == "pass"
+    selected_singleton_positive = bool(
+        singleton_reconciliation["signals"].get("selected_incontext_positive")
+    )
+    offcontext_interference = bool(
+        singleton_reconciliation["signals"].get("offcontext_fixed_dominant_negative")
+    )
+    singleton_gain_positive = (
+        selected_singleton_positive if reconciliation_passes else packet_singleton_gain_positive
     )
     commutator_present = all(
         isinstance(row.get(field), float)
@@ -441,6 +486,7 @@ def _claim_signals(
             transfer_not_worse_than_topk2,
             beats_dense_control,
             singleton_gain_positive,
+            not offcontext_interference,
             bool(aggregates["ce_guardrail_all_packets"]),
             commutator_present,
             commutator_not_worse_than_topk2,
@@ -452,6 +498,10 @@ def _claim_signals(
         "transfer_improvement_not_worse_than_topk2": transfer_not_worse_than_topk2,
         "transfer_improvement_beats_dense_control": beats_dense_control,
         "singleton_gain_positive": singleton_gain_positive,
+        "packet_singleton_gain_positive": packet_singleton_gain_positive,
+        "singleton_reconciliation_present": reconciliation_passes,
+        "selected_incontext_singleton_gain_positive": selected_singleton_positive,
+        "offcontext_singleton_interference_present": offcontext_interference,
         "ce_guardrail_all_packets": bool(aggregates["ce_guardrail_all_packets"]),
         "finite_update_commutator_present": commutator_present,
         "finite_update_commutator_not_worse_than_topk2": commutator_not_worse_than_topk2,
@@ -462,9 +512,60 @@ def _claim_signals(
 def _blocked_claim_status(signals: dict[str, bool]) -> str:
     if not signals["singleton_gain_positive"]:
         return BLOCKED_BY_NEGATIVE_SINGLETON_GAIN
+    if signals["offcontext_singleton_interference_present"]:
+        return CONTEXT_GATED_SINGLETON_EFFICACY_WITH_OFFCONTEXT_INTERFERENCE
     if not signals["transfer_improvement_beats_dense_control"]:
         return BLOCKED_BY_CONTROL_MATCH_FAILURE
     return FUNCTIONAL_RETENTION_BRACKET_ONLY
+
+
+def _singleton_reconciliation(path: Path) -> dict[str, Any]:
+    summary_path = path / "summary.json"
+    summary = _read_json_object(summary_path)
+    evidence = summary.get("evidence", {})
+    metrics = evidence.get("metrics", {}) if isinstance(evidence, dict) else {}
+    signals = evidence.get("signals", {}) if isinstance(evidence, dict) else {}
+    return {
+        "dir": str(path),
+        "summary_path": str(summary_path),
+        "summary_present": summary_path.is_file(),
+        "status": summary.get("status"),
+        "decision": summary.get("decision"),
+        "metrics": {
+            "selected_singleton_gain_mean": _float_or_none(
+                metrics.get("selected_singleton_gain_mean")
+            ),
+            "logged_oracle_singleton_gain_mean": _float_or_none(
+                metrics.get("logged_oracle_singleton_gain_mean")
+            ),
+            "offcontext_fixed_dominant_singleton_gain_mean": _float_or_none(
+                metrics.get("offcontext_fixed_dominant_singleton_gain_mean")
+            ),
+            "random_singleton_gain_mean": _float_or_none(
+                metrics.get("random_singleton_gain_mean")
+            ),
+            "exhaustive_singleton_gain_mean": _float_or_none(
+                metrics.get("exhaustive_singleton_gain_mean")
+            ),
+        },
+        "signals": {
+            "selected_incontext_positive": bool(
+                signals.get("selected_incontext_positive")
+            ),
+            "logged_oracle_incontext_positive": bool(
+                signals.get("logged_oracle_incontext_positive")
+            ),
+            "offcontext_fixed_dominant_negative": bool(
+                signals.get("offcontext_fixed_dominant_negative")
+            ),
+            "random_singleton_control_present": bool(
+                signals.get("random_singleton_control_present")
+            ),
+            "exhaustive_singleton_control_present": bool(
+                signals.get("exhaustive_singleton_control_present")
+            ),
+        },
+    }
 
 
 def _variant_prefix(variant: str) -> str:
@@ -531,6 +632,10 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"`{aggregates['min_commutator_transfer_logit_mse_advantage_topk1_vs_topk2']}`",
         "- Mean source singleton gain: "
         f"`{aggregates['mean_source_topk1_singleton_gain_mean']}`",
+        "- Reconciled selected singleton gain: "
+        f"`{summary['evidence']['singleton_reconciliation']['metrics']['selected_singleton_gain_mean']}`",
+        "- Reconciled off-context singleton gain: "
+        f"`{summary['evidence']['singleton_reconciliation']['metrics']['offcontext_fixed_dominant_singleton_gain_mean']}`",
         "",
         "## Rationale",
         "",
@@ -540,7 +645,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "",
         "- Support identity churn: exact support-set churn from the completed probe packets.",
         "- Functional/logit churn: anchor logit MSE drift after transfer.",
-        "- Causal gain/regret: source singleton gain remains the causal-gain caveat.",
+        "- Causal gain/regret: when present, the selected/oracle/off-context singleton reconciliation supersedes the older source singleton-gain caveat.",
         f"- CE guardrail: positive anchor CE deterioration must stay within `{summary['ce_guardrail']}`.",
         "- Finite-update commutator: A-to-B versus B-to-A final-function logit MSE when present.",
         "",
@@ -599,12 +704,19 @@ def main(argv: list[str] | None = None) -> int:
         help="Completed active top-k-1 retention/churn probe directory.",
     )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument(
+        "--singleton-reconciliation-dir",
+        type=Path,
+        default=DEFAULT_SINGLETON_RECONCILIATION_DIR,
+        help="Completed selected/oracle/off-context singleton reconciliation audit directory.",
+    )
     parser.add_argument("--ce-guardrail", type=float, default=0.05)
     args = parser.parse_args(argv)
     probe_dirs = tuple(args.probe_dirs) if args.probe_dirs else DEFAULT_PROBE_DIRS
     summary = run_active_topk1_functional_retention_audit(
         probe_dirs=probe_dirs,
         out_dir=args.out,
+        singleton_reconciliation_dir=args.singleton_reconciliation_dir,
         ce_guardrail=args.ce_guardrail,
     )
     print(
