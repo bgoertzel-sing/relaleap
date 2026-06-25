@@ -1,0 +1,159 @@
+{
+  "artifacts": {
+    "notes_md": "results/reports/token_larger_active_topk1_next_evidence_selection/notes.md",
+    "selected_experiment_csv": "results/reports/token_larger_active_topk1_next_evidence_selection/selected_experiment.csv",
+    "source_rows_csv": "results/reports/token_larger_active_topk1_next_evidence_selection/source_rows.csv",
+    "summary_json": "results/reports/token_larger_active_topk1_next_evidence_selection/summary.json"
+  },
+  "claim_policy": "broad_reusable_singleton_claim_excluded",
+  "claim_status": "column_plus_context_gate_hypothesis",
+  "decision": "active_topk1_next_evidence_selected",
+  "evidence_snapshot": {
+    "metrics": {
+      "context_count": 252,
+      "context_gate_gain_minus_ungated_holdout_mean": 0.44408054031165584,
+      "context_gated_net_gain_holdout_mean": 0.7776962748832172,
+      "exhaustive_control_context_count": 252,
+      "exhaustive_singleton_gain_mean": 1.4447493151066795,
+      "off_context_singleton_gain_mean": -0.13995217362127335,
+      "offcontext_context_count": 252,
+      "own_context_singleton_gain_mean": 1.0019046117862065,
+      "random_control_context_count": 252,
+      "random_singleton_gain_mean": 0.0,
+      "selected_context_count": 120,
+      "source_row_count": 106848,
+      "topk2_reference_gain_mean": 0.06945956072637013
+    },
+    "signals": {
+      "context_gate_holdout_net_gain_positive": true,
+      "context_gate_improves_over_ungated_holdout": true,
+      "exhaustive_control_present": true,
+      "matched_topk2_reference_present": true,
+      "offcontext_singleton_interference_present": true,
+      "own_context_singleton_gain_positive": true,
+      "random_control_present": true
+    }
+  },
+  "experiment_design": {
+    "components": [
+      {
+        "component": "threshold_sweep_on_existing_context_gate_holdout",
+        "purpose": "find a gate threshold that keeps positive own-context holdout gain while suppressing contexts with predicted off-context harm"
+      },
+      {
+        "component": "abstention_vs_routed_baseline_control",
+        "purpose": "distinguish clean gating from simply disabling residual columns everywhere"
+      },
+      {
+        "component": "offcontext_harm_suppression_metric",
+        "purpose": "measure how much negative forced-singleton reuse remains after the gate abstains"
+      },
+      {
+        "component": "own_context_gain_retention_metric",
+        "purpose": "ensure the gate preserves the context-conditioned singleton benefit"
+      },
+      {
+        "component": "matched_topk2_random_dense_controls",
+        "purpose": "keep the existing reference and low-rank controls attached to the next claim"
+      }
+    ],
+    "source_artifacts": [
+      "results/audits/token_larger_active_topk1_context_conditioned_singleton_interference/context_gate_holdout.csv",
+      "results/audits/token_larger_active_topk1_context_conditioned_singleton_interference/singleton_interference_by_context.csv",
+      "results/audits/token_larger_active_topk1_context_conditioned_singleton_interference/singleton_interference_by_stratum.csv"
+    ],
+    "success_criteria": {
+      "broad_reusable_singleton_claim_policy": "broad_reusable_singleton_claim_excluded",
+      "context_gated_net_gain_holdout_mean": "> 0.0",
+      "offcontext_harm_after_gate_mean": "<= 0.0 or materially below ungated off-context harm",
+      "own_context_gain_retention_fraction": ">= 0.8 of validated own-context singleton gain"
+    }
+  },
+  "failures": [],
+  "git_commit": "1107825193739fe41d75cb854bdf42338128e899",
+  "next_step": "implement and run the local no-training context-gate suppression calibration audit using the validated interference CSV artifacts",
+  "out_dir": "results/reports/token_larger_active_topk1_next_evidence_selection",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "rationale": "The RunPod-validated decomposition already establishes positive own-context singleton gain, negative off-context forced-singleton reuse, and positive context-gated holdout gain. Repeating backend validation or adding another wrapper would duplicate completed work. The next useful evidence is a bounded no-training gate-suppression audit that tests whether off-context interference can be cleanly gated away while retaining the in-context singleton gain.",
+  "runtime_seconds": 0.0032,
+  "selected_experiment": "context_gate_suppression_calibration_audit",
+  "selection_gate": {
+    "duplicates_completed_work": false,
+    "new_training_required": false,
+    "requires_gpu_now": false,
+    "selected_because": [
+      "runpod_closeout_already_validated",
+      "offcontext_singleton_interference_remains_present",
+      "context_gate_positive_but_not_yet_clean_suppression_policy",
+      "broad_reusable_singleton_claim_still_excluded"
+    ]
+  },
+  "source_rows": [
+    {
+      "claim_status": "column_plus_context_gate_hypothesis",
+      "decision": "runpod_post_decomposition_validated",
+      "path": "results/reports/token_larger_active_topk1_runpod_post_decomposition_closeout/summary.json",
+      "present": true,
+      "source": "runpod_post_decomposition_closeout",
+      "status": "pass"
+    },
+    {
+      "claim_status": "broad_reusable_singleton_claim_excluded",
+      "decision": "post_bracket_direction_selected",
+      "path": "results/reports/token_larger_active_topk1_post_bracket_research_direction/summary.json",
+      "present": true,
+      "source": "post_bracket_direction",
+      "status": "pass"
+    },
+    {
+      "claim_status": "context_gated_singleton_efficacy_with_offcontext_interference",
+      "decision": "functional_retention_bracket_only",
+      "path": "results/reports/token_larger_active_topk1_functional_retention_audit/summary.json",
+      "present": true,
+      "source": "functional_retention_audit",
+      "status": "pass"
+    },
+    {
+      "claim_status": null,
+      "decision": "active_topk1_retention_churn_stable_across_local_seeds",
+      "path": "results/reports/token_larger_active_rank_matched_topk1_retention_churn_stability/summary.json",
+      "present": true,
+      "source": "retention_churn_stability",
+      "status": "pass"
+    },
+    {
+      "claim_status": null,
+      "decision": "active_topk1_backend_provenance_established",
+      "path": "results/reports/token_larger_active_topk1_backend_provenance_manifest/summary.json",
+      "present": true,
+      "source": "backend_provenance_manifest",
+      "status": "pass"
+    },
+    {
+      "claim_status": null,
+      "decision": "confirm_active_rank_matched_topk1_causal_bracket",
+      "path": "results/reports/token_larger_active_rank_matched_topk1_causal_bracket_audit/decision_report.json",
+      "present": true,
+      "source": "active_rank_matched_topk1_causal_bracket",
+      "status": "pass"
+    },
+    {
+      "claim_status": "strategic_change_level=minor; notify_ben=False",
+      "decision": "Implement the post-bracket research-direction report so that it selects and then runs a bounded context-conditioned active-top-k1 retention/interference audit with matched top-k2, random, and dense controls, while explicitly excluding any reusable singleton claim until off-context interference is removed or cleanly gated.",
+      "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
+      "present": true,
+      "source": "strategy_review",
+      "status": "present"
+    }
+  ],
+  "status": "pass",
+  "strategy_review": {
+    "ben_notification_required": false,
+    "incorporation": "followed where still applicable: the recommended context-conditioned interference decomposition and RunPod closeout are complete; this report selects the next bounded local gate-suppression audit rather than duplicating backend validation",
+    "notify_ben": false,
+    "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
+    "present": true,
+    "recommended_next_action": "Implement the post-bracket research-direction report so that it selects and then runs a bounded context-conditioned active-top-k1 retention/interference audit with matched top-k2, random, and dense controls, while explicitly excluding any reusable singleton claim until off-context interference is removed or cleanly gated.",
+    "strategic_change_level": "minor"
+  }
+}

@@ -1,0 +1,6 @@
+component,purpose
+threshold_sweep_on_existing_context_gate_holdout,find a gate threshold that keeps positive own-context holdout gain while suppressing contexts with predicted off-context harm
+abstention_vs_routed_baseline_control,distinguish clean gating from simply disabling residual columns everywhere
+offcontext_harm_suppression_metric,measure how much negative forced-singleton reuse remains after the gate abstains
+own_context_gain_retention_metric,ensure the gate preserves the context-conditioned singleton benefit
+matched_topk2_random_dense_controls,keep the existing reference and low-rank controls attached to the next claim
