@@ -67,8 +67,9 @@ python tools/runpod_ssh_runner.py bootstrap
 ```
 
 The bootstrap command uses `/workspace/relaleap` and the official GitHub repo.
-It deliberately uses the pod's system Python so the template's preinstalled
-PyTorch/CUDA stack stays intact.
+It creates `/workspace/relaleap/.venv-runpod` with access to the template's
+preinstalled PyTorch/CUDA packages, avoiding Ubuntu's system-Python package
+guard while preserving the CUDA stack.
 
 ## Run A GPU Probe
 
@@ -81,7 +82,7 @@ python tools/runpod_ssh_runner.py run
 Or pass a specific command:
 
 ```bash
-python tools/runpod_ssh_runner.py run --command 'python3 -m relaleap.experiments.compare --config configs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml --config configs/char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2.yaml --out results/comparisons/runpod_char_larger_contextual_router_seed2'
+python tools/runpod_ssh_runner.py run --command 'python -m relaleap.experiments.compare --config configs/char_larger_support_wide_hep_temporal_clipped_objective_gate_seed2.yaml --config configs/char_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2.yaml --out results/comparisons/runpod_char_larger_contextual_router_seed2'
 ```
 
 ## Fetch Artifacts

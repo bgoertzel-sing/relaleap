@@ -62,6 +62,47 @@ class RunPodSshRunnerTest(unittest.TestCase):
         self.assertEqual(endpoint.public_ip, "203.0.113.1")
         self.assertEqual(endpoint.ssh_port, 22188)
 
+    def test_fetch_uses_host_only_in_remote_path(self) -> None:
+        runner = _load_runner_module()
+        endpoint = runner.PodEndpoint(
+            pod_id="pod123",
+            public_ip="203.0.113.1",
+            ssh_port=22188,
+            status="RUNNING",
+            cost_per_hr=0.44,
+            image_name="runpod/pytorch:test",
+            ports=("22/tcp",),
+        )
+        calls = []
+        original_selected_endpoint = runner._selected_endpoint
+        original_run = runner.subprocess.run
+        try:
+            runner._selected_endpoint = lambda pod_id: endpoint
+            runner.subprocess.run = lambda cmd, check: calls.append((cmd, check))
+            with tempfile.TemporaryDirectory() as tmpdir:
+                args = type(
+                    "Args",
+                    (),
+                    {
+                        "pod_id": None,
+                        "identity": Path("/tmp/id_rsa"),
+                        "local_dest": Path(tmpdir) / "fetch",
+                        "remote_path": "/workspace/relaleap/results/",
+                    },
+                )()
+
+                runner.command_fetch(args)
+        finally:
+            runner._selected_endpoint = original_selected_endpoint
+            runner.subprocess.run = original_run
+
+        self.assertEqual(len(calls), 1)
+        command, check = calls[0]
+        self.assertTrue(check)
+        transport = command[command.index("-e") + 1]
+        self.assertNotIn("root@", transport)
+        self.assertIn("root@203.0.113.1:/workspace/relaleap/results/", command)
+
     def test_setup_snippet_starts_sshd_directly(self) -> None:
         runner = _load_runner_module()
         with tempfile.TemporaryDirectory() as tmpdir:

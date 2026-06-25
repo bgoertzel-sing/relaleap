@@ -26,14 +26,15 @@ RUNPOD_API_URL = "https://rest.runpod.io/v1"
 KEYCHAIN_SERVICE = "codex-runpod-api-key"
 DEFAULT_REPO_URL = "https://github.com/bgoertzel-sing/relaleap.git"
 DEFAULT_REMOTE_DIR = "/workspace/relaleap"
+DEFAULT_REMOTE_VENV = ".venv-runpod"
 DEFAULT_IDENTITY = Path.home() / ".ssh" / "id_rsa"
 DEFAULT_PUBLIC_KEY = Path.home() / ".ssh" / "id_rsa.pub"
 DEFAULT_RUN_COMMAND = (
-    "python3 -m relaleap.experiments.compare "
+    "python -m relaleap.experiments.compare "
     "--config configs/char_validation_support_wide_hep_temporal_clipped_objective_gate.yaml "
     "--config configs/char_validation_capacity_support_wide_hep_temporal_clipped_objective_gate.yaml "
     "--out results/comparisons/runpod_support_width_validation_probe "
-    "&& python3 -m relaleap.experiments.check_artifacts "
+    "&& python -m relaleap.experiments.check_artifacts "
     "--comparison-dir results/comparisons/runpod_support_width_validation_probe "
     "--out results/comparisons/runpod_support_width_validation_probe/artifact_check.json"
 )
@@ -249,6 +250,7 @@ def command_bootstrap(args: argparse.Namespace) -> None:
     endpoint = _selected_endpoint(args.pod_id)
     remote_dir = shlex.quote(args.remote_dir)
     repo_url = shlex.quote(args.repo_url)
+    remote_venv = shlex.quote(f"{args.remote_dir.rstrip('/')}/{args.remote_venv}")
     remote = f"""
 set -euo pipefail
 if [ ! -d {remote_dir}/.git ]; then
@@ -268,23 +270,30 @@ try:
 except Exception as exc:
     print('torch check failed', repr(exc))
 PY
-python3 -m pip install --upgrade pip
-python3 -m pip install -e . --no-build-isolation
-python3 -m unittest discover -s tests
+DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv
+python3 -m venv --system-site-packages {remote_venv}
+{remote_venv}/bin/python -m pip install --upgrade pip
+{remote_venv}/bin/python -m pip install -e . --no-build-isolation
+{remote_venv}/bin/python -m unittest discover -s tests
 """
     subprocess.run(_ssh_args(endpoint, args.identity) + [remote], check=True)
 
 
 def command_run(args: argparse.Namespace) -> None:
     endpoint = _selected_endpoint(args.pod_id)
-    remote = f"set -euo pipefail; cd {shlex.quote(args.remote_dir)}; {args.command}"
+    remote_venv = shlex.quote(args.remote_venv)
+    remote = (
+        f"set -euo pipefail; cd {shlex.quote(args.remote_dir)}; "
+        f"if [ -x {remote_venv}/bin/python ]; then export PATH=\"$PWD/{remote_venv}/bin:$PATH\"; fi; "
+        f"{args.command}"
+    )
     subprocess.run(_ssh_args(endpoint, args.identity) + [remote], check=True)
 
 
 def command_fetch(args: argparse.Namespace) -> None:
     endpoint = _selected_endpoint(args.pod_id)
     args.local_dest.mkdir(parents=True, exist_ok=True)
-    ssh_transport = _ssh_shell_quote(_ssh_args(endpoint, args.identity))
+    ssh_transport = _ssh_shell_quote(_ssh_args(endpoint, args.identity)[:-1])
     remote_path = (
         f"root@{endpoint.public_ip}:{shlex.quote(args.remote_path.rstrip('/'))}/"
     )
@@ -340,10 +349,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bootstrap.add_argument("--repo-url", default=DEFAULT_REPO_URL)
     bootstrap.add_argument("--remote-dir", default=DEFAULT_REMOTE_DIR)
+    bootstrap.add_argument("--remote-venv", default=DEFAULT_REMOTE_VENV)
     bootstrap.set_defaults(func=command_bootstrap)
 
     run = subparsers.add_parser("run", help="Run a command inside the remote RelaLeap repo.")
     run.add_argument("--remote-dir", default=DEFAULT_REMOTE_DIR)
+    run.add_argument("--remote-venv", default=DEFAULT_REMOTE_VENV)
     run.add_argument("--command", default=DEFAULT_RUN_COMMAND)
     run.set_defaults(func=command_run)
 
