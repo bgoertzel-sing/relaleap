@@ -399,6 +399,26 @@ rows, deterministic random singleton controls, and the exhaustive same-context
 singleton oracle. It still records random/exhaustive controls as missing when
 the source artifact predates the singleton-control extension.
 
+After the post-bracket research-direction report selects the context-conditioned
+singleton interference decomposition, run the bounded local no-training audit:
+
+```bash
+python -m relaleap.experiments.active_topk1_context_conditioned_singleton_interference_audit
+```
+
+This writes
+`results/audits/token_larger_active_topk1_context_conditioned_singleton_interference/summary.json`,
+`singleton_interference_by_context.csv`, `singleton_interference_by_stratum.csv`,
+`context_gate_holdout.csv`, and `notes.md`. It consumes the existing causal
+fingerprint source rows and the post-bracket direction report, decomposes
+selected own-context singleton gain from matched off-context forced-singleton
+harm, includes matched top-k-2, random singleton, exhaustive singleton, and the
+dense/rank-matched control provenance from the functional-retention packet, and
+keeps broad reusable singleton claims excluded unless off-context interference
+is cleanly gated. The current local packet passes with decision
+`context_gate_reduces_offcontext_interference`; this is a local source-artifact
+result rather than a backend-stable reusable singleton claim.
+
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled
 synergy audit before making a causal-cooperation claim or spending Colab/GPU
