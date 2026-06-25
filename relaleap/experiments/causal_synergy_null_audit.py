@@ -355,8 +355,9 @@ def _null_evidence(
         and sign_flip_p_value <= 0.05
     )
     artifact_control_supported = (
-        not control_available
-        or (minus_control_ci[0] is not None and minus_control_ci[0] > 0.0)
+        control_available
+        and minus_control_ci[0] is not None
+        and minus_control_ci[0] > 0.0
     )
     pair_synergy_supported = sign_flip_synergy_supported and artifact_control_supported
     cleaner_supported = (

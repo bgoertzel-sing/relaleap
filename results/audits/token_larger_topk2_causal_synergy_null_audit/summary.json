@@ -25,8 +25,8 @@
       },
       "control_min_support_count_abs_difference_available_mean": 0.0,
       "control_near_support_count_candidate_count_mean": 2.8864836940604213,
-      "fixed_support_loss_difference_abs_mean": 0.09749224139936252,
-      "fixed_support_loss_difference_mean": -0.09749224139936252,
+      "fixed_support_loss_difference_abs_mean": 0.09749192457281576,
+      "fixed_support_loss_difference_mean": -0.09749192457281576,
       "matched_anchor_support_count": 99,
       "matched_control_support_count": 99,
       "matched_strata_overlap_fraction": 1.0,
@@ -35,7 +35,7 @@
     },
     "control_matched_strata_count": 28,
     "control_note": "`fixed_best_support_swap` is an artifact-level matched control, not a retraining control.",
-    "control_pair_synergy_mean": 0.22994570826485777,
+    "control_pair_synergy_mean": 0.22994570359740166,
     "deconfounded_dir": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention",
     "failures": [],
     "matched_dimensions": [
@@ -46,29 +46,29 @@
       "support_count_bin"
     ],
     "matched_observed_strata_count": 28,
-    "matched_observed_tokens": 787,
+    "matched_observed_tokens": 791,
     "null_controls": [
       "stratified sign-flip null centered at zero synergy",
       "artifact control intervention `fixed_best_support_swap` when present"
     ],
     "observed_deconfounded_pair_synergy_ci": [
-      0.13735732606108536,
-      0.2003492825608546
+      0.13490017275549018,
+      0.1993658205307805
     ],
-    "observed_deconfounded_pair_synergy_mean": 0.16876831173218335,
+    "observed_deconfounded_pair_synergy_mean": 0.16724165783875575,
     "observed_intervention": "fixed_dominant_router_support",
     "observed_minus_control_synergy_ci": [
-      -0.10331990785751402,
-      -0.01591229749678766
+      -0.10542973940582488,
+      -0.016833687727758676
     ],
-    "observed_minus_control_synergy_mean": -0.06117739653267449,
-    "observed_positive_strata_fraction": 1.0,
+    "observed_minus_control_synergy_mean": -0.06270404575864595,
+    "observed_positive_strata_fraction": 0.9642857142857143,
     "pair_synergy_supported": false,
     "sign_flip_null_ci": [
-      -0.06326159352511145,
-      0.06732212031196605
+      -0.06337165813441689,
+      0.06729243995357762
     ],
-    "sign_flip_null_mean": 0.00021014414197889728,
+    "sign_flip_null_mean": 0.00022764360724959428,
     "sign_flip_one_sided_p_value": 0.000999000999000999,
     "sign_flip_synergy_supported": true,
     "source_audit_dir": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1",
@@ -80,6 +80,6 @@
   },
   "out_dir": "results/audits/token_larger_topk2_causal_synergy_null_audit",
   "platform": "macOS-26.5.1-x86_64-i386-64bit",
-  "runtime_seconds": 1.9804,
+  "runtime_seconds": 1.0986,
   "status": "pass"
 }

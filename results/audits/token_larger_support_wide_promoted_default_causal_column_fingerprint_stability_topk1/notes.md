@@ -11,6 +11,6 @@
 
 ## Variant Summary
 
-- `baseline`: alpha-0 CE `2.9124011993408203`, used columns `19`, unique support sets `41`, load entropy `2.523192169717511`, mean abs ablate delta `0.05213464299837748`, mean abs force delta `1.3214413126309712`
-- `load_balance_0.0125`: alpha-0 CE `2.830271005630493`, used columns `24`, unique support sets `45`, load entropy `2.887798705299062`, mean abs ablate delta `0.05555600921312968`, mean abs force delta `1.413821041584015`
+- `baseline`: alpha-0 CE `2.912400960922241`, used columns `19`, unique support sets `41`, load entropy `2.523192169717511`, mean abs ablate delta `0.05213488141695658`, mean abs force delta `1.3214415510495503`
+- `load_balance_0.0125`: alpha-0 CE `2.830270767211914`, used columns `24`, unique support sets `45`, load entropy `2.887798705299062`, mean abs ablate delta `0.05555606881777445`, mean abs force delta `1.4138212998708088`
 - `rank_matched_topk1_contextual`: alpha-0 CE `2.8664543628692627`, used columns `31`, unique support sets `31`, load entropy `3.264069075886517`, mean abs ablate delta `0.027024442950884502`, mean abs force delta `1.3583199083805084`

@@ -148,6 +148,7 @@ def run_causal_synergy_anchor_control_diagnostic(
         )
         control_summaries = {
             intervention: _control_summary(
+                intervention,
                 [
                     row
                     for row in anchor_rows
@@ -287,7 +288,12 @@ def _paired_anchor_rows(
     return paired
 
 
-def _control_summary(rows: list[dict[str, Any]], *, ci_level: float) -> dict[str, Any]:
+def _control_summary(
+    intervention: str,
+    rows: list[dict[str, Any]],
+    *,
+    ci_level: float,
+) -> dict[str, Any]:
     deltas = [
         float(row["observed_minus_control_pair_synergy"])
         for row in rows
@@ -334,8 +340,7 @@ def _control_summary(rows: list[dict[str, Any]], *, ci_level: float) -> dict[str
         "supported": ci[0] is not None and ci[0] > 0.0,
         "control_role": (
             "outcome_proximal_loss_matched_secondary_bound"
-            if rows
-            and rows[0].get("control_intervention") in OUTCOME_PROXIMAL_CONTROLS
+            if intervention in OUTCOME_PROXIMAL_CONTROLS
             else "selection_control"
         ),
     }

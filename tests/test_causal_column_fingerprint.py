@@ -183,6 +183,8 @@ outputs:
                 "control_near_support_count_candidate_count",
                 pair_rows[0],
             )
+            self.assertIn("control_support_count_caliper", pair_rows[0])
+            self.assertIn("control_calipered_candidate_count", pair_rows[0])
             self.assertTrue(
                 {"all", "even", "odd"}.issubset(
                     {row["position_bin"] for row in pair_rows}
@@ -211,6 +213,25 @@ outputs:
             self.assertTrue(any(row["control_support"] for row in control_pair_rows))
             self.assertTrue(
                 any(row["control_match_status"] for row in control_pair_rows)
+            )
+            calibrated_control_rows = [
+                row
+                for row in pair_rows
+                if row["intervention"].endswith("_control")
+            ]
+            self.assertTrue(calibrated_control_rows)
+            self.assertFalse(
+                any(
+                    row["control_match_status"] == "loose_support_count_fallback"
+                    for row in calibrated_control_rows
+                )
+            )
+            self.assertTrue(
+                all(
+                    abs(int(row["support_count_difference"])) <= 1
+                    for row in calibrated_control_rows
+                    if row["support_count_difference"]
+                )
             )
             random_pair_rows = [
                 row
@@ -266,6 +287,8 @@ outputs:
             self.assertIn("fixed_support_loss_difference", per_token_rows[0])
             self.assertIn("control_match_status", per_token_rows[0])
             self.assertIn("control_candidate_count", per_token_rows[0])
+            self.assertIn("control_support_count_caliper", per_token_rows[0])
+            self.assertIn("control_calipered_candidate_count", per_token_rows[0])
             self.assertTrue(
                 {"low", "mid", "high"} & {row["residual_norm_bin"] for row in per_token_rows}
             )
@@ -287,6 +310,25 @@ outputs:
             self.assertTrue(any(row["control_support"] for row in control_token_rows))
             self.assertTrue(
                 any(row["control_match_status"] for row in control_token_rows)
+            )
+            calibrated_control_token_rows = [
+                row
+                for row in per_token_rows
+                if row["intervention"].endswith("_control")
+            ]
+            self.assertTrue(calibrated_control_token_rows)
+            self.assertFalse(
+                any(
+                    row["control_match_status"] == "loose_support_count_fallback"
+                    for row in calibrated_control_token_rows
+                )
+            )
+            self.assertTrue(
+                all(
+                    abs(int(row["support_count_difference"])) <= 1
+                    for row in calibrated_control_token_rows
+                    if row["support_count_difference"]
+                )
             )
             random_token_rows = [
                 row
