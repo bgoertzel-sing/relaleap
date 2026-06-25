@@ -580,6 +580,9 @@ DEFAULT_TOPK2_CAUSAL_COOPERATION_STOP_OUT_DIR = Path(
 DEFAULT_POST_STOP_CAUSAL_BRACKET_OUT_DIR = Path(
     "results/reports/token_larger_post_stop_causal_bracket_decision"
 )
+DEFAULT_SUPPORT_FREQUENCY_CANDIDATE_AUDIT_DIR = Path(
+    "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_support_frequency_candidates"
+)
 DEFAULT_RANK_MATCHED_TOPK1_MATCHED_STRATA_AUDIT_DIR = Path(
     "results/audits/token_larger_rank_matched_topk1_vs_topk2_matched_strata_intervention"
 )
@@ -15191,6 +15194,7 @@ def write_post_stop_causal_bracket_decision_report(
     rank_bracket_report_path: Path = DEFAULT_RANK_MATCHED_TOPK1_CAUSAL_BRACKET_AUDIT_REPORT,
     matched_strata_audit_dir: Path = DEFAULT_RANK_MATCHED_TOPK1_MATCHED_STRATA_AUDIT_DIR,
     out_dir: Path = DEFAULT_POST_STOP_CAUSAL_BRACKET_OUT_DIR,
+    support_frequency_candidate_audit_dir: Path = DEFAULT_SUPPORT_FREQUENCY_CANDIDATE_AUDIT_DIR,
 ) -> dict[str, Any]:
     """Choose the post-stop causal-audit bracket from completed local artifacts."""
 
@@ -15284,22 +15288,41 @@ def write_post_stop_causal_bracket_decision_report(
         if isinstance(rank_report, dict)
         else {}
     )
+    support_candidate_gate = _support_frequency_candidate_percentile_gate(
+        support_frequency_candidate_audit_dir
+    )
     status = "fail" if failures else "pass"
     selected = status == "pass"
     if selected:
-        rationale = (
-            "The local top-k-2 causal-cooperation claim is closed, and the "
-            "existing matched-strata audit prefers the rank-matched contextual "
-            "top-k-1 bracket on the CE guardrail. The available sampled-control "
-            "rows are not an exhaustive near-frequency candidate set, so this "
-            "report explicitly defers a support-frequency candidate-percentile "
-            "test until the fingerprint artifact writes all eligible candidates."
-        )
-        next_step = (
-            "extend the causal-column fingerprint artifact with an exhaustive "
-            "near-frequency nonrouter candidate table before running any "
-            "support-frequency candidate-percentile audit"
-        )
+        if support_candidate_gate["artifact_ready"]:
+            rationale = (
+                "The local top-k-2 causal-cooperation claim is closed, and the "
+                "existing matched-strata audit prefers the rank-matched "
+                "contextual top-k-1 bracket on the CE guardrail. The refreshed "
+                "support-frequency candidate table is artifact-ready, but it "
+                "has no candidates inside the declared no-fallback support-count "
+                "caliper, so the candidate-percentile bracket is locally "
+                "unidentified rather than supportive."
+            )
+            next_step = (
+                "use rank-matched contextual top-k-1 as the active local causal "
+                "bracket while keeping support-frequency candidate-percentile "
+                "claims blocked until matched no-fallback candidates exist"
+            )
+        else:
+            rationale = (
+                "The local top-k-2 causal-cooperation claim is closed, and the "
+                "existing matched-strata audit prefers the rank-matched contextual "
+                "top-k-1 bracket on the CE guardrail. The available sampled-control "
+                "rows are not an exhaustive near-frequency candidate set, so this "
+                "report explicitly defers a support-frequency candidate-percentile "
+                "test until the fingerprint artifact writes all eligible candidates."
+            )
+            next_step = (
+                "extend the causal-column fingerprint artifact with an exhaustive "
+                "near-frequency nonrouter candidate table before running any "
+                "support-frequency candidate-percentile audit"
+            )
         decision = SELECT_POST_STOP_RANK_MATCHED_TOPK1_CAUSAL_BRACKET
     else:
         rationale = (
@@ -15317,8 +15340,15 @@ def write_post_stop_causal_bracket_decision_report(
         "status": status,
         "decision": decision,
         "rank_matched_topk1_default_causal_audit_bracket": selected,
-        "support_frequency_candidate_percentile_ready": False,
-        "requires_exhaustive_candidate_artifact": True,
+        "support_frequency_candidate_percentile_ready": bool(
+            selected and support_candidate_gate["percentile_ready"]
+        ),
+        "requires_exhaustive_candidate_artifact": not support_candidate_gate[
+            "artifact_ready"
+        ],
+        "support_frequency_candidate_percentile_identified": bool(
+            selected and support_candidate_gate["percentile_ready"]
+        ),
         "colab_topk2_replication_warranted": False,
         "topk2_causal_cooperation_claim_supported": False,
         "keep_contextual_router_default": selected,
@@ -15328,12 +15358,9 @@ def write_post_stop_causal_bracket_decision_report(
             "matched_strata_audit_dir": str(matched_strata_audit_dir),
             "matched_strata_evidence": matched_evidence,
             "rank_matched_topk1_metrics": rank_metrics,
+            "support_frequency_candidate_artifact": support_candidate_gate,
             "failures": failures,
-            "deferred_percentile_reason": (
-                "Existing control rows are sampled audit controls, not an "
-                "exhaustive all-candidates table over near-frequency nonrouter "
-                "supports."
-            ),
+            "deferred_percentile_reason": support_candidate_gate["reason"],
         },
         "rationale": rationale,
         "next_step": next_step,
@@ -15345,6 +15372,80 @@ def write_post_stop_causal_bracket_decision_report(
     )
     _write_post_stop_causal_bracket_markdown(out_dir / "decision_report.md", report)
     return report
+
+
+def _support_frequency_candidate_percentile_gate(audit_dir: Path) -> dict[str, Any]:
+    summary_path = audit_dir / "summary.json"
+    csv_path = audit_dir / "support_frequency_candidate_controls.csv"
+    if not summary_path.is_file() or not csv_path.is_file():
+        return {
+            "artifact_ready": False,
+            "percentile_ready": False,
+            "audit_dir": str(audit_dir),
+            "summary_json": str(summary_path),
+            "support_frequency_candidate_controls_csv": str(csv_path),
+            "candidate_row_count": 0,
+            "calipered_candidate_row_count": 0,
+            "exact_support_count_match_row_count": 0,
+            "near_support_count_match_row_count": 0,
+            "unmatched_candidate_row_count": 0,
+            "support_count_caliper": None,
+            "unmatched_policy": None,
+            "reason": (
+                "Existing control rows are sampled audit controls, not an "
+                "exhaustive all-candidates table over near-frequency nonrouter "
+                "supports."
+            ),
+        }
+    summary = _read_json_object(summary_path)
+    audit = summary.get("audit") if isinstance(summary.get("audit"), dict) else {}
+    controls = (
+        audit.get("support_frequency_candidate_controls")
+        if isinstance(audit.get("support_frequency_candidate_controls"), dict)
+        else {}
+    )
+    candidate_count = int(controls.get("candidate_row_count") or 0)
+    calipered_count = int(controls.get("calipered_candidate_row_count") or 0)
+    exact_count = int(controls.get("exact_support_count_match_row_count") or 0)
+    near_count = int(controls.get("near_support_count_match_row_count") or 0)
+    unmatched_count = int(controls.get("unmatched_candidate_row_count") or 0)
+    artifact_ready = summary.get("status") == "ok" and candidate_count > 0
+    percentile_ready = artifact_ready and calipered_count > 0
+    if percentile_ready:
+        reason = (
+            "The exhaustive support-frequency candidate table has at least one "
+            "no-fallback caliper-matched candidate, so a candidate-percentile "
+            "audit is identified."
+        )
+    elif artifact_ready:
+        reason = (
+            "The exhaustive support-frequency candidate table is present, but "
+            "no nonrouter candidate falls within the declared no-fallback "
+            "support-count caliper; the candidate-percentile audit is locally "
+            "unidentified."
+        )
+    else:
+        reason = (
+            "The support-frequency candidate table exists but is not a valid "
+            "artifact-ready denominator."
+        )
+    return {
+        "artifact_ready": artifact_ready,
+        "percentile_ready": percentile_ready,
+        "audit_dir": str(audit_dir),
+        "summary_json": str(summary_path),
+        "support_frequency_candidate_controls_csv": str(csv_path),
+        "status": summary.get("status"),
+        "candidate_row_count": candidate_count,
+        "calipered_candidate_row_count": calipered_count,
+        "exact_support_count_match_row_count": exact_count,
+        "near_support_count_match_row_count": near_count,
+        "unmatched_candidate_row_count": unmatched_count,
+        "support_count_caliper": controls.get("support_count_caliper"),
+        "anchor_count": controls.get("anchor_count"),
+        "unmatched_policy": controls.get("unmatched_policy"),
+        "reason": reason,
+    }
 
 
 def _read_report_file(
@@ -15378,6 +15479,8 @@ def _write_post_stop_causal_bracket_markdown(
         f"`{report['rank_matched_topk1_default_causal_audit_bracket']}`",
         "- Support-frequency candidate-percentile ready: "
         f"`{report['support_frequency_candidate_percentile_ready']}`",
+        "- Support-frequency candidate-percentile identified: "
+        f"`{report['support_frequency_candidate_percentile_identified']}`",
         "- Requires exhaustive candidate artifact: "
         f"`{report['requires_exhaustive_candidate_artifact']}`",
         "- Colab top-k-2 replication warranted: "
@@ -15394,12 +15497,27 @@ def _write_post_stop_causal_bracket_markdown(
         f"- Matched-strata audit: `{report['evidence']['matched_strata_audit_dir']}`",
         "- Deferred percentile reason: "
         f"`{report['evidence']['deferred_percentile_reason']}`",
+        "- Support-frequency candidate artifact: "
+        f"`{report['evidence']['support_frequency_candidate_artifact']['audit_dir']}`",
         "",
-        "## Matched-Strata Metrics",
+        "## Support-Frequency Candidate Denominator",
         "",
         "| Metric | Value |",
         "| --- | --- |",
     ]
+    for key, value in report["evidence"][
+        "support_frequency_candidate_artifact"
+    ].items():
+        lines.append(f"| `{key}` | `{value}` |")
+    lines.extend(
+        [
+            "",
+            "## Matched-Strata Metrics",
+            "",
+            "| Metric | Value |",
+            "| --- | --- |",
+        ]
+    )
     for key, value in report["evidence"]["matched_strata_evidence"].items():
         if key == "failures":
             continue

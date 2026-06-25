@@ -479,6 +479,7 @@ class PostStopCausalBracketDecisionReportTest(unittest.TestCase):
                 rank_report,
                 matched_dir,
                 tmp_path / "report",
+                tmp_path / "missing_candidates",
             )
 
             self.assertEqual(report["status"], "pass")
@@ -498,6 +499,85 @@ class PostStopCausalBracketDecisionReportTest(unittest.TestCase):
             )
             self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
             self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
+
+    def test_consumes_exhaustive_candidate_artifact_but_marks_unidentified(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            stop_report = tmp_path / "stop" / "decision_report.json"
+            rank_report = tmp_path / "rank" / "decision_report.json"
+            matched_dir = tmp_path / "matched"
+            candidate_dir = tmp_path / "candidate"
+            _write_json(
+                stop_report,
+                {
+                    "status": "pass",
+                    "topk2_causal_cooperation_claim_closed_locally": True,
+                },
+            )
+            _write_json(
+                rank_report,
+                {
+                    "status": "pass",
+                    "rank_matched_topk1_default_causal_audit_bracket": True,
+                    "evidence": {"metrics": {}},
+                },
+            )
+            _write_json(
+                matched_dir / "summary.json",
+                {
+                    "status": "pass",
+                    "decision": "prefer_rank_matched_topk1_for_causal_audits",
+                    "evidence": {"matched_strata_count": 5},
+                },
+            )
+            _write_json(
+                candidate_dir / "summary.json",
+                {
+                    "status": "ok",
+                    "audit": {
+                        "support_frequency_candidate_controls": {
+                            "anchor_count": 8,
+                            "candidate_row_count": 1880,
+                            "calipered_candidate_row_count": 0,
+                            "exact_support_count_match_row_count": 0,
+                            "near_support_count_match_row_count": 0,
+                            "unmatched_candidate_row_count": 1880,
+                            "support_count_caliper": 1,
+                            "unmatched_policy": (
+                                "exclude_from_primary_percentile_denominator_"
+                                "no_loose_fallback"
+                            ),
+                        }
+                    },
+                },
+            )
+            (candidate_dir / "support_frequency_candidate_controls.csv").write_text(
+                "variant,anchor_index,candidate_match_status\n",
+                encoding="utf-8",
+            )
+
+            report = write_post_stop_causal_bracket_decision_report(
+                stop_report,
+                rank_report,
+                matched_dir,
+                tmp_path / "report",
+                candidate_dir,
+            )
+
+            candidate = report["evidence"]["support_frequency_candidate_artifact"]
+            self.assertEqual(report["status"], "pass")
+            self.assertTrue(candidate["artifact_ready"])
+            self.assertFalse(candidate["percentile_ready"])
+            self.assertFalse(report["requires_exhaustive_candidate_artifact"])
+            self.assertFalse(report["support_frequency_candidate_percentile_ready"])
+            self.assertFalse(
+                report["support_frequency_candidate_percentile_identified"]
+            )
+            self.assertEqual(candidate["candidate_row_count"], 1880)
+            self.assertEqual(candidate["calipered_candidate_row_count"], 0)
+            self.assertIn("locally unidentified", candidate["reason"])
 
     def test_missing_matched_strata_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
