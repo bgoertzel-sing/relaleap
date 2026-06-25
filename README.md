@@ -205,8 +205,11 @@ controls available across the existing source artifacts, then emits one of
 The causal-column fingerprint audit now also writes
 `per_token_pair_interventions.csv` with batch/position/token indices,
 residual-norm and residual-gain bins, support-frequency fields, and an
-active-rank proxy so this report can decide whether the next no-training
-residual-norm/active-rank deconfounding audit can run without new training.
+active-rank proxy. For top-k-2 fixed-pair interventions it also logs
+singleton-left/singleton-right per-token losses and gains, pair gain, and
+`pair_synergy = pair_gain - singleton_left_gain - singleton_right_gain`, so the
+next no-training residual-norm/active-rank deconfounding audit can test direct
+per-token synergy without new training.
 
 After the coverage report emits
 `existing_artifacts_sufficient_for_next_no_training_audit`, run the no-training
@@ -225,9 +228,11 @@ residual-gain bin, and router-support-count bin. The active-rank proxy is
 reported as a bracket dimension rather than exact-matched because top-k-2 and
 top-k-1 have structurally different active-rank proxies in the current
 artifact. CE is treated as a guardrail with a default tolerance of `0.05`, and
-the audit remains conservative when coarse top-k-2 pair synergy is not backed by
-deconfounded fixed-support and functional-churn wins across at least `80%` of
-matched strata.
+the audit reports direct deconfounded per-token pair synergy separately from the
+cleaner causal-bracket claim. Top-k-2 pair synergy can survive the matching
+audit while the broader cleanliness/interference claim remains blocked unless
+fixed-support and functional-churn wins each clear at least `80%` of matched
+strata.
 
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic

@@ -61,6 +61,34 @@ class DeconfoundedInterventionAuditTest(unittest.TestCase):
                 0.8,
             )
 
+    def test_pair_synergy_can_survive_when_cleanliness_bar_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            audit_dir = root / "source"
+            _write_source_audit(
+                audit_dir,
+                topk2_cleaner=False,
+                include_per_token_synergy=True,
+            )
+
+            summary = run_deconfounded_intervention_audit(
+                audit_dir,
+                root / "deconfounded",
+            )
+
+            self.assertEqual(summary["status"], "pass")
+            self.assertEqual(
+                summary["decision"],
+                "topk2_pair_synergy_survives_deconfounding_but_cleanliness_bar_fails",
+            )
+            evidence = summary["evidence"]
+            self.assertTrue(evidence["per_token_pair_synergy_available"])
+            self.assertGreater(evidence["deconfounded_topk2_pair_synergy_mean"], 0.0)
+            self.assertEqual(
+                evidence["deconfounded_topk2_pair_synergy_positive_strata_fraction"],
+                1.0,
+            )
+
     def test_fails_without_required_per_token_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -85,6 +113,7 @@ def _write_source_audit(
     *,
     topk2_cleaner: bool = True,
     include_active_rank: bool = True,
+    include_per_token_synergy: bool = False,
 ) -> None:
     audit_dir.mkdir(parents=True)
     summary = {
@@ -137,6 +166,8 @@ def _write_source_audit(
     ]
     if include_active_rank:
         fields.append("active_rank_proxy")
+    if include_per_token_synergy:
+        fields.append("pair_synergy")
     topk2_delta = 0.2 if topk2_cleaner else 0.8
     topk2_mse = 0.1 if topk2_cleaner else 0.5
     rows = [
@@ -152,6 +183,7 @@ def _write_source_audit(
             topk2_mse,
             2,
             include_active_rank=include_active_rank,
+            pair_synergy=0.15 if include_per_token_synergy else None,
         ),
         _per_token_row(
             "rank_matched_topk1_contextual",
@@ -165,6 +197,7 @@ def _write_source_audit(
             0.3,
             1,
             include_active_rank=include_active_rank,
+            pair_synergy=None,
         ),
         _per_token_row(
             "baseline",
@@ -178,6 +211,7 @@ def _write_source_audit(
             topk2_mse,
             2,
             include_active_rank=include_active_rank,
+            pair_synergy=0.25 if include_per_token_synergy else None,
         ),
         _per_token_row(
             "rank_matched_topk1_contextual",
@@ -191,6 +225,7 @@ def _write_source_audit(
             0.4,
             1,
             include_active_rank=include_active_rank,
+            pair_synergy=None,
         ),
     ]
     _write_csv(audit_dir / "per_token_pair_interventions.csv", fields, rows)
@@ -209,6 +244,7 @@ def _per_token_row(
     active_rank_proxy: int,
     *,
     include_active_rank: bool,
+    pair_synergy: float | None,
 ) -> dict[str, object]:
     row: dict[str, object] = {
         "variant": variant,
@@ -225,6 +261,8 @@ def _per_token_row(
     }
     if include_active_rank:
         row["active_rank_proxy"] = active_rank_proxy
+    if pair_synergy is not None:
+        row["pair_synergy"] = pair_synergy
     return row
 
 

@@ -260,6 +260,7 @@ def _matched_deconfounded_rows(
                 topk2["fixed_support_residual_stream_l2_delta_mean"]
                 - topk1["fixed_support_residual_stream_l2_delta_mean"]
             ),
+            "topk2_pair_synergy_mean": topk2["pair_synergy_mean"],
         }
         rows.append(row)
     return rows
@@ -299,6 +300,7 @@ def _aggregate_by_stratum(
             "fixed_support_residual_stream_l2_delta_mean": _mean_field(
                 stratum_rows, "fixed_support_residual_stream_l2_delta"
             ),
+            "pair_synergy_mean": _mean_field(stratum_rows, "pair_synergy"),
         }
         for stratum, stratum_rows in buckets.items()
     }
@@ -339,6 +341,11 @@ def _deconfounded_evidence(
         row["topk2_residual_stream_l2_delta_minus_topk1"]
         for row in matched_rows
         if row["topk2_residual_stream_l2_delta_minus_topk1"] is not None
+    ]
+    per_token_synergies = [
+        row["topk2_pair_synergy_mean"]
+        for row in matched_rows
+        if row["topk2_pair_synergy_mean"] is not None
     ]
     coarse_synergies = [
         _optional_float(row.get("pair_synergy"))
@@ -382,7 +389,11 @@ def _deconfounded_evidence(
         "coarse_topk2_pair_synergy_positive_fraction": _fraction(
             value > 0.0 for value in coarse_synergies
         ),
-        "per_token_pair_synergy_available": False,
+        "per_token_pair_synergy_available": bool(per_token_synergies),
+        "deconfounded_topk2_pair_synergy_mean": _mean(per_token_synergies),
+        "deconfounded_topk2_pair_synergy_positive_strata_fraction": _fraction(
+            value > 0.0 for value in per_token_synergies
+        ),
     }
 
 
@@ -397,6 +408,13 @@ def _deconfounded_decision(evidence: dict[str, Any]) -> str:
         return "topk2_causal_metrics_survive_deconfounding_with_ce_guardrail"
     if causal_metrics_pass:
         return "topk2_causal_metrics_survive_deconfounding_but_ce_guardrail_fails"
+    synergy_survives = (
+        evidence["per_token_pair_synergy_available"]
+        and evidence["deconfounded_topk2_pair_synergy_positive_strata_fraction"] is not None
+        and evidence["deconfounded_topk2_pair_synergy_positive_strata_fraction"] >= 0.8
+    )
+    if synergy_survives and evidence["ce_guardrail_passed"]:
+        return "topk2_pair_synergy_survives_deconfounding_but_cleanliness_bar_fails"
     if evidence["ce_guardrail_passed"]:
         return "topk2_coarse_synergy_not_supported_after_deconfounding"
     return "rank_matched_topk1_remains_cleaner_causal_audit_bracket"
@@ -494,6 +512,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
                 f"- Top-k-2 functional-churn cleaner strata fraction: `{evidence['topk2_functional_churn_cleaner_strata_fraction']}`",
                 f"- Coarse top-k-2 pair synergy mean: `{evidence['coarse_topk2_pair_synergy_mean']}`",
                 f"- Per-token pair synergy available: `{evidence['per_token_pair_synergy_available']}`",
+                f"- Deconfounded top-k-2 pair synergy mean: `{evidence['deconfounded_topk2_pair_synergy_mean']}`",
+                f"- Deconfounded top-k-2 pair synergy positive strata fraction: `{evidence['deconfounded_topk2_pair_synergy_positive_strata_fraction']}`",
                 f"- Active-rank note: {evidence['active_rank_matching_note']}",
             ]
         )
@@ -527,6 +547,7 @@ _FIELDNAMES = [
     "topk2_residual_stream_l2_delta_mean",
     "topk1_residual_stream_l2_delta_mean",
     "topk2_residual_stream_l2_delta_minus_topk1",
+    "topk2_pair_synergy_mean",
 ]
 
 

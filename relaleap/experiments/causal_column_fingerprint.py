@@ -387,6 +387,12 @@ def run_causal_column_fingerprint(
             "variants": variant_summaries,
             "heldout_stability": stability_summaries,
             "functional_churn": functional_churn_summaries,
+            "pair_synergy_sign_convention": (
+                "pair_synergy = pair_gain - singleton_left_gain - "
+                "singleton_right_gain, where gain = empty_loss - intervention_loss; "
+                "positive values mean the fixed pair improves loss more than the "
+                "sum of its singleton interventions under this loss-space diagnostic."
+            ),
         },
         "artifacts": {
             "summary_json": str(out_dir / "summary.json"),
@@ -784,6 +790,27 @@ def _per_token_pair_fingerprint_rows(
         fixed_hidden = residual(hidden, support_indices=_fixed_support(hidden, support))
         fixed_logits = base.decode(fixed_hidden)
         fixed_token_loss = _token_ce_losses(fixed_logits, targets, vocab_size)
+        left_token_loss = None
+        right_token_loss = None
+        if len(support) == 2:
+            left_hidden = residual(
+                hidden,
+                support_indices=_fixed_support(hidden, (support[0],)),
+            )
+            right_hidden = residual(
+                hidden,
+                support_indices=_fixed_support(hidden, (support[1],)),
+            )
+            left_token_loss = _token_ce_losses(
+                base.decode(left_hidden),
+                targets,
+                vocab_size,
+            )
+            right_token_loss = _token_ce_losses(
+                base.decode(right_hidden),
+                targets,
+                vocab_size,
+            )
         fixed_logit_mse = (fixed_logits[:, :-1, :] - router_logits[:, :-1, :]).pow(2).mean(
             dim=-1
         )
@@ -816,6 +843,26 @@ def _per_token_pair_fingerprint_rows(
                 fixed_loss = float(
                     fixed_token_loss[batch_index, position_index].detach().item()
                 )
+                if left_token_loss is not None and right_token_loss is not None:
+                    singleton_left_loss = float(
+                        left_token_loss[batch_index, position_index].detach().item()
+                    )
+                    singleton_right_loss = float(
+                        right_token_loss[batch_index, position_index].detach().item()
+                    )
+                    singleton_left_gain = empty_loss - singleton_left_loss
+                    singleton_right_gain = empty_loss - singleton_right_loss
+                    pair_gain = empty_loss - fixed_loss
+                    pair_synergy = (
+                        pair_gain - singleton_left_gain - singleton_right_gain
+                    )
+                else:
+                    singleton_left_loss = fixed_loss
+                    singleton_right_loss = None
+                    singleton_left_gain = empty_loss - fixed_loss
+                    singleton_right_gain = None
+                    pair_gain = None
+                    pair_synergy = None
                 rows.append(
                     {
                         "variant": variant,
@@ -840,6 +887,12 @@ def _per_token_pair_fingerprint_rows(
                         ),
                         "empty_loss": empty_loss,
                         "router_loss": router_loss,
+                        "singleton_left_loss": singleton_left_loss,
+                        "singleton_right_loss": singleton_right_loss,
+                        "singleton_left_gain": singleton_left_gain,
+                        "singleton_right_gain": singleton_right_gain,
+                        "pair_gain": pair_gain,
+                        "pair_synergy": pair_synergy,
                         "fixed_support_loss": fixed_loss,
                         "fixed_support_loss_delta": fixed_loss - router_loss,
                         "fixed_support_logit_mse": float(
@@ -1481,6 +1534,12 @@ _PER_TOKEN_PAIR_FIELDNAMES = [
     "router_support_matches_fixed",
     "empty_loss",
     "router_loss",
+    "singleton_left_loss",
+    "singleton_right_loss",
+    "singleton_left_gain",
+    "singleton_right_gain",
+    "pair_gain",
+    "pair_synergy",
     "fixed_support_loss",
     "fixed_support_loss_delta",
     "fixed_support_logit_mse",
@@ -1513,6 +1572,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Column fingerprint rows: `{audit['column_fingerprint_count']}`",
         f"- Pair intervention rows: `{audit['pair_intervention_count']}`",
         f"- Per-token pair intervention rows: `{audit['per_token_pair_intervention_count']}`",
+        f"- Pair synergy sign convention: {audit['pair_synergy_sign_convention']}",
         "",
         "## Variant Summary",
         "",
