@@ -68,6 +68,22 @@ outputs:
             self.assertEqual(audit["column_fingerprint_count"], 8)
             self.assertGreater(audit["pair_intervention_count"], 0)
             self.assertGreater(audit["per_token_pair_intervention_count"], 0)
+            self.assertIn(
+                "fixed_support_frequency_matched_control",
+                audit["pair_intervention_counts"],
+            )
+            self.assertIn(
+                "fixed_loss_matched_nonrouter_control",
+                audit["pair_intervention_counts"],
+            )
+            self.assertIn(
+                "fixed_support_frequency_matched_control",
+                audit["per_token_pair_intervention_counts"],
+            )
+            self.assertIn(
+                "fixed_loss_matched_nonrouter_control",
+                audit["per_token_pair_intervention_counts"],
+            )
             self.assertEqual(len(audit["heldout_stability"]), 2)
             self.assertEqual(len(audit["functional_churn"]), 2)
             self.assertIn(
@@ -139,6 +155,12 @@ outputs:
                     {row["token_class"] for row in pair_rows}
                 )
             )
+            self.assertTrue(
+                {
+                    "fixed_support_frequency_matched_control",
+                    "fixed_loss_matched_nonrouter_control",
+                }.issubset({row["intervention"] for row in pair_rows})
+            )
 
             with (
                 tmp_path / "fingerprint" / "per_token_pair_interventions.csv"
@@ -159,6 +181,12 @@ outputs:
             self.assertIn("active_rank_proxy", per_token_rows[0])
             self.assertTrue(
                 {"low", "mid", "high"} & {row["residual_norm_bin"] for row in per_token_rows}
+            )
+            self.assertTrue(
+                {
+                    "fixed_support_frequency_matched_control",
+                    "fixed_loss_matched_nonrouter_control",
+                }.issubset({row["intervention"] for row in per_token_rows})
             )
 
     def test_causal_column_fingerprint_can_include_rank_matched_topk1(self) -> None:

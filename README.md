@@ -251,6 +251,22 @@ uses the available `fixed_best_support_swap` intervention as an artifact-level
 matched control when present, and keeps `pair_synergy_supported` separate from
 `cleaner_causal_bracket_supported`.
 
+After refreshing the causal-column fingerprint artifact with matched control
+pairs, run the stronger support-frequency control check before any Colab repeat
+or causal-cooperation claim:
+
+```bash
+python -m relaleap.experiments.causal_synergy_null_audit \
+  --control-intervention fixed_support_frequency_matched_control \
+  --out results/audits/token_larger_topk2_causal_synergy_null_audit_support_frequency_control
+```
+
+This uses the same no-training matched-strata audit but compares the observed
+router-selected top-k-2 pair synergy against fixed top-k-2 pairs with similar
+router support frequency. The current local artifact fails this stronger
+control while still passing the sign-flip and `fixed_best_support_swap` checks,
+so broad top-k-2 causal-cooperation claims remain blocked.
+
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic
 sees nonzero repicking without changing the checked Phase 0 baseline. After the

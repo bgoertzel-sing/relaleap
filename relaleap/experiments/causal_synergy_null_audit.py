@@ -156,6 +156,7 @@ def run_causal_synergy_null_audit(
                     observed,
                     control,
                     deconfounded_summary,
+                    control_intervention=control_intervention,
                     bootstrap_samples=bootstrap_samples,
                     seed=seed,
                     ci_level=ci_level,
@@ -249,6 +250,7 @@ def _null_evidence(
     control: dict[tuple[str, str, str, str, str], dict[str, Any]],
     deconfounded_summary: dict[str, Any],
     *,
+    control_intervention: str,
     bootstrap_samples: int,
     seed: int,
     ci_level: float,
@@ -282,16 +284,17 @@ def _null_evidence(
     observed_ci = _ci(observed_bootstrap, ci_level)
     sign_flip_ci = _ci(sign_flip_null, ci_level)
     minus_control_ci = _ci(observed_minus_control_bootstrap, ci_level)
-    pair_synergy_supported = (
+    sign_flip_synergy_supported = (
         observed_ci[0] is not None
         and observed_ci[0] > 0.0
         and sign_flip_p_value is not None
         and sign_flip_p_value <= 0.05
-        and (
-            not control_available
-            or (minus_control_ci[0] is not None and minus_control_ci[0] > 0.0)
-        )
     )
+    artifact_control_supported = (
+        not control_available
+        or (minus_control_ci[0] is not None and minus_control_ci[0] > 0.0)
+    )
+    pair_synergy_supported = sign_flip_synergy_supported and artifact_control_supported
     cleaner_supported = (
         ce_deficit is not None
         and ce_deficit <= ce_guardrail_tolerance
@@ -314,6 +317,8 @@ def _null_evidence(
         "control_pair_synergy_mean": _mean(control_values),
         "observed_minus_control_synergy_mean": _mean(observed_minus_control),
         "observed_minus_control_synergy_ci": list(minus_control_ci),
+        "sign_flip_synergy_supported": sign_flip_synergy_supported,
+        "artifact_control_supported": artifact_control_supported,
         "topk2_ce_deficit_vs_topk1": ce_deficit,
         "ce_guardrail_passed": ce_deficit is not None and ce_deficit <= ce_guardrail_tolerance,
         "topk2_fixed_support_cleaner_strata_fraction": fixed_cleaner,
@@ -321,7 +326,7 @@ def _null_evidence(
         "pair_synergy_supported": pair_synergy_supported,
         "cleaner_causal_bracket_supported": cleaner_supported,
         "control_note": (
-            f"`{CONTROL_INTERVENTION}` is an artifact-level matched control, not a fresh random-pair retraining control."
+            f"`{control_intervention}` is an artifact-level matched control, not a retraining control."
         ),
     }
 

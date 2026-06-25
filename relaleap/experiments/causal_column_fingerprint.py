@@ -384,6 +384,10 @@ def run_causal_column_fingerprint(
             "column_fingerprint_count": len(column_rows),
             "pair_intervention_count": len(pair_rows),
             "per_token_pair_intervention_count": len(per_token_pair_rows),
+            "pair_intervention_counts": _intervention_counts(pair_rows),
+            "per_token_pair_intervention_counts": _intervention_counts(
+                per_token_pair_rows
+            ),
             "variants": variant_summaries,
             "heldout_stability": stability_summaries,
             "functional_churn": functional_churn_summaries,
@@ -1343,7 +1347,108 @@ def _selected_pair_interventions(
                 "router_support_count": support_counts.get(key, 0),
             },
         )
-    return list(selected.values())[: max_pair_rows * 2]
+    anchors = list(selected.values())
+    for row in _matched_control_pair_rows(
+        fixed_rows=fixed_rows,
+        support_counts=support_counts,
+        anchors=anchors,
+        selected=selected,
+        max_pair_rows=max_pair_rows,
+        intervention="fixed_support_frequency_matched_control",
+        prefer_nonrouter=False,
+        score_fn=lambda candidate, anchor: (
+            abs(
+                support_counts.get(str(candidate["support_key"]), 0)
+                - int(anchor["router_support_count"])
+            ),
+            abs(float(candidate["loss"]) - _anchor_loss(anchor, rows_by_key)),
+            str(candidate["support_key"]),
+        ),
+    ):
+        key = str(row["support_key"])
+        selected[f"support_frequency_control_{key}"] = {
+            "intervention": "fixed_support_frequency_matched_control",
+            "support": row["support"],
+            "router_support_count": support_counts.get(key, 0),
+        }
+    for row in _matched_control_pair_rows(
+        fixed_rows=fixed_rows,
+        support_counts=support_counts,
+        anchors=anchors,
+        selected=selected,
+        max_pair_rows=max_pair_rows,
+        intervention="fixed_loss_matched_nonrouter_control",
+        prefer_nonrouter=True,
+        score_fn=lambda candidate, anchor: (
+            abs(float(candidate["loss"]) - _anchor_loss(anchor, rows_by_key)),
+            abs(
+                support_counts.get(str(candidate["support_key"]), 0)
+                - int(anchor["router_support_count"])
+            ),
+            str(candidate["support_key"]),
+        ),
+    ):
+        key = str(row["support_key"])
+        selected[f"loss_matched_control_{key}"] = {
+            "intervention": "fixed_loss_matched_nonrouter_control",
+            "support": row["support"],
+            "router_support_count": support_counts.get(key, 0),
+        }
+    return list(selected.values())[: max_pair_rows * 10]
+
+
+def _matched_control_pair_rows(
+    *,
+    fixed_rows: list[dict[str, Any]],
+    support_counts: dict[str, int],
+    anchors: list[dict[str, Any]],
+    selected: dict[str, dict[str, Any]],
+    max_pair_rows: int,
+    intervention: str,
+    prefer_nonrouter: bool,
+    score_fn: Any,
+) -> list[dict[str, Any]]:
+    del intervention
+
+    selected_supports = {
+        _support_key(tuple(row["support"]))
+        for row in selected.values()
+        if not str(row.get("intervention", "")).endswith("_control")
+    }
+    control_rows: list[dict[str, Any]] = []
+    control_keys: set[str] = set()
+    candidates = [
+        row for row in fixed_rows if str(row["support_key"]) not in selected_supports
+    ]
+    if prefer_nonrouter:
+        nonrouter_candidates = [
+            row
+            for row in candidates
+            if support_counts.get(str(row["support_key"]), 0) == 0
+        ]
+        if nonrouter_candidates:
+            candidates = nonrouter_candidates
+    target_count = max_pair_rows * 4
+    anchor_index = 0
+    while anchors and len(control_rows) < target_count:
+        anchor = anchors[anchor_index % len(anchors)]
+        ranked = sorted(candidates, key=lambda row: score_fn(row, anchor))
+        for row in ranked:
+            key = str(row["support_key"])
+            if key in control_keys:
+                continue
+            control_keys.add(key)
+            control_rows.append(row)
+            break
+        anchor_index += 1
+        if anchor_index > len(anchors) + len(candidates):
+            break
+    return control_rows
+
+
+def _anchor_loss(anchor: dict[str, Any], rows_by_key: dict[str, dict[str, Any]]) -> float:
+    key = _support_key(tuple(int(part) for part in anchor["support"]))
+    return float(rows_by_key[key]["loss"])
 
 
 def _selected_singleton_interventions(
@@ -1475,6 +1580,14 @@ def _mean_abs_difference(left: list[float], right: list[float]) -> float | None:
         abs(float(left_value) - float(right_value))
         for left_value, right_value in zip(left, right)
     ) / len(left)
+
+
+def _intervention_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        intervention = str(row.get("intervention", ""))
+        counts[intervention] = counts.get(intervention, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 _COLUMN_FIELDNAMES = [

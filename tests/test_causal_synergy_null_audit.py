@@ -34,6 +34,8 @@ class CausalSynergyNullAuditTest(unittest.TestCase):
             )
             evidence = summary["evidence"]
             self.assertTrue(evidence["pair_synergy_supported"])
+            self.assertTrue(evidence["sign_flip_synergy_supported"])
+            self.assertTrue(evidence["artifact_control_supported"])
             self.assertFalse(evidence["cleaner_causal_bracket_supported"])
             self.assertGreater(evidence["observed_minus_control_synergy_mean"], 0.0)
             self.assertTrue((root / "null_audit" / "summary.json").is_file())
