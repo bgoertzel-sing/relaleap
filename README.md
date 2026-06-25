@@ -267,6 +267,22 @@ router support frequency. The current local artifact fails this stronger
 control while still passing the sign-flip and `fixed_best_support_swap` checks,
 so broad top-k-2 causal-cooperation claims remain blocked.
 
+To inspect whether that failure is local to a single artifact-level control or
+holds per observed anchor across the sampled nonrouter controls in the same
+causal fingerprint artifact, run:
+
+```bash
+python -m relaleap.experiments.causal_synergy_anchor_control_diagnostic
+```
+
+This writes
+`results/audits/token_larger_topk2_causal_synergy_anchor_control_diagnostic/summary.json`,
+`per_anchor_control_deltas.csv`, and `notes.md`. It pairs each sampled control
+token row back to its observed router-selected anchor token row, reports
+observed-minus-control pair-synergy distributions by anchor, and keeps
+support-frequency selection controls separate from loss-matched
+outcome-proximal controls.
+
 The default support-stress config intentionally reshapes the trained residual
 columns after the ordinary smoke update so the support-instability diagnostic
 sees nonzero repicking without changing the checked Phase 0 baseline. After the
