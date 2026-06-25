@@ -544,6 +544,12 @@ DEFAULT_CAUSAL_COLUMN_FINGERPRINT_DECONFOUNDING_DIR = Path(
 DEFAULT_CAUSAL_COLUMN_FINGERPRINT_OUT_DIR = Path(
     "results/reports/token_larger_causal_column_fingerprint_audit"
 )
+DEFAULT_CAUSAL_AUDIT_BRACKET_DECISION_REPORT = (
+    DEFAULT_CAUSAL_COLUMN_FINGERPRINT_OUT_DIR / "decision_report.json"
+)
+DEFAULT_CAUSAL_AUDIT_BRACKET_DECISION_OUT_DIR = Path(
+    "results/reports/token_larger_causal_audit_bracket_decision"
+)
 DEFAULT_RETENTION_CHURN_MICROTEST_DIR = Path(
     "results/audits/token_larger_retention_churn_microtest"
 )
@@ -661,6 +667,9 @@ CONFIRM_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT = (
 KEEP_LOAD_BALANCE_PROBE_OPT_IN = "keep_router_load_balance_probe_opt_in"
 DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT = (
     "diagnose_causal_column_fingerprint_audit"
+)
+SELECT_RANK_MATCHED_TOPK1_CAUSAL_AUDIT_BRACKET = (
+    "select_rank_matched_topk1_causal_audit_bracket"
 )
 DIAGNOSE_RETENTION_CHURN_MICROTEST = "diagnose_retention_churn_microtest"
 KEEP_OPT_IN = "keep_opt_in"
@@ -14330,6 +14339,222 @@ def _write_causal_column_fingerprint_audit_markdown(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_causal_audit_bracket_decision_report(
+    causal_fingerprint_report_path: Path = DEFAULT_CAUSAL_AUDIT_BRACKET_DECISION_REPORT,
+    out_dir: Path = DEFAULT_CAUSAL_AUDIT_BRACKET_DECISION_OUT_DIR,
+) -> dict[str, Any]:
+    """Choose the next causal-audit bracket from the completed local claim gate."""
+
+    failures: list[dict[str, Any]] = []
+    source_report: dict[str, Any] | None = None
+    if not causal_fingerprint_report_path.is_file():
+        failures.append(
+            {
+                "field": "causal_fingerprint_report",
+                "expected": "file exists",
+                "actual": "missing",
+                "path": str(causal_fingerprint_report_path),
+            }
+        )
+    else:
+        source_report = _read_json_object(causal_fingerprint_report_path)
+        if source_report.get("status") != "pass":
+            failures.append(
+                {
+                    "field": "causal_fingerprint_report.status",
+                    "expected": "pass",
+                    "actual": source_report.get("status"),
+                    "path": str(causal_fingerprint_report_path),
+                }
+            )
+        if source_report.get("decision") != DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT:
+            failures.append(
+                {
+                    "field": "causal_fingerprint_report.decision",
+                    "expected": DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT,
+                    "actual": source_report.get("decision"),
+                    "path": str(causal_fingerprint_report_path),
+                }
+            )
+
+    evidence = source_report.get("evidence", {}) if source_report else {}
+    signals = evidence.get("signals", {}) if isinstance(evidence, dict) else {}
+    required_signals = (
+        "rank_matched_topk1_ce_better_than_topk2",
+        "exact_pair_synergy_supported",
+        "rank_matched_topk1_intervention_present",
+        "functional_churn_acceptable",
+        "topk2_cooperation_supported_by_pair_gate",
+    )
+    if source_report and not all(signal in signals for signal in required_signals):
+        failures.append(
+            {
+                "field": "causal_fingerprint_report.signals",
+                "expected": sorted(required_signals),
+                "actual": sorted(signals),
+                "path": str(causal_fingerprint_report_path),
+            }
+        )
+
+    causal_claim_supported = bool(
+        source_report and source_report.get("causal_column_claim_supported")
+    )
+    rank_matched_topk1_ce_better = bool(
+        signals.get("rank_matched_topk1_ce_better_than_topk2")
+    )
+    pair_gate_supports_topk2 = bool(
+        signals.get("topk2_cooperation_supported_by_pair_gate")
+    )
+    functional_churn_acceptable = bool(signals.get("functional_churn_acceptable"))
+    exact_pair_synergy_supported = bool(signals.get("exact_pair_synergy_supported"))
+    rank_matched_topk1_intervention_present = bool(
+        signals.get("rank_matched_topk1_intervention_present")
+    )
+    select_rank_matched_topk1 = (
+        not failures
+        and not causal_claim_supported
+        and rank_matched_topk1_ce_better
+        and exact_pair_synergy_supported
+        and rank_matched_topk1_intervention_present
+        and functional_churn_acceptable
+    )
+    colab_topk2_replication_warranted = (
+        not failures
+        and causal_claim_supported
+        and pair_gate_supports_topk2
+        and functional_churn_acceptable
+        and not rank_matched_topk1_ce_better
+    )
+
+    if failures:
+        status = "fail"
+        decision = INSUFFICIENT_EVIDENCE
+        rationale = (
+            "The causal fingerprint decision report is missing, incomplete, or "
+            "not the completed local claim gate."
+        )
+        next_step = (
+            "repair or regenerate the local causal-column fingerprint report "
+            "before choosing a causal-audit bracket"
+        )
+    elif select_rank_matched_topk1:
+        status = "pass"
+        decision = SELECT_RANK_MATCHED_TOPK1_CAUSAL_AUDIT_BRACKET
+        rationale = (
+            "The local claim gate has exact pair-synergy rows, rank-matched "
+            "top-k-1 intervention rows, and acceptable functional-churn "
+            "diagnostics, but it still blocks a top-k-2 causal cooperation "
+            "claim because the rank-matched contextual top-k-1 control has "
+            "better CE. This makes top-k-1 the cleaner default bracket for "
+            "future causal audits while keeping the promoted contextual router "
+            "as the support-selection default."
+        )
+        next_step = (
+            "use rank-matched contextual top-k-1 as the default causal-audit "
+            "bracket for the next local audit; defer Colab top-k-2 replication "
+            "until top-k-2 beats or explains the top-k-1 control"
+        )
+    elif colab_topk2_replication_warranted:
+        status = "pass"
+        decision = DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT
+        rationale = (
+            "The local claim gate supports the top-k-2 causal cooperation claim "
+            "without a rank-matched top-k-1 CE guardrail violation, so a narrow "
+            "Colab replication would be warranted."
+        )
+        next_step = "run one narrow Colab causal-column fingerprint replication"
+    else:
+        status = "fail"
+        decision = INSUFFICIENT_EVIDENCE
+        rationale = (
+            "The local claim gate does not cleanly select either top-k-2 "
+            "replication or the rank-matched top-k-1 causal-audit bracket."
+        )
+        next_step = (
+            "tighten the local causal-column decision criteria before spending "
+            "Colab time"
+        )
+
+    report = {
+        "status": status,
+        "decision": decision,
+        "rank_matched_topk1_default_causal_audit_bracket": select_rank_matched_topk1,
+        "keep_contextual_router_default": not failures,
+        "colab_topk2_replication_warranted": colab_topk2_replication_warranted,
+        "topk2_causal_cooperation_claim_supported": causal_claim_supported,
+        "defer_topk2_causal_claim": not causal_claim_supported,
+        "support_utilization_alone_sufficient": False,
+        "evidence": {
+            "causal_fingerprint_report_path": str(causal_fingerprint_report_path),
+            "causal_fingerprint_report_status": None
+            if source_report is None
+            else source_report.get("status"),
+            "causal_fingerprint_report_decision": None
+            if source_report is None
+            else source_report.get("decision"),
+            "signals": signals,
+            "source_next_step": None
+            if source_report is None
+            else source_report.get("next_step"),
+            "failures": failures,
+        },
+        "rationale": rationale,
+        "next_step": next_step,
+    }
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "decision_report.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    _write_causal_audit_bracket_decision_markdown(
+        out_dir / "decision_report.md",
+        report,
+    )
+    return report
+
+
+def _write_causal_audit_bracket_decision_markdown(
+    path: Path,
+    report: dict[str, Any],
+) -> None:
+    lines = [
+        "# Causal Audit Bracket Decision",
+        "",
+        f"- Status: `{report['status']}`",
+        f"- Decision: `{report['decision']}`",
+        "- Rank-matched top-k-1 default causal-audit bracket: "
+        f"`{report['rank_matched_topk1_default_causal_audit_bracket']}`",
+        "- Keep contextual router default: "
+        f"`{report['keep_contextual_router_default']}`",
+        "- Colab top-k-2 replication warranted: "
+        f"`{report['colab_topk2_replication_warranted']}`",
+        "- Top-k-2 causal cooperation claim supported: "
+        f"`{report['topk2_causal_cooperation_claim_supported']}`",
+        "- Support utilization alone sufficient: "
+        f"`{report['support_utilization_alone_sufficient']}`",
+        "",
+        "## Rationale",
+        "",
+        report["rationale"],
+        "",
+        "## Signals",
+        "",
+    ]
+    for key, value in report["evidence"]["signals"].items():
+        lines.append(f"- {key}: `{value}`")
+    if report["evidence"]["failures"]:
+        lines.extend(["", "## Failures", ""])
+        for failure in report["evidence"]["failures"]:
+            lines.append(
+                "- "
+                f"`{failure.get('field')}` expected "
+                f"`{failure.get('expected')}`, got `{failure.get('actual')}` "
+                f"at `{failure.get('path', '')}`"
+            )
+    lines.extend(["", "## Next Step", "", report["next_step"], ""])
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def write_retention_churn_microtest_decision_report(
     audit_dir: Path = DEFAULT_RETENTION_CHURN_MICROTEST_DIR,
     out_dir: Path = DEFAULT_RETENTION_CHURN_MICROTEST_OUT_DIR,
@@ -15118,6 +15343,7 @@ def main() -> None:
             "post-promotion-support-wide-promoted-default",
             "dead-column-load-balance-probe",
             "causal-column-fingerprint-audit",
+            "causal-audit-bracket-decision",
             "retention-churn-microtest-decision",
         ),
         default="pinned-support",
@@ -15557,6 +15783,13 @@ def main() -> None:
             args.out or DEFAULT_CAUSAL_COLUMN_FINGERPRINT_OUT_DIR,
             deconfounding_dir=args.deconfounding_dir
             or DEFAULT_CAUSAL_COLUMN_FINGERPRINT_DECONFOUNDING_DIR,
+        )
+    elif args.report == "causal-audit-bracket-decision":
+        report = write_causal_audit_bracket_decision_report(
+            args.decision_report[0]
+            if args.decision_report
+            else DEFAULT_CAUSAL_AUDIT_BRACKET_DECISION_REPORT,
+            args.out or DEFAULT_CAUSAL_AUDIT_BRACKET_DECISION_OUT_DIR,
         )
     elif args.report == "retention-churn-microtest-decision":
         report = write_retention_churn_microtest_decision_report(

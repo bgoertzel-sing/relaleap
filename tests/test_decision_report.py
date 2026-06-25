@@ -44,6 +44,7 @@ from relaleap.experiments.decision_report import (
     CONFIRM_POST_PROMOTION_SUPPORT_WIDE_PROMOTED_DEFAULT,
     KEEP_LOAD_BALANCE_PROBE_OPT_IN,
     DIAGNOSE_CAUSAL_COLUMN_FINGERPRINT_AUDIT,
+    SELECT_RANK_MATCHED_TOPK1_CAUSAL_AUDIT_BRACKET,
     DIAGNOSE_RETENTION_CHURN_MICROTEST,
     DIAGNOSE_PC_RESIDUAL_OBJECTIVE,
     STOP_PC_RESIDUAL_OBJECTIVE_VALIDATION,
@@ -81,6 +82,7 @@ from relaleap.experiments.decision_report import (
     write_post_promotion_support_wide_promoted_default_report,
     write_dead_column_load_balance_probe_report,
     write_causal_column_fingerprint_audit_report,
+    write_causal_audit_bracket_decision_report,
     write_retention_churn_microtest_decision_report,
     write_margin_penalty_residual_objective_decision_report,
     write_guided_clipped_hep_decision_report,
@@ -225,6 +227,77 @@ class CausalColumnFingerprintAuditReportTest(unittest.TestCase):
             self.assertEqual(pair_gate["exact_pair_synergy_count"], 2)
             self.assertGreater(pair_gate["exact_pair_synergy_mean"], 0.0)
             self.assertFalse(report["causal_column_claim_supported"])
+
+
+class CausalAuditBracketDecisionReportTest(unittest.TestCase):
+    def test_rank_matched_topk1_selected_after_blocked_topk2_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            audit_dir = tmp_path / "fingerprint"
+            deconfounding_dir = tmp_path / "deconfounding"
+            _write_causal_fingerprint_audit(
+                audit_dir,
+                include_stability=True,
+                include_rank_matched_topk1=True,
+                include_exact_pair_synergy=True,
+                include_topk1_interventions=True,
+                include_functional_churn=True,
+            )
+            _write_causal_deconfounding_audit(deconfounding_dir)
+            source = write_causal_column_fingerprint_audit_report(
+                audit_dir,
+                tmp_path / "fingerprint_report",
+                deconfounding_dir=deconfounding_dir,
+            )
+            self.assertEqual(source["status"], "pass")
+            self.assertFalse(source["causal_column_claim_supported"])
+
+            bracket = write_causal_audit_bracket_decision_report(
+                tmp_path / "fingerprint_report" / "decision_report.json",
+                tmp_path / "bracket_report",
+            )
+
+            self.assertEqual(bracket["status"], "pass")
+            self.assertEqual(
+                bracket["decision"],
+                SELECT_RANK_MATCHED_TOPK1_CAUSAL_AUDIT_BRACKET,
+            )
+            self.assertTrue(
+                bracket["rank_matched_topk1_default_causal_audit_bracket"]
+            )
+            self.assertTrue(bracket["keep_contextual_router_default"])
+            self.assertFalse(bracket["colab_topk2_replication_warranted"])
+            self.assertFalse(bracket["topk2_causal_cooperation_claim_supported"])
+            self.assertFalse(bracket["support_utilization_alone_sufficient"])
+            self.assertTrue(
+                (tmp_path / "bracket_report" / "decision_report.json").is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "bracket_report" / "decision_report.md").is_file()
+            )
+
+    def test_missing_source_report_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+
+            bracket = write_causal_audit_bracket_decision_report(
+                tmp_path / "missing" / "decision_report.json",
+                tmp_path / "bracket_report",
+            )
+
+            self.assertEqual(bracket["status"], "fail")
+            self.assertEqual(bracket["decision"], INSUFFICIENT_EVIDENCE)
+            self.assertFalse(
+                bracket["rank_matched_topk1_default_causal_audit_bracket"]
+            )
+            self.assertFalse(bracket["keep_contextual_router_default"])
+            self.assertIn(
+                "causal_fingerprint_report",
+                [
+                    failure["field"]
+                    for failure in bracket["evidence"]["failures"]
+                ],
+            )
 
 
 class RetentionChurnMicrotestDecisionReportTest(unittest.TestCase):
