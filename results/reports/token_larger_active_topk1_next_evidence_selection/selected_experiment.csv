@@ -1,6 +1,5 @@
-component,purpose
-threshold_sweep_on_existing_context_gate_holdout,find a gate threshold that keeps positive own-context holdout gain while suppressing contexts with predicted off-context harm
-abstention_vs_routed_baseline_control,distinguish clean gating from simply disabling residual columns everywhere
-offcontext_harm_suppression_metric,measure how much negative forced-singleton reuse remains after the gate abstains
-own_context_gain_retention_metric,ensure the gate preserves the context-conditioned singleton benefit
-matched_topk2_random_dense_controls,keep the existing reference and low-rank controls attached to the next claim
+branch,component,purpose
+retention_churn,anchor_task_drift,test whether retention survives transfer without hiding behind CE averages
+retention_churn,functional_and_logit_churn,compare final functions and logits after matched updates
+retention_churn,support_identity_churn,reconcile router-support stability with finite-update support churn
+retention_churn,finite_update_commutator_controls,"keep top-k-1, dense active-rank, random fixed top-k-2, and promoted top-k-2 controls attached"

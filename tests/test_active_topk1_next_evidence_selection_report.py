@@ -5,32 +5,32 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from relaleap.experiments.active_topk1_backend_provenance_manifest import (
-    ACTIVE_TOPK1_BACKEND_PROVENANCE_ESTABLISHED,
-)
 from relaleap.experiments.active_topk1_functional_retention_audit import (
     FUNCTIONAL_RETENTION_BRACKET_ONLY,
 )
 from relaleap.experiments.active_topk1_next_evidence_selection_report import (
     INSUFFICIENT_EVIDENCE,
     NEXT_EVIDENCE_SELECTED,
-    SELECTED_EXPERIMENT,
+    SELECTED_MATCHED_DECONFOUNDING,
+    SELECTED_RETENTION_CHURN,
     run_active_topk1_next_evidence_selection_report,
 )
-from relaleap.experiments.active_topk1_post_decomposition_decision_report import (
-    BROAD_REUSABLE_SINGLETON_CLAIM_EXCLUDED,
-    COLUMN_PLUS_CONTEXT_GATE_HYPOTHESIS,
+from relaleap.experiments.active_topk1_retention_churn_summary import (
+    ACTIVE_TOPK1_RETENTION_CHURN_STABLE,
 )
-from relaleap.experiments.active_topk1_runpod_post_decomposition_closeout_report import (
-    RUNPOD_POST_DECOMPOSITION_VALIDATED,
+from relaleap.experiments.promoted_topk2_finite_update_augmented_causal_gate import (
+    BLOCKED as FINITE_UPDATE_TOPK2_BLOCKED,
 )
-from relaleap.experiments.active_topk1_singleton_reconciliation_audit import (
-    CONTEXT_GATED_SINGLETON_EFFICACY_WITH_OFFCONTEXT_INTERFERENCE,
+from relaleap.experiments.promoted_topk2_finite_update_control_matrix import (
+    FINITE_UPDATE_CONTROL_MATRIX_READY,
 )
+
+
+TOPK2_NOT_SUPPORTED = "topk2_comparative_causal_cooperation_not_supported"
 
 
 class ActiveTopk1NextEvidenceSelectionReportTest(unittest.TestCase):
-    def test_report_selects_context_gate_suppression_calibration_audit(self) -> None:
+    def test_report_selects_retention_churn_when_controls_are_adequate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             paths = _write_sources(root)
@@ -40,7 +40,7 @@ class ActiveTopk1NextEvidenceSelectionReportTest(unittest.TestCase):
                     [
                         "strategic_change_level: minor",
                         "notify_ben: false",
-                        "recommended_next_action: run context-conditioned singleton interference decomposition",
+                        "recommended_next_action: Run active-rank-matched top-k-1 selection",
                     ]
                 )
                 + "\n",
@@ -48,33 +48,22 @@ class ActiveTopk1NextEvidenceSelectionReportTest(unittest.TestCase):
             )
 
             summary = run_active_topk1_next_evidence_selection_report(
-                closeout_dir=paths["closeout"],
-                direction_dir=paths["direction"],
-                retention_dir=paths["retention"],
+                finite_augmented_dir=paths["finite_augmented"],
+                functional_retention_dir=paths["functional_retention"],
                 retention_stability_dir=paths["retention_stability"],
-                provenance_dir=paths["provenance"],
-                causal_bracket_dir=paths["causal_bracket"],
+                deconfounded_dir=paths["deconfounded"],
+                finite_control_dir=paths["finite_control"],
                 strategy_review_path=review,
                 out_dir=root / "report",
             )
 
             self.assertEqual(summary["status"], "pass")
             self.assertEqual(summary["decision"], NEXT_EVIDENCE_SELECTED)
-            self.assertEqual(summary["selected_experiment"], SELECTED_EXPERIMENT)
-            self.assertEqual(summary["claim_status"], COLUMN_PLUS_CONTEXT_GATE_HYPOTHESIS)
-            self.assertEqual(
-                summary["claim_policy"], BROAD_REUSABLE_SINGLETON_CLAIM_EXCLUDED
-            )
+            self.assertEqual(summary["selected_experiment"], SELECTED_RETENTION_CHURN)
             self.assertFalse(summary["selection_gate"]["requires_gpu_now"])
             self.assertFalse(summary["selection_gate"]["new_training_required"])
-            self.assertIn(
-                "offcontext_singleton_interference_remains_present",
-                summary["selection_gate"]["selected_because"],
-            )
-            self.assertIn(
-                "offcontext_harm_suppression_metric",
-                {row["component"] for row in summary["experiment_design"]["components"]},
-            )
+            self.assertTrue(summary["selection_gate"]["matched_control_coverage_adequate"])
+            self.assertTrue(summary["selection_gate"]["topk2_causal_cooperation_blocked"])
             self.assertEqual(summary["strategy_review"]["strategic_change_level"], "minor")
             self.assertFalse(summary["strategy_review"]["notify_ben"])
             self.assertTrue((root / "report" / "summary.json").is_file())
@@ -82,19 +71,40 @@ class ActiveTopk1NextEvidenceSelectionReportTest(unittest.TestCase):
             self.assertTrue((root / "report" / "selected_experiment.csv").is_file())
             self.assertTrue((root / "report" / "notes.md").is_file())
 
-    def test_report_fails_closed_when_closeout_is_missing(self) -> None:
+    def test_report_selects_matched_deconfounding_when_control_coverage_is_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            paths = _write_sources(root, include_dense_role=False)
+
+            summary = run_active_topk1_next_evidence_selection_report(
+                finite_augmented_dir=paths["finite_augmented"],
+                functional_retention_dir=paths["functional_retention"],
+                retention_stability_dir=paths["retention_stability"],
+                deconfounded_dir=paths["deconfounded"],
+                finite_control_dir=paths["finite_control"],
+                strategy_review_path=root / "missing-review.md",
+                out_dir=root / "report",
+            )
+
+            self.assertEqual(summary["status"], "pass")
+            self.assertEqual(summary["decision"], NEXT_EVIDENCE_SELECTED)
+            self.assertEqual(summary["selected_experiment"], SELECTED_MATCHED_DECONFOUNDING)
+            self.assertFalse(summary["selection_gate"]["matched_control_coverage_adequate"])
+
+    def test_report_fails_closed_when_required_source_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             paths = _write_sources(root)
-            (paths["closeout"] / "summary.json").unlink()
+            (paths["finite_augmented"] / "summary.json").unlink()
 
             summary = run_active_topk1_next_evidence_selection_report(
-                closeout_dir=paths["closeout"],
-                direction_dir=paths["direction"],
-                retention_dir=paths["retention"],
+                finite_augmented_dir=paths["finite_augmented"],
+                functional_retention_dir=paths["functional_retention"],
                 retention_stability_dir=paths["retention_stability"],
-                provenance_dir=paths["provenance"],
-                causal_bracket_dir=paths["causal_bracket"],
+                deconfounded_dir=paths["deconfounded"],
+                finite_control_dir=paths["finite_control"],
                 strategy_review_path=root / "missing-review.md",
                 out_dir=root / "report",
             )
@@ -105,104 +115,105 @@ class ActiveTopk1NextEvidenceSelectionReportTest(unittest.TestCase):
                 (failure.get("source"), failure.get("field"))
                 for failure in summary["failures"]
             }
-            self.assertIn(("runpod_post_decomposition_closeout", "summary_json"), fields)
+            self.assertIn(("finite_update_augmented_causal_gate", "summary_json"), fields)
 
 
-def _write_sources(root: Path) -> dict[str, Path]:
-    closeout = root / "closeout"
-    direction = root / "direction"
-    retention = root / "retention"
+def _write_sources(root: Path, *, include_dense_role: bool = True) -> dict[str, Path]:
+    finite_augmented = root / "finite_augmented"
+    functional_retention = root / "functional_retention"
     retention_stability = root / "retention_stability"
-    provenance = root / "provenance"
-    causal_bracket = root / "causal_bracket"
+    deconfounded = root / "deconfounded"
+    finite_control = root / "finite_control"
     for path in (
-        closeout,
-        direction,
-        retention,
+        finite_augmented,
+        functional_retention,
         retention_stability,
-        provenance,
-        causal_bracket,
+        deconfounded,
+        finite_control,
     ):
         path.mkdir()
+
+    role_counts = {
+        "promoted_contextual_topk2": 10,
+        "rank_matched_contextual_topk1": 10,
+        "random_fixed_topk2": 10,
+    }
+    if include_dense_role:
+        role_counts["dense_active_rank"] = 10
     _write_json(
-        closeout / "summary.json",
+        finite_augmented / "summary.json",
         {
             "status": "pass",
-            "decision": RUNPOD_POST_DECOMPOSITION_VALIDATED,
-            "claim_status": COLUMN_PLUS_CONTEXT_GATE_HYPOTHESIS,
-            "claim_policy": BROAD_REUSABLE_SINGLETON_CLAIM_EXCLUDED,
-            "metric_comparison": [
-                _metric("own_context_singleton_gain_mean", 1.0),
-                _metric("off_context_singleton_gain_mean", -0.2),
-                _metric("context_gated_net_gain_holdout_mean", 0.7),
-                _metric("context_gate_gain_minus_ungated_holdout_mean", 0.4),
-                _metric("topk2_reference_gain_mean", 0.1),
-                _metric("random_singleton_gain_mean", 0.0),
-                _metric("exhaustive_singleton_gain_mean", 1.2),
-            ],
-            "signal_comparison": [
-                _signal("own_context_singleton_gain_positive", True),
-                _signal("offcontext_singleton_interference_present", True),
-                _signal("context_gate_holdout_net_gain_positive", True),
-                _signal("context_gate_improves_over_ungated_holdout", True),
-                _signal("matched_topk2_reference_present", True),
-                _signal("random_control_present", True),
-                _signal("exhaustive_control_present", True),
-            ],
+            "decision": FINITE_UPDATE_TOPK2_BLOCKED,
+            "metrics": {
+                "augmented_strata_count": 4,
+                "augmented_matched_exact_context_count": 32,
+                "augmented_mean_topk2_minus_topk1_finite_logit_mse": 0.2,
+                "augmented_mean_topk2_minus_dense_finite_logit_mse": 0.1,
+                "augmented_mean_topk2_finite_support_churn_fraction": 0.9,
+            },
+            "role_counts": role_counts,
         },
     )
     _write_json(
-        direction / "summary.json",
-        {
-            "status": "pass",
-            "decision": "post_bracket_direction_selected",
-        },
-    )
-    _write_json(
-        retention / "summary.json",
+        functional_retention / "summary.json",
         {
             "status": "pass",
             "decision": FUNCTIONAL_RETENTION_BRACKET_ONLY,
-            "claim_status": CONTEXT_GATED_SINGLETON_EFFICACY_WITH_OFFCONTEXT_INTERFERENCE,
+            "evidence": {
+                "aggregates": {
+                    "mean_topk1_anchor_support_churn_after_transfer": 0.01,
+                    "mean_topk2_anchor_support_churn_after_transfer": 0.8,
+                    "mean_transfer_improvement_advantage_topk1_vs_topk2": 0.03,
+                    "mean_transfer_improvement_advantage_topk1_vs_dense": 0.5,
+                    "mean_commutator_anchor_logit_mse_advantage_topk1_vs_topk2": 0.2,
+                    "mean_commutator_anchor_logit_mse_advantage_topk1_vs_dense": 0.05,
+                },
+                "claim_signals": {
+                    "support_identity_churn_cleaner_than_topk2": True,
+                    "functional_logit_churn_not_higher_than_topk2": True,
+                    "finite_update_commutator_not_worse_than_topk2": True,
+                    "transfer_improvement_beats_dense_control": True,
+                },
+            },
         },
     )
     _write_json(
         retention_stability / "summary.json",
         {
             "status": "pass",
-            "decision": "active_topk1_retention_churn_stable_across_local_seeds",
+            "decision": ACTIVE_TOPK1_RETENTION_CHURN_STABLE,
         },
     )
     _write_json(
-        provenance / "summary.json",
+        deconfounded / "summary.json",
         {
             "status": "pass",
-            "decision": ACTIVE_TOPK1_BACKEND_PROVENANCE_ESTABLISHED,
+            "decision": TOPK2_NOT_SUPPORTED,
+            "evidence": {
+                "metrics": {
+                    "matched_exact_context_count": 20,
+                    "topk2_incremental_pair_gain_positive_strata_fraction": 0.6,
+                    "topk2_fixed_support_cleaner_strata_fraction": 0.6,
+                }
+            },
         },
     )
     _write_json(
-        causal_bracket / "decision_report.json",
+        finite_control / "summary.json",
         {
             "status": "pass",
-            "decision": "confirm_active_rank_matched_topk1_causal_bracket",
+            "decision": FINITE_UPDATE_CONTROL_MATRIX_READY,
+            "metrics": {"topk2_minus_topk1_logit_mse": 0.2},
         },
     )
     return {
-        "closeout": closeout,
-        "direction": direction,
-        "retention": retention,
+        "finite_augmented": finite_augmented,
+        "functional_retention": functional_retention,
         "retention_stability": retention_stability,
-        "provenance": provenance,
-        "causal_bracket": causal_bracket,
+        "deconfounded": deconfounded,
+        "finite_control": finite_control,
     }
-
-
-def _metric(field: str, value: float) -> dict[str, object]:
-    return {"field": field, "local": value, "runpod": value, "match": True}
-
-
-def _signal(field: str, value: bool) -> dict[str, object]:
-    return {"field": field, "local": value, "runpod": value, "match": True}
 
 
 def _write_json(path: Path, value: dict[str, object]) -> None:

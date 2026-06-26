@@ -2,27 +2,20 @@
 
 - Status: `pass`
 - Decision: `active_topk1_next_evidence_selected`
-- Selected experiment: `context_gate_suppression_calibration_audit`
-- Claim status: `column_plus_context_gate_hypothesis`
-- Claim policy: `broad_reusable_singleton_claim_excluded`
+- Selected experiment: `retention_churn`
 - Requires GPU now: `False`
 - New training required: `False`
-- Git commit: `1107825193739fe41d75cb854bdf42338128e899`
-
-## Key Evidence
-
-- Own-context singleton gain mean: `1.0019046117862065`
-- Off-context singleton gain mean: `-0.13995217362127335`
-- Context-gated holdout net gain: `0.7776962748832172`
-- Context gate minus ungated holdout: `0.44408054031165584`
+- Matched-control coverage adequate: `True`
+- Top-k-2 causal cooperation blocked: `True`
+- Git commit: `0bc6962e0315b0453ebdeb793f95b2b8ca04a3a7`
 
 ## Rationale
 
-The RunPod-validated decomposition already establishes positive own-context singleton gain, negative off-context forced-singleton reuse, and positive context-gated holdout gain. Repeating backend validation or adding another wrapper would duplicate completed work. The next useful evidence is a bounded no-training gate-suppression audit that tests whether off-context interference can be cleanly gated away while retaining the in-context singleton gain.
+The matched-control coverage is adequate and the active rank-matched top-k-1 bracket already has favorable support churn, functional/logit churn, finite-update commutator, transfer, and dense-control evidence. The finite-update-augmented causal gate keeps top-k-2 causal-cooperation claims blocked, so the highest-information follow-up is retention and functional churn rather than another mitigation family or CE variant.
 
 ## Next Step
 
-implement and run the local no-training context-gate suppression calibration audit using the validated interference CSV artifacts
+run the retention/functional-churn follow-up as the next bounded branch: promoted contextual top-k-2, rank-matched contextual top-k-1, dense active-rank, and random fixed top-k-2 controls; prioritize anchor drift, functional churn, support identity churn, finite-update commutator risk, residual/logit deltas, and CE guardrails
 
 ## Strategy Review
 
@@ -30,4 +23,4 @@ implement and run the local no-training context-gate suppression calibration aud
 - Strategic change level: `minor`
 - Notify Ben: `False`
 - Ben notification required: `False`
-- Incorporation: followed where still applicable: the recommended context-conditioned interference decomposition and RunPod closeout are complete; this report selects the next bounded local gate-suppression audit rather than duplicating backend validation
+- Incorporation: accepted: the report follows the recommendation to run a no-training active-rank-matched top-k-1 selection report and favors retention/functional-churn when matched-control coverage is adequate

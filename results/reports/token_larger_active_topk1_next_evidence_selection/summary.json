@@ -5,104 +5,71 @@
     "source_rows_csv": "results/reports/token_larger_active_topk1_next_evidence_selection/source_rows.csv",
     "summary_json": "results/reports/token_larger_active_topk1_next_evidence_selection/summary.json"
   },
-  "claim_policy": "broad_reusable_singleton_claim_excluded",
-  "claim_status": "column_plus_context_gate_hypothesis",
+  "branch_options": [
+    "retention_churn",
+    "matched_deconfounding",
+    "dense_teacher_residual_distillation"
+  ],
   "decision": "active_topk1_next_evidence_selected",
-  "evidence_snapshot": {
-    "metrics": {
-      "context_count": 252,
-      "context_gate_gain_minus_ungated_holdout_mean": 0.44408054031165584,
-      "context_gated_net_gain_holdout_mean": 0.7776962748832172,
-      "exhaustive_control_context_count": 252,
-      "exhaustive_singleton_gain_mean": 1.4447493151066795,
-      "off_context_singleton_gain_mean": -0.13995217362127335,
-      "offcontext_context_count": 252,
-      "own_context_singleton_gain_mean": 1.0019046117862065,
-      "random_control_context_count": 252,
-      "random_singleton_gain_mean": 0.0,
-      "selected_context_count": 120,
-      "source_row_count": 106848,
-      "topk2_reference_gain_mean": 0.06945956072637013
-    },
-    "signals": {
-      "context_gate_holdout_net_gain_positive": true,
-      "context_gate_improves_over_ungated_holdout": true,
-      "exhaustive_control_present": true,
-      "matched_topk2_reference_present": true,
-      "offcontext_singleton_interference_present": true,
-      "own_context_singleton_gain_positive": true,
-      "random_control_present": true
-    }
-  },
-  "experiment_design": {
-    "components": [
-      {
-        "component": "threshold_sweep_on_existing_context_gate_holdout",
-        "purpose": "find a gate threshold that keeps positive own-context holdout gain while suppressing contexts with predicted off-context harm"
-      },
-      {
-        "component": "abstention_vs_routed_baseline_control",
-        "purpose": "distinguish clean gating from simply disabling residual columns everywhere"
-      },
-      {
-        "component": "offcontext_harm_suppression_metric",
-        "purpose": "measure how much negative forced-singleton reuse remains after the gate abstains"
-      },
-      {
-        "component": "own_context_gain_retention_metric",
-        "purpose": "ensure the gate preserves the context-conditioned singleton benefit"
-      },
-      {
-        "component": "matched_topk2_random_dense_controls",
-        "purpose": "keep the existing reference and low-rank controls attached to the next claim"
-      }
-    ],
-    "source_artifacts": [
-      "results/audits/token_larger_active_topk1_context_conditioned_singleton_interference/context_gate_holdout.csv",
-      "results/audits/token_larger_active_topk1_context_conditioned_singleton_interference/singleton_interference_by_context.csv",
-      "results/audits/token_larger_active_topk1_context_conditioned_singleton_interference/singleton_interference_by_stratum.csv"
-    ],
-    "success_criteria": {
-      "broad_reusable_singleton_claim_policy": "broad_reusable_singleton_claim_excluded",
-      "context_gated_net_gain_holdout_mean": "> 0.0",
-      "offcontext_harm_after_gate_mean": "<= 0.0 or materially below ungated off-context harm",
-      "own_context_gain_retention_fraction": ">= 0.8 of validated own-context singleton gain"
-    }
-  },
   "failures": [],
-  "git_commit": "1107825193739fe41d75cb854bdf42338128e899",
-  "next_step": "implement and run the local no-training context-gate suppression calibration audit using the validated interference CSV artifacts",
+  "git_commit": "0bc6962e0315b0453ebdeb793f95b2b8ca04a3a7",
+  "metrics": {
+    "control_matrix_topk2_minus_topk1_logit_mse": 0.22752397570613553,
+    "deconfounded_matched_exact_context_count": 210,
+    "deconfounded_topk2_fixed_cleaner_fraction": 0.6521739130434783,
+    "deconfounded_topk2_positive_fraction": 0.6521739130434783,
+    "finite_augmented_strata_count": 46,
+    "finite_matched_exact_context_count": 369,
+    "finite_role_counts": {
+      "dense_active_rank": 1008,
+      "promoted_contextual_topk2": 1008,
+      "random_fixed_topk2": 1008,
+      "rank_matched_contextual_topk1": 1008
+    },
+    "finite_topk2_minus_dense_logit_mse": 0.23304109157759784,
+    "finite_topk2_minus_topk1_logit_mse": 0.2784630590280149,
+    "finite_topk2_support_churn": 0.9247085715595466,
+    "functional_mean_topk1_support_churn": 0.005859375,
+    "functional_mean_topk2_support_churn": 0.85546875,
+    "functional_topk1_commutator_advantage_vs_dense": 0.06801410252228379,
+    "functional_topk1_commutator_advantage_vs_topk2": 0.23237817594781518,
+    "functional_topk1_transfer_advantage_vs_dense": 0.5444295406341553,
+    "functional_topk1_transfer_advantage_vs_topk2": 0.03069305419921875
+  },
+  "next_step": "run the retention/functional-churn follow-up as the next bounded branch: promoted contextual top-k-2, rank-matched contextual top-k-1, dense active-rank, and random fixed top-k-2 controls; prioritize anchor drift, functional churn, support identity churn, finite-update commutator risk, residual/logit deltas, and CE guardrails",
   "out_dir": "results/reports/token_larger_active_topk1_next_evidence_selection",
   "platform": "macOS-26.5.1-x86_64-i386-64bit",
-  "rationale": "The RunPod-validated decomposition already establishes positive own-context singleton gain, negative off-context forced-singleton reuse, and positive context-gated holdout gain. Repeating backend validation or adding another wrapper would duplicate completed work. The next useful evidence is a bounded no-training gate-suppression audit that tests whether off-context interference can be cleanly gated away while retaining the in-context singleton gain.",
-  "runtime_seconds": 0.0032,
-  "selected_experiment": "context_gate_suppression_calibration_audit",
+  "rationale": "The matched-control coverage is adequate and the active rank-matched top-k-1 bracket already has favorable support churn, functional/logit churn, finite-update commutator, transfer, and dense-control evidence. The finite-update-augmented causal gate keeps top-k-2 causal-cooperation claims blocked, so the highest-information follow-up is retention and functional churn rather than another mitigation family or CE variant.",
+  "runtime_seconds": 0.0019,
+  "selected_experiment": "retention_churn",
   "selection_gate": {
     "duplicates_completed_work": false,
+    "matched_control_coverage_adequate": true,
     "new_training_required": false,
     "requires_gpu_now": false,
     "selected_because": [
-      "runpod_closeout_already_validated",
-      "offcontext_singleton_interference_remains_present",
-      "context_gate_positive_but_not_yet_clean_suppression_policy",
-      "broad_reusable_singleton_claim_still_excluded"
-    ]
+      "external_review_prefers_retention_when_coverage_is_adequate",
+      "matched_control_coverage_adequate",
+      "active_topk1_low_churn_and_transfer_evidence_present",
+      "topk2_causal_cooperation_blocked_by_deconfounded_and_finite_update_gates"
+    ],
+    "topk2_causal_cooperation_blocked": true
+  },
+  "signals": {
+    "dense_control_present": true,
+    "finite_control_matrix_ready": true,
+    "matched_control_coverage_adequate": true,
+    "retention_churn_evidence_adequate": true,
+    "strategy_review_prefers_retention_if_covered": true,
+    "topk2_causal_cooperation_blocked": true
   },
   "source_rows": [
     {
-      "claim_status": "column_plus_context_gate_hypothesis",
-      "decision": "runpod_post_decomposition_validated",
-      "path": "results/reports/token_larger_active_topk1_runpod_post_decomposition_closeout/summary.json",
+      "claim_status": "causal_cooperation_blocked_unless_functional_benefit_survives_finite_update_risk_controls",
+      "decision": "finite_update_augmented_topk2_causal_cooperation_blocked",
+      "path": "results/reports/token_larger_promoted_topk2_finite_update_augmented_causal_gate/summary.json",
       "present": true,
-      "source": "runpod_post_decomposition_closeout",
-      "status": "pass"
-    },
-    {
-      "claim_status": "broad_reusable_singleton_claim_excluded",
-      "decision": "post_bracket_direction_selected",
-      "path": "results/reports/token_larger_active_topk1_post_bracket_research_direction/summary.json",
-      "present": true,
-      "source": "post_bracket_direction",
+      "source": "finite_update_augmented_causal_gate",
       "status": "pass"
     },
     {
@@ -123,23 +90,23 @@
     },
     {
       "claim_status": null,
-      "decision": "active_topk1_backend_provenance_established",
-      "path": "results/reports/token_larger_active_topk1_backend_provenance_manifest/summary.json",
+      "decision": "topk2_comparative_causal_cooperation_not_supported",
+      "path": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention/summary.json",
       "present": true,
-      "source": "backend_provenance_manifest",
+      "source": "deconfounded_intervention",
       "status": "pass"
     },
     {
-      "claim_status": null,
-      "decision": "confirm_active_rank_matched_topk1_causal_bracket",
-      "path": "results/reports/token_larger_active_rank_matched_topk1_causal_bracket_audit/decision_report.json",
+      "claim_status": "matrix_input_only_not_causal_cooperation_evidence",
+      "decision": "finite_update_control_matrix_ready",
+      "path": "results/reports/token_larger_promoted_topk2_finite_update_control_matrix/summary.json",
       "present": true,
-      "source": "active_rank_matched_topk1_causal_bracket",
+      "source": "finite_update_control_matrix",
       "status": "pass"
     },
     {
       "claim_status": "strategic_change_level=minor; notify_ben=False",
-      "decision": "Implement the post-bracket research-direction report so that it selects and then runs a bounded context-conditioned active-top-k1 retention/interference audit with matched top-k2, random, and dense controls, while explicitly excluding any reusable singleton claim until off-context interference is removed or cleanly gated.",
+      "decision": "Run the planned no-training active-rank-matched top-k-1 evidence-selection report and use it to select one bounded follow-up, with retention/functional-churn favored if matched-control coverage is adequate.",
       "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
       "present": true,
       "source": "strategy_review",
@@ -149,11 +116,11 @@
   "status": "pass",
   "strategy_review": {
     "ben_notification_required": false,
-    "incorporation": "followed where still applicable: the recommended context-conditioned interference decomposition and RunPod closeout are complete; this report selects the next bounded local gate-suppression audit rather than duplicating backend validation",
+    "incorporation": "accepted: the report follows the recommendation to run a no-training active-rank-matched top-k-1 selection report and favors retention/functional-churn when matched-control coverage is adequate",
     "notify_ben": false,
     "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
     "present": true,
-    "recommended_next_action": "Implement the post-bracket research-direction report so that it selects and then runs a bounded context-conditioned active-top-k1 retention/interference audit with matched top-k2, random, and dense controls, while explicitly excluding any reusable singleton claim until off-context interference is removed or cleanly gated.",
+    "recommended_next_action": "Run the planned no-training active-rank-matched top-k-1 evidence-selection report and use it to select one bounded follow-up, with retention/functional-churn favored if matched-control coverage is adequate.",
     "strategic_change_level": "minor"
   }
 }
