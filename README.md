@@ -432,6 +432,25 @@ top-k `1`, random fixed top-k `2`, and dense active-rank controls. A candidate
 must materially reduce absolute anchor commutator logit MSE while retaining
 transfer improvement, support usage, and anchor CE drift.
 
+After simple value scaling/clipping, low-rank value updates, and the
+commutator-aware value penalty all fail their promoted top-k-2 commutator
+mitigation gates, select exactly one next mitigation branch without rerunning
+training:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_mitigation_branch_selector
+```
+
+This writes
+`results/reports/token_larger_promoted_topk2_mitigation_branch_selector/summary.json`,
+`source_rows.csv`, `candidate_actions.csv`, and `notes.md`. It consumes the
+shortcut decision, finite-update order-control report, simple value mitigation
+gate, low-rank value gate, and commutator-value-penalty probe. The selector
+fails closed on missing or inconsistent packets and chooses exactly one of
+`router_policy_mitigation_probe` or `explicit_order_averaging_mitigation_probe`;
+order averaging remains a mitigation candidate only, not a causal-cooperation
+claim.
+
 After refreshed per-token finite-update packets exist, turn the finite-update
 evidence into an explicit causal-control matrix input without rerunning
 training:
