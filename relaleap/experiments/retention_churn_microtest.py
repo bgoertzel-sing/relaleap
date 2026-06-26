@@ -41,6 +41,8 @@ class _VariantSpec:
     dense_rank: int | None = None
     freeze_router_during_transfer: bool = False
     gradient_clip_norm: float | None = None
+    anchor_update_group: str = "full"
+    transfer_update_group: str = "full"
 
 
 def run_retention_churn_microtest(
@@ -48,6 +50,7 @@ def run_retention_churn_microtest(
     out_dir: Path,
     *,
     include_mitigation_variants: bool = False,
+    include_decomposition_variants: bool = False,
 ) -> dict[str, Any]:
     """Train on slice A then slice B and measure anchor drift/churn."""
 
@@ -174,6 +177,31 @@ def run_retention_churn_microtest(
                     support_router="contextual_mlp",
                     contextual_router_hidden_dim=contextual_router_hidden_dim,
                     gradient_clip_norm=0.25,
+                ),
+            ]
+        )
+    if include_decomposition_variants:
+        specs.extend(
+            [
+                _VariantSpec(
+                    name="router_only_transfer_topk2",
+                    kind="sparse",
+                    top_k=2,
+                    num_columns=num_columns,
+                    atoms_per_column=atoms_per_column,
+                    support_router="contextual_mlp",
+                    contextual_router_hidden_dim=contextual_router_hidden_dim,
+                    transfer_update_group="router_only",
+                ),
+                _VariantSpec(
+                    name="value_only_transfer_topk2",
+                    kind="sparse",
+                    top_k=2,
+                    num_columns=num_columns,
+                    atoms_per_column=atoms_per_column,
+                    support_router="contextual_mlp",
+                    contextual_router_hidden_dim=contextual_router_hidden_dim,
+                    transfer_update_group="value_only",
                 ),
             ]
         )
@@ -327,6 +355,7 @@ def run_retention_churn_microtest(
                 learning_rate=learning_rate,
                 support_indices=fixed_anchor_support,
                 gradient_clip_norm=spec.gradient_clip_norm,
+                update_group=spec.anchor_update_group,
             )
             before_b = {key: value.detach().clone() for key, value in residual.state_dict().items()}
             anchor_before = _sparse_snapshot(
@@ -358,6 +387,7 @@ def run_retention_churn_microtest(
                 support_indices=fixed_transfer_support,
                 freeze_router=spec.freeze_router_during_transfer,
                 gradient_clip_norm=spec.gradient_clip_norm,
+                update_group=spec.transfer_update_group,
             )
             anchor_after = _sparse_snapshot(
                 base=base,
@@ -398,6 +428,7 @@ def run_retention_churn_microtest(
                 learning_rate=learning_rate,
                 support_indices=fixed_transfer_support,
                 gradient_clip_norm=spec.gradient_clip_norm,
+                update_group=spec.anchor_update_group,
             )
             _train_sparse(
                 base=base,
@@ -410,6 +441,7 @@ def run_retention_churn_microtest(
                 support_indices=fixed_anchor_support,
                 freeze_router=spec.freeze_router_during_transfer,
                 gradient_clip_norm=spec.gradient_clip_norm,
+                update_group=spec.transfer_update_group,
             )
             reverse_anchor_final = _sparse_snapshot(
                 base=base,
@@ -517,6 +549,8 @@ def run_retention_churn_microtest(
             "gradient_clip_norm": (
                 "" if spec.gradient_clip_norm is None else spec.gradient_clip_norm
             ),
+            "anchor_update_group": spec.anchor_update_group,
+            "transfer_update_group": spec.transfer_update_group,
         }
         variant_rows.append(row)
 
@@ -554,6 +588,7 @@ def run_retention_churn_microtest(
                 "commutator_transfer_residual_stream_l2",
             ],
             "include_mitigation_variants": include_mitigation_variants,
+            "include_decomposition_variants": include_decomposition_variants,
         },
         "artifacts": {
             "summary_json": str(out_dir / "summary.json"),
@@ -582,16 +617,27 @@ def _train_sparse(
     support_indices: Any | None = None,
     freeze_router: bool = False,
     gradient_clip_norm: float | None = None,
+    update_group: str = "full",
 ) -> None:
     import torch
     import torch.nn.functional as F
 
     residual.train()
-    trainable_parameters = [
-        parameter
-        for name, parameter in residual.named_parameters()
-        if not (freeze_router and _is_router_parameter(name))
-    ]
+    trainable_parameters = []
+    for name, parameter in residual.named_parameters():
+        is_router = _is_router_parameter(name)
+        if freeze_router and is_router:
+            continue
+        if update_group == "full":
+            trainable_parameters.append(parameter)
+        elif update_group == "router_only" and is_router:
+            trainable_parameters.append(parameter)
+        elif update_group == "value_only" and not is_router:
+            trainable_parameters.append(parameter)
+        elif update_group not in {"full", "router_only", "value_only"}:
+            raise ValueError("update_group must be one of: full, router_only, value_only")
+    if not trainable_parameters:
+        raise ValueError(f"update_group selected no trainable parameters: {update_group}")
     optimizer = torch.optim.AdamW(trainable_parameters, lr=learning_rate)
     for _ in range(steps):
         optimizer.zero_grad(set_to_none=True)
@@ -809,11 +855,17 @@ def main() -> None:
         action="store_true",
         help="Also evaluate bounded router-freeze and update-clipping top-k-2 variants.",
     )
+    parser.add_argument(
+        "--include-decomposition-variants",
+        action="store_true",
+        help="Also evaluate full-anchor then router-only/value-only transfer top-k-2 variants.",
+    )
     args = parser.parse_args()
     summary = run_retention_churn_microtest(
         args.config,
         args.out,
         include_mitigation_variants=args.include_mitigation_variants,
+        include_decomposition_variants=args.include_decomposition_variants,
     )
     print(
         json.dumps(

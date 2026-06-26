@@ -380,6 +380,22 @@ absolute anchor commutator logit MSE while retaining transfer improvement and
 support usage, so a support-collapse or transfer-destroying variant is rejected
 even if its support churn falls.
 
+After a negative mitigation gate, decompose the promoted contextual top-k-2
+finite-update packet into full, router-only, and value-only transfer updates
+under the same A/B versus B/A microtest protocol:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_update_decomposition_audit
+```
+
+This writes
+`results/audits/token_larger_promoted_topk2_update_decomposition_audit/summary.json`,
+`variant_metrics.csv`, `phase_metrics.csv`, `decomposition_rows.csv`, and
+`decomposition_notes.md`. The audit keeps full anchor-slice training fixed,
+then restricts the second-slice update group to router-only or value-only to
+identify whether order sensitivity is mainly router-update, value-update, or
+mixed before selecting a mitigation family.
+
 To inspect the older fixed-singleton gain/regret packet that motivated the
 singleton reconciliation audit, run:
 

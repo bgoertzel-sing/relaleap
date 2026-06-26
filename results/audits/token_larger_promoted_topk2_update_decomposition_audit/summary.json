@@ -1,0 +1,76 @@
+{
+  "artifacts": {
+    "decomposition_rows_csv": "results/audits/token_larger_promoted_topk2_update_decomposition_audit/decomposition_rows.csv",
+    "notes_md": "results/audits/token_larger_promoted_topk2_update_decomposition_audit/decomposition_notes.md",
+    "phase_metrics_csv": "results/audits/token_larger_promoted_topk2_update_decomposition_audit/phase_metrics.csv",
+    "summary_json": "results/audits/token_larger_promoted_topk2_update_decomposition_audit/summary.json",
+    "variant_metrics_csv": "results/audits/token_larger_promoted_topk2_update_decomposition_audit/variant_metrics.csv"
+  },
+  "config_path": "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
+  "decision": "value_update_dominated_order_sensitivity",
+  "decomposition_rows": [
+    {
+      "anchor_ce_drift": 4.76837158203125e-07,
+      "anchor_support_churn_after_transfer": 0.8125,
+      "anchor_used_columns_after_transfer": 23.0,
+      "baseline_commutator_anchor_logit_mse": 0.21909268200397491,
+      "baseline_transfer_ce_improvement": 0.8878865242004395,
+      "baseline_variant": "promoted_contextual_topk2",
+      "commutator_anchor_fraction_of_full": 0.22705120722820915,
+      "commutator_anchor_logit_mse": 0.04974525794386864,
+      "commutator_anchor_support_churn": 0.921875,
+      "commutator_transfer_logit_mse": 0.0507337860763073,
+      "transfer_ce_improvement": 0.0005395412445068359,
+      "transfer_retention_fraction": 0.0006076691444244006,
+      "transfer_update_group": "router_only",
+      "variant": "router_only_transfer_topk2"
+    },
+    {
+      "anchor_ce_drift": -0.9339891672134399,
+      "anchor_support_churn_after_transfer": 0.0,
+      "anchor_used_columns_after_transfer": 23.0,
+      "baseline_commutator_anchor_logit_mse": 0.21909268200397491,
+      "baseline_transfer_ce_improvement": 0.8878865242004395,
+      "baseline_variant": "promoted_contextual_topk2",
+      "commutator_anchor_fraction_of_full": 1.2560724600135986,
+      "commutator_anchor_logit_mse": 0.27519628405570984,
+      "commutator_anchor_support_churn": 0.984375,
+      "commutator_transfer_logit_mse": 0.26748305559158325,
+      "transfer_ce_improvement": 0.9600329399108887,
+      "transfer_retention_fraction": 1.081256347229077,
+      "transfer_update_group": "value_only",
+      "variant": "value_only_transfer_topk2"
+    }
+  ],
+  "decomposition_variants": [
+    "router_only_transfer_topk2",
+    "value_only_transfer_topk2"
+  ],
+  "failures": [],
+  "metrics": {
+    "baseline_commutator_anchor_logit_mse": 0.21909268200397491,
+    "baseline_transfer_ce_improvement": 0.8878865242004395,
+    "router_only_commutator_anchor_logit_mse": 0.04974525794386864,
+    "router_only_fraction_of_full": 0.22705120722820915,
+    "router_only_transfer_retention_fraction": 0.0006076691444244006,
+    "value_only_commutator_anchor_logit_mse": 0.27519628405570984,
+    "value_only_fraction_of_full": 1.2560724600135986,
+    "value_only_transfer_retention_fraction": 1.081256347229077
+  },
+  "next_step": "test value-update regularization or lower-rank value updates before changing router policy",
+  "out_dir": "results/audits/token_larger_promoted_topk2_update_decomposition_audit",
+  "rationale": "Value-only transfer updates preserve a material share of the full commutator signal while router-only transfer updates fall below the `0.5` fraction threshold.",
+  "source_rows": [
+    {
+      "path": "results/audits/token_larger_promoted_topk2_update_decomposition_audit/variant_metrics.csv",
+      "present": true,
+      "source": "retention_churn_microtest",
+      "status": "ok",
+      "variant_count": 6
+    }
+  ],
+  "status": "pass",
+  "thresholds": {
+    "material_fraction_of_full_commutator": 0.5
+  }
+}
