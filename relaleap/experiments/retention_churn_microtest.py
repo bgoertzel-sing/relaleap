@@ -44,6 +44,7 @@ class _VariantSpec:
     value_gradient_clip_norm: float | None = None
     value_gradient_low_rank: int | None = None
     value_update_scale: float = 1.0
+    commutator_value_penalty_weight: float = 0.0
     anchor_update_group: str = "full"
     transfer_update_group: str = "full"
 
@@ -56,6 +57,7 @@ def run_retention_churn_microtest(
     include_decomposition_variants: bool = False,
     include_value_mitigation_variants: bool = False,
     include_low_rank_value_variants: bool = False,
+    include_commutator_value_penalty_variants: bool = False,
 ) -> dict[str, Any]:
     """Train on slice A then slice B and measure anchor drift/churn."""
 
@@ -257,6 +259,31 @@ def run_retention_churn_microtest(
                     support_router="contextual_mlp",
                     contextual_router_hidden_dim=contextual_router_hidden_dim,
                     value_gradient_low_rank=2,
+                ),
+            ]
+        )
+    if include_commutator_value_penalty_variants:
+        specs.extend(
+            [
+                _VariantSpec(
+                    name="commutator_value_penalty_w010_contextual_topk2",
+                    kind="sparse",
+                    top_k=2,
+                    num_columns=num_columns,
+                    atoms_per_column=atoms_per_column,
+                    support_router="contextual_mlp",
+                    contextual_router_hidden_dim=contextual_router_hidden_dim,
+                    commutator_value_penalty_weight=0.10,
+                ),
+                _VariantSpec(
+                    name="commutator_value_penalty_w100_contextual_topk2",
+                    kind="sparse",
+                    top_k=2,
+                    num_columns=num_columns,
+                    atoms_per_column=atoms_per_column,
+                    support_router="contextual_mlp",
+                    contextual_router_hidden_dim=contextual_router_hidden_dim,
+                    commutator_value_penalty_weight=1.00,
                 ),
             ]
         )
@@ -497,6 +524,7 @@ def run_retention_churn_microtest(
                 value_gradient_clip_norm=spec.value_gradient_clip_norm,
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
+                commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
                 update_group=spec.anchor_update_group,
             )
             before_b = {key: value.detach().clone() for key, value in residual.state_dict().items()}
@@ -540,6 +568,7 @@ def run_retention_churn_microtest(
                 value_gradient_clip_norm=spec.value_gradient_clip_norm,
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
+                commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
                 update_group=spec.anchor_update_group,
             )
             _train_sparse(
@@ -556,6 +585,7 @@ def run_retention_churn_microtest(
                 value_gradient_clip_norm=spec.value_gradient_clip_norm,
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
+                commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
                 update_group=spec.transfer_update_group,
             )
             same_order_anchor_final = _sparse_snapshot(
@@ -588,6 +618,7 @@ def run_retention_churn_microtest(
                 value_gradient_clip_norm=spec.value_gradient_clip_norm,
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
+                commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
                 update_group=spec.transfer_update_group,
             )
             anchor_after = _sparse_snapshot(
@@ -632,6 +663,7 @@ def run_retention_churn_microtest(
                 value_gradient_clip_norm=spec.value_gradient_clip_norm,
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
+                commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
                 update_group=spec.anchor_update_group,
             )
             _train_sparse(
@@ -648,6 +680,7 @@ def run_retention_churn_microtest(
                 value_gradient_clip_norm=spec.value_gradient_clip_norm,
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
+                commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
                 update_group=spec.transfer_update_group,
             )
             reverse_anchor_final = _sparse_snapshot(
@@ -688,6 +721,7 @@ def run_retention_churn_microtest(
                 value_gradient_clip_norm=spec.value_gradient_clip_norm,
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
+                commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
                 update_group=spec.anchor_update_group,
             )
             _train_sparse(
@@ -704,6 +738,7 @@ def run_retention_churn_microtest(
                 value_gradient_clip_norm=spec.value_gradient_clip_norm,
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
+                commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
                 update_group=spec.transfer_update_group,
             )
             identical_order_anchor_final = _sparse_snapshot(
@@ -873,6 +908,7 @@ def run_retention_churn_microtest(
                 "" if spec.value_gradient_low_rank is None else spec.value_gradient_low_rank
             ),
             "value_update_scale": spec.value_update_scale,
+            "commutator_value_penalty_weight": spec.commutator_value_penalty_weight,
             "anchor_update_group": spec.anchor_update_group,
             "transfer_update_group": spec.transfer_update_group,
         }
@@ -931,6 +967,9 @@ def run_retention_churn_microtest(
             "include_decomposition_variants": include_decomposition_variants,
             "include_value_mitigation_variants": include_value_mitigation_variants,
             "include_low_rank_value_variants": include_low_rank_value_variants,
+            "include_commutator_value_penalty_variants": (
+                include_commutator_value_penalty_variants
+            ),
         },
         "artifacts": {
             "summary_json": str(out_dir / "summary.json"),
@@ -963,6 +1002,7 @@ def _train_sparse(
     value_gradient_clip_norm: float | None = None,
     value_gradient_low_rank: int | None = None,
     value_update_scale: float = 1.0,
+    commutator_value_penalty_weight: float = 0.0,
     update_group: str = "full",
 ) -> None:
     import torch
@@ -988,17 +1028,38 @@ def _train_sparse(
     if not trainable_parameters:
         raise ValueError(f"update_group selected no trainable parameters: {update_group}")
     optimizer = torch.optim.AdamW(trainable_parameters, lr=learning_rate)
+    reference_residual_delta = None
+    if commutator_value_penalty_weight > 0.0:
+        residual.eval()
+        with torch.no_grad():
+            reference_hidden = base.encode(inputs)
+            if support_indices is None:
+                reference_output = residual(reference_hidden)
+            else:
+                reference_output = residual(
+                    reference_hidden,
+                    support_indices=support_indices,
+                )
+            reference_residual_delta = (reference_output - reference_hidden).detach()
+        residual.train()
     for _ in range(steps):
         optimizer.zero_grad(set_to_none=True)
+        hidden = base.encode(inputs)
         if support_indices is None:
-            logits = base(inputs, residual_adapter=residual)
+            output_hidden = residual(hidden)
         else:
-            hidden = base.encode(inputs)
-            logits = base.decode(residual(hidden, support_indices=support_indices))
+            output_hidden = residual(hidden, support_indices=support_indices)
+        logits = base.decode(output_hidden)
         loss = F.cross_entropy(
             logits[:, :-1, :].reshape(-1, vocab_size),
             targets[:, :-1].reshape(-1),
         )
+        if reference_residual_delta is not None:
+            current_residual_delta = output_hidden - hidden
+            loss = loss + commutator_value_penalty_weight * F.mse_loss(
+                current_residual_delta,
+                reference_residual_delta,
+            )
         loss.backward()
         if value_gradient_low_rank is not None:
             _project_value_gradients_low_rank(value_parameters, value_gradient_low_rank)
@@ -1600,6 +1661,11 @@ def main() -> None:
         action="store_true",
         help="Also evaluate low-rank projected value-gradient top-k-2 variants.",
     )
+    parser.add_argument(
+        "--include-commutator-value-penalty-variants",
+        action="store_true",
+        help="Also evaluate residual-change penalty top-k-2 variants.",
+    )
     args = parser.parse_args()
     summary = run_retention_churn_microtest(
         args.config,
@@ -1608,6 +1674,9 @@ def main() -> None:
         include_decomposition_variants=args.include_decomposition_variants,
         include_value_mitigation_variants=args.include_value_mitigation_variants,
         include_low_rank_value_variants=args.include_low_rank_value_variants,
+        include_commutator_value_penalty_variants=(
+            args.include_commutator_value_penalty_variants
+        ),
     )
     print(
         json.dumps(

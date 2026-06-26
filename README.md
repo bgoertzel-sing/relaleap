@@ -413,6 +413,25 @@ preserving the rank-matched top-k-1, random fixed top-k-2, and dense active-rank
 controls. A candidate must materially reduce absolute anchor commutator logit
 MSE while retaining transfer improvement and support usage.
 
+After the shortcut-decision selector chooses the commutator-aware value-penalty
+branch, run the bounded local probe:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_commutator_value_penalty_probe \
+  --config configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml \
+  --out results/audits/token_larger_promoted_topk2_commutator_value_penalty_probe
+```
+
+This writes
+`results/audits/token_larger_promoted_topk2_commutator_value_penalty_probe/summary.json`,
+`variant_metrics.csv`, `phase_metrics.csv`, `per_token_commutator.csv`,
+`commutator_value_penalty_rows.csv`, and
+`commutator_value_penalty_notes.md`. It compares promoted contextual top-k `2`
+against two residual-change penalty weights while preserving the rank-matched
+top-k `1`, random fixed top-k `2`, and dense active-rank controls. A candidate
+must materially reduce absolute anchor commutator logit MSE while retaining
+transfer improvement, support usage, and anchor CE drift.
+
 After refreshed per-token finite-update packets exist, turn the finite-update
 evidence into an explicit causal-control matrix input without rerunning
 training:
@@ -1888,6 +1907,12 @@ top-k `1` gate-suppression packets. It writes
 `results/reports/token_larger_contextual_router_shortcut_decision/summary.json`,
 `source_rows.csv`, `candidate_actions.csv`, and `notes.md`, keeps the shortcut
 interpretation conservative, and emits one exact next command.
+
+The selected commutator-aware value-penalty probe currently passes artifact
+generation but does not establish a mitigation: the best penalty row reduces
+anchor commutator logit MSE by only `0.23063087609231459`, below the `0.5`
+gate.
+
 Verify the promoted default locally with a fresh command-driven comparison and
 artifact check:
 
