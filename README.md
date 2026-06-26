@@ -505,6 +505,24 @@ diagnostic-only, blocks top-k `2` causal-cooperation claims, and selects a
 no-training pairwise value-interaction localization audit before proposing a
 new mitigation family.
 
+After the closeout selects pairwise value-interaction localization, run the
+no-training source-artifact audit over the promoted top-k `2` causal-column
+fingerprint packet:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_pairwise_value_interaction_localization_audit \
+  --out results/reports/token_larger_promoted_topk2_pairwise_value_interaction_localization_audit
+```
+
+This writes
+`results/reports/token_larger_promoted_topk2_pairwise_value_interaction_localization_audit/summary.json`,
+`source_rows.csv`, `localization_rows.csv`, `column_localization_rows.csv`,
+`stratum_rows.csv`, and `notes.md`. It consumes the per-token fixed-support
+fingerprint rows, aggregate pair/column fingerprints, update-decomposition
+audit, finite-update order-control report, and mitigation closeout. The report
+localizes value-composition risk for mitigation design only; it keeps top-k `2`
+causal-cooperation claims blocked and does not promote a new architecture.
+
 After refreshed per-token finite-update packets exist, turn the finite-update
 evidence into an explicit causal-control matrix input without rerunning
 training:
