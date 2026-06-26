@@ -1,0 +1,5 @@
+claim_status,decision,path,present,source,status
+,promoted_topk2_support_selection_quality_established,results/reports/token_larger_promoted_topk2_support_selection_quality_audit/summary.json,True,support_selection_quality,pass
+,,results/audits/token_larger_support_wide_promoted_default_exhaustive_support/summary.json,True,exhaustive_support_audit,ok
+,predictive_default_causal_adequacy_not_established,results/reports/token_larger_promoted_topk2_causal_adequacy_matrix/summary.json,True,causal_adequacy_matrix,pass
+strategic_change_level=minor; notify_ben=False,"Run a pre-registered promoted contextual top-k-2 causal-adequacy matrix against rank-matched top-k-1, dense active-rank, and random top-k-2 controls, gating on retention/churn/commutator/intervention/oracle-regret metrics with CE only as a guardrail.",../outputs/strategy-reviews/relaleap/latest-review.md,True,strategy_review,present

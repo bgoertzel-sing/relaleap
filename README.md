@@ -2252,6 +2252,22 @@ features. The decision report fails closed on missing audit artifacts and
 selects whether the next branch should target router support selection, column
 redundancy, or pairwise composition.
 
+To check whether the promoted token-larger contextual top-k-2 support-selection
+packet already satisfies the stricter sequence-level holdout coverage requested
+by strategic review, run:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_sequence_holdout_coverage_report
+```
+
+This no-training report writes
+`results/reports/token_larger_promoted_topk2_sequence_holdout_coverage/summary.json`,
+`split_rows.csv`, `source_rows.csv`, and `notes.md`. It consumes the promoted
+support-selection quality audit, exhaustive support audit, causal-adequacy
+matrix, and optional external strategy review. It fails closed on missing source
+artifacts and records whether the existing support-prediction holdout is only an
+even/odd flattened-token-position split or includes a sequence-level split.
+
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
 
