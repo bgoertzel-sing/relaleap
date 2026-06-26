@@ -41,6 +41,8 @@ class _VariantSpec:
     dense_rank: int | None = None
     freeze_router_during_transfer: bool = False
     gradient_clip_norm: float | None = None
+    value_gradient_clip_norm: float | None = None
+    value_update_scale: float = 1.0
     anchor_update_group: str = "full"
     transfer_update_group: str = "full"
 
@@ -51,6 +53,7 @@ def run_retention_churn_microtest(
     *,
     include_mitigation_variants: bool = False,
     include_decomposition_variants: bool = False,
+    include_value_mitigation_variants: bool = False,
 ) -> dict[str, Any]:
     """Train on slice A then slice B and measure anchor drift/churn."""
 
@@ -205,6 +208,31 @@ def run_retention_churn_microtest(
                 ),
             ]
         )
+    if include_value_mitigation_variants:
+        specs.extend(
+            [
+                _VariantSpec(
+                    name="value_gradient_clipped_contextual_topk2",
+                    kind="sparse",
+                    top_k=2,
+                    num_columns=num_columns,
+                    atoms_per_column=atoms_per_column,
+                    support_router="contextual_mlp",
+                    contextual_router_hidden_dim=contextual_router_hidden_dim,
+                    value_gradient_clip_norm=0.10,
+                ),
+                _VariantSpec(
+                    name="value_update_scaled_contextual_topk2",
+                    kind="sparse",
+                    top_k=2,
+                    num_columns=num_columns,
+                    atoms_per_column=atoms_per_column,
+                    support_router="contextual_mlp",
+                    contextual_router_hidden_dim=contextual_router_hidden_dim,
+                    value_update_scale=0.50,
+                ),
+            ]
+        )
 
     variant_rows: list[dict[str, Any]] = []
     phase_rows: list[dict[str, Any]] = []
@@ -355,6 +383,8 @@ def run_retention_churn_microtest(
                 learning_rate=learning_rate,
                 support_indices=fixed_anchor_support,
                 gradient_clip_norm=spec.gradient_clip_norm,
+                value_gradient_clip_norm=spec.value_gradient_clip_norm,
+                value_update_scale=spec.value_update_scale,
                 update_group=spec.anchor_update_group,
             )
             before_b = {key: value.detach().clone() for key, value in residual.state_dict().items()}
@@ -387,6 +417,8 @@ def run_retention_churn_microtest(
                 support_indices=fixed_transfer_support,
                 freeze_router=spec.freeze_router_during_transfer,
                 gradient_clip_norm=spec.gradient_clip_norm,
+                value_gradient_clip_norm=spec.value_gradient_clip_norm,
+                value_update_scale=spec.value_update_scale,
                 update_group=spec.transfer_update_group,
             )
             anchor_after = _sparse_snapshot(
@@ -428,6 +460,8 @@ def run_retention_churn_microtest(
                 learning_rate=learning_rate,
                 support_indices=fixed_transfer_support,
                 gradient_clip_norm=spec.gradient_clip_norm,
+                value_gradient_clip_norm=spec.value_gradient_clip_norm,
+                value_update_scale=spec.value_update_scale,
                 update_group=spec.anchor_update_group,
             )
             _train_sparse(
@@ -441,6 +475,8 @@ def run_retention_churn_microtest(
                 support_indices=fixed_anchor_support,
                 freeze_router=spec.freeze_router_during_transfer,
                 gradient_clip_norm=spec.gradient_clip_norm,
+                value_gradient_clip_norm=spec.value_gradient_clip_norm,
+                value_update_scale=spec.value_update_scale,
                 update_group=spec.transfer_update_group,
             )
             reverse_anchor_final = _sparse_snapshot(
@@ -549,6 +585,12 @@ def run_retention_churn_microtest(
             "gradient_clip_norm": (
                 "" if spec.gradient_clip_norm is None else spec.gradient_clip_norm
             ),
+            "value_gradient_clip_norm": (
+                ""
+                if spec.value_gradient_clip_norm is None
+                else spec.value_gradient_clip_norm
+            ),
+            "value_update_scale": spec.value_update_scale,
             "anchor_update_group": spec.anchor_update_group,
             "transfer_update_group": spec.transfer_update_group,
         }
@@ -589,6 +631,7 @@ def run_retention_churn_microtest(
             ],
             "include_mitigation_variants": include_mitigation_variants,
             "include_decomposition_variants": include_decomposition_variants,
+            "include_value_mitigation_variants": include_value_mitigation_variants,
         },
         "artifacts": {
             "summary_json": str(out_dir / "summary.json"),
@@ -617,6 +660,8 @@ def _train_sparse(
     support_indices: Any | None = None,
     freeze_router: bool = False,
     gradient_clip_norm: float | None = None,
+    value_gradient_clip_norm: float | None = None,
+    value_update_scale: float = 1.0,
     update_group: str = "full",
 ) -> None:
     import torch
@@ -624,8 +669,11 @@ def _train_sparse(
 
     residual.train()
     trainable_parameters = []
+    value_parameters = []
     for name, parameter in residual.named_parameters():
         is_router = _is_router_parameter(name)
+        if not is_router:
+            value_parameters.append(parameter)
         if freeze_router and is_router:
             continue
         if update_group == "full":
@@ -651,8 +699,14 @@ def _train_sparse(
             targets[:, :-1].reshape(-1),
         )
         loss.backward()
+        if value_gradient_clip_norm is not None:
+            torch.nn.utils.clip_grad_norm_(value_parameters, value_gradient_clip_norm)
         if gradient_clip_norm is not None:
             torch.nn.utils.clip_grad_norm_(trainable_parameters, gradient_clip_norm)
+        if value_update_scale != 1.0:
+            for parameter in value_parameters:
+                if parameter.grad is not None:
+                    parameter.grad.mul_(value_update_scale)
         optimizer.step()
     residual.eval()
 
@@ -860,12 +914,18 @@ def main() -> None:
         action="store_true",
         help="Also evaluate full-anchor then router-only/value-only transfer top-k-2 variants.",
     )
+    parser.add_argument(
+        "--include-value-mitigation-variants",
+        action="store_true",
+        help="Also evaluate value-update clipping/scaling top-k-2 variants.",
+    )
     args = parser.parse_args()
     summary = run_retention_churn_microtest(
         args.config,
         args.out,
         include_mitigation_variants=args.include_mitigation_variants,
         include_decomposition_variants=args.include_decomposition_variants,
+        include_value_mitigation_variants=args.include_value_mitigation_variants,
     )
     print(
         json.dumps(

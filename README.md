@@ -396,6 +396,23 @@ then restricts the second-slice update group to router-only or value-only to
 identify whether order sensitivity is mainly router-update, value-update, or
 mixed before selecting a mitigation family.
 
+After the decomposition audit identifies value-update dominated order
+sensitivity, run the bounded value-update mitigation gate before returning to
+router-policy changes:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_value_mitigation_gate
+```
+
+This writes
+`results/audits/token_larger_promoted_topk2_value_mitigation_gate/summary.json`,
+`variant_metrics.csv`, `phase_metrics.csv`, `value_mitigation_rows.csv`, and
+`value_mitigation_notes.md`. The gate compares promoted contextual top-k-2
+against value-gradient-clipped and value-update-scaled top-k-2 variants while
+preserving the rank-matched top-k-1, random fixed top-k-2, and dense active-rank
+controls. A candidate must materially reduce absolute anchor commutator logit
+MSE while retaining transfer improvement and support usage.
+
 To inspect the older fixed-singleton gain/regret packet that motivated the
 singleton reconciliation audit, run:
 
