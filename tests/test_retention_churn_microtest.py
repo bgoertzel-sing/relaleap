@@ -106,6 +106,15 @@ model:
                 "order_averaged_anchor_residual_stream_l2_to_forward",
                 metric_rows[0],
             )
+            self.assertIn("same_order_ensemble_anchor_ce_loss", metric_rows[0])
+            self.assertIn(
+                "same_order_ensemble_anchor_ce_delta_vs_best_endpoint",
+                metric_rows[0],
+            )
+            self.assertIn(
+                "same_order_ensemble_anchor_logit_mse_to_primary",
+                metric_rows[0],
+            )
             topk1 = next(
                 row
                 for row in metric_rows

@@ -32,6 +32,7 @@ DEFAULT_MICROTEST_DIRS = (
     Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_microtest"),
     Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_microtest_seed2"),
     Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_order_averaging_microtest"),
+    Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_order_averaging_microtest_seed2"),
 )
 DEFAULT_FINGERPRINT_DIR = Path(
     "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1"
@@ -233,6 +234,9 @@ def run_promoted_topk2_finite_update_order_control_audit(
             "controls but not per-token commutator rows.",
             "Older finite-update packets report A-then-B versus B-then-A order "
             "sensitivity but do not expose order-averaged inference fields.",
+            "Order-averaged logit-MSE shrinkage is expected from midpoint "
+            "geometry; CE deltas versus the best order and same-order ensemble "
+            "controls are the primary order-averaging interpretation fields.",
         ],
         "failures": failures,
         "rationale": rationale,
@@ -360,6 +364,24 @@ def _variant_row(packet: str, path: Path, variant: dict[str, Any]) -> dict[str, 
         "order_averaged_transfer_residual_stream_l2_to_forward": _float_or_none(
             variant.get("order_averaged_transfer_residual_stream_l2_to_forward")
         ),
+        "same_order_ensemble_anchor_ce_delta_vs_primary": _float_or_none(
+            variant.get("same_order_ensemble_anchor_ce_delta_vs_primary")
+        ),
+        "same_order_ensemble_transfer_ce_delta_vs_primary": _float_or_none(
+            variant.get("same_order_ensemble_transfer_ce_delta_vs_primary")
+        ),
+        "same_order_ensemble_anchor_ce_delta_vs_best_endpoint": _float_or_none(
+            variant.get("same_order_ensemble_anchor_ce_delta_vs_best_endpoint")
+        ),
+        "same_order_ensemble_transfer_ce_delta_vs_best_endpoint": _float_or_none(
+            variant.get("same_order_ensemble_transfer_ce_delta_vs_best_endpoint")
+        ),
+        "same_order_ensemble_anchor_logit_mse_to_primary": _float_or_none(
+            variant.get("same_order_ensemble_anchor_logit_mse_to_primary")
+        ),
+        "same_order_ensemble_transfer_logit_mse_to_primary": _float_or_none(
+            variant.get("same_order_ensemble_transfer_logit_mse_to_primary")
+        ),
     }
     return row
 
@@ -455,6 +477,18 @@ def _metrics(
     topk2_order_avg_best_ce_delta = _mean_field(
         topk2, "order_averaged_anchor_ce_delta_vs_best_order"
     )
+    topk2_same_order_best_ce_delta = _mean_field(
+        topk2, "same_order_ensemble_anchor_ce_delta_vs_best_endpoint"
+    )
+    topk2_same_order_transfer_best_ce_delta = _mean_field(
+        topk2, "same_order_ensemble_transfer_ce_delta_vs_best_endpoint"
+    )
+    topk1_order_avg_best_ce_delta = _mean_field(
+        topk1, "order_averaged_anchor_ce_delta_vs_best_order"
+    )
+    topk1_same_order_best_ce_delta = _mean_field(
+        topk1, "same_order_ensemble_anchor_ce_delta_vs_best_endpoint"
+    )
     all_stratum = _first(row for row in token_strata_rows if row["stratum"] == "all")
     return {
         "packet_count": len({row.get("packet") for row in variant_rows}),
@@ -507,6 +541,21 @@ def _metrics(
         ),
         "topk2_order_averaged_to_commutator_anchor_logit_mse_ratio": _ratio(
             topk2_order_avg_logit, topk2_logit
+        ),
+        "topk2_mean_same_order_ensemble_anchor_ce_delta_vs_best_endpoint": (
+            topk2_same_order_best_ce_delta
+        ),
+        "topk2_mean_same_order_ensemble_transfer_ce_delta_vs_best_endpoint": (
+            topk2_same_order_transfer_best_ce_delta
+        ),
+        "topk2_order_avg_minus_same_order_anchor_ce_delta_vs_best": _delta(
+            topk2_order_avg_best_ce_delta, topk2_same_order_best_ce_delta
+        ),
+        "topk2_minus_topk1_order_avg_anchor_ce_delta_vs_best": _delta(
+            topk2_order_avg_best_ce_delta, topk1_order_avg_best_ce_delta
+        ),
+        "topk2_minus_topk1_same_order_anchor_ce_delta_vs_best": _delta(
+            topk2_same_order_best_ce_delta, topk1_same_order_best_ce_delta
         ),
         "topk2_mean_commutator_anchor_residual_stream_l2": _mean_field(
             topk2, "commutator_anchor_residual_stream_l2"
@@ -675,6 +724,12 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"`{metrics['topk2_order_averaged_to_commutator_anchor_logit_mse_ratio']}`",
         "- Top-k-2 mean order-averaged anchor CE delta vs forward order: "
         f"`{metrics['topk2_mean_order_averaged_anchor_ce_delta_vs_forward']}`",
+        "- Top-k-2 mean order-averaged anchor CE delta vs best order: "
+        f"`{metrics['topk2_mean_order_averaged_anchor_ce_delta_vs_best_order']}`",
+        "- Top-k-2 mean same-order ensemble anchor CE delta vs best endpoint: "
+        f"`{metrics['topk2_mean_same_order_ensemble_anchor_ce_delta_vs_best_endpoint']}`",
+        "- Top-k-2 order-average minus same-order ensemble anchor CE delta vs best: "
+        f"`{metrics['topk2_order_avg_minus_same_order_anchor_ce_delta_vs_best']}`",
         "- Top-k-2 mean anchor commutator residual-stream L2: "
         f"`{metrics['topk2_mean_commutator_anchor_residual_stream_l2']}`",
         "- Top-k-2 mean anchor commutator support churn: "

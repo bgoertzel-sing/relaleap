@@ -76,6 +76,18 @@ class PromotedTopk2FiniteUpdateOrderControlAuditTest(unittest.TestCase):
                 ],
                 0.003,
             )
+            self.assertAlmostEqual(
+                summary["metrics"][
+                    "topk2_mean_same_order_ensemble_anchor_ce_delta_vs_best_endpoint"
+                ],
+                0.006,
+            )
+            self.assertAlmostEqual(
+                summary["metrics"][
+                    "topk2_order_avg_minus_same_order_anchor_ce_delta_vs_best"
+                ],
+                -0.002,
+            )
             self.assertTrue((root / "out" / "summary.json").is_file())
             self.assertTrue((root / "out" / "variant_commutator.csv").is_file())
             self.assertTrue((root / "out" / "token_strata.csv").is_file())
@@ -255,6 +267,12 @@ def _variant(
         "order_averaged_transfer_logit_mse_to_forward": logit_mse * 0.25,
         "order_averaged_anchor_residual_stream_l2_to_forward": residual_l2 * 0.5,
         "order_averaged_transfer_residual_stream_l2_to_forward": residual_l2 * 0.5,
+        "same_order_ensemble_anchor_ce_delta_vs_primary": 0.005,
+        "same_order_ensemble_transfer_ce_delta_vs_primary": 0.004,
+        "same_order_ensemble_anchor_ce_delta_vs_best_endpoint": 0.006,
+        "same_order_ensemble_transfer_ce_delta_vs_best_endpoint": 0.005,
+        "same_order_ensemble_anchor_logit_mse_to_primary": logit_mse * 0.2,
+        "same_order_ensemble_transfer_logit_mse_to_primary": logit_mse * 0.2,
     }
 
 
