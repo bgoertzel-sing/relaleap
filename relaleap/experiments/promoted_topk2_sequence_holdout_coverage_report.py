@@ -28,6 +28,9 @@ DEFAULT_OUT_DIR = Path(
 
 SEQUENCE_HOLDOUT_COVERAGE_READY = "sequence_holdout_coverage_ready"
 SEQUENCE_HOLDOUT_EXTENSION_REQUIRED = "sequence_holdout_extension_required"
+SEQUENCE_HOLDOUT_SUPPORT_HEAD_GENERALIZATION_FAILED = (
+    "sequence_holdout_support_head_generalization_failed"
+)
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 
 
@@ -71,6 +74,10 @@ def run_promoted_topk2_sequence_holdout_coverage_report(
     ]
     failures = _failures(source_rows, metrics)
     sequence_holdout_present = metrics["sequence_level_holdout_present"]
+    sequence_support_head_failed = (
+        metrics["sequence_support_head_intervention_minus_router_loss"] is not None
+        and metrics["sequence_support_head_intervention_minus_router_loss"] > 0.0
+    )
 
     if failures:
         status = "fail"
@@ -81,6 +88,26 @@ def run_promoted_topk2_sequence_holdout_coverage_report(
             "The sequence-holdout coverage report cannot be interpreted because "
             "a required support-selection or causal-adequacy source artifact is "
             "missing or inconsistent."
+        )
+    elif sequence_holdout_present and sequence_support_head_failed:
+        status = "pass"
+        decision = SEQUENCE_HOLDOUT_SUPPORT_HEAD_GENERALIZATION_FAILED
+        claim_status = "deployable_support_head_sequence_generalization_blocked"
+        next_step = (
+            "run a local K-fold sequence-heldout causal-feature ablation of the "
+            "actual promoted contextual router versus the linear/top-k controls"
+        )
+        rationale = (
+            "The refreshed exhaustive support audit now includes sequence-level "
+            "holdout coverage, but the train-time-style contextual support head "
+            "is worse than the learned router on held-out full sequences. The "
+            "sequence-head absolute intervention-minus-router CE delta is "
+            f"`{metrics['sequence_support_head_intervention_minus_router_loss']}`; "
+            "because the router-oracle gap is tiny, recovery fractions are "
+            "numerically fragile. Treat contextual routing as the operational "
+            "predictive default from prior local/Colab evidence, but block "
+            "deployable contextual support-selection claims until K-fold "
+            "sequence-heldout and causal-feature-safe router evidence exists."
         )
     elif sequence_holdout_present:
         status = "pass"
@@ -125,11 +152,18 @@ def run_promoted_topk2_sequence_holdout_coverage_report(
         "signals": {
             "position_holdout_present": metrics["position_holdout_present"],
             "sequence_level_holdout_present": sequence_holdout_present,
+            "sequence_support_head_generalization_failed": (
+                sequence_support_head_failed
+            ),
+            "sequence_recovery_fraction_numerically_fragile": metrics[
+                "sequence_recovery_fraction_numerically_fragile"
+            ],
             "strategy_review_requested_sequence_holdout": strategy_review[
                 "sequence_holdout_recommended"
             ],
             "deployable_support_selection_claim_blocked_by_split_coverage": (
-                status == "pass" and not sequence_holdout_present
+                status == "pass"
+                and (not sequence_holdout_present or sequence_support_head_failed)
             ),
         },
         "strategy_review": strategy_review,
@@ -163,8 +197,11 @@ def _split_rows(audit: dict[str, Any]) -> list[dict[str, Any]]:
         "router_oracle_target_diagnostic",
         "router_oracle_target_nonlinear_diagnostic",
         "router_oracle_target_contextual_diagnostic",
+        "router_oracle_target_contextual_sequence_diagnostic",
         "contextual_router_support_intervention",
         "contextual_router_support_head",
+        "contextual_router_support_sequence_intervention",
+        "contextual_router_support_sequence_head",
     ):
         packet = audit.get(name)
         if not isinstance(packet, dict):
@@ -172,13 +209,40 @@ def _split_rows(audit: dict[str, Any]) -> list[dict[str, Any]]:
         train_split = _string_or_empty(packet.get("train_split"))
         holdout_split = _string_or_empty(packet.get("holdout_split"))
         split_text = f"{train_split} {holdout_split}".lower()
+        sequence_level_holdout = _is_sequence_split(split_text)
         rows.append(
             {
                 "artifact": name,
                 "train_split": train_split,
                 "holdout_split": holdout_split,
-                "position_holdout": _is_position_split(split_text),
-                "sequence_level_holdout": _is_sequence_split(split_text),
+                "position_holdout": (
+                    _is_position_split(split_text) and not sequence_level_holdout
+                ),
+                "sequence_level_holdout": sequence_level_holdout,
+                "holdout_router_loss": _nested_float(
+                    packet, "holdout", "router_loss"
+                ),
+                "holdout_oracle_loss": _nested_float(
+                    packet, "holdout", "oracle_loss"
+                ),
+                "holdout_selector_loss": _nested_float(
+                    packet, "holdout", "selector_loss"
+                ),
+                "holdout_intervention_loss": _nested_float(
+                    packet, "holdout", "intervention_loss"
+                ),
+                "holdout_selector_minus_router_loss": _nested_float(
+                    packet, "holdout", "selector_minus_router_loss"
+                ),
+                "holdout_intervention_minus_router_loss": _nested_float(
+                    packet, "holdout", "intervention_minus_router_loss"
+                ),
+                "holdout_selector_oracle_regret": _nested_float(
+                    packet, "holdout", "selector_oracle_regret"
+                ),
+                "holdout_intervention_oracle_regret": _nested_float(
+                    packet, "holdout", "intervention_oracle_regret"
+                ),
                 "holdout_oracle_gap_recovery_fraction": _nested_float(
                     packet, "holdout", "oracle_gap_recovery_fraction"
                 ),
@@ -195,6 +259,11 @@ def _metrics(
 ) -> dict[str, Any]:
     support_metrics = support_selection.get("metrics", {})
     causal_metrics = causal.get("metrics", {})
+    sequence_support_head = _find_split_row(
+        split_rows,
+        "contextual_router_support_sequence_head",
+    )
+    sequence_oracle_gap = _gap_from_row(sequence_support_head)
     return {
         "config_path": audit.get("config_path") or support_metrics.get("config_path"),
         "dataset": audit.get("dataset") or support_metrics.get("dataset"),
@@ -203,6 +272,25 @@ def _metrics(
         "position_holdout_present": any(row["position_holdout"] for row in split_rows),
         "sequence_level_holdout_present": any(
             row["sequence_level_holdout"] for row in split_rows
+        ),
+        "sequence_support_head_holdout_gap_recovery": (
+            None
+            if sequence_support_head is None
+            else sequence_support_head.get("holdout_oracle_gap_recovery_fraction")
+        ),
+        "sequence_support_head_intervention_minus_router_loss": (
+            None
+            if sequence_support_head is None
+            else sequence_support_head.get("holdout_intervention_minus_router_loss")
+        ),
+        "sequence_support_head_intervention_oracle_regret": (
+            None
+            if sequence_support_head is None
+            else sequence_support_head.get("holdout_intervention_oracle_regret")
+        ),
+        "sequence_router_oracle_gap": sequence_oracle_gap,
+        "sequence_recovery_fraction_numerically_fragile": (
+            sequence_oracle_gap is not None and abs(sequence_oracle_gap) < 0.01
         ),
         "contextual_support_head_holdout_gap_recovery": support_metrics.get(
             "contextual_support_head_holdout_gap_recovery"
@@ -217,6 +305,26 @@ def _metrics(
             "topk2_to_topk1_finite_update_logit_mse_ratio"
         ),
     }
+
+
+def _find_split_row(
+    split_rows: list[dict[str, Any]],
+    artifact: str,
+) -> dict[str, Any] | None:
+    for row in split_rows:
+        if row.get("artifact") == artifact:
+            return row
+    return None
+
+
+def _gap_from_row(row: dict[str, Any] | None) -> float | None:
+    if row is None:
+        return None
+    router_loss = row.get("holdout_router_loss")
+    oracle_loss = row.get("holdout_oracle_loss")
+    if router_loss is None or oracle_loss is None:
+        return None
+    return float(router_loss) - float(oracle_loss)
 
 
 def _failures(
@@ -358,6 +466,10 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"`{signals['strategy_review_requested_sequence_holdout']}`",
         "- Contextual support-head holdout gap recovery: "
         f"`{metrics['contextual_support_head_holdout_gap_recovery']}`",
+        "- Sequence support-head intervention minus router loss: "
+        f"`{metrics['sequence_support_head_intervention_minus_router_loss']}`",
+        "- Sequence recovery fraction numerically fragile: "
+        f"`{signals['sequence_recovery_fraction_numerically_fragile']}`",
         f"- Oracle support regret: `{metrics['oracle_support_regret']}`",
         "- Causal-adequacy decision: "
         f"`{metrics['causal_adequacy_decision']}`",

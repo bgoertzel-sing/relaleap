@@ -1,6 +1,9 @@
-artifact,holdout_oracle_gap_recovery_fraction,holdout_split,position_holdout,sequence_level_holdout,train_split
-router_oracle_target_diagnostic,-69.57185996036614,odd flattened token positions,True,False,even flattened token positions
-router_oracle_target_nonlinear_diagnostic,-73.259601774087,odd flattened token positions,True,False,even flattened token positions
-router_oracle_target_contextual_diagnostic,1.0,odd flattened token positions,True,False,even flattened token positions
-contextual_router_support_intervention,1.0,,False,False,
-contextual_router_support_head,0.1893932244974993,odd flattened token positions,True,False,even flattened token positions
+artifact,holdout_intervention_loss,holdout_intervention_minus_router_loss,holdout_intervention_oracle_regret,holdout_oracle_gap_recovery_fraction,holdout_oracle_loss,holdout_router_loss,holdout_selector_loss,holdout_selector_minus_router_loss,holdout_selector_oracle_regret,holdout_split,position_holdout,sequence_level_holdout,train_split
+router_oracle_target_diagnostic,,,,-70.37554255519909,2.8724637031555176,2.874990463256836,3.0528125762939453,0.17782211303710938,0.18034887313842773,odd flattened token positions,True,False,even flattened token positions
+router_oracle_target_nonlinear_diagnostic,,,,-74.88299679184752,2.8724637031555176,2.874990463256836,3.064201831817627,0.18921136856079102,0.19173812866210938,odd flattened token positions,True,False,even flattened token positions
+router_oracle_target_contextual_diagnostic,,,,1.0,2.8724637031555176,2.874990463256836,2.8724637031555176,-0.0025267601013183594,0.0,odd flattened token positions,True,False,even flattened token positions
+router_oracle_target_contextual_sequence_diagnostic,,,,1.0,2.8495421409606934,2.8520634174346924,2.8495421409606934,-0.0025212764739990234,0.0,odd full sequences,False,True,even full sequences
+contextual_router_support_intervention,2.8724637031555176,-0.0025267601013183594,0.0,1.0,2.8724637031555176,2.874990463256836,,,,holdout odd positions,True,False,train even positions
+contextual_router_support_head,2.874512195587158,-0.0004782676696777344,0.002048492431640625,0.1892809964144178,2.8724637031555176,2.874990463256836,,,,odd flattened token positions,True,False,even flattened token positions
+contextual_router_support_sequence_intervention,2.8495421409606934,-0.0025212764739990234,0.0,1.0,2.8495421409606934,2.8520634174346924,,,,holdout odd sequences,False,True,train even sequences
+contextual_router_support_sequence_head,2.868842601776123,0.016779184341430664,0.019300460815429688,-6.655035460992908,2.8495421409606934,2.8520634174346924,,,,odd full sequences,False,True,even full sequences

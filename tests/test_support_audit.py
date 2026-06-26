@@ -76,6 +76,14 @@ outputs:
                 "holdout",
                 audit["router_oracle_target_contextual_diagnostic"],
             )
+            self.assertIn(
+                "router_oracle_target_contextual_sequence_diagnostic",
+                audit,
+            )
+            self.assertIn(
+                "holdout",
+                audit["router_oracle_target_contextual_sequence_diagnostic"],
+            )
             self.assertIn("contextual_router_support_intervention", audit)
             self.assertIn(
                 "holdout",
@@ -85,6 +93,16 @@ outputs:
             self.assertIn(
                 "holdout",
                 audit["contextual_router_support_head"],
+            )
+            self.assertIn("contextual_router_support_sequence_intervention", audit)
+            self.assertIn(
+                "holdout",
+                audit["contextual_router_support_sequence_intervention"],
+            )
+            self.assertIn("contextual_router_support_sequence_head", audit)
+            self.assertIn(
+                "holdout",
+                audit["contextual_router_support_sequence_head"],
             )
             self.assertEqual(audit["support_audit"]["top_k"], 2)
 
@@ -110,10 +128,31 @@ outputs:
                 ).is_file()
             )
             self.assertTrue(
+                (
+                    tmp_path
+                    / "audit"
+                    / "router_target_contextual_sequence_diagnostic.csv"
+                ).is_file()
+            )
+            self.assertTrue(
                 (tmp_path / "audit" / "router_support_intervention.csv").is_file()
             )
             self.assertTrue(
                 (tmp_path / "audit" / "contextual_router_support_head.csv").is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "audit"
+                    / "router_support_sequence_intervention.csv"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "audit"
+                    / "contextual_router_support_sequence_head.csv"
+                ).is_file()
             )
             self.assertTrue((tmp_path / "audit" / "notes.md").is_file())
 
@@ -155,12 +194,32 @@ outputs:
                 contextual_diagnostic_rows[0],
             )
 
+            with (
+                tmp_path / "audit" / "router_target_contextual_sequence_diagnostic.csv"
+            ).open(newline="", encoding="utf-8") as handle:
+                contextual_sequence_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(contextual_sequence_rows), 3)
+            self.assertEqual(
+                contextual_sequence_rows[1]["split"],
+                "train_even_sequences",
+            )
+            self.assertEqual(
+                contextual_sequence_rows[2]["split"],
+                "holdout_odd_sequences",
+            )
+            self.assertIn(
+                "oracle_gap_recovery_fraction",
+                contextual_sequence_rows[0],
+            )
+
             with (tmp_path / "audit" / "router_support_intervention.csv").open(
                 newline="",
                 encoding="utf-8",
             ) as handle:
                 intervention_rows = list(csv.DictReader(handle))
             self.assertEqual(len(intervention_rows), 3)
+            self.assertIn("router_loss", intervention_rows[0])
+            self.assertIn("oracle_loss", intervention_rows[0])
             self.assertIn("intervention_loss", intervention_rows[0])
             self.assertIn("intervention_minus_router_loss", intervention_rows[0])
 
@@ -172,6 +231,23 @@ outputs:
             self.assertEqual(len(support_head_rows), 3)
             self.assertIn("intervention_loss", support_head_rows[0])
             self.assertIn("intervention_minus_router_loss", support_head_rows[0])
+
+            with (
+                tmp_path / "audit" / "contextual_router_support_sequence_head.csv"
+            ).open(newline="", encoding="utf-8") as handle:
+                support_sequence_head_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(support_sequence_head_rows), 3)
+            self.assertEqual(
+                support_sequence_head_rows[1]["split"],
+                "train_even_sequences",
+            )
+            self.assertEqual(
+                support_sequence_head_rows[2]["split"],
+                "holdout_odd_sequences",
+            )
+            self.assertIn("intervention_loss", support_sequence_head_rows[0])
+            self.assertIn("router_loss", support_sequence_head_rows[0])
+            self.assertIn("oracle_loss", support_sequence_head_rows[0])
 
     def test_support_audit_requires_top_k_two(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

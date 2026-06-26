@@ -2240,17 +2240,26 @@ The audit retrains the configured residual adapter, evaluates all 12 singleton
 supports and all 66 two-column supports on the fixed in-repo validation batch,
 and writes `summary.json`, `support_losses.csv`, `pairwise_synergy.csv`,
 `router_target_diagnostic.csv`, `router_target_nonlinear_diagnostic.csv`,
-`router_target_contextual_diagnostic.csv`, and `notes.md`. The summary reports
-per-token oracle-support regret, best global fixed support, dominant router
-support, one-swap recovery, support-loss
-distribution, pairwise synergy leaders, the existing router support audit, and
-linear, small-MLP, and contextual small-MLP router-target probes that train
-against the per-token oracle support pair on even flattened token positions and
-report holdout odd-position recovery of the oracle gap. The contextual probe
-adds normalized token position plus immediate previous/next hidden-neighborhood
-features. The decision report fails closed on missing audit artifacts and
-selects whether the next branch should target router support selection, column
-redundancy, or pairwise composition.
+`router_target_contextual_diagnostic.csv`,
+`router_target_contextual_sequence_diagnostic.csv`,
+`router_support_intervention.csv`, `router_support_sequence_intervention.csv`,
+`contextual_router_support_head.csv`,
+`contextual_router_support_sequence_head.csv`, and `notes.md`. The summary
+reports per-token oracle-support regret, best global fixed support, dominant
+router support, one-swap recovery, support-loss distribution, pairwise synergy
+leaders, the existing router support audit, and linear, small-MLP, and
+contextual small-MLP router-target probes. The legacy probes train against the
+per-token oracle support pair on even flattened token positions and report
+holdout odd-position recovery of the oracle gap. The sequence diagnostics train
+on even full sequences and hold out odd full sequences for the contextual
+oracle-target probe and train-time-style contextual support head. Intervention
+CSVs include split-local router loss, oracle loss, intervention loss, absolute
+intervention-minus-router loss, oracle regret, and recovery fraction so tiny
+oracle-gap denominators can be interpreted conservatively. The contextual
+probes add normalized token position plus immediate previous/next
+hidden-neighborhood features. The decision report fails closed on missing audit
+artifacts and selects whether the next branch should target router support
+selection, column redundancy, or pairwise composition.
 
 To check whether the promoted token-larger contextual top-k-2 support-selection
 packet already satisfies the stricter sequence-level holdout coverage requested
@@ -2266,7 +2275,13 @@ This no-training report writes
 support-selection quality audit, exhaustive support audit, causal-adequacy
 matrix, and optional external strategy review. It fails closed on missing source
 artifacts and records whether the existing support-prediction holdout is only an
-even/odd flattened-token-position split or includes a sequence-level split.
+even/odd flattened-token-position split or includes a sequence-level split. When
+sequence coverage exists but the sequence-heldout contextual support head is
+worse than the learned router, the report emits
+`sequence_holdout_support_head_generalization_failed`, blocks deployable
+contextual support-selection claims, and selects a local K-fold
+sequence-heldout causal-feature ablation of the actual promoted contextual
+router versus linear/top-k controls.
 
 A paired pinned-support stress config uses the same support-stress preset while
 pinning settling updates to the ordinary-pass support:
