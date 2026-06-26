@@ -467,6 +467,26 @@ packet, treats order averaging as diagnostic-only and not a promoted
 architecture path, and emits the exact next command for the router-policy
 mitigation branch when the diagnostic source evidence is present.
 
+After order averaging points back to router-policy mitigation, run the
+fail-closed paired intervention/decomposition gate without retraining:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_router_policy_mitigation_probe \
+  --config configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml \
+  --out results/audits/token_larger_promoted_topk2_router_policy_mitigation_probe
+```
+
+This writes
+`results/audits/token_larger_promoted_topk2_router_policy_mitigation_probe/summary.json`,
+`source_rows.csv`, `router_policy_rows.csv`, `interpretation_rows.csv`, and
+`notes.md`. It consumes the explicit order-averaging probe, retention
+mitigation probe, update-decomposition audit, value-mitigation gate, and
+finite-update order-control packet. The gate only selects router-policy
+training if pinned/router-frozen support materially reduces commutator while
+preserving transfer and support usage; otherwise it records whether residual
+scale or value composition is the more coherent next branch and keeps top-k-2
+causal-cooperation claims blocked.
+
 After refreshed per-token finite-update packets exist, turn the finite-update
 evidence into an explicit causal-control matrix input without rerunning
 training:
