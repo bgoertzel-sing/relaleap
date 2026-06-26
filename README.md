@@ -1874,6 +1874,20 @@ position-only, context-only, and full-context support heads against the fixed
 support-loss matrix. It writes `summary.json`, `variant_metrics.csv`, and
 `notes.md` with held-out oracle-target accuracy, fixed-support selector loss,
 and realized support-intervention CE for each feature view.
+
+After that shortcut ablation exists, choose the next non-duplicative promoted
+top-k `2` diagnostic without rerunning training:
+
+```bash
+python -m relaleap.experiments.contextual_router_shortcut_decision_report
+```
+
+The report consumes the shortcut ablation plus the existing support-selection,
+functional-churn, finite-update, simple value-mitigation, low-rank value, and
+top-k `1` gate-suppression packets. It writes
+`results/reports/token_larger_contextual_router_shortcut_decision/summary.json`,
+`source_rows.csv`, `candidate_actions.csv`, and `notes.md`, keeps the shortcut
+interpretation conservative, and emits one exact next command.
 Verify the promoted default locally with a fresh command-driven comparison and
 artifact check:
 
