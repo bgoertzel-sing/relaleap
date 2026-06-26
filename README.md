@@ -1859,6 +1859,21 @@ and tokenized objective-gate configs use residual-column support top-k `2`.
 After the contextual support-router promotion gate is satisfied, the
 support-wide configs also use the contextual MLP support router with hidden dim
 `128` by default.
+To test whether the promoted contextual-router gain depends on full contextual
+features or shallow shortcuts, run the feature-ablation support-head diagnostic:
+
+```bash
+python -m relaleap.experiments.contextual_router_shortcut_ablation \
+  --config configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml \
+  --out results/audits/token_larger_contextual_router_shortcut_ablation
+```
+
+The audit retrains the configured residual adapter, scores all token-larger
+top-k `2` support pairs on the fixed in-repo batch, and trains hidden-only,
+position-only, context-only, and full-context support heads against the fixed
+support-loss matrix. It writes `summary.json`, `variant_metrics.csv`, and
+`notes.md` with held-out oracle-target accuracy, fixed-support selector loss,
+and realized support-intervention CE for each feature view.
 Verify the promoted default locally with a fresh command-driven comparison and
 artifact check:
 
