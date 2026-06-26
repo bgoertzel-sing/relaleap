@@ -564,6 +564,23 @@ contextual top-k-2, rank-matched contextual top-k-1, random fixed top-k-2, and
 dense active-rank controls, while keeping top-k-2 causal-cooperation claims
 blocked until downstream selection controls pass.
 
+To materialize the explicit no-training finite-update control matrix from the
+raw per-token commutator packet list, run:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_finite_update_control_matrix
+```
+
+This writes
+`results/reports/token_larger_promoted_topk2_finite_update_control_matrix/summary.json`,
+`finite_update_control_matrix.csv`, `finite_update_control_strata.csv`,
+`source_rows.csv`, and `notes.md`. It fails closed unless promoted contextual
+top-k-2, rank-matched contextual top-k-1, random fixed top-k-2, and dense
+active-rank controls all expose per-token forward-vs-reverse CE, symmetric KL,
+logit MSE, support-set, token-position, support-churn, residual-norm, and
+residual-delta fields. The report is a control-matrix input only, not causal
+cooperation evidence by itself.
+
 To inspect the older fixed-singleton gain/regret packet that motivated the
 singleton reconciliation audit, run:
 
