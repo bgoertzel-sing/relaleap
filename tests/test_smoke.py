@@ -171,6 +171,87 @@ class Phase0SmokeTest(unittest.TestCase):
                 self.skipTest(str(exc))
             raise
 
+        hidden_dim = 4
+        causal = ResidualColumns(
+            hidden_dim=hidden_dim,
+            num_columns=5,
+            atoms_per_column=2,
+            top_k=2,
+            support_router="contextual_mlp_causal",
+            contextual_router_hidden_dim=8,
+        )
+        full_context = ResidualColumns(
+            hidden_dim=hidden_dim,
+            num_columns=5,
+            atoms_per_column=2,
+            top_k=2,
+            support_router="contextual_mlp",
+            contextual_router_hidden_dim=8,
+        )
+        for residual in (causal, full_context):
+            with torch.no_grad():
+                first = residual.contextual_column_scores[1]
+                second = residual.contextual_column_scores[3]
+                first.weight.zero_()
+                first.bias.zero_()
+                second.weight.zero_()
+                next_hidden_feature = hidden_dim * 2
+                first.weight[0, next_hidden_feature] = 1.0
+                second.weight[0, 0] = 1.0
+
+        hidden = torch.zeros(1, 5, hidden_dim)
+        hidden[:, :, 0] = torch.tensor([0.0, 0.1, 0.2, 0.3, 0.4])
+        perturbed = hidden.clone()
+        perturb_start = 2
+        perturbed[:, perturb_start:, 0] += 100.0
+
+        causal_scores = causal._score_columns(hidden)
+        causal_perturbed_scores = causal._score_columns(perturbed)
+        _, causal_support = causal(hidden, return_support=True)
+        _, causal_perturbed_support = causal(perturbed, return_support=True)
+
+        earlier = slice(0, perturb_start)
+        self.assertTrue(
+            torch.allclose(
+                causal_scores[:, earlier, :],
+                causal_perturbed_scores[:, earlier, :],
+            )
+        )
+        self.assertTrue(
+            torch.equal(
+                causal_support[:, earlier, :],
+                causal_perturbed_support[:, earlier, :],
+            )
+        )
+
+        full_scores = full_context._score_columns(hidden)
+        full_perturbed_scores = full_context._score_columns(perturbed)
+        leak_position = perturb_start - 1
+        self.assertGreater(
+            float(
+                (
+                    full_scores[:, leak_position, :]
+                    - full_perturbed_scores[:, leak_position, :]
+                )
+                .abs()
+                .max()
+                .item()
+            ),
+            1e-3,
+        )
+
+    def test_causal_contextual_router_ignores_future_positions_with_random_weights(self) -> None:
+        try:
+            import torch
+        except RuntimeError as exc:
+            if "torch" in str(exc):
+                self.skipTest(str(exc))
+            raise
+        except ModuleNotFoundError as exc:
+            if exc.name == "torch":
+                self.skipTest(str(exc))
+            raise
+
         torch.manual_seed(7)
         residual = ResidualColumns(
             hidden_dim=4,
