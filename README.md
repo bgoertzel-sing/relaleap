@@ -347,6 +347,23 @@ as bracket evidence, but still blocks a broad reusable singleton
 causal-retention claim when the reconciliation shows off-context singleton
 interference.
 
+After the fresh RunPod task-free retention microtest packets exist for seed 1
+and seed 2, synthesize the retention, finite-update, support-selection,
+functional-churn, and causal/deconfounded source artifacts without rerunning
+training:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_retention_synthesis_gate
+```
+
+This writes
+`results/reports/token_larger_promoted_topk2_retention_synthesis_gate/summary.json`,
+`source_rows.csv`, `retention_seed_metrics.csv`, and `notes.md`. It decides
+whether the next evidence step should be another fresh retention seed or a
+bounded support-stability/finite-update mitigation probe while retaining the
+promoted top-k-2, rank-matched top-k-1, random fixed top-k-2, and dense
+active-rank controls.
+
 To inspect the older fixed-singleton gain/regret packet that motivated the
 singleton reconciliation audit, run:
 
