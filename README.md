@@ -364,6 +364,22 @@ bounded support-stability/finite-update mitigation probe while retaining the
 promoted top-k-2, rank-matched top-k-1, random fixed top-k-2, and dense
 active-rank controls.
 
+To run that bounded mitigation probe through the command-driven microtest
+harness, including router-freeze and update-clipped top-k-2 variants against
+the same controls:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_retention_mitigation_probe
+```
+
+This writes
+`results/audits/token_larger_promoted_topk2_retention_mitigation_probe/summary.json`,
+`variant_metrics.csv`, `phase_metrics.csv`, `mitigation_rows.csv`, and
+`mitigation_notes.md`. The gate requires a mitigation to materially reduce
+absolute anchor commutator logit MSE while retaining transfer improvement and
+support usage, so a support-collapse or transfer-destroying variant is rejected
+even if its support churn falls.
+
 To inspect the older fixed-singleton gain/regret packet that motivated the
 singleton reconciliation audit, run:
 
