@@ -191,7 +191,7 @@ def _evidence_snapshot(packets: dict[str, dict[str, Any]]) -> dict[str, Any]:
     low_rank_metrics = packets["low_rank_value_gate"].get("metrics", {})
     penalty_metrics = packets["commutator_value_penalty_probe"].get("metrics", {})
     router_rows = packets["router_policy_probe"].get("router_policy_rows", [])
-    router_row = router_rows[0] if router_rows and isinstance(router_rows[0], dict) else {}
+    router_row = _best_router_policy_row(router_rows)
     return {
         "router_policy_decision": packets["router_policy_probe"].get("decision"),
         "router_policy_reduction_fraction": _float_or_none(
@@ -287,6 +287,40 @@ def _closeout_rows(evidence: dict[str, Any]) -> list[dict[str, Any]]:
             "disposition": "mechanism_prior_for_next_audit",
         },
     ]
+
+
+def _best_router_policy_row(rows: Any) -> dict[str, Any]:
+    if not isinstance(rows, list):
+        return {}
+    candidates = [
+        row
+        for row in rows
+        if isinstance(row, dict)
+        and row.get("variant") != "dynamic_contextual_topk2"
+        and _float_or_none(
+            row.get("commutator_anchor_logit_mse_reduction_fraction")
+        )
+        is not None
+    ]
+    if not candidates:
+        candidates = [
+            row
+            for row in rows
+            if isinstance(row, dict)
+            and _float_or_none(
+                row.get("commutator_anchor_logit_mse_reduction_fraction")
+            )
+            is not None
+        ]
+    if not candidates:
+        return {}
+    return max(
+        candidates,
+        key=lambda row: _float_or_none(
+            row.get("commutator_anchor_logit_mse_reduction_fraction")
+        )
+        or float("-inf"),
+    )
 
 
 def _failures(

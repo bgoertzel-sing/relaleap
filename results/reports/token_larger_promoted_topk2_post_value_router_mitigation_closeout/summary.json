@@ -21,7 +21,7 @@
       "decision": "value_composition_prioritized_over_router_policy",
       "disposition": "closed_not_established",
       "key_metric": "commutator_anchor_logit_mse_reduction_fraction",
-      "key_value": -0.013875435318412323
+      "key_value": 0.1781019233634759
     },
     {
       "branch": "simple_value_update",
@@ -71,7 +71,7 @@
     "order_averaging_decision": "explicit_order_averaging_diagnostic_candidate_not_promoted",
     "router_only_fraction_of_full": 0.22705120722820915,
     "router_policy_decision": "value_composition_prioritized_over_router_policy",
-    "router_policy_reduction_fraction": -0.013875435318412323,
+    "router_policy_reduction_fraction": 0.1781019233634759,
     "simple_value_best_reduction_fraction": 0.1266509238864246,
     "simple_value_mitigation_decision": "value_mitigation_not_established",
     "topk2_mean_commutator_anchor_support_churn": 0.9189453125,
@@ -81,13 +81,13 @@
     "value_only_fraction_of_full": 1.2560724600135986
   },
   "failures": [],
-  "git_commit": "83b6f42b6cbdc06e6bb071f3cea2396eeb833b61",
+  "git_commit": "3b87624acec851e93cc9f69c4fd6fafed36e61f0",
   "next_command": null,
   "next_step": "implement a no-training pairwise value-interaction localization audit over the promoted top-k-2 checkpoint before proposing another mitigation family",
   "out_dir": "results/reports/token_larger_promoted_topk2_post_value_router_mitigation_closeout",
   "platform": "macOS-26.5.1-x86_64-i386-64bit",
   "rationale": "Router-policy pinning/freezing did not reduce the commutator, simple value clipping/scaling did not clear the gate, low-rank value updates did not clear the gate, and commutator-aware value penalties did not clear the gate. Explicit order averaging remains diagnostic-only. Because the update decomposition is value-dominated, the next non-duplicative step is to localize pairwise fixed-value interactions before designing another trainable mitigation.",
-  "runtime_seconds": 0.0016,
+  "runtime_seconds": 0.007,
   "selected_next_action": "pairwise_value_interaction_localization_audit",
   "source_rows": [
     {

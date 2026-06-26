@@ -7,7 +7,7 @@
 
 ## Evidence
 
-- Router-policy reduction fraction: `-0.013875435318412323`
+- Router-policy reduction fraction: `0.1781019233634759`
 - Simple value best reduction fraction: `0.1266509238864246`
 - Low-rank value best reduction fraction: `0.08746147951831357`
 - Commutator value-penalty best reduction fraction: `0.23063087609231459`

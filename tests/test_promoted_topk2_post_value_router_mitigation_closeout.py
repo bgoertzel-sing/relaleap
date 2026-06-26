@@ -58,6 +58,10 @@ class PromotedTopk2PostValueRouterMitigationCloseoutTest(unittest.TestCase):
                 summary["claim_statuses"]["topk2_causal_cooperation"],
                 "not_supported",
             )
+            self.assertEqual(
+                summary["evidence"]["router_policy_reduction_fraction"],
+                0.18,
+            )
             self.assertFalse(summary["strategy_review"]["ben_notification_required"])
             self.assertEqual(len(summary["closeout_rows"]), 6)
             self.assertTrue((root / "closeout" / "summary.json").is_file())
@@ -111,8 +115,16 @@ def _write_sources(root: Path) -> dict[str, Path]:
             "decision": "value_composition_prioritized_over_router_policy",
             "router_policy_rows": [
                 {
+                    "variant": "dynamic_contextual_topk2",
+                    "commutator_anchor_logit_mse_reduction_fraction": 0.0,
+                },
+                {
                     "variant": "router_frozen_transfer_topk2",
                     "commutator_anchor_logit_mse_reduction_fraction": -0.014,
+                },
+                {
+                    "variant": "pinned_forward_final_support_topk2",
+                    "commutator_anchor_logit_mse_reduction_fraction": 0.18,
                 }
             ],
         },
