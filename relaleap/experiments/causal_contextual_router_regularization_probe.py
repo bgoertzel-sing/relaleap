@@ -45,10 +45,12 @@ def run_causal_contextual_router_regularization_probe(
     *,
     max_folds: int | None = None,
     smooth_weights: tuple[float, ...] = (0.01, 0.05),
+    load_balance_weights: tuple[float, ...] = (0.01, 0.05),
+    oracle_target_weights: tuple[float, ...] = (0.01, 0.05),
     ce_guardrail: float = 0.05,
     random_seed: int = 2606,
 ) -> dict[str, Any]:
-    """Train causal folds with router-score smoothness and audit support quality."""
+    """Train causal folds with router regularizers and audit support quality."""
 
     try:
         import torch
@@ -90,12 +92,20 @@ def run_causal_contextual_router_regularization_probe(
         raise ValueError("max_folds must be positive when set")
     if any(weight < 0.0 for weight in smooth_weights):
         raise ValueError("smooth_weights must be non-negative")
+    if any(weight < 0.0 for weight in load_balance_weights):
+        raise ValueError("load_balance_weights must be non-negative")
+    if any(weight < 0.0 for weight in oracle_target_weights):
+        raise ValueError("oracle_target_weights must be non-negative")
 
     torch.manual_seed(seed)
     inputs, targets, vocab_size = _build_batch(dataset=dataset, seq_len=seq_len, batch_size=4)
     fold_count = int(inputs.shape[0]) if max_folds is None else min(max_folds, int(inputs.shape[0]))
     all_pairs = list(itertools.combinations(range(num_columns), top_k))
-    variants = _variant_specs(smooth_weights)
+    variants = _variant_specs(
+        smooth_weights=smooth_weights,
+        load_balance_weights=load_balance_weights,
+        oracle_target_weights=oracle_target_weights,
+    )
     fold_rows: list[dict[str, Any]] = []
     support_count_rows: list[dict[str, Any]] = []
     control_rows: list[dict[str, Any]] = []
@@ -139,9 +149,14 @@ def run_causal_contextual_router_regularization_probe(
                     training_cfg=training_cfg,
                 )
                 hidden = base.encode(train_inputs)
-                loss = ce_loss + float(spec["score_smooth_weight"]) * _score_smoothness_loss(
-                    residual,
-                    hidden,
+                loss = ce_loss + _regularization_loss(
+                    base=base,
+                    residual=residual,
+                    hidden=hidden,
+                    targets=train_targets,
+                    vocab_size=vocab_size,
+                    all_pairs=all_pairs,
+                    spec=spec,
                 )
                 loss.backward()
                 optimizer.step()
@@ -192,6 +207,8 @@ def run_causal_contextual_router_regularization_probe(
                 "variant": spec["name"],
                 "regularizer": spec["regularizer"],
                 "score_smooth_weight": spec["score_smooth_weight"],
+                "load_balance_weight": spec["load_balance_weight"],
+                "oracle_target_weight": spec["oracle_target_weight"],
                 "support_router": spec["support_router"],
                 "top_k": spec["top_k"],
                 "causal_feature_safe": spec["causal_feature_safe"],
@@ -272,10 +289,21 @@ def run_causal_contextual_router_regularization_probe(
     return summary
 
 
-def _variant_specs(smooth_weights: tuple[float, ...]) -> list[dict[str, Any]]:
+def _variant_specs(
+    *,
+    smooth_weights: tuple[float, ...],
+    load_balance_weights: tuple[float, ...],
+    oracle_target_weights: tuple[float, ...],
+) -> list[dict[str, Any]]:
     specs = _control_specs(contextual_router_hidden_dim=0)
     out = [
-        {**spec, "regularizer": "none", "score_smooth_weight": 0.0}
+        {
+            **spec,
+            "regularizer": "none",
+            "score_smooth_weight": 0.0,
+            "load_balance_weight": 0.0,
+            "oracle_target_weight": 0.0,
+        }
         for spec in specs
         if spec["name"] in {"causal_contextual_topk2", "linear_topk2"}
     ]
@@ -288,9 +316,67 @@ def _variant_specs(smooth_weights: tuple[float, ...]) -> list[dict[str, Any]]:
                 "causal_feature_safe": True,
                 "regularizer": "adjacent_router_score_distribution_l2",
                 "score_smooth_weight": float(weight),
+                "load_balance_weight": 0.0,
+                "oracle_target_weight": 0.0,
+            }
+        )
+    for weight in load_balance_weights:
+        out.append(
+            {
+                "name": f"causal_contextual_load_balance_{weight:g}",
+                "support_router": "contextual_mlp_causal",
+                "top_k": 2,
+                "causal_feature_safe": True,
+                "regularizer": "soft_support_load_balance_mse",
+                "score_smooth_weight": 0.0,
+                "load_balance_weight": float(weight),
+                "oracle_target_weight": 0.0,
+            }
+        )
+    for weight in oracle_target_weights:
+        out.append(
+            {
+                "name": f"causal_contextual_oracle_target_{weight:g}",
+                "support_router": "contextual_mlp_causal",
+                "top_k": 2,
+                "causal_feature_safe": True,
+                "regularizer": "train_fold_oracle_support_multilabel_bce",
+                "score_smooth_weight": 0.0,
+                "load_balance_weight": 0.0,
+                "oracle_target_weight": float(weight),
             }
         )
     return out
+
+
+def _regularization_loss(
+    *,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    all_pairs: list[tuple[int, ...]],
+    spec: dict[str, Any],
+) -> Any:
+    loss = hidden.sum() * 0.0
+    score_smooth_weight = float(spec.get("score_smooth_weight", 0.0))
+    load_balance_weight = float(spec.get("load_balance_weight", 0.0))
+    oracle_target_weight = float(spec.get("oracle_target_weight", 0.0))
+    if score_smooth_weight:
+        loss = loss + score_smooth_weight * _score_smoothness_loss(residual, hidden)
+    if load_balance_weight:
+        loss = loss + load_balance_weight * _support_load_balance_loss(residual, hidden)
+    if oracle_target_weight:
+        loss = loss + oracle_target_weight * _oracle_target_support_loss(
+            base=base,
+            residual=residual,
+            hidden=hidden,
+            targets=targets,
+            vocab_size=vocab_size,
+            all_pairs=all_pairs,
+        )
+    return loss
 
 
 def _score_smoothness_loss(residual: Any, hidden: Any) -> Any:
@@ -302,6 +388,55 @@ def _score_smoothness_loss(residual: Any, hidden: Any) -> Any:
         return probabilities.sum() * 0.0
     delta = probabilities[:, 1:, :] - probabilities[:, :-1, :]
     return delta.pow(2).mean()
+
+
+def _support_load_balance_loss(residual: Any, hidden: Any) -> Any:
+    import torch
+    import torch.nn.functional as F
+
+    scores = residual._score_columns(hidden)
+    probabilities = F.softmax(scores[:, :-1, :], dim=-1)
+    mean_load = probabilities.reshape(-1, probabilities.shape[-1]).mean(dim=0)
+    target = torch.full_like(mean_load, 1.0 / float(mean_load.numel()))
+    return (mean_load - target).pow(2).mean() * float(mean_load.numel())
+
+
+def _oracle_target_support_loss(
+    *,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    all_pairs: list[tuple[int, ...]],
+) -> Any:
+    import torch
+    import torch.nn.functional as F
+
+    with torch.no_grad():
+        token_loss_rows = []
+        for pair in all_pairs:
+            support_indices = torch.tensor(
+                pair,
+                dtype=torch.long,
+                device=hidden.device,
+            ).view(1, 1, len(pair)).expand(hidden.shape[0], hidden.shape[1], len(pair))
+            logits = base.decode(residual(hidden, support_indices=support_indices))
+            token_loss_rows.append(_token_losses(logits, targets).reshape(-1))
+        token_loss_matrix = torch.stack(token_loss_rows, dim=1)
+        oracle_indices = token_loss_matrix.argmin(dim=1)
+        target = torch.zeros(
+            token_loss_matrix.shape[0],
+            residual.num_columns,
+            dtype=hidden.dtype,
+            device=hidden.device,
+        )
+        pair_tensor = torch.tensor(all_pairs, dtype=torch.long, device=hidden.device)
+        target_columns = pair_tensor[oracle_indices]
+        target.scatter_(dim=1, index=target_columns, value=1.0)
+    del vocab_size
+    scores = residual._score_columns(hidden)[:, :-1, :].reshape(-1, residual.num_columns)
+    return F.binary_cross_entropy_with_logits(scores, target)
 
 
 def _token_losses(logits: Any, targets: Any) -> Any:
@@ -442,14 +577,34 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--max-folds", type=int, default=None)
     parser.add_argument("--smooth-weight", type=float, action="append", dest="smooth_weights")
+    parser.add_argument(
+        "--load-balance-weight",
+        type=float,
+        action="append",
+        dest="load_balance_weights",
+    )
+    parser.add_argument(
+        "--oracle-target-weight",
+        type=float,
+        action="append",
+        dest="oracle_target_weights",
+    )
     parser.add_argument("--ce-guardrail", type=float, default=0.05)
     args = parser.parse_args(argv)
     smooth_weights = tuple(args.smooth_weights) if args.smooth_weights else (0.01, 0.05)
+    load_balance_weights = (
+        tuple(args.load_balance_weights) if args.load_balance_weights else (0.01, 0.05)
+    )
+    oracle_target_weights = (
+        tuple(args.oracle_target_weights) if args.oracle_target_weights else (0.01, 0.05)
+    )
     summary = run_causal_contextual_router_regularization_probe(
         args.config,
         args.out,
         max_folds=args.max_folds,
         smooth_weights=smooth_weights,
+        load_balance_weights=load_balance_weights,
+        oracle_target_weights=oracle_target_weights,
         ce_guardrail=args.ce_guardrail,
     )
     print(json.dumps({"status": summary["status"], "decision": summary["decision"]}))

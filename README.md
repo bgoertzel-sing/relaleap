@@ -261,9 +261,12 @@ python -m relaleap.experiments.causal_contextual_router_regularization_probe \
 This writes `summary.json`, `fold_metrics.csv`, `aggregate_metrics.csv`,
 `variant_gate.csv`, `control_metrics.csv`, `support_counts.csv`, and `notes.md`.
 It compares the unregularized causal contextual top-k-2 router, linear top-k-2,
-and adjacent router-score smoothness variants under the same sequence-heldout
-oracle-regret and functional-churn audit metrics. A passing variant is only a
-candidate for backend validation; it does not promote a router default.
+adjacent router-score smoothness variants, soft support-load balance variants,
+and train-fold oracle-target support variants under the same sequence-heldout
+oracle-regret and functional-churn audit metrics. The oracle-target penalty is
+a train-time diagnostic regularizer computed only on the training fold. A
+passing variant is only a candidate for backend validation; it does not promote
+a router default.
 
 After the deconfounded audit closes comparative top-k-2 causal cooperation,
 confirm the active local causal bracket without rerunning training:

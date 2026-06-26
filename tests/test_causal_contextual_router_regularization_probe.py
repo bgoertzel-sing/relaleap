@@ -57,6 +57,8 @@ outputs:
                 root / "probe",
                 max_folds=2,
                 smooth_weights=(0.01,),
+                load_balance_weights=(0.01,),
+                oracle_target_weights=(0.01,),
             )
 
             self.assertEqual(summary["status"], "pass")
@@ -73,7 +75,15 @@ outputs:
                 "causal_contextual_score_smooth_0.01",
                 probe["aggregate_metrics"],
             )
-            self.assertEqual(len(probe["variant_gate_rows"]), 1)
+            self.assertIn(
+                "causal_contextual_load_balance_0.01",
+                probe["aggregate_metrics"],
+            )
+            self.assertIn(
+                "causal_contextual_oracle_target_0.01",
+                probe["aggregate_metrics"],
+            )
+            self.assertEqual(len(probe["variant_gate_rows"]), 3)
             self.assertTrue((root / "probe" / "summary.json").is_file())
             self.assertTrue((root / "probe" / "fold_metrics.csv").is_file())
             self.assertTrue((root / "probe" / "aggregate_metrics.csv").is_file())
@@ -86,6 +96,12 @@ outputs:
             variant = saved["probe"]["variant_gate_rows"][0]
             self.assertIn("mean_oracle_regret_delta_vs_causal", variant)
             self.assertIn("mean_functional_churn_delta_vs_causal", variant)
+            self.assertTrue(
+                all(
+                    "load_balance_weight" in row and "oracle_target_weight" in row
+                    for row in saved["probe"]["fold_metrics"]
+                )
+            )
 
     def test_requires_causal_contextual_topk2(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
