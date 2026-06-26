@@ -581,6 +581,22 @@ logit MSE, support-set, token-position, support-churn, residual-norm, and
 residual-delta fields. The report is a control-matrix input only, not causal
 cooperation evidence by itself.
 
+To join finite-update risk controls back to the deconfounded functional-benefit
+strata before making any top-k `2` causal-cooperation claim, run:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_finite_update_augmented_causal_gate
+```
+
+This writes
+`results/reports/token_larger_promoted_topk2_finite_update_augmented_causal_gate/summary.json`,
+`finite_update_risk_controls.csv`, `augmented_deconfounded_strata.csv`, and
+`notes.md`. It consumes the deconfounded top-k `2` versus rank-matched top-k `1`
+matched-strata audit plus the raw finite-update per-token commutator packet
+list referenced by the control matrix. The gate keeps causal-cooperation claims
+blocked unless functional benefit, fixed-support cleanliness, finite-update
+logit-MSE risk, support churn, and random/dense controls all pass together.
+
 To inspect the older fixed-singleton gain/regret packet that motivated the
 singleton reconciliation audit, run:
 

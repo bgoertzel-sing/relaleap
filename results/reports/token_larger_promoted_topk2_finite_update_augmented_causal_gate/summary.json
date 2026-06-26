@@ -1,0 +1,92 @@
+{
+  "artifacts": {
+    "augmented_deconfounded_strata_csv": "results/reports/token_larger_promoted_topk2_finite_update_augmented_causal_gate/augmented_deconfounded_strata.csv",
+    "finite_update_risk_controls_csv": "results/reports/token_larger_promoted_topk2_finite_update_augmented_causal_gate/finite_update_risk_controls.csv",
+    "notes_md": "results/reports/token_larger_promoted_topk2_finite_update_augmented_causal_gate/notes.md",
+    "summary_json": "results/reports/token_larger_promoted_topk2_finite_update_augmented_causal_gate/summary.json"
+  },
+  "claim_gate": "causal_cooperation_blocked_unless_functional_benefit_survives_finite_update_risk_controls",
+  "decision": "finite_update_augmented_topk2_causal_cooperation_blocked",
+  "deconfounded_dir": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention",
+  "failures": [],
+  "finite_sources": [
+    {
+      "config_path": "configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed2.yaml",
+      "decision": "",
+      "packet": "retention_microtest_1",
+      "path": "results/runpod_fetch/audits/runpod_token_larger_retention_churn_order_averaging_microtest_seed2/per_token_commutator.csv",
+      "path_present": true,
+      "per_token_commutator_present": "True",
+      "per_token_row_count": "2016",
+      "probe_dir": "results/runpod_fetch/audits/runpod_token_larger_retention_churn_order_averaging_microtest_seed2",
+      "read_row_count": 2016,
+      "status": "ok"
+    },
+    {
+      "config_path": "configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate_seed3.yaml",
+      "decision": "",
+      "packet": "retention_microtest_2",
+      "path": "results/runpod_fetch/audits/runpod_token_larger_retention_churn_order_averaging_microtest_seed3/per_token_commutator.csv",
+      "path_present": true,
+      "per_token_commutator_present": "True",
+      "per_token_row_count": "2016",
+      "probe_dir": "results/runpod_fetch/audits/runpod_token_larger_retention_churn_order_averaging_microtest_seed3",
+      "read_row_count": 2016,
+      "status": "ok"
+    }
+  ],
+  "finite_update_matrix_dir": "results/reports/token_larger_promoted_topk2_finite_update_control_matrix",
+  "metrics": {
+    "augmented_fixed_cleaner_fraction": 0.6521739130434783,
+    "augmented_functional_churn_cleaner_fraction": 0.8260869565217391,
+    "augmented_matched_exact_context_count": 369,
+    "augmented_mean_topk2_finite_support_churn_fraction": 0.9247085715595466,
+    "augmented_mean_topk2_minus_dense_finite_logit_mse": 0.23304109157759784,
+    "augmented_mean_topk2_minus_random_fixed_finite_logit_mse": -0.034330067261335466,
+    "augmented_mean_topk2_minus_topk1_finite_logit_mse": 0.2784630590280149,
+    "augmented_positive_benefit_fraction": 0.6521739130434783,
+    "augmented_strata_count": 46,
+    "deconfounded_ce_guardrail_passed": true,
+    "deconfounded_original_decision": "topk2_comparative_causal_cooperation_not_supported",
+    "deconfounded_topk2_fixed_support_cleaner_strata_fraction": 0.6521739130434783,
+    "deconfounded_topk2_functional_churn_cleaner_strata_fraction": 0.6086956521739131,
+    "deconfounded_topk2_incremental_pair_gain_positive_strata_fraction": 0.6521739130434783,
+    "matrix_topk2_minus_dense_logit_mse": 0.17318824422907814,
+    "matrix_topk2_minus_random_fixed_topk2_logit_mse": -0.1174720917322816,
+    "matrix_topk2_minus_topk1_logit_mse": 0.22752397570613553,
+    "matrix_topk2_support_churn_fraction": 0.9236111111111112
+  },
+  "next_step": "keep top-k-2 causal-cooperation claims blocked; return to active rank-matched top-k-1 controls, retention/churn, or matched deconfounding",
+  "out_dir": "results/reports/token_larger_promoted_topk2_finite_update_augmented_causal_gate",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "role_counts": {
+    "dense_active_rank": 1008,
+    "promoted_contextual_topk2": 1008,
+    "random_fixed_topk2": 1008,
+    "rank_matched_contextual_topk1": 1008
+  },
+  "runtime_seconds": 0.0407,
+  "signals": {
+    "benefit_fraction_gate_passed": false,
+    "ce_guardrail_passed": true,
+    "cleanliness_fraction_gate_passed": false,
+    "deconfounded_original_decision_supports_topk2": false,
+    "topk2_logit_mse_not_worse_than_dense": false,
+    "topk2_logit_mse_not_worse_than_topk1": false,
+    "topk2_not_worse_than_random_fixed_on_logit_mse": true,
+    "topk2_support_churn_not_high": false
+  },
+  "source_artifacts": {
+    "deconfounded_summary_json": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention/summary.json",
+    "finite_update_matrix_summary_json": "results/reports/token_larger_promoted_topk2_finite_update_control_matrix/summary.json",
+    "finite_update_source_rows_csv": "results/reports/token_larger_promoted_topk2_finite_update_control_matrix/source_rows.csv",
+    "matched_deconfounded_strata_csv": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention/matched_deconfounded_strata.csv"
+  },
+  "status": "pass",
+  "thresholds": {
+    "max_topk2_support_churn_fraction": 0.5,
+    "max_topk2_vs_dense_logit_mse_delta": 0.0,
+    "max_topk2_vs_topk1_logit_mse_delta": 0.0,
+    "min_positive_benefit_fraction": 0.8
+  }
+}
