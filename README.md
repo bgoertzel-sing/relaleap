@@ -268,6 +268,23 @@ a train-time diagnostic regularizer computed only on the training fold. A
 passing variant is only a candidate for backend validation; it does not promote
 a router default.
 
+After that probe finds a train-fold oracle-target regularization candidate,
+audit whether a deployable causal-only student can distill the regularized
+teacher's support policy without using oracle features at inference:
+
+```bash
+python -m relaleap.experiments.causal_contextual_router_distillation_audit \
+  --config configs/token_larger_support_wide_causal_contextual_router_hep_temporal_clipped_objective_gate.yaml \
+  --out results/audits/token_larger_causal_contextual_router_distillation_audit
+```
+
+This command writes `summary.json`, `fold_metrics.csv`,
+`aggregate_metrics.csv`, `distillation_gate.csv`, `control_metrics.csv`,
+`support_counts.csv`, and `notes.md`. A passing row is still only a
+deployable-candidate result: defaults stay blocked until the distilled student
+is repeated beyond the bounded audit and teacher-student support agreement is
+inspected.
+
 After the deconfounded audit closes comparative top-k-2 causal cooperation,
 confirm the active local causal bracket without rerunning training:
 
