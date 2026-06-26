@@ -32,6 +32,7 @@ class CausalAuditCoverageReportTest(unittest.TestCase):
                 rank_matched_report_path=reports["rank"],
                 retention_report_path=reports["retention"],
                 post_stop_report_path=root / "missing_post_stop_report.json",
+                finite_update_matrix_path=root / "missing_finite_update_matrix.csv",
             )
 
             self.assertEqual(report["status"], "pass")
@@ -70,6 +71,7 @@ class CausalAuditCoverageReportTest(unittest.TestCase):
                 rank_matched_report_path=reports["rank"],
                 retention_report_path=reports["retention"],
                 post_stop_report_path=root / "missing_post_stop_report.json",
+                finite_update_matrix_path=root / "missing_finite_update_matrix.csv",
             )
 
             self.assertEqual(report["decision"], EXISTING_ARTIFACTS_SUFFICIENT)
@@ -101,12 +103,64 @@ class CausalAuditCoverageReportTest(unittest.TestCase):
                 rank_matched_report_path=reports["rank"],
                 retention_report_path=reports["retention"],
                 post_stop_report_path=root / "missing_post_stop_report.json",
+                finite_update_matrix_path=root / "missing_finite_update_matrix.csv",
             )
 
             self.assertEqual(report["decision"], NEW_TRAINING_REQUIRED)
             self.assertIn(
                 "norm_matched_dense",
                 report["coverage"]["missing_controls_for_deconfounded_matrix"],
+            )
+
+    def test_finite_update_matrix_is_consumed_as_explicit_control_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            reports = _write_source_artifacts(
+                root,
+                include_dense_control=False,
+                include_per_token_fields=True,
+                include_active_rank=True,
+                include_residual_norm_bin=True,
+            )
+            finite_update_matrix = root / "finite_update_matrix.csv"
+            _write_finite_update_matrix(finite_update_matrix)
+
+            report = write_causal_audit_coverage_report(
+                root / "fingerprint",
+                root / "matched",
+                root / "coverage",
+                causal_fingerprint_report_path=reports["fingerprint"],
+                bracket_report_path=reports["bracket"],
+                rank_matched_report_path=reports["rank"],
+                retention_report_path=reports["retention"],
+                post_stop_report_path=root / "missing_post_stop_report.json",
+                finite_update_matrix_path=finite_update_matrix,
+            )
+
+            coverage = report["coverage"]
+            self.assertEqual(report["decision"], EXISTING_ARTIFACTS_SUFFICIENT)
+            self.assertEqual(coverage["missing_controls_for_deconfounded_matrix"], [])
+            self.assertTrue(coverage["controls_available"]["norm_matched_dense"])
+            self.assertTrue(
+                coverage["controls_available"]["finite_update_dense_active_rank"]
+            )
+            self.assertTrue(
+                coverage["controls_available"]["finite_update_random_fixed_topk2"]
+            )
+            self.assertEqual(coverage["finite_update_control_matrix_row_count"], 4)
+            self.assertEqual(
+                [
+                    row["matrix_role"]
+                    for row in report["next_no_training_causal_audit_matrix"][
+                        "finite_update_controls"
+                    ]
+                ],
+                [
+                    "promoted_contextual_topk2",
+                    "rank_matched_contextual_topk1",
+                    "random_fixed_topk2",
+                    "dense_active_rank",
+                ],
             )
 
     def test_post_stop_report_selects_rank_matched_topk1_active_bracket(self) -> None:
@@ -129,6 +183,7 @@ class CausalAuditCoverageReportTest(unittest.TestCase):
                 rank_matched_report_path=reports["rank"],
                 retention_report_path=reports["retention"],
                 post_stop_report_path=reports["post_stop"],
+                finite_update_matrix_path=root / "missing_finite_update_matrix.csv",
             )
 
             self.assertEqual(report["decision"], RANK_MATCHED_TOPK1_ACTIVE_POST_STOP)
@@ -396,6 +451,69 @@ def _write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, str]]) ->
         writer.writeheader()
         for row in rows:
             writer.writerow({field: row.get(field, "") for field in fieldnames})
+
+
+def _write_finite_update_matrix(path: Path) -> None:
+    _write_csv(
+        path,
+        [
+            "variant",
+            "matrix_role",
+            "claim_gate",
+            "mean_anchor_ce_abs_delta",
+            "mean_anchor_logit_mse",
+            "mean_anchor_residual_stream_l2",
+            "mean_anchor_support_churn",
+            "per_token_commutator_rows_available",
+            "available_per_token_strata",
+        ],
+        [
+            {
+                "variant": "promoted_contextual_topk2",
+                "matrix_role": "promoted_contextual_topk2",
+                "claim_gate": "matrix_input_only_not_causal_cooperation_evidence",
+                "mean_anchor_ce_abs_delta": "0.01",
+                "mean_anchor_logit_mse": "0.24",
+                "mean_anchor_residual_stream_l2": "5.1",
+                "mean_anchor_support_churn": "0.9",
+                "per_token_commutator_rows_available": "True",
+                "available_per_token_strata": "position_bin;token_class",
+            },
+            {
+                "variant": "rank_matched_contextual_topk1",
+                "matrix_role": "rank_matched_contextual_topk1",
+                "claim_gate": "control_matrix_input",
+                "mean_anchor_ce_abs_delta": "0.02",
+                "mean_anchor_logit_mse": "0.01",
+                "mean_anchor_residual_stream_l2": "1.3",
+                "mean_anchor_support_churn": "0.0",
+                "per_token_commutator_rows_available": "True",
+                "available_per_token_strata": "position_bin;token_class",
+            },
+            {
+                "variant": "random_fixed_topk2",
+                "matrix_role": "random_fixed_topk2",
+                "claim_gate": "control_matrix_input",
+                "mean_anchor_ce_abs_delta": "0.05",
+                "mean_anchor_logit_mse": "0.35",
+                "mean_anchor_residual_stream_l2": "6.7",
+                "mean_anchor_support_churn": "0.0",
+                "per_token_commutator_rows_available": "True",
+                "available_per_token_strata": "position_bin;token_class",
+            },
+            {
+                "variant": "norm_matched_dense_active_rank",
+                "matrix_role": "dense_active_rank",
+                "claim_gate": "control_matrix_input",
+                "mean_anchor_ce_abs_delta": "0.04",
+                "mean_anchor_logit_mse": "0.07",
+                "mean_anchor_residual_stream_l2": "3.2",
+                "mean_anchor_support_churn": "",
+                "per_token_commutator_rows_available": "True",
+                "available_per_token_strata": "position_bin;token_class",
+            },
+        ],
+    )
 
 
 if __name__ == "__main__":

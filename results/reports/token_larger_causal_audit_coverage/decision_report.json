@@ -6,12 +6,130 @@
   "audit_dir": "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1",
   "coverage": {
     "controls_available": {
+      "finite_update_dense_active_rank": true,
+      "finite_update_random_fixed_topk2": true,
       "norm_matched_dense": true,
       "promoted_topk2": true,
       "random_support": true,
       "rank_matched_topk1": true,
       "retention_dense_control": true
     },
+    "finite_update_control_matrix_present": true,
+    "finite_update_control_matrix_roles": [
+      "dense_active_rank",
+      "promoted_contextual_topk2",
+      "random_fixed_topk2",
+      "rank_matched_contextual_topk1"
+    ],
+    "finite_update_control_matrix_row_count": 4,
+    "finite_update_control_matrix_rows": [
+      {
+        "active_parameters_proxy": "768.0",
+        "available_per_token_strata": "all;position_bin;residual_delta_l2_bin;residual_norm_bin;split;support_churn;token_class;variant",
+        "claim_gate": "matrix_input_only_not_causal_cooperation_evidence",
+        "interpretation": "active promoted support-routing default; causal-cooperation claim remains blocked",
+        "kind": "sparse",
+        "matrix_role": "promoted_contextual_topk2",
+        "mean_anchor_ce_abs_delta": "0.014751255512237549",
+        "mean_anchor_logit_mse": "0.24012182280421257",
+        "mean_anchor_residual_stream_l2": "5.105314016342163",
+        "mean_anchor_support_churn": "0.9189453125",
+        "mean_transfer_ce_abs_delta": "0.020724743604660034",
+        "mean_transfer_logit_mse": "0.24536952376365662",
+        "mean_transfer_residual_stream_l2": "5.1470627784729",
+        "num_columns": "24.0",
+        "per_token_commutator_row_count": "1008",
+        "per_token_commutator_rows_available": "True",
+        "per_token_mean_ce_abs_delta": "0.3973325586005572",
+        "per_token_mean_logit_mse": "0.23669071559276747",
+        "per_token_mean_residual_delta_l2": "5.156413700982248",
+        "per_token_mean_symmetric_kl": "0.256635295208769",
+        "source_packet_count": "4",
+        "top_k": "2.0",
+        "variant": "promoted_contextual_topk2"
+      },
+      {
+        "active_parameters_proxy": "384.0",
+        "available_per_token_strata": "all;position_bin;residual_delta_l2_bin;residual_norm_bin;split;support_churn;token_class;variant",
+        "claim_gate": "control_matrix_input",
+        "interpretation": "rank-matched sparse active causal bracket",
+        "kind": "sparse",
+        "matrix_role": "rank_matched_contextual_topk1",
+        "mean_anchor_ce_abs_delta": "0.019871175289154053",
+        "mean_anchor_logit_mse": "0.009295536670833826",
+        "mean_anchor_residual_stream_l2": "1.2995811998844147",
+        "mean_anchor_support_churn": "0.0",
+        "mean_transfer_ce_abs_delta": "0.017447441816329956",
+        "mean_transfer_logit_mse": "0.009680313291028142",
+        "mean_transfer_residual_stream_l2": "1.335866928100586",
+        "num_columns": "48.0",
+        "per_token_commutator_row_count": "1008",
+        "per_token_commutator_rows_available": "True",
+        "per_token_mean_ce_abs_delta": "0.10445518272795848",
+        "per_token_mean_logit_mse": "0.00916673988663195",
+        "per_token_mean_residual_delta_l2": "1.2693865260680757",
+        "per_token_mean_symmetric_kl": "0.006559088256153926",
+        "source_packet_count": "4",
+        "top_k": "1.0",
+        "variant": "rank_matched_contextual_topk1"
+      },
+      {
+        "active_parameters_proxy": "768.0",
+        "available_per_token_strata": "all;position_bin;residual_delta_l2_bin;residual_norm_bin;split;support_churn;token_class;variant",
+        "claim_gate": "control_matrix_input",
+        "interpretation": "router-free fixed-support sparse control",
+        "kind": "sparse_fixed",
+        "matrix_role": "random_fixed_topk2",
+        "mean_anchor_ce_abs_delta": "0.05372142791748047",
+        "mean_anchor_logit_mse": "0.34768086671829224",
+        "mean_anchor_residual_stream_l2": "6.7158379554748535",
+        "mean_anchor_support_churn": "0.0",
+        "mean_transfer_ce_abs_delta": "0.0898216962814331",
+        "mean_transfer_logit_mse": "0.359788179397583",
+        "mean_transfer_residual_stream_l2": "6.796779155731201",
+        "num_columns": "24.0",
+        "per_token_commutator_row_count": "1008",
+        "per_token_commutator_rows_available": "True",
+        "per_token_mean_ce_abs_delta": "0.4437421860675963",
+        "per_token_mean_logit_mse": "0.35416280732504907",
+        "per_token_mean_residual_delta_l2": "6.759792602724499",
+        "per_token_mean_symmetric_kl": "0.22688354474551503",
+        "source_packet_count": "2",
+        "top_k": "2.0",
+        "variant": "random_fixed_topk2"
+      },
+      {
+        "active_parameters_proxy": "1536.0",
+        "available_per_token_strata": "all;position_bin;residual_delta_l2_bin;residual_norm_bin;split;support_churn;token_class;variant",
+        "claim_gate": "control_matrix_input",
+        "interpretation": "dense active-rank control",
+        "kind": "dense",
+        "matrix_role": "dense_active_rank",
+        "mean_anchor_ce_abs_delta": "0.037420451641082764",
+        "mean_anchor_logit_mse": "0.07050299365073442",
+        "mean_anchor_residual_stream_l2": "3.272839069366455",
+        "mean_anchor_support_churn": "",
+        "mean_transfer_ce_abs_delta": "0.03861504793167114",
+        "mean_transfer_logit_mse": "0.07027852069586515",
+        "mean_transfer_residual_stream_l2": "3.270709812641144",
+        "num_columns": "",
+        "per_token_commutator_row_count": "1008",
+        "per_token_commutator_rows_available": "True",
+        "per_token_mean_ce_abs_delta": "0.0659256594048606",
+        "per_token_mean_logit_mse": "0.06350247136368933",
+        "per_token_mean_residual_delta_l2": "3.156933040254646",
+        "per_token_mean_symmetric_kl": "0.026965312340522244",
+        "source_packet_count": "4",
+        "top_k": "0.0",
+        "variant": "norm_matched_dense_active_rank"
+      }
+    ],
+    "finite_update_control_matrix_variants": [
+      "norm_matched_dense_active_rank",
+      "promoted_contextual_topk2",
+      "random_fixed_topk2",
+      "rank_matched_contextual_topk1"
+    ],
     "functional_churn_fields": [
       "adjacent_support_changed_count",
       "adjacent_support_identity_churn_fraction",
@@ -55,7 +173,7 @@
     "support_frequency_candidate_percentile_identified": false,
     "support_frequency_candidate_percentile_ready": false,
     "support_frequency_candidate_unmatched_count": 1880,
-    "topk2_ce_deficit_vs_rank_matched_topk1": 0.045946598052978516,
+    "topk2_ce_deficit_vs_rank_matched_topk1": 0.04594707489013672,
     "topk2_functional_churn_cleaner_than_topk1": true,
     "topk2_pair_synergy_mean_across_strata": 0.18841660618782044,
     "variant_count": 3,
@@ -85,9 +203,55 @@
       "topk2_causal_cooperation": true
     },
     "ce_guardrail": {
-      "current_topk2_deficit": 0.045946598052978516,
+      "current_topk2_deficit": 0.04594707489013672,
       "interpretation": "CE remains a guardrail; the active causal bracket is top-k-1 unless no-fallback top-k-2 selection controls become identified and supportive."
     },
+    "finite_update_controls": [
+      {
+        "available_per_token_strata": "all;position_bin;residual_delta_l2_bin;residual_norm_bin;split;support_churn;token_class;variant",
+        "claim_gate": "matrix_input_only_not_causal_cooperation_evidence",
+        "matrix_role": "promoted_contextual_topk2",
+        "mean_anchor_ce_abs_delta": "0.014751255512237549",
+        "mean_anchor_logit_mse": "0.24012182280421257",
+        "mean_anchor_residual_stream_l2": "5.105314016342163",
+        "mean_anchor_support_churn": "0.9189453125",
+        "per_token_commutator_rows_available": "True",
+        "variant": "promoted_contextual_topk2"
+      },
+      {
+        "available_per_token_strata": "all;position_bin;residual_delta_l2_bin;residual_norm_bin;split;support_churn;token_class;variant",
+        "claim_gate": "control_matrix_input",
+        "matrix_role": "rank_matched_contextual_topk1",
+        "mean_anchor_ce_abs_delta": "0.019871175289154053",
+        "mean_anchor_logit_mse": "0.009295536670833826",
+        "mean_anchor_residual_stream_l2": "1.2995811998844147",
+        "mean_anchor_support_churn": "0.0",
+        "per_token_commutator_rows_available": "True",
+        "variant": "rank_matched_contextual_topk1"
+      },
+      {
+        "available_per_token_strata": "all;position_bin;residual_delta_l2_bin;residual_norm_bin;split;support_churn;token_class;variant",
+        "claim_gate": "control_matrix_input",
+        "matrix_role": "random_fixed_topk2",
+        "mean_anchor_ce_abs_delta": "0.05372142791748047",
+        "mean_anchor_logit_mse": "0.34768086671829224",
+        "mean_anchor_residual_stream_l2": "6.7158379554748535",
+        "mean_anchor_support_churn": "0.0",
+        "per_token_commutator_rows_available": "True",
+        "variant": "random_fixed_topk2"
+      },
+      {
+        "available_per_token_strata": "all;position_bin;residual_delta_l2_bin;residual_norm_bin;split;support_churn;token_class;variant",
+        "claim_gate": "control_matrix_input",
+        "matrix_role": "dense_active_rank",
+        "mean_anchor_ce_abs_delta": "0.037420451641082764",
+        "mean_anchor_logit_mse": "0.07050299365073442",
+        "mean_anchor_residual_stream_l2": "3.272839069366455",
+        "mean_anchor_support_churn": "",
+        "per_token_commutator_rows_available": "True",
+        "variant": "norm_matched_dense_active_rank"
+      }
+    ],
     "match_or_bin_by": [
       "position_bin",
       "token_class",
@@ -106,7 +270,7 @@
   "next_step": "use rank-matched contextual top-k-1 as the active local causal bracket and keep top-k-2 causal-cooperation and support-frequency percentile claims blocked",
   "out_dir": "results/reports/token_larger_causal_audit_coverage",
   "platform": "macOS-26.5.1-x86_64-i386-64bit",
-  "runtime_seconds": 2.3054,
+  "runtime_seconds": 2.6069,
   "source_artifacts": [
     {
       "functional_churn_fields_present": true,
@@ -287,6 +451,41 @@
       "status": "pass",
       "strata_coverage": "decision report aggregate",
       "variants_present": []
+    },
+    {
+      "ce_fields_present": true,
+      "functional_churn_fields_present": true,
+      "intervention_rows_present": true,
+      "logit_mse_fields_present": true,
+      "matrix_roles_present": [
+        "dense_active_rank",
+        "promoted_contextual_topk2",
+        "random_fixed_topk2",
+        "rank_matched_contextual_topk1"
+      ],
+      "name": "finite_update_control_matrix_extension",
+      "path": "results/reports/token_larger_promoted_topk2_finite_update_order_control_audit/causal_control_matrix_extension.csv",
+      "per_token_commutator_rows_present": true,
+      "present": true,
+      "residual_l2_fields_present": true,
+      "row_granularity": "finite_update_control_matrix",
+      "strata_coverage": [
+        "all",
+        "position_bin",
+        "residual_delta_l2_bin",
+        "residual_norm_bin",
+        "split",
+        "support_churn",
+        "token_class",
+        "variant"
+      ],
+      "support_churn_fields_present": true,
+      "variants_present": [
+        "norm_matched_dense_active_rank",
+        "promoted_contextual_topk2",
+        "random_fixed_topk2",
+        "rank_matched_contextual_topk1"
+      ]
     }
   ],
   "status": "pass"

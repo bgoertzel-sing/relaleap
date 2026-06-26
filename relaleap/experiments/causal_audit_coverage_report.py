@@ -32,6 +32,9 @@ DEFAULT_RETENTION_REPORT = Path(
 DEFAULT_POST_STOP_BRACKET_REPORT = Path(
     "results/reports/token_larger_post_stop_causal_bracket_decision/decision_report.json"
 )
+DEFAULT_FINITE_UPDATE_MATRIX = Path(
+    "results/reports/token_larger_promoted_topk2_finite_update_order_control_audit/causal_control_matrix_extension.csv"
+)
 DEFAULT_OUT_DIR = Path("results/reports/token_larger_causal_audit_coverage")
 
 EXISTING_ARTIFACTS_SUFFICIENT = "existing_artifacts_sufficient_for_next_no_training_audit"
@@ -53,6 +56,7 @@ def write_causal_audit_coverage_report(
     rank_matched_report_path: Path = DEFAULT_RANK_MATCHED_REPORT,
     retention_report_path: Path = DEFAULT_RETENTION_REPORT,
     post_stop_report_path: Path = DEFAULT_POST_STOP_BRACKET_REPORT,
+    finite_update_matrix_path: Path = DEFAULT_FINITE_UPDATE_MATRIX,
 ) -> dict[str, Any]:
     """Write a decision-bearing ledger for the next no-training causal audit."""
 
@@ -71,6 +75,7 @@ def write_causal_audit_coverage_report(
         _report_entry(rank_matched_report_path, "rank_matched_topk1_bracket_report"),
         _report_entry(retention_report_path, "retention_churn_microtest_report"),
         _report_entry(post_stop_report_path, "post_stop_causal_bracket_decision"),
+        _finite_update_matrix_entry(finite_update_matrix_path),
     ]
 
     audit_summary = _read_json_if_present(audit_dir / "summary.json")
@@ -86,6 +91,7 @@ def write_causal_audit_coverage_report(
     )
     column_fields = _csv_fieldnames(audit_dir / "column_fingerprints.csv")
     matched_fields = _csv_fieldnames(matched_strata_dir / "matched_strata.csv")
+    finite_update_matrix_rows = _read_csv_dicts(finite_update_matrix_path)
 
     coverage = _coverage_summary(
         audit_summary,
@@ -99,6 +105,7 @@ def write_causal_audit_coverage_report(
         per_token_pair_fields,
         column_fields,
         matched_fields,
+        finite_update_matrix_rows,
     )
     decision, status, next_step = _coverage_decision(coverage)
     report = {
@@ -139,6 +146,7 @@ def _coverage_summary(
     per_token_pair_fields: list[str],
     column_fields: list[str],
     matched_fields: list[str],
+    finite_update_matrix_rows: list[dict[str, str]],
 ) -> dict[str, Any]:
     audit = audit_summary.get("audit", {}) if isinstance(audit_summary, dict) else {}
     variants = {
@@ -161,6 +169,16 @@ def _coverage_summary(
     column_field_set = set(column_fields)
     matched_field_set = set(matched_fields)
     intervention_field_set = pair_field_set | per_token_pair_field_set
+    finite_update_roles = {
+        row.get("matrix_role", "")
+        for row in finite_update_matrix_rows
+        if row.get("matrix_role")
+    }
+    finite_update_variants = {
+        row.get("variant", "")
+        for row in finite_update_matrix_rows
+        if row.get("variant")
+    }
     matching_fields = {
         "position_bin": "position_bin" in intervention_field_set
         and "position_bin" in matched_field_set,
@@ -192,9 +210,16 @@ def _coverage_summary(
     controls = {
         "promoted_topk2": TOPK2_VARIANT in variants,
         "rank_matched_topk1": TOPK1_VARIANT in variants
-        or bool(rank_signals.get("rank_matched_topk1_present")),
-        "random_support": bool(signals.get("random_fixed_topk2_worse_than_learned")),
-        "norm_matched_dense": bool(signals.get("norm_matched_dense_worse_than_learned")),
+        or bool(rank_signals.get("rank_matched_topk1_present"))
+        or "rank_matched_contextual_topk1" in finite_update_roles,
+        "random_support": bool(signals.get("random_fixed_topk2_worse_than_learned"))
+        or "random_fixed_topk2" in finite_update_roles,
+        "finite_update_random_fixed_topk2": (
+            "random_fixed_topk2" in finite_update_roles
+        ),
+        "norm_matched_dense": bool(signals.get("norm_matched_dense_worse_than_learned"))
+        or "dense_active_rank" in finite_update_roles,
+        "finite_update_dense_active_rank": "dense_active_rank" in finite_update_roles,
         "retention_dense_control": bool(
             retention_signals.get("sparse_beats_dense_after_transfer")
         ),
@@ -239,6 +264,11 @@ def _coverage_summary(
             }
         ),
         "controls_available": controls,
+        "finite_update_control_matrix_present": bool(finite_update_matrix_rows),
+        "finite_update_control_matrix_row_count": len(finite_update_matrix_rows),
+        "finite_update_control_matrix_roles": sorted(finite_update_roles),
+        "finite_update_control_matrix_variants": sorted(finite_update_variants),
+        "finite_update_control_matrix_rows": finite_update_matrix_rows,
         "topk2_ce_deficit_vs_rank_matched_topk1": _ce_deficit(variants),
         "topk2_pair_synergy_mean_across_strata": matched_evidence.get(
             "topk2_pair_synergy_mean_across_strata"
@@ -300,6 +330,24 @@ def _coverage_decision(coverage: dict[str, Any]) -> tuple[str, str, str]:
 
 
 def _next_matrix(coverage: dict[str, Any]) -> dict[str, Any]:
+    finite_update_controls = [
+        {
+            "variant": row.get("variant"),
+            "matrix_role": row.get("matrix_role"),
+            "claim_gate": row.get("claim_gate"),
+            "mean_anchor_ce_abs_delta": row.get("mean_anchor_ce_abs_delta"),
+            "mean_anchor_logit_mse": row.get("mean_anchor_logit_mse"),
+            "mean_anchor_residual_stream_l2": row.get(
+                "mean_anchor_residual_stream_l2"
+            ),
+            "mean_anchor_support_churn": row.get("mean_anchor_support_churn"),
+            "per_token_commutator_rows_available": row.get(
+                "per_token_commutator_rows_available"
+            ),
+            "available_per_token_strata": row.get("available_per_token_strata"),
+        }
+        for row in coverage.get("finite_update_control_matrix_rows", [])
+    ]
     if coverage["post_stop_rank_matched_topk1_active"]:
         return {
             "active_bracket": {
@@ -322,6 +370,7 @@ def _next_matrix(coverage: dict[str, Any]) -> dict[str, Any]:
                     "role": "empirically useful support-routing default; not an active causal-cooperation bracket",
                 }
             ],
+            "finite_update_controls": finite_update_controls,
             "match_or_bin_by": [
                 "position_bin",
                 "token_class",
@@ -370,6 +419,7 @@ def _next_matrix(coverage: dict[str, Any]) -> dict[str, Any]:
             "support_identity_churn",
             "changed_support_logit_mse",
         ],
+        "finite_update_controls": finite_update_controls,
         "ce_guardrail": {
             "current_topk2_deficit": coverage["topk2_ce_deficit_vs_rank_matched_topk1"],
             "interpretation": "CE is a guardrail; do not promote top-k-2 cooperation from coarse positive synergy alone.",
@@ -452,6 +502,41 @@ def _csv_entry(path: Path, name: str) -> dict[str, Any]:
     }
 
 
+def _finite_update_matrix_entry(path: Path) -> dict[str, Any]:
+    fieldnames = _csv_fieldnames(path)
+    rows = _read_csv_dicts(path)
+    return {
+        "name": "finite_update_control_matrix_extension",
+        "path": str(path),
+        "present": bool(rows),
+        "variants_present": sorted(
+            {row.get("variant", "") for row in rows if row.get("variant")}
+        ),
+        "matrix_roles_present": sorted(
+            {row.get("matrix_role", "") for row in rows if row.get("matrix_role")}
+        ),
+        "intervention_rows_present": bool(rows),
+        "strata_coverage": sorted(
+            {
+                value
+                for row in rows
+                for value in row.get("available_per_token_strata", "").split(";")
+                if value
+            }
+        ),
+        "row_granularity": "finite_update_control_matrix",
+        "per_token_commutator_rows_present": any(
+            str(row.get("per_token_commutator_rows_available")).lower() == "true"
+            for row in rows
+        ),
+        "ce_fields_present": "mean_anchor_ce_abs_delta" in fieldnames,
+        "logit_mse_fields_present": "mean_anchor_logit_mse" in fieldnames,
+        "residual_l2_fields_present": "mean_anchor_residual_stream_l2" in fieldnames,
+        "support_churn_fields_present": "mean_anchor_support_churn" in fieldnames,
+        "functional_churn_fields_present": "mean_anchor_logit_mse" in fieldnames,
+    }
+
+
 def _report_entry(path: Path, name: str) -> dict[str, Any]:
     report = _read_json_if_present(path)
     evidence = report.get("evidence", {}) if isinstance(report, dict) else {}
@@ -508,6 +593,13 @@ def _csv_unique(path: Path, field: str) -> list[str]:
         return sorted({row.get(field, "") for row in rows if row.get(field, "")})
 
 
+def _read_csv_dicts(path: Path) -> list[dict[str, str]]:
+    if not path.is_file():
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
 def _read_json_if_present(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
@@ -537,6 +629,8 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
         f"- Top-k-2 CE deficit vs rank-matched top-k-1: `{coverage['topk2_ce_deficit_vs_rank_matched_topk1']}`",
         f"- Missing fields: `{coverage['missing_fields_for_deconfounded_no_training_audit']}`",
         f"- Missing controls: `{coverage['missing_controls_for_deconfounded_matrix']}`",
+        "- Finite-update control matrix rows: "
+        f"`{coverage['finite_update_control_matrix_row_count']}`",
         f"- Post-stop rank-matched top-k-1 active: `{coverage['post_stop_rank_matched_topk1_active']}`",
         "- Support-frequency candidate-percentile identified: "
         f"`{coverage['support_frequency_candidate_percentile_identified']}`",
@@ -560,6 +654,15 @@ def _write_markdown(path: Path, report: dict[str, Any]) -> None:
             + ", ".join(row["name"] for row in matrix["brackets"])
             + "`"
         )
+    lines.append(
+        "- Finite-update controls: `"
+        + ", ".join(
+            row.get("matrix_role", "")
+            for row in matrix.get("finite_update_controls", [])
+            if row.get("matrix_role")
+        )
+        + "`"
+    )
     lines.append("- Match/bin by: `" + ", ".join(matrix["match_or_bin_by"]) + "`")
     lines.extend(["", "## Next Step", "", report["next_step"], ""])
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -586,6 +689,9 @@ def main() -> None:
     parser.add_argument(
         "--post-stop-report", type=Path, default=DEFAULT_POST_STOP_BRACKET_REPORT
     )
+    parser.add_argument(
+        "--finite-update-matrix", type=Path, default=DEFAULT_FINITE_UPDATE_MATRIX
+    )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     args = parser.parse_args()
     report = write_causal_audit_coverage_report(
@@ -597,6 +703,7 @@ def main() -> None:
         rank_matched_report_path=args.rank_matched_report,
         retention_report_path=args.retention_report,
         post_stop_report_path=args.post_stop_report,
+        finite_update_matrix_path=args.finite_update_matrix,
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     if report["status"] != "pass":
