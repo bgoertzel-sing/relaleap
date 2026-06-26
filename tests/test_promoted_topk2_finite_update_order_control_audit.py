@@ -99,6 +99,21 @@ class PromotedTopk2FiniteUpdateOrderControlAuditTest(unittest.TestCase):
                     "same_order_identical_replay_nonperturbation_pass"
                 ]
             )
+            self.assertTrue(
+                summary["signals"][
+                    "topk2_same_order_identical_replay_noise_bounded"
+                ]
+            )
+            self.assertEqual(
+                summary["metrics"][
+                    "topk2_same_order_identical_anchor_logit_mse_to_commutator_ratio"
+                ],
+                0.0,
+            )
+            self.assertIn(
+                "per-token forward-vs-reverse CE",
+                summary["next_step"],
+            )
             self.assertTrue((root / "out" / "summary.json").is_file())
             self.assertTrue((root / "out" / "variant_commutator.csv").is_file())
             self.assertTrue((root / "out" / "token_strata.csv").is_file())

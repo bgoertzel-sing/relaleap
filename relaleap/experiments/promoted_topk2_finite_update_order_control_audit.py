@@ -160,6 +160,32 @@ def run_promoted_topk2_finite_update_order_control_audit(
         "same_order_identical_replay_nonperturbation_pass": _all_true_or_missing(
             variant_rows, "same_order_identical_replay_nonperturbation_pass"
         ),
+        "topk2_same_order_identical_replay_noise_bounded": (
+            _at_most(
+                metrics.get(
+                    "topk2_same_order_identical_anchor_logit_mse_to_commutator_ratio"
+                ),
+                0.01,
+            )
+            and _at_most(
+                metrics.get(
+                    "topk2_same_order_identical_transfer_logit_mse_to_commutator_ratio"
+                ),
+                0.01,
+            )
+            and _at_most(
+                metrics.get(
+                    "topk2_same_order_identical_anchor_residual_l2_to_commutator_ratio"
+                ),
+                0.01,
+            )
+            and _at_most(
+                metrics.get(
+                    "topk2_same_order_identical_transfer_residual_l2_to_commutator_ratio"
+                ),
+                0.01,
+            )
+        ),
     }
     failures = _failures(
         functional_summary=functional_summary,
@@ -191,9 +217,10 @@ def run_promoted_topk2_finite_update_order_control_audit(
             "finite-update residual/order sensitivity as a real risk."
         )
         next_step = (
-            "run a bounded finite-update order-averaging microtest on RunPod, "
-            "reusing promoted top-k-2, rank-matched top-k-1, random fixed top-k-2, "
-            "and dense active-rank controls"
+            "extend the causal-column fingerprint/control matrix with per-token "
+            "forward-vs-reverse CE, KL/logit-MSE, support-set, token-position, "
+            "and residual-delta strata before making any top-k-2 causal-cooperation "
+            "claim"
         )
     else:
         status = "pass"
@@ -241,7 +268,8 @@ def run_promoted_topk2_finite_update_order_control_audit(
             "geometry; CE deltas versus the best order and same-order ensemble "
             "controls are the primary order-averaging interpretation fields.",
             "Same-order independent ensemble controls are only endpoint-comparable "
-            "when the same-seed A-then-B replay non-perturbation checks pass.",
+            "when same-seed A-then-B replay noise is bounded; strict replay "
+            "non-perturbation and bounded replay noise are reported separately.",
         ],
         "failures": failures,
         "rationale": rationale,
@@ -500,6 +528,7 @@ def _metrics(
     topk1_logit = _mean_field(topk1, "commutator_anchor_logit_mse")
     random_topk2_logit = _mean_field(random_topk2, "commutator_anchor_logit_mse")
     dense_logit = _mean_field(dense, "commutator_anchor_logit_mse")
+    topk2_transfer_logit = _mean_field(topk2, "commutator_transfer_logit_mse")
     topk2_order_avg_logit = _mean_field(
         topk2, "order_averaged_anchor_logit_mse_to_forward"
     )
@@ -521,11 +550,27 @@ def _metrics(
     topk2_same_order_replay_transfer_logit = _mean_field(
         topk2, "same_order_identical_transfer_logit_mse_to_primary"
     )
+    topk2_replay_anchor_ce = _mean_field(
+        topk2, "same_order_identical_anchor_ce_abs_delta_to_primary"
+    )
+    topk2_replay_transfer_ce = _mean_field(
+        topk2, "same_order_identical_transfer_ce_abs_delta_to_primary"
+    )
+    topk2_replay_anchor_residual = _mean_field(
+        topk2, "same_order_identical_anchor_residual_stream_l2_to_primary"
+    )
+    topk2_replay_transfer_residual = _mean_field(
+        topk2, "same_order_identical_transfer_residual_stream_l2_to_primary"
+    )
     topk1_order_avg_best_ce_delta = _mean_field(
         topk1, "order_averaged_anchor_ce_delta_vs_best_order"
     )
     topk1_same_order_best_ce_delta = _mean_field(
         topk1, "same_order_ensemble_anchor_ce_delta_vs_best_endpoint"
+    )
+    topk2_anchor_residual = _mean_field(topk2, "commutator_anchor_residual_stream_l2")
+    topk2_transfer_residual = _mean_field(
+        topk2, "commutator_transfer_residual_stream_l2"
     )
     all_stratum = _first(row for row in token_strata_rows if row["stratum"] == "all")
     return {
@@ -547,6 +592,7 @@ def _metrics(
             dense, "commutator_anchor_ce_abs_delta"
         ),
         "topk2_mean_commutator_anchor_logit_mse": topk2_logit,
+        "topk2_mean_commutator_transfer_logit_mse": topk2_transfer_logit,
         "topk1_mean_commutator_anchor_logit_mse": topk1_logit,
         "random_fixed_topk2_mean_commutator_anchor_logit_mse": random_topk2_logit,
         "dense_mean_commutator_anchor_logit_mse": dense_logit,
@@ -592,6 +638,30 @@ def _metrics(
         "topk2_mean_same_order_identical_transfer_logit_mse_to_primary": (
             topk2_same_order_replay_transfer_logit
         ),
+        "topk2_mean_same_order_identical_anchor_ce_abs_delta_to_primary": (
+            topk2_replay_anchor_ce
+        ),
+        "topk2_mean_same_order_identical_transfer_ce_abs_delta_to_primary": (
+            topk2_replay_transfer_ce
+        ),
+        "topk2_mean_same_order_identical_anchor_residual_stream_l2_to_primary": (
+            topk2_replay_anchor_residual
+        ),
+        "topk2_mean_same_order_identical_transfer_residual_stream_l2_to_primary": (
+            topk2_replay_transfer_residual
+        ),
+        "topk2_same_order_identical_anchor_logit_mse_to_commutator_ratio": _ratio(
+            topk2_same_order_replay_anchor_logit, topk2_logit
+        ),
+        "topk2_same_order_identical_transfer_logit_mse_to_commutator_ratio": _ratio(
+            topk2_same_order_replay_transfer_logit, topk2_transfer_logit
+        ),
+        "topk2_same_order_identical_anchor_residual_l2_to_commutator_ratio": _ratio(
+            topk2_replay_anchor_residual, topk2_anchor_residual
+        ),
+        "topk2_same_order_identical_transfer_residual_l2_to_commutator_ratio": _ratio(
+            topk2_replay_transfer_residual, topk2_transfer_residual
+        ),
         "topk2_order_avg_minus_same_order_anchor_ce_delta_vs_best": _delta(
             topk2_order_avg_best_ce_delta, topk2_same_order_best_ce_delta
         ),
@@ -601,9 +671,8 @@ def _metrics(
         "topk2_minus_topk1_same_order_anchor_ce_delta_vs_best": _delta(
             topk2_same_order_best_ce_delta, topk1_same_order_best_ce_delta
         ),
-        "topk2_mean_commutator_anchor_residual_stream_l2": _mean_field(
-            topk2, "commutator_anchor_residual_stream_l2"
-        ),
+        "topk2_mean_commutator_anchor_residual_stream_l2": topk2_anchor_residual,
+        "topk2_mean_commutator_transfer_residual_stream_l2": topk2_transfer_residual,
         "topk1_mean_commutator_anchor_residual_stream_l2": _mean_field(
             topk1, "commutator_anchor_residual_stream_l2"
         ),
@@ -778,6 +847,14 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"`{metrics['topk2_mean_commutator_anchor_residual_stream_l2']}`",
         "- Top-k-2 mean anchor commutator support churn: "
         f"`{metrics['topk2_mean_commutator_anchor_support_churn']}`",
+        "- Top-k-2 same-order identical replay anchor logit-MSE/commutator ratio: "
+        f"`{metrics['topk2_same_order_identical_anchor_logit_mse_to_commutator_ratio']}`",
+        "- Top-k-2 same-order identical replay transfer logit-MSE/commutator ratio: "
+        f"`{metrics['topk2_same_order_identical_transfer_logit_mse_to_commutator_ratio']}`",
+        "- Top-k-2 same-order identical replay anchor residual-L2/commutator ratio: "
+        f"`{metrics['topk2_same_order_identical_anchor_residual_l2_to_commutator_ratio']}`",
+        "- Top-k-2 same-order identical replay transfer residual-L2/commutator ratio: "
+        f"`{metrics['topk2_same_order_identical_transfer_residual_l2_to_commutator_ratio']}`",
         "",
         "## Signals",
         "",
