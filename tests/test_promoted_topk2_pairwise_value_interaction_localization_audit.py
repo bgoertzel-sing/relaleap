@@ -30,6 +30,7 @@ class PromotedTopk2PairwiseValueInteractionLocalizationAuditTest(unittest.TestCa
 
             self.assertEqual(summary["status"], "pass")
             self.assertEqual(summary["decision"], PAIRWISE_VALUE_INTERACTION_LOCALIZED)
+            self.assertEqual(summary["localization_status"], "hub_localized")
             self.assertEqual(summary["metrics"]["dominant_column"], 2)
             self.assertGreaterEqual(
                 summary["metrics"]["dominant_column_abs_synergy_share"],
@@ -158,6 +159,23 @@ def _write_sources(root: Path) -> dict[str, Path]:
             _column_row(3, 4, 0.01, 4.2, 1.0, 0.03),
         ],
     )
+    _write_csv(
+        fingerprint / "support_frequency_candidate_controls.csv",
+        [
+            "anchor_support",
+            "candidate_support",
+            "included_in_primary_percentile_denominator",
+            "candidate_pair_synergy",
+        ],
+        [
+            _control_row("2,9", "0,1", 0.05),
+            _control_row("2,9", "0,3", 0.08),
+            _control_row("2,9", "0,4", 0.10),
+            _control_row("2,15", "1,4", 0.07),
+            _control_row("2,15", "1,5", 0.09),
+            _control_row("2,6", "3,4", 0.11),
+        ],
+    )
     decomposition = root / "decomposition.json"
     finite = root / "finite.json"
     closeout = root / "closeout.json"
@@ -267,6 +285,19 @@ def _column_row(
         "column_value_norm": value_norm,
         "force_loss_delta": force_delta,
         "ablate_loss_delta": ablate_delta,
+    }
+
+
+def _control_row(
+    anchor_support: str,
+    candidate_support: str,
+    candidate_pair_synergy: float,
+) -> dict[str, object]:
+    return {
+        "anchor_support": anchor_support,
+        "candidate_support": candidate_support,
+        "included_in_primary_percentile_denominator": "True",
+        "candidate_pair_synergy": candidate_pair_synergy,
     }
 
 

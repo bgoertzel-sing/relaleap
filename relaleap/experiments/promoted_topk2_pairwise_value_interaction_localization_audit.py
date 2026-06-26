@@ -53,6 +53,7 @@ def run_promoted_topk2_pairwise_value_interaction_localization_audit(
     per_token_path = fingerprint_dir / "per_token_pair_interventions.csv"
     pair_path = fingerprint_dir / "pair_interventions.csv"
     column_path = fingerprint_dir / "column_fingerprints.csv"
+    frequency_control_path = fingerprint_dir / "support_frequency_candidate_controls.csv"
     update_decomposition = _read_json_object(update_decomposition_audit_path)
     finite_update = _read_json_object(finite_update_report_path)
     closeout = _read_json_object(closeout_report_path)
@@ -61,6 +62,7 @@ def run_promoted_topk2_pairwise_value_interaction_localization_audit(
     per_token_rows = _read_csv_dicts(per_token_path)
     pair_rows = _read_csv_dicts(pair_path)
     column_rows = _read_csv_dicts(column_path)
+    frequency_control_rows = _read_csv_dicts(frequency_control_path)
     token_rows = _filter_pair_rows(per_token_rows)
     aggregate_pair_rows = _filter_pair_rows(
         pair_rows,
@@ -79,16 +81,32 @@ def run_promoted_topk2_pairwise_value_interaction_localization_audit(
         column_lookup,
     )
     stratum_rows = _stratum_rows(token_rows)
+    split_rows = _split_rows(token_rows)
+    frequency_control = _frequency_control(frequency_control_rows, localization_rows)
     metrics = _metrics(
         localization_rows,
         column_localization_rows,
         update_decomposition,
         finite_update,
+        frequency_control,
+        split_rows,
     )
     source_rows = [
         _source_row("per_token_pair_interventions", per_token_path, bool(per_token_rows)),
         _source_row("pair_interventions", pair_path, bool(pair_rows)),
         _source_row("column_fingerprints", column_path, bool(column_rows)),
+        {
+            "source": "support_frequency_candidate_controls",
+            "path": str(frequency_control_path),
+            "present": frequency_control_path.is_file() and bool(frequency_control_rows),
+            "status": (
+                "present"
+                if frequency_control_path.is_file() and frequency_control_rows
+                else "missing_optional"
+            ),
+            "decision": frequency_control.get("status"),
+            "row_count": len(frequency_control_rows) if frequency_control_rows else "",
+        },
         _source_row(
             "update_decomposition_audit",
             update_decomposition_audit_path,
@@ -124,6 +142,7 @@ def run_promoted_topk2_pairwise_value_interaction_localization_audit(
         closeout,
         metrics,
     )
+    localization_status = _localization_status(metrics, failures)
 
     if failures:
         status = "fail"
@@ -136,33 +155,53 @@ def run_promoted_topk2_pairwise_value_interaction_localization_audit(
         next_step = "repair missing pairwise value-interaction localization source artifacts"
     else:
         status = "pass"
-        if (
-            _at_least(metrics.get("top3_pair_abs_synergy_share"), top3_pair_share_threshold)
-            and _at_least(metrics.get("dominant_column_abs_synergy_share"), hub_share_threshold)
-        ):
+        if localization_status == "hub_localized":
             decision = PAIRWISE_VALUE_INTERACTION_LOCALIZED
             rationale = (
                 "The value-dominated top-k-2 interference signal is concentrated "
-                "in a small fixed-support family rather than evenly spread across "
-                "all selected pairs. The leading pairs share a dominant column, "
-                "so the next mitigation should target pairwise value composition "
-                "around that hub instead of reopening router-policy pinning."
+                "in a small fixed-support family whose leading pairs share a "
+                "dominant column. Frequency and split controls do not explain "
+                "away the concentration, so the next mitigation can target "
+                "pairwise value composition around that hub instead of reopening "
+                "router-policy pinning."
             )
             next_step = (
                 "design a no-promotion column-hub pairwise value-composition "
                 "mitigation candidate, then evaluate it with the existing "
                 "commutator/CE/residual-norm gates"
             )
+        elif localization_status == "frequency_explained":
+            decision = PAIRWISE_VALUE_INTERACTION_DIFFUSE
+            rationale = (
+                "The apparent pairwise value-interaction concentration tracks "
+                "support-frequency structure strongly enough that a hub-pair "
+                "mitigation would be underjustified."
+            )
+            next_step = (
+                "return to matched support-frequency controls before proposing "
+                "another value-composition mitigation"
+            )
+        elif localization_status == "undetermined":
+            decision = INSUFFICIENT_EVIDENCE
+            rationale = (
+                "The pairwise concentration signal exists, but the available "
+                "frequency/null or discovery-confirmation controls are not strong "
+                "enough to authorize a new mitigation family."
+            )
+            next_step = (
+                "extend the no-training localization controls with usable "
+                "frequency-matched or permutation null denominators"
+            )
         else:
             decision = PAIRWISE_VALUE_INTERACTION_DIFFUSE
             rationale = (
                 "The fixed-support value interaction signal is not sufficiently "
-                "localized under the current thresholds, so a narrow hub-pair "
-                "penalty would be underjustified."
+                "localized under the current thresholds and controls, so a "
+                "narrow hub-pair penalty would be underjustified."
             )
             next_step = (
-                "prefer a broader value-composition diagnostic before proposing "
-                "a trainable mitigation"
+                "close the current value/router mitigation family and resume "
+                "matched deconfounding plus retention/churn evidence"
             )
 
     summary = {
@@ -171,7 +210,11 @@ def run_promoted_topk2_pairwise_value_interaction_localization_audit(
         "thresholds": {
             "top3_pair_abs_synergy_share": top3_pair_share_threshold,
             "dominant_column_abs_synergy_share": hub_share_threshold,
+            "top_pair_null_percentile": 0.95,
+            "discovery_confirmation_top3_overlap": 0.5,
+            "frequency_explained_abs_correlation": 0.75,
         },
+        "localization_status": localization_status,
         "metrics": metrics,
         "claim_statuses": {
             "contextual_topk2_router": "operational_default_train_time_support_selection",
@@ -188,6 +231,8 @@ def run_promoted_topk2_pairwise_value_interaction_localization_audit(
         "localization_rows": localization_rows,
         "column_localization_rows": column_localization_rows,
         "stratum_rows": stratum_rows,
+        "split_rows": split_rows,
+        "frequency_control": frequency_control,
         "strategy_review": strategy_review,
         "failures": failures,
         "rationale": rationale,
@@ -204,6 +249,7 @@ def run_promoted_topk2_pairwise_value_interaction_localization_audit(
                 out_dir / "column_localization_rows.csv"
             ),
             "stratum_rows_csv": str(out_dir / "stratum_rows.csv"),
+            "split_rows_csv": str(out_dir / "split_rows.csv"),
             "notes_md": str(out_dir / "notes.md"),
         },
     }
@@ -268,6 +314,18 @@ def run_promoted_topk2_pairwise_value_interaction_localization_audit(
             "mean_residual_norm",
         ],
         stratum_rows,
+    )
+    _write_csv(
+        out_dir / "split_rows.csv",
+        [
+            "split",
+            "row_count",
+            "support_count",
+            "top_support",
+            "top3_supports",
+            "top3_pair_abs_synergy_share",
+        ],
+        split_rows,
     )
     _write_notes(out_dir / "notes.md", summary)
     return summary
@@ -432,11 +490,81 @@ def _stratum_rows(token_rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     return out
 
 
+def _split_rows(token_rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+    rows = []
+    for split, split_token_rows in (
+        ("even_position", [row for row in token_rows if row.get("position_bin") == "even"]),
+        ("odd_position", [row for row in token_rows if row.get("position_bin") == "odd"]),
+    ):
+        localization_rows = _localization_rows(split_token_rows, {})
+        top3 = localization_rows[:3]
+        rows.append(
+            {
+                "split": split,
+                "row_count": len(split_token_rows),
+                "support_count": len(localization_rows),
+                "top_support": top3[0]["support"] if top3 else None,
+                "top3_supports": ";".join(str(row["support"]) for row in top3),
+                "top3_pair_abs_synergy_share": sum(
+                    row.get("abs_pair_synergy_share") or 0.0 for row in top3
+                )
+                if top3
+                else None,
+            }
+        )
+    return rows
+
+
+def _frequency_control(
+    rows: list[dict[str, str]],
+    localization_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not rows:
+        return {
+            "status": "missing_optional",
+            "row_count": 0,
+            "primary_denominator_count": 0,
+            "candidate_abs_synergy_count": 0,
+            "top_support_null_percentile": None,
+            "median_support_null_percentile": None,
+        }
+    candidates = [
+        abs(_float_or_none(row.get("candidate_pair_synergy")) or 0.0)
+        for row in rows
+        if _float_or_none(row.get("candidate_pair_synergy")) is not None
+    ]
+    primary_candidates = [
+        abs(_float_or_none(row.get("candidate_pair_synergy")) or 0.0)
+        for row in rows
+        if row.get("included_in_primary_percentile_denominator") == "True"
+        and _float_or_none(row.get("candidate_pair_synergy")) is not None
+    ]
+    denominator = primary_candidates or candidates
+    percentiles = []
+    for row in localization_rows:
+        abs_synergy = row.get("mean_abs_pair_synergy")
+        if abs_synergy is not None and denominator:
+            percentiles.append(_percentile_rank(denominator, abs_synergy))
+    status = "primary_frequency_matched"
+    if not primary_candidates:
+        status = "permutation_null_only_frequency_match_unavailable"
+    return {
+        "status": status,
+        "row_count": len(rows),
+        "primary_denominator_count": len(primary_candidates),
+        "candidate_abs_synergy_count": len(candidates),
+        "top_support_null_percentile": percentiles[0] if percentiles else None,
+        "median_support_null_percentile": _median(percentiles),
+    }
+
+
 def _metrics(
     localization_rows: list[dict[str, Any]],
     column_localization_rows: list[dict[str, Any]],
     update_decomposition: dict[str, Any],
     finite_update: dict[str, Any],
+    frequency_control: dict[str, Any],
+    split_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     top_row = localization_rows[0] if localization_rows else {}
     top3_share = sum(
@@ -445,6 +573,27 @@ def _metrics(
     update_metrics = update_decomposition.get("metrics", {})
     finite_metrics = finite_update.get("metrics", {})
     dominant_column = column_localization_rows[0] if column_localization_rows else {}
+    shares = [
+        row.get("abs_pair_synergy_share") or 0.0
+        for row in localization_rows
+        if row.get("abs_pair_synergy_share") is not None
+    ]
+    top5_share = sum(shares[:5])
+    router_counts = [row.get("router_support_count") for row in localization_rows]
+    abs_synergies = [row.get("mean_abs_pair_synergy") for row in localization_rows]
+    split_top3_sets = [
+        {
+            support
+            for support in str(row.get("top3_supports") or "").split(";")
+            if support
+        }
+        for row in split_rows
+    ]
+    split_overlap = None
+    if len(split_top3_sets) == 2 and split_top3_sets[0] and split_top3_sets[1]:
+        split_overlap = len(split_top3_sets[0] & split_top3_sets[1]) / min(
+            len(split_top3_sets[0]), len(split_top3_sets[1])
+        )
     return {
         "per_token_row_count": sum(row.get("row_count") or 0 for row in localization_rows),
         "support_pair_count": len(localization_rows),
@@ -453,6 +602,11 @@ def _metrics(
         "top_support_mean_abs_pair_synergy": top_row.get("mean_abs_pair_synergy"),
         "top_pair_abs_synergy_share": top_row.get("abs_pair_synergy_share"),
         "top3_pair_abs_synergy_share": top3_share if localization_rows else None,
+        "top5_pair_abs_synergy_share": top5_share if localization_rows else None,
+        "pair_abs_synergy_hhi": sum(share * share for share in shares)
+        if shares
+        else None,
+        "pair_abs_synergy_gini": _gini(shares) if shares else None,
         "dominant_column": dominant_column.get("column"),
         "dominant_column_abs_synergy_share": dominant_column.get(
             "abs_pair_synergy_share"
@@ -473,7 +627,51 @@ def _metrics(
         "topk2_mean_commutator_anchor_residual_stream_l2": _float_or_none(
             finite_metrics.get("topk2_mean_commutator_anchor_residual_stream_l2")
         ),
+        "router_support_count_abs_synergy_correlation": _pearson(
+            router_counts,
+            abs_synergies,
+        ),
+        "discovery_confirmation_top3_overlap": split_overlap,
+        "frequency_control_status": frequency_control.get("status"),
+        "frequency_control_primary_denominator_count": frequency_control.get(
+            "primary_denominator_count"
+        ),
+        "top_support_null_percentile": frequency_control.get(
+            "top_support_null_percentile"
+        ),
+        "median_support_null_percentile": frequency_control.get(
+            "median_support_null_percentile"
+        ),
     }
+
+
+def _localization_status(
+    metrics: dict[str, Any],
+    failures: list[dict[str, Any]],
+) -> str:
+    if failures:
+        return "undetermined"
+    has_primary_frequency_control = (
+        (metrics.get("frequency_control_primary_denominator_count") or 0) > 0
+    )
+    frequency_corr = abs(
+        _float_or_none(metrics.get("router_support_count_abs_synergy_correlation"))
+        or 0.0
+    )
+    localized_pair = _at_least(metrics.get("top3_pair_abs_synergy_share"), 0.35)
+    localized_hub = _at_least(metrics.get("dominant_column_abs_synergy_share"), 0.60)
+    null_survives = _at_least(metrics.get("top_support_null_percentile"), 0.95)
+    split_survives = _at_least(metrics.get("discovery_confirmation_top3_overlap"), 0.5)
+    if has_primary_frequency_control and frequency_corr >= 0.75 and not null_survives:
+        return "frequency_explained"
+    if localized_pair and localized_hub and null_survives and split_survives:
+        return "hub_localized"
+    if localized_pair and localized_hub and (
+        metrics.get("top_support_null_percentile") is None
+        or metrics.get("discovery_confirmation_top3_overlap") is None
+    ):
+        return "undetermined"
+    return "diffuse"
 
 
 def _failures(
@@ -485,7 +683,17 @@ def _failures(
     metrics: dict[str, Any],
 ) -> list[dict[str, Any]]:
     failures = []
-    required_sources = source_rows[:6]
+    required_source_names = {
+        "per_token_pair_interventions",
+        "pair_interventions",
+        "column_fingerprints",
+        "update_decomposition_audit",
+        "finite_update_order_control",
+        "post_value_router_mitigation_closeout",
+    }
+    required_sources = [
+        row for row in source_rows if row.get("source") in required_source_names
+    ]
     for row in required_sources:
         if not row["present"]:
             failures.append(
@@ -665,6 +873,54 @@ def _mean_numbers(values: Any) -> float | None:
     return mean(numeric)
 
 
+def _median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[midpoint]
+    return (ordered[midpoint - 1] + ordered[midpoint]) / 2.0
+
+
+def _percentile_rank(values: list[float], value: float) -> float | None:
+    if not values:
+        return None
+    return sum(1 for candidate in values if candidate <= value) / len(values)
+
+
+def _pearson(xs: list[Any], ys: list[Any]) -> float | None:
+    pairs = [
+        (float(x), float(y))
+        for x, y in zip(xs, ys)
+        if x is not None and y is not None
+    ]
+    if len(pairs) < 2:
+        return None
+    mean_x = mean(x for x, _ in pairs)
+    mean_y = mean(y for _, y in pairs)
+    numerator = sum((x - mean_x) * (y - mean_y) for x, y in pairs)
+    denom_x = sum((x - mean_x) ** 2 for x, _ in pairs) ** 0.5
+    denom_y = sum((y - mean_y) ** 2 for _, y in pairs) ** 0.5
+    if denom_x == 0.0 or denom_y == 0.0:
+        return None
+    return numerator / (denom_x * denom_y)
+
+
+def _gini(values: list[float]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(value for value in values if value >= 0.0)
+    if not ordered:
+        return None
+    total = sum(ordered)
+    if total == 0.0:
+        return 0.0
+    n = len(ordered)
+    weighted_sum = sum((index + 1) * value for index, value in enumerate(ordered))
+    return (2.0 * weighted_sum) / (n * total) - (n + 1.0) / n
+
+
 def _at_least(value: Any, threshold: float) -> bool:
     numeric = _float_or_none(value)
     return numeric is not None and numeric >= threshold
@@ -753,6 +1009,7 @@ def main(argv: list[str] | None = None) -> None:
             {
                 "status": summary["status"],
                 "decision": summary["decision"],
+                "localization_status": summary["localization_status"],
                 "metrics": summary["metrics"],
                 "next_step": summary["next_step"],
             },
