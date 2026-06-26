@@ -61,6 +61,8 @@ outputs:
             self.assertIn(
                 summary["decision"],
                 {
+                    "causal_contextual_router_sequence_holdout_candidate",
+                    "causal_contextual_router_sequence_holdout_underperforms_linear",
                     "sequence_kfold_causal_feature_ablation_completed",
                     "future_context_features_material_for_promoted_router",
                     "promoted_contextual_router_sequence_holdout_underperforms_linear",
@@ -78,10 +80,23 @@ outputs:
                 "promoted_contextual_topk2:causal_current_past_position",
                 ablation["variants"],
             )
+            self.assertIn(
+                "causal_contextual_topk2:actual_causal_context",
+                ablation["variants"],
+            )
             self.assertIn("linear_topk2_control:linear_actual", ablation["variants"])
             self.assertIn(
                 "contextual_topk1_control:actual_full_context",
                 ablation["variants"],
+            )
+            self.assertIn(
+                "causal_contextual_topk1_control:actual_causal_context",
+                ablation["variants"],
+            )
+            self.assertFalse(
+                ablation["variants"][
+                    "causal_contextual_topk2:actual_causal_context"
+                ]["uses_future_context"]
             )
             self.assertTrue((root / "report" / "summary.json").is_file())
             self.assertTrue((root / "report" / "fold_metrics.csv").is_file())
@@ -99,6 +114,7 @@ outputs:
             self.assertGreaterEqual(len(variant_rows), 6)
             self.assertIn("mean_router_loss", variant_rows[0])
             self.assertIn("causal_feature_safe", variant_rows[0])
+            self.assertIn("causal_contextual_vs_linear_loss_delta", saved["ablation"])
 
     def test_sequence_kfold_ablation_requires_contextual_topk2(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

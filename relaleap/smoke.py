@@ -29,6 +29,8 @@ support stress changes sparse column choices during repeated settling .
 the promotion gate asks for evidence beyond character level smoke runs .
 """.strip()
 
+SUPPORT_ROUTER_CHOICES = {"linear", "contextual_mlp", "contextual_mlp_causal"}
+
 
 @dataclass(frozen=True)
 class Phase0Result:
@@ -205,8 +207,11 @@ def run_phase0_smoke(config: dict[str, Any]) -> Phase0Result:
         raise ValueError("training.focal_gamma must be non-negative")
     if temporal_consistency_weight < 0.0:
         raise ValueError("training.temporal_consistency_weight must be non-negative")
-    if support_router not in {"linear", "contextual_mlp"}:
-        raise ValueError("model.columns.support_router must be one of: linear, contextual_mlp")
+    if support_router not in SUPPORT_ROUTER_CHOICES:
+        raise ValueError(
+            "model.columns.support_router must be one of: "
+            "linear, contextual_mlp, contextual_mlp_causal"
+        )
     if contextual_router_hidden_dim < 1:
         raise ValueError("model.columns.contextual_router_hidden_dim must be positive")
     if residual_objective not in {
@@ -614,9 +619,10 @@ class ResidualColumns:
                 super().__init__()
                 if top_k < 1 or top_k > num_columns:
                     raise ValueError("top_k must be between 1 and num_columns")
-                if support_router not in {"linear", "contextual_mlp"}:
+                if support_router not in SUPPORT_ROUTER_CHOICES:
                     raise ValueError(
-                        "support_router must be one of: linear, contextual_mlp"
+                        "support_router must be one of: "
+                        "linear, contextual_mlp, contextual_mlp_causal"
                     )
                 if (
                     contextual_router_hidden_dim is not None
@@ -679,13 +685,18 @@ class ResidualColumns:
                         device=current.device,
                     ).view(1, seq_len, 1).expand(current.shape[0], seq_len, 1)
                 angle = normalized_position * (2.0 * torch.pi)
+                if self.support_router == "contextual_mlp_causal":
+                    next_hidden = torch.zeros_like(current)
+                    next_delta = torch.zeros_like(current)
+                else:
+                    next_delta = next_hidden - current
                 return torch.cat(
                     [
                         current,
                         previous,
                         next_hidden,
                         current - previous,
-                        next_hidden - current,
+                        next_delta,
                         normalized_position,
                         torch.sin(angle),
                         torch.cos(angle),
@@ -694,7 +705,7 @@ class ResidualColumns:
                 )
 
             def _score_columns(self, hidden: Any) -> Any:
-                if self.support_router == "contextual_mlp":
+                if self.support_router in {"contextual_mlp", "contextual_mlp_causal"}:
                     return self.contextual_column_scores(self._contextual_features(hidden))
                 return self.column_scores(hidden)
 

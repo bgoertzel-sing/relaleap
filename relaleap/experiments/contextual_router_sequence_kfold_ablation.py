@@ -161,7 +161,7 @@ def run_contextual_router_sequence_kfold_ablation(
                         holdout_inputs,
                     )
                     final_delta = _state_dict_delta(before_residual, residual)
-                variants = _contextual_feature_variants() if control["support_router"] == "contextual_mlp" else [("linear_actual", None, False)]
+                variants = _feature_variants_for_router(control["support_router"])
                 for variant_name, feature_mask, uses_future_context in variants:
                     logits, support = _forward_with_feature_ablation(
                         base,
@@ -190,6 +190,7 @@ def run_contextual_router_sequence_kfold_ablation(
                             "oracle_regret_positive_fraction"
                         ],
                         "unique_support_sets": _unique_support_sets(support),
+                        "used_columns": _used_columns(support),
                     }
                     fold_rows.append(row)
                     support_rows.extend(
@@ -234,11 +235,18 @@ def run_contextual_router_sequence_kfold_ablation(
             "variants": {
                 row["variant_key"]: row for row in variant_rows
             },
+            "key_comparisons": _key_comparisons(fold_rows, variant_rows),
             "decision_reason": decision["reason"],
             "future_context_material_loss_delta": decision[
                 "future_context_material_loss_delta"
             ],
             "promoted_vs_linear_loss_delta": decision["promoted_vs_linear_loss_delta"],
+            "causal_contextual_vs_linear_loss_delta": decision[
+                "causal_contextual_vs_linear_loss_delta"
+            ],
+            "causal_contextual_vs_promoted_full_loss_delta": decision[
+                "causal_contextual_vs_promoted_full_loss_delta"
+            ],
             "support_audit_last_promoted_fold": final_support_audit,
             "residual_parameter_delta_last_promoted_fold": final_delta,
         },
@@ -282,11 +290,46 @@ def _control_specs(
             "top_k": promoted_top_k,
         },
         {
+            "name": "causal_contextual_topk2",
+            "support_router": "contextual_mlp_causal",
+            "top_k": promoted_top_k,
+        },
+        {
             "name": "contextual_topk1_control",
             "support_router": "contextual_mlp",
             "top_k": 1,
         },
+        {
+            "name": "causal_contextual_topk1_control",
+            "support_router": "contextual_mlp_causal",
+            "top_k": 1,
+        },
     ]
+
+
+def _feature_variants_for_router(
+    support_router: str,
+) -> list[tuple[str, set[str] | None, bool]]:
+    if support_router == "contextual_mlp":
+        return _contextual_feature_variants()
+    if support_router == "contextual_mlp_causal":
+        return [
+            ("actual_causal_context", None, False),
+            (
+                "causal_current_past_position",
+                {"current", "previous", "previous_delta", "position"},
+                False,
+            ),
+            (
+                "current_past_no_position",
+                {"current", "previous", "previous_delta"},
+                False,
+            ),
+            ("current_hidden_only", {"current"}, False),
+            ("position_only", {"position"}, False),
+            ("past_context_only", {"previous", "previous_delta"}, False),
+        ]
+    return [("linear_actual", None, False)]
 
 
 def _contextual_feature_variants() -> list[tuple[str, set[str] | None, bool]]:
@@ -348,7 +391,10 @@ def _forward_with_feature_ablation(
     *,
     feature_mask: set[str] | None,
 ) -> tuple[Any, Any]:
-    if getattr(residual, "support_router", None) != "contextual_mlp":
+    if getattr(residual, "support_router", None) not in {
+        "contextual_mlp",
+        "contextual_mlp_causal",
+    }:
         output, support = residual(hidden, return_support=True)
         return base.decode(output), support
     if feature_mask is None:
@@ -414,6 +460,10 @@ def _unique_support_sets(support: Any) -> int:
     return len({tuple(int(value) for value in row) for row in flattened})
 
 
+def _used_columns(support: Any) -> int:
+    return len({int(value) for value in support.reshape(-1).detach().cpu().tolist()})
+
+
 def _support_count_rows(
     *,
     fold_index: int,
@@ -460,22 +510,102 @@ def _aggregate_variant_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "mean_router_oracle_gap": mean_router - mean_oracle,
                 "mean_router_minus_empty_loss": _mean(group, "router_minus_empty_loss"),
                 "mean_unique_support_sets": _mean(group, "unique_support_sets"),
+                "mean_used_columns": _mean(group, "used_columns"),
             }
         )
     return aggregates
+
+
+def _key_comparisons(
+    fold_rows: list[dict[str, Any]],
+    variant_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    fold_by_key: dict[str, dict[int, dict[str, Any]]] = {}
+    for row in fold_rows:
+        key = f"{row['control']}:{row['variant']}"
+        fold_by_key.setdefault(key, {})[int(row["fold"])] = row
+    aggregate_by_key = {row["variant_key"]: row for row in variant_rows}
+    comparisons = {
+        "causal_contextual_vs_linear": (
+            "causal_contextual_topk2:actual_causal_context",
+            "linear_topk2_control:linear_actual",
+        ),
+        "causal_contextual_vs_full_context_oracle_baseline": (
+            "causal_contextual_topk2:actual_causal_context",
+            "promoted_contextual_topk2:actual_full_context",
+        ),
+        "full_context_oracle_baseline_vs_linear": (
+            "promoted_contextual_topk2:actual_full_context",
+            "linear_topk2_control:linear_actual",
+        ),
+    }
+    result: dict[str, Any] = {}
+    for name, (left_key, right_key) in comparisons.items():
+        left_folds = fold_by_key.get(left_key, {})
+        right_folds = fold_by_key.get(right_key, {})
+        fold_deltas = []
+        for fold in sorted(set(left_folds) & set(right_folds)):
+            left = left_folds[fold]
+            right = right_folds[fold]
+            fold_deltas.append(
+                {
+                    "fold": fold,
+                    "left_variant_key": left_key,
+                    "right_variant_key": right_key,
+                    "loss_delta": float(left["router_loss"])
+                    - float(right["router_loss"]),
+                    "left_router_loss": float(left["router_loss"]),
+                    "right_router_loss": float(right["router_loss"]),
+                    "left_oracle_gap": float(left["router_oracle_gap"]),
+                    "right_oracle_gap": float(right["router_oracle_gap"]),
+                    "left_used_columns": int(left["used_columns"]),
+                    "right_used_columns": int(right["used_columns"]),
+                    "left_unique_support_sets": int(left["unique_support_sets"]),
+                    "right_unique_support_sets": int(right["unique_support_sets"]),
+                }
+            )
+        aggregate_left = aggregate_by_key.get(left_key, {})
+        aggregate_right = aggregate_by_key.get(right_key, {})
+        result[name] = {
+            "left_variant_key": left_key,
+            "right_variant_key": right_key,
+            "mean_loss_delta": (
+                float(aggregate_left["mean_router_loss"])
+                - float(aggregate_right["mean_router_loss"])
+                if aggregate_left and aggregate_right
+                else None
+            ),
+            "fold_count": len(fold_deltas),
+            "left_wins": sum(1 for row in fold_deltas if row["loss_delta"] < 0.0),
+            "right_wins": sum(1 for row in fold_deltas if row["loss_delta"] > 0.0),
+            "ties": sum(1 for row in fold_deltas if row["loss_delta"] == 0.0),
+            "fold_deltas": fold_deltas,
+        }
+    return result
 
 
 def _decision(rows: list[dict[str, Any]]) -> dict[str, Any]:
     by_key = {row["variant_key"]: row for row in rows}
     full = by_key.get("promoted_contextual_topk2:actual_full_context")
     causal = by_key.get("promoted_contextual_topk2:causal_current_past_position")
+    causal_trained = by_key.get("causal_contextual_topk2:actual_causal_context")
     linear = by_key.get("linear_topk2_control:linear_actual")
     future_delta = None
     promoted_vs_linear = None
+    causal_vs_linear = None
+    causal_vs_promoted_full = None
     if full is not None and causal is not None:
         future_delta = float(causal["mean_router_loss"]) - float(full["mean_router_loss"])
     if full is not None and linear is not None:
         promoted_vs_linear = float(full["mean_router_loss"]) - float(linear["mean_router_loss"])
+    if causal_trained is not None and linear is not None:
+        causal_vs_linear = float(causal_trained["mean_router_loss"]) - float(
+            linear["mean_router_loss"]
+        )
+    if causal_trained is not None and full is not None:
+        causal_vs_promoted_full = float(causal_trained["mean_router_loss"]) - float(
+            full["mean_router_loss"]
+        )
     if promoted_vs_linear is not None and promoted_vs_linear > 0.0:
         return {
             "decision": "promoted_contextual_router_sequence_holdout_underperforms_linear",
@@ -483,6 +613,28 @@ def _decision(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "reason": "The promoted contextual top-k-2 router has higher mean sequence-heldout CE than the linear top-k-2 control.",
             "future_context_material_loss_delta": future_delta,
             "promoted_vs_linear_loss_delta": promoted_vs_linear,
+            "causal_contextual_vs_linear_loss_delta": causal_vs_linear,
+            "causal_contextual_vs_promoted_full_loss_delta": causal_vs_promoted_full,
+        }
+    if causal_vs_linear is not None and causal_vs_linear > 0.0:
+        return {
+            "decision": "causal_contextual_router_sequence_holdout_underperforms_linear",
+            "claim_status": "causal_feature_safe_router_claim_blocked_by_linear_control",
+            "reason": "The trained causal contextual top-k-2 router has higher mean sequence-heldout CE than the linear top-k-2 control.",
+            "future_context_material_loss_delta": future_delta,
+            "promoted_vs_linear_loss_delta": promoted_vs_linear,
+            "causal_contextual_vs_linear_loss_delta": causal_vs_linear,
+            "causal_contextual_vs_promoted_full_loss_delta": causal_vs_promoted_full,
+        }
+    if causal_vs_linear is not None and causal_vs_linear <= 0.0:
+        return {
+            "decision": "causal_contextual_router_sequence_holdout_candidate",
+            "claim_status": "causal_feature_safe_router_local_sequence_holdout_supported",
+            "reason": "The trained causal contextual top-k-2 router matches or beats the linear top-k-2 control on mean sequence-heldout CE.",
+            "future_context_material_loss_delta": future_delta,
+            "promoted_vs_linear_loss_delta": promoted_vs_linear,
+            "causal_contextual_vs_linear_loss_delta": causal_vs_linear,
+            "causal_contextual_vs_promoted_full_loss_delta": causal_vs_promoted_full,
         }
     if future_delta is not None and future_delta > 0.01:
         return {
@@ -491,6 +643,8 @@ def _decision(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "reason": "Removing future-token feature groups worsens mean sequence-heldout CE by more than 0.01.",
             "future_context_material_loss_delta": future_delta,
             "promoted_vs_linear_loss_delta": promoted_vs_linear,
+            "causal_contextual_vs_linear_loss_delta": causal_vs_linear,
+            "causal_contextual_vs_promoted_full_loss_delta": causal_vs_promoted_full,
         }
     return {
         "decision": "sequence_kfold_causal_feature_ablation_completed",
@@ -498,6 +652,8 @@ def _decision(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "reason": "The K-fold report records promoted-router sequence holdout versus causal-feature and linear/top-k controls without a fail-closed threshold breach.",
         "future_context_material_loss_delta": future_delta,
         "promoted_vs_linear_loss_delta": promoted_vs_linear,
+        "causal_contextual_vs_linear_loss_delta": causal_vs_linear,
+        "causal_contextual_vs_promoted_full_loss_delta": causal_vs_promoted_full,
     }
 
 
@@ -527,9 +683,23 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Folds: `{ablation['fold_count']}`",
         f"- Future-context loss delta: `{ablation['future_context_material_loss_delta']}`",
         f"- Promoted-vs-linear loss delta: `{ablation['promoted_vs_linear_loss_delta']}`",
+        "- Causal-contextual-vs-linear loss delta: "
+        f"`{ablation['causal_contextual_vs_linear_loss_delta']}`",
+        "- Causal-contextual-vs-promoted-full loss delta: "
+        f"`{ablation['causal_contextual_vs_promoted_full_loss_delta']}`",
+        "",
+        "## Key Fold Comparisons",
+    ]
+    for name, comparison in ablation["key_comparisons"].items():
+        lines.append(
+            "- "
+            f"{name}: mean delta `{comparison['mean_loss_delta']}`, "
+            f"left wins `{comparison['left_wins']}/{comparison['fold_count']}`"
+        )
+    lines.extend([
         "",
         "## Mean Heldout Loss",
-    ]
+    ])
     for row in sorted(
         ablation["variants"].values(),
         key=lambda item: float(item["mean_router_loss"]),

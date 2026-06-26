@@ -15,6 +15,7 @@ from relaleap.experiments.run import _load_torch_info
 from relaleap.experiments.run import _read_config
 from relaleap.experiments.support_audit import _configured_residual_loss
 from relaleap.smoke import ResidualColumns
+from relaleap.smoke import SUPPORT_ROUTER_CHOICES
 from relaleap.smoke import TinyCharTransformer
 from relaleap.smoke import _build_batch
 from relaleap.smoke import _residual_support_audit
@@ -63,8 +64,11 @@ def run_column_redundancy(config_path: Path, out_dir: Path) -> dict[str, Any]:
     contextual_router_hidden_dim = int(
         column_cfg.get("contextual_router_hidden_dim", hidden_dim * 2)
     )
-    if support_router not in {"linear", "contextual_mlp"}:
-        raise ValueError("model.columns.support_router must be one of: linear, contextual_mlp")
+    if support_router not in SUPPORT_ROUTER_CHOICES:
+        raise ValueError(
+            "model.columns.support_router must be one of: "
+            "linear, contextual_mlp, contextual_mlp_causal"
+        )
     if contextual_router_hidden_dim < 1:
         raise ValueError("model.columns.contextual_router_hidden_dim must be positive")
 
