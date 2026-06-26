@@ -7,9 +7,14 @@ from pathlib import Path
 
 from relaleap.experiments.causal_contextual_router_gate_report import (
     CAUSAL_GATE_PREREGISTERED,
+    CAUSAL_LOCAL_GATE_PASSED,
     INSUFFICIENT_EVIDENCE,
+    RUNPOD_REPEAT_ACTION,
     SELECTED_NEXT_ACTION,
     run_causal_contextual_router_gate_report,
+)
+from relaleap.experiments.causal_router_future_perturbation import (
+    run_causal_router_future_perturbation,
 )
 
 
@@ -35,6 +40,7 @@ class CausalContextualRouterGateReportTest(unittest.TestCase):
             summary = run_causal_contextual_router_gate_report(
                 sequence_report_path=sequence,
                 strategy_review_path=review,
+                future_perturbation_report_path=root / "missing-perturbation.json",
                 out_dir=root / "report",
             )
 
@@ -69,12 +75,46 @@ class CausalContextualRouterGateReportTest(unittest.TestCase):
             self.assertTrue((root / "report" / "candidate_actions.csv").is_file())
             self.assertTrue((root / "report" / "notes.md").is_file())
 
+    def test_passing_future_perturbation_evidence_unlocks_runpod_repeat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            sequence = root / "sequence.json"
+            _write_json(sequence, _sequence_packet())
+            perturbation_summary = run_causal_router_future_perturbation(
+                out_dir=root / "future_perturbation"
+            )
+            self.assertEqual(perturbation_summary["status"], "pass")
+
+            summary = run_causal_contextual_router_gate_report(
+                sequence_report_path=sequence,
+                strategy_review_path=root / "missing-review.md",
+                future_perturbation_report_path=root
+                / "future_perturbation"
+                / "summary.json",
+                out_dir=root / "report",
+            )
+
+            self.assertEqual(summary["status"], "pass")
+            self.assertEqual(summary["decision"], CAUSAL_LOCAL_GATE_PASSED)
+            self.assertEqual(summary["selected_next_action"], RUNPOD_REPEAT_ACTION)
+            gate = summary["local_gate_status"]
+            self.assertTrue(gate["criteria"]["future_perturbation_invariance"])
+            self.assertTrue(gate["passes_full_local_gate"])
+            self.assertIsNone(gate["missing_required_next_check"])
+            dispositions = {
+                row["candidate_action"]: row["disposition"]
+                for row in summary["candidate_actions"]
+            }
+            self.assertEqual(dispositions[SELECTED_NEXT_ACTION], "completed")
+            self.assertEqual(dispositions[RUNPOD_REPEAT_ACTION], "selected")
+
     def test_fails_closed_when_sequence_report_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             summary = run_causal_contextual_router_gate_report(
                 sequence_report_path=root / "missing.json",
                 strategy_review_path=root / "missing-review.md",
+                future_perturbation_report_path=root / "missing-perturbation.json",
                 out_dir=root / "report",
             )
 

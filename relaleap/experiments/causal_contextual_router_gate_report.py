@@ -17,10 +17,15 @@ DEFAULT_SEQUENCE_REPORT = Path(
 )
 DEFAULT_STRATEGY_REVIEW = Path("../outputs/strategy-reviews/relaleap/latest-review.md")
 DEFAULT_OUT_DIR = Path("results/reports/token_larger_causal_contextual_router_gate")
+DEFAULT_FUTURE_PERTURBATION_REPORT = Path(
+    "results/reports/causal_router_future_perturbation/summary.json"
+)
 
 CAUSAL_GATE_PREREGISTERED = "causal_contextual_router_gate_preregistered"
+CAUSAL_LOCAL_GATE_PASSED = "causal_contextual_router_local_gate_passed"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
 SELECTED_NEXT_ACTION = "causal_router_future_perturbation_test"
+RUNPOD_REPEAT_ACTION = "runpod_repeat_matrix_now"
 
 FULL_CONTEXT_VARIANT = "promoted_contextual_topk2:actual_full_context"
 FULL_CONTEXT_CAUSAL_VIEW = "promoted_contextual_topk2:causal_current_past_position"
@@ -81,7 +86,7 @@ _CANDIDATE_ACTIONS = (
         "reason": "the K-fold report is supportive, but the causal-router invariance test is the missing fail-closed deployability safeguard before GPU repeats",
     },
     {
-        "candidate_action": "runpod_repeat_matrix_now",
+        "candidate_action": RUNPOD_REPEAT_ACTION,
         "disposition": "deferred",
         "reason": "GPU validation is deferred until the local causal gate includes future-perturbation invariance",
     },
@@ -102,15 +107,22 @@ def run_causal_contextual_router_gate_report(
     *,
     sequence_report_path: Path = DEFAULT_SEQUENCE_REPORT,
     strategy_review_path: Path = DEFAULT_STRATEGY_REVIEW,
+    future_perturbation_report_path: Path = DEFAULT_FUTURE_PERTURBATION_REPORT,
     out_dir: Path = DEFAULT_OUT_DIR,
 ) -> dict[str, Any]:
     """Consume K-fold evidence and pre-register the local causal-router gate."""
 
     start = time.time()
     sequence = _read_json_object(sequence_report_path)
+    future_perturbation = _read_json_object(future_perturbation_report_path)
     strategy_review = _strategy_review(strategy_review_path)
     source_rows = [
         _source_row("contextual_router_sequence_kfold_ablation", sequence_report_path, sequence),
+        _source_row(
+            "causal_router_future_perturbation",
+            future_perturbation_report_path,
+            future_perturbation,
+        ),
         {
             "source": "strategy_review",
             "path": str(strategy_review_path),
@@ -123,9 +135,10 @@ def run_causal_contextual_router_gate_report(
             ),
         },
     ]
-    evidence = _evidence_snapshot(sequence)
+    evidence = _evidence_snapshot(sequence, future_perturbation)
     gate = _evaluate_gate(evidence)
     failures = _failures(source_rows=source_rows, sequence=sequence, evidence=evidence)
+    candidate_actions = _candidate_actions(gate)
 
     if failures:
         status = "fail"
@@ -138,19 +151,33 @@ def run_causal_contextual_router_gate_report(
         )
     else:
         status = "pass"
-        decision = CAUSAL_GATE_PREREGISTERED
-        selected_next_action = SELECTED_NEXT_ACTION
-        next_step = (
-            "add a causal-router future-perturbation invariance unit test before any "
-            "RunPod repeat or default-promotion work"
-        )
-        rationale = (
-            "The full-context contextual router is now classified as a nondeployable "
-            "oracle-style baseline because future features are material. The causal "
-            "contextual router is a strong local candidate versus the linear control, "
-            "but default promotion and GPU repeats remain gated on a fail-closed "
-            "causal-invariance test plus the recorded sequence-heldout criteria."
-        )
+        if gate["passes_full_local_gate"]:
+            decision = CAUSAL_LOCAL_GATE_PASSED
+            selected_next_action = RUNPOD_REPEAT_ACTION
+            next_step = (
+                "run the RunPod causal-router repeat matrix before any default-promotion work"
+            )
+            rationale = (
+                "The full-context contextual router is classified as a nondeployable "
+                "oracle-style baseline because future features are material. The causal "
+                "contextual router now passes the local sequence-heldout criteria and "
+                "the fail-closed future-perturbation invariance check, so the next "
+                "bounded scientific step is GPU repeat validation."
+            )
+        else:
+            decision = CAUSAL_GATE_PREREGISTERED
+            selected_next_action = SELECTED_NEXT_ACTION
+            next_step = (
+                "add a causal-router future-perturbation invariance unit test before any "
+                "RunPod repeat or default-promotion work"
+            )
+            rationale = (
+                "The full-context contextual router is now classified as a nondeployable "
+                "oracle-style baseline because future features are material. The causal "
+                "contextual router is a strong local candidate versus the linear control, "
+                "but default promotion and GPU repeats remain gated on a fail-closed "
+                "causal-invariance test plus the recorded sequence-heldout criteria."
+            )
 
     summary = {
         "status": status,
@@ -158,10 +185,10 @@ def run_causal_contextual_router_gate_report(
         "selected_next_action": selected_next_action,
         "next_step": next_step,
         "next_command": None,
-        "claim_statuses": dict(_CLAIM_STATUSES),
+        "claim_statuses": _claim_statuses(gate),
         "local_gate_criteria": list(_LOCAL_GATE_CRITERIA),
         "local_gate_status": gate,
-        "candidate_actions": list(_CANDIDATE_ACTIONS),
+        "candidate_actions": candidate_actions,
         "source_rows": source_rows,
         "evidence": evidence,
         "strategy_review": strategy_review,
@@ -197,13 +224,49 @@ def run_causal_contextual_router_gate_report(
     _write_csv(
         out_dir / "candidate_actions.csv",
         ["candidate_action", "disposition", "reason"],
-        list(_CANDIDATE_ACTIONS),
+        candidate_actions,
     )
     _write_notes(out_dir / "notes.md", summary)
     return summary
 
 
-def _evidence_snapshot(sequence: dict[str, Any]) -> dict[str, Any]:
+def _claim_statuses(gate: dict[str, Any]) -> dict[str, str]:
+    claim_statuses = dict(_CLAIM_STATUSES)
+    if gate.get("passes_full_local_gate"):
+        claim_statuses["gpu_repeat"] = "unlocked_pending_runpod_validation"
+    return claim_statuses
+
+
+def _candidate_actions(gate: dict[str, Any]) -> list[dict[str, str]]:
+    if not gate.get("passes_full_local_gate"):
+        return list(_CANDIDATE_ACTIONS)
+    return [
+        {
+            "candidate_action": SELECTED_NEXT_ACTION,
+            "disposition": "completed",
+            "reason": "future-perturbation invariance is now present and passing in the local evidence artifact",
+        },
+        {
+            "candidate_action": RUNPOD_REPEAT_ACTION,
+            "disposition": "selected",
+            "reason": "the fail-closed local causal gate now passes, so GPU repeat validation is the next evidence step",
+        },
+        {
+            "candidate_action": "promote_contextual_mlp_causal_default",
+            "disposition": "disqualified",
+            "reason": "default promotion remains blocked until GPU repeats and follow-up causal support audits pass",
+        },
+        {
+            "candidate_action": "restore_full_context_contextual_mlp_deployable_claim",
+            "disposition": "disqualified",
+            "reason": "future-token feature groups are material, so full-context contextual_mlp is oracle-style only",
+        },
+    ]
+
+
+def _evidence_snapshot(
+    sequence: dict[str, Any], future_perturbation: dict[str, Any]
+) -> dict[str, Any]:
     ablation = sequence.get("ablation", {}) if isinstance(sequence.get("ablation"), dict) else {}
     variants = ablation.get("variants", {}) if isinstance(ablation.get("variants"), dict) else {}
     comparisons = (
@@ -255,6 +318,12 @@ def _evidence_snapshot(sequence: dict[str, Any]) -> dict[str, Any]:
         ],
         "full_context_vs_linear_mean_delta": full_vs_linear.get("mean_loss_delta"),
         "causal_vs_full_mean_delta": causal_vs_full.get("mean_loss_delta"),
+        "future_perturbation_status": future_perturbation.get("status"),
+        "future_perturbation_decision": future_perturbation.get("decision"),
+        "future_perturbation_claim_status": future_perturbation.get("claim_status"),
+        "future_perturbation_invariance": future_perturbation.get(
+            "future_perturbation_invariance"
+        ),
     }
 
 
@@ -290,7 +359,7 @@ def _evaluate_gate(evidence: dict[str, Any]) -> dict[str, Any]:
             and position_mean is not None
             and position_mean - causal_mean >= MAX_POSITION_ONLY_RELATIVE_TO_CAUSAL_DELTA
         ),
-        "future_perturbation_invariance": False,
+        "future_perturbation_invariance": evidence.get("future_perturbation_invariance") is True,
     }
     passed_without_perturbation = all(
         value for key, value in criteria.items() if key != "future_perturbation_invariance"
@@ -324,6 +393,25 @@ def _failures(
                 "path": source_rows[0]["path"],
             }
         )
+    if source_rows[1]["present"]:
+        if evidence.get("future_perturbation_status") != "pass":
+            failures.append(
+                {
+                    "source": "causal_router_future_perturbation",
+                    "field": "future_perturbation_status",
+                    "expected": "pass",
+                    "actual": evidence.get("future_perturbation_status"),
+                }
+            )
+        if evidence.get("future_perturbation_invariance") is not True:
+            failures.append(
+                {
+                    "source": "causal_router_future_perturbation",
+                    "field": "future_perturbation_invariance",
+                    "expected": True,
+                    "actual": evidence.get("future_perturbation_invariance"),
+                }
+            )
     expected = {
         "sequence_status": "ok",
         "sequence_decision": "causal_contextual_router_sequence_holdout_candidate",
@@ -521,6 +609,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
             f"- Causal contextual mean CE: `{evidence['causal_mean_ce']}`",
             f"- Linear mean CE: `{evidence['linear_mean_ce']}`",
             f"- Causal-vs-linear fold deltas: `{evidence['causal_vs_linear_fold_deltas']}`",
+            f"- Future perturbation invariance: `{evidence['future_perturbation_invariance']}`",
             f"- Causal used columns / unique support sets: `{evidence['causal_mean_used_columns']}` / `{evidence['causal_mean_unique_support_sets']}`",
             f"- Linear used columns / unique support sets: `{evidence['linear_mean_used_columns']}` / `{evidence['linear_mean_unique_support_sets']}`",
             "",
@@ -545,11 +634,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sequence-report", type=Path, default=DEFAULT_SEQUENCE_REPORT)
     parser.add_argument("--strategy-review", type=Path, default=DEFAULT_STRATEGY_REVIEW)
+    parser.add_argument(
+        "--future-perturbation-report",
+        type=Path,
+        default=DEFAULT_FUTURE_PERTURBATION_REPORT,
+    )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     args = parser.parse_args(argv)
     summary = run_causal_contextual_router_gate_report(
         sequence_report_path=args.sequence_report,
         strategy_review_path=args.strategy_review,
+        future_perturbation_report_path=args.future_perturbation_report,
         out_dir=args.out,
     )
     print(json.dumps({"status": summary["status"], "decision": summary["decision"]}))
