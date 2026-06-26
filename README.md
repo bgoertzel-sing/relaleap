@@ -529,6 +529,25 @@ audit, finite-update order-control report, and mitigation closeout. The report
 localizes value-composition risk for mitigation design only; it keeps top-k `2`
 causal-cooperation claims blocked and does not promote a new architecture.
 
+If localization is diffuse or otherwise does not justify a new hub-family
+mitigation, close the current top-k `2` value/router mitigation family and
+select the next non-mitigation branch:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_post_localization_closeout_report
+```
+
+This writes
+`results/reports/token_larger_promoted_topk2_post_localization_closeout/summary.json`,
+`source_rows.csv`, `closure_rows.csv`, and `notes.md`. It consumes the
+post-value/router mitigation closeout, pairwise localization audit, active
+top-k `1` next-evidence selector, active top-k `1` retention/functional-churn
+follow-up, and optional strategy review. It fails closed on missing or
+inconsistent source artifacts, records that no new top-k `2` value/router
+mitigation family should be opened from diffuse localization evidence, and
+selects the next matched deconfounding/retention branch without rerunning
+training.
+
 After the localization audit identifies a dominant hub-family value interaction,
 run the bounded hub-focused value-composition mitigation probe:
 

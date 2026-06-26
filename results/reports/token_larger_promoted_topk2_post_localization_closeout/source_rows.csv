@@ -1,0 +1,6 @@
+source,path,present,status,decision,claim_status
+post_value_router_mitigation_closeout,results/reports/token_larger_promoted_topk2_post_value_router_mitigation_closeout/summary.json,True,pass,promoted_topk2_mitigation_closeout_no_promotion,
+pairwise_value_interaction_localization,results/reports/token_larger_promoted_topk2_pairwise_value_interaction_localization_audit/summary.json,True,pass,pairwise_value_interaction_diffuse,
+active_topk1_next_evidence_selection,results/reports/token_larger_active_topk1_next_evidence_selection/summary.json,True,pass,active_topk1_next_evidence_selected,
+active_topk1_retention_functional_churn_followup,results/reports/token_larger_active_topk1_retention_functional_churn_followup/summary.json,True,pass,retention_functional_churn_bracket_supported,local_retention_functional_churn_bracket_only
+strategy_review,../outputs/strategy-reviews/relaleap/latest-review.md,True,present,"Run the planned no-training active-rank-matched top-k-1 evidence-selection report and use it to select one bounded follow-up, with retention/functional-churn favored if matched-control coverage is adequate.",strategic_change_level=minor; notify_ben=False

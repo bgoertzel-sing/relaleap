@@ -1,0 +1,136 @@
+{
+  "artifacts": {
+    "closure_rows_csv": "results/reports/token_larger_promoted_topk2_post_localization_closeout/closure_rows.csv",
+    "notes_md": "results/reports/token_larger_promoted_topk2_post_localization_closeout/notes.md",
+    "source_rows_csv": "results/reports/token_larger_promoted_topk2_post_localization_closeout/source_rows.csv",
+    "summary_json": "results/reports/token_larger_promoted_topk2_post_localization_closeout/summary.json"
+  },
+  "branch_options": [
+    "retention_causal_audit_design",
+    "retention_churn_backend_repeat_if_needed",
+    "matched_deconfounding"
+  ],
+  "claim_status": "topk2_value_router_mitigation_family_closed_no_promotion",
+  "claim_statuses": {
+    "active_rank_matched_topk1": "active_retention_churn_bracket",
+    "contextual_topk2_router": "operational_default_train_time_support_selection",
+    "pairwise_value_interaction": "not_localized",
+    "router_policy_mitigation": "closed_not_established",
+    "topk2_causal_cooperation": "not_supported",
+    "value_router_mitigation_family": "closed_not_established"
+  },
+  "closure_rows": [
+    {
+      "branch": "router_policy_and_value_mitigation",
+      "disposition": "closed_not_established",
+      "key_metric": "selected_next_action",
+      "key_value": "pairwise_value_interaction_localization_audit",
+      "source_decision": "promoted_topk2_mitigation_closeout_no_promotion"
+    },
+    {
+      "branch": "pairwise_value_interaction_localization",
+      "disposition": "closed_no_new_mitigation_family",
+      "key_metric": "localization_status",
+      "key_value": "diffuse",
+      "source_decision": "pairwise_value_interaction_diffuse"
+    },
+    {
+      "branch": "active_topk1_next_evidence_selection",
+      "disposition": "accepted_retention_branch",
+      "key_metric": "selected_experiment",
+      "key_value": "retention_churn",
+      "source_decision": "active_topk1_next_evidence_selected"
+    },
+    {
+      "branch": "active_topk1_retention_functional_churn_followup",
+      "disposition": "completed_local_bracket",
+      "key_metric": "min_support_churn_advantage_topk1_vs_topk2",
+      "key_value": 0.8046875,
+      "source_decision": "retention_functional_churn_bracket_supported"
+    }
+  ],
+  "decision": "promoted_topk2_value_router_family_closed",
+  "failures": [],
+  "git_commit": "75271e6bb165080cea2a62fdac12b056a7c1b2ec",
+  "metrics": {
+    "active_topk1_selected_experiment": "retention_churn",
+    "dominant_column_abs_synergy_share": 0.8807960047600303,
+    "frequency_control_primary_denominator_count": 0,
+    "matched_control_coverage_adequate": true,
+    "pairwise_localization_decision": "pairwise_value_interaction_diffuse",
+    "pairwise_localization_status": "diffuse",
+    "post_value_closeout_decision": "promoted_topk2_mitigation_closeout_no_promotion",
+    "post_value_selected_next_action": "pairwise_value_interaction_localization_audit",
+    "retention_ce_guardrail_all_packets": true,
+    "retention_followup_decision": "retention_functional_churn_bracket_supported",
+    "retention_min_commutator_advantage_topk1_vs_topk2": 0.1751744169741869,
+    "retention_min_support_churn_advantage_topk1_vs_topk2": 0.8046875,
+    "retention_min_transfer_advantage_topk1_vs_dense": 0.3985363245010376,
+    "top3_pair_abs_synergy_share": 0.4036014110350822
+  },
+  "next_step": "design one command-driven causal-retention audit that uses the completed local retention/churn bracket to test whether active rank-matched top-k-1's lower churn corresponds to reusable causal corrections under matched contexts and CE guardrails",
+  "out_dir": "results/reports/token_larger_promoted_topk2_post_localization_closeout",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "rationale": "The current top-k-2 value/router mitigation family should close: router/value mitigations did not establish a promotion path and the pairwise localization audit was diffuse, so adding another mitigation family is underjustified. The active top-k-1 selector chose retention/churn, and the local four-control follow-up already supports that bracket with lower support churn and commutator risk under CE guardrails. The next bounded step is therefore a discriminative causal-retention audit design, not another top-k-2 mitigation.",
+  "runtime_seconds": 0.0052,
+  "selected_next_branch": "retention_causal_audit_design",
+  "selection_gate": {
+    "adds_new_mitigation_family": false,
+    "new_training_required": false,
+    "requires_gpu_now": false,
+    "retention_followup_already_completed": true,
+    "topk2_value_router_family_closed": true
+  },
+  "source_rows": [
+    {
+      "claim_status": null,
+      "decision": "promoted_topk2_mitigation_closeout_no_promotion",
+      "path": "results/reports/token_larger_promoted_topk2_post_value_router_mitigation_closeout/summary.json",
+      "present": true,
+      "source": "post_value_router_mitigation_closeout",
+      "status": "pass"
+    },
+    {
+      "claim_status": null,
+      "decision": "pairwise_value_interaction_diffuse",
+      "path": "results/reports/token_larger_promoted_topk2_pairwise_value_interaction_localization_audit/summary.json",
+      "present": true,
+      "source": "pairwise_value_interaction_localization",
+      "status": "pass"
+    },
+    {
+      "claim_status": null,
+      "decision": "active_topk1_next_evidence_selected",
+      "path": "results/reports/token_larger_active_topk1_next_evidence_selection/summary.json",
+      "present": true,
+      "source": "active_topk1_next_evidence_selection",
+      "status": "pass"
+    },
+    {
+      "claim_status": "local_retention_functional_churn_bracket_only",
+      "decision": "retention_functional_churn_bracket_supported",
+      "path": "results/reports/token_larger_active_topk1_retention_functional_churn_followup/summary.json",
+      "present": true,
+      "source": "active_topk1_retention_functional_churn_followup",
+      "status": "pass"
+    },
+    {
+      "claim_status": "strategic_change_level=minor; notify_ben=False",
+      "decision": "Run the planned no-training active-rank-matched top-k-1 evidence-selection report and use it to select one bounded follow-up, with retention/functional-churn favored if matched-control coverage is adequate.",
+      "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
+      "present": true,
+      "source": "strategy_review",
+      "status": "present"
+    }
+  ],
+  "status": "pass",
+  "strategy_review": {
+    "ben_notification_required": false,
+    "incorporation": "accepted: this closeout uses the already completed active-rank-matched top-k-1 selection report, preserves the retention/churn branch favored by the review, and records that no additional top-k-2 mitigation family should be opened from diffuse localization evidence",
+    "notify_ben": false,
+    "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
+    "present": true,
+    "recommended_next_action": "Run the planned no-training active-rank-matched top-k-1 evidence-selection report and use it to select one bounded follow-up, with retention/functional-churn favored if matched-control coverage is adequate.",
+    "strategic_change_level": "minor"
+  }
+}
