@@ -61,6 +61,7 @@ def run_retention_churn_microtest(
     include_low_rank_value_variants: bool = False,
     include_commutator_value_penalty_variants: bool = False,
     include_hub_value_composition_variants: bool = False,
+    include_router_policy_interventions: bool = False,
 ) -> dict[str, Any]:
     """Train on slice A then slice B and measure anchor drift/churn."""
 
@@ -319,8 +320,11 @@ def run_retention_churn_microtest(
     variant_rows: list[dict[str, Any]] = []
     phase_rows: list[dict[str, Any]] = []
     per_token_commutator_rows: list[dict[str, Any]] = []
+    router_policy_intervention_rows: list[dict[str, Any]] = []
     token_classes = _target_token_classes(targets)
     promoted_anchor_residual_norm: float | None = None
+    promoted_packet: dict[str, Any] | None = None
+    rank_matched_topk1_anchor_norm_after_transfer: float | None = None
     for offset, spec in enumerate(specs):
         torch.manual_seed(seed + 100 * offset)
         if spec.kind == "dense":
@@ -817,6 +821,17 @@ def run_retention_churn_microtest(
                 vocab_size=vocab_size,
                 support_indices=fixed_transfer_support,
             )
+            if include_router_policy_interventions and spec.name == "promoted_contextual_topk2":
+                promoted_packet = {
+                    "residual": residual,
+                    "reverse_residual": reverse_residual,
+                    "anchor_before": anchor_before,
+                    "transfer_before": transfer_before,
+                    "anchor_after": anchor_after,
+                    "transfer_after": transfer_after,
+                    "reverse_anchor_final": reverse_anchor_final,
+                    "reverse_transfer_final": reverse_transfer_final,
+                }
 
         phase_rows.extend(
             _phase_rows(
@@ -977,6 +992,24 @@ def run_retention_churn_microtest(
             "transfer_update_group": spec.transfer_update_group,
         }
         variant_rows.append(row)
+        if spec.name == "rank_matched_contextual_topk1":
+            rank_matched_topk1_anchor_norm_after_transfer = _float_from(
+                row.get("anchor_residual_norm_after_transfer")
+            )
+
+    if include_router_policy_interventions and promoted_packet is not None:
+        router_policy_intervention_rows.extend(
+            _router_policy_intervention_rows(
+                base=base,
+                packet=promoted_packet,
+                anchor_inputs=anchor_inputs,
+                anchor_targets=anchor_targets,
+                transfer_inputs=transfer_inputs,
+                transfer_targets=transfer_targets,
+                vocab_size=vocab_size,
+                norm_match_anchor_residual_norm=rank_matched_topk1_anchor_norm_after_transfer,
+            )
+        )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_csv(out_dir / "variant_metrics.csv", variant_rows)
@@ -1037,12 +1070,17 @@ def run_retention_churn_microtest(
             "include_hub_value_composition_variants": (
                 include_hub_value_composition_variants
             ),
+            "include_router_policy_interventions": include_router_policy_interventions,
+            "router_policy_interventions": router_policy_intervention_rows,
         },
         "artifacts": {
             "summary_json": str(out_dir / "summary.json"),
             "variant_metrics_csv": str(out_dir / "variant_metrics.csv"),
             "phase_metrics_csv": str(out_dir / "phase_metrics.csv"),
             "per_token_commutator_csv": str(out_dir / "per_token_commutator.csv"),
+            "router_policy_interventions_csv": str(
+                out_dir / "router_policy_interventions.csv"
+            ),
             "notes_md": str(out_dir / "notes.md"),
         },
     }
@@ -1051,7 +1089,233 @@ def run_retention_churn_microtest(
         encoding="utf-8",
     )
     _write_notes(out_dir / "notes.md", summary)
+    _write_csv(out_dir / "router_policy_interventions.csv", router_policy_intervention_rows)
     return summary
+
+
+def _router_policy_intervention_rows(
+    *,
+    base: Any,
+    packet: dict[str, Any],
+    anchor_inputs: Any,
+    anchor_targets: Any,
+    transfer_inputs: Any,
+    transfer_targets: Any,
+    vocab_size: int,
+    norm_match_anchor_residual_norm: float | None,
+) -> list[dict[str, Any]]:
+    rows = [
+        _router_policy_intervention_row(
+            policy="dynamic_contextual_topk2",
+            forward_anchor=packet["anchor_after"],
+            reverse_anchor=packet["reverse_anchor_final"],
+            forward_transfer=packet["transfer_after"],
+            reverse_transfer=packet["reverse_transfer_final"],
+            anchor_targets=anchor_targets,
+            transfer_targets=transfer_targets,
+            vocab_size=vocab_size,
+            residual_scale=1.0,
+        )
+    ]
+    for policy, anchor_support, transfer_support in (
+        (
+            "pinned_pre_transfer_support_topk2",
+            packet["anchor_before"].get("support"),
+            packet["transfer_before"].get("support"),
+        ),
+        (
+            "pinned_forward_final_support_topk2",
+            packet["anchor_after"].get("support"),
+            packet["transfer_after"].get("support"),
+        ),
+        (
+            "sticky_pre_transfer_margin0_topk2",
+            packet["anchor_before"].get("support"),
+            packet["transfer_before"].get("support"),
+        ),
+    ):
+        forward_anchor = _sparse_snapshot(
+            base=base,
+            residual=packet["residual"],
+            inputs=anchor_inputs,
+            targets=anchor_targets,
+            vocab_size=vocab_size,
+            support_indices=anchor_support,
+        )
+        reverse_anchor = _sparse_snapshot(
+            base=base,
+            residual=packet["reverse_residual"],
+            inputs=anchor_inputs,
+            targets=anchor_targets,
+            vocab_size=vocab_size,
+            support_indices=anchor_support,
+        )
+        forward_transfer = _sparse_snapshot(
+            base=base,
+            residual=packet["residual"],
+            inputs=transfer_inputs,
+            targets=transfer_targets,
+            vocab_size=vocab_size,
+            support_indices=transfer_support,
+        )
+        reverse_transfer = _sparse_snapshot(
+            base=base,
+            residual=packet["reverse_residual"],
+            inputs=transfer_inputs,
+            targets=transfer_targets,
+            vocab_size=vocab_size,
+            support_indices=transfer_support,
+        )
+        rows.append(
+            _router_policy_intervention_row(
+                policy=policy,
+                forward_anchor=forward_anchor,
+                reverse_anchor=reverse_anchor,
+                forward_transfer=forward_transfer,
+                reverse_transfer=reverse_transfer,
+                anchor_targets=anchor_targets,
+                transfer_targets=transfer_targets,
+                vocab_size=vocab_size,
+                residual_scale=1.0,
+            )
+        )
+    baseline_norm = _float_from(packet["anchor_after"].get("residual_norm_mean"))
+    if norm_match_anchor_residual_norm is not None and baseline_norm and baseline_norm > 0.0:
+        scale = norm_match_anchor_residual_norm / baseline_norm
+        rows.append(
+            _router_policy_intervention_row(
+                policy="residual_norm_matched_dynamic_topk2",
+                forward_anchor=_scale_snapshot(
+                    base=base,
+                    inputs=anchor_inputs,
+                    targets=anchor_targets,
+                    vocab_size=vocab_size,
+                    snapshot=packet["anchor_after"],
+                    residual_scale=scale,
+                ),
+                reverse_anchor=_scale_snapshot(
+                    base=base,
+                    inputs=anchor_inputs,
+                    targets=anchor_targets,
+                    vocab_size=vocab_size,
+                    snapshot=packet["reverse_anchor_final"],
+                    residual_scale=scale,
+                ),
+                forward_transfer=_scale_snapshot(
+                    base=base,
+                    inputs=transfer_inputs,
+                    targets=transfer_targets,
+                    vocab_size=vocab_size,
+                    snapshot=packet["transfer_after"],
+                    residual_scale=scale,
+                ),
+                reverse_transfer=_scale_snapshot(
+                    base=base,
+                    inputs=transfer_inputs,
+                    targets=transfer_targets,
+                    vocab_size=vocab_size,
+                    snapshot=packet["reverse_transfer_final"],
+                    residual_scale=scale,
+                ),
+                anchor_targets=anchor_targets,
+                transfer_targets=transfer_targets,
+                vocab_size=vocab_size,
+                residual_scale=scale,
+            )
+        )
+    return rows
+
+
+def _router_policy_intervention_row(
+    *,
+    policy: str,
+    forward_anchor: dict[str, Any],
+    reverse_anchor: dict[str, Any],
+    forward_transfer: dict[str, Any],
+    reverse_transfer: dict[str, Any],
+    anchor_targets: Any,
+    transfer_targets: Any,
+    vocab_size: int,
+    residual_scale: float,
+) -> dict[str, Any]:
+    return {
+        "policy": policy,
+        "residual_scale": residual_scale,
+        "anchor_forward_ce": forward_anchor["ce_loss"],
+        "anchor_reverse_ce": reverse_anchor["ce_loss"],
+        "transfer_forward_ce": forward_transfer["ce_loss"],
+        "transfer_reverse_ce": reverse_transfer["ce_loss"],
+        "commutator_anchor_logit_mse": _mse_delta(
+            forward_anchor["logits"], reverse_anchor["logits"]
+        ),
+        "commutator_transfer_logit_mse": _mse_delta(
+            forward_transfer["logits"], reverse_transfer["logits"]
+        ),
+        "commutator_anchor_symmetric_kl": _symmetric_kl_mean(
+            forward_anchor["logits"], reverse_anchor["logits"]
+        ),
+        "commutator_transfer_symmetric_kl": _symmetric_kl_mean(
+            forward_transfer["logits"], reverse_transfer["logits"]
+        ),
+        "commutator_anchor_ce_abs_delta": abs(
+            forward_anchor["ce_loss"] - reverse_anchor["ce_loss"]
+        ),
+        "commutator_transfer_ce_abs_delta": abs(
+            forward_transfer["ce_loss"] - reverse_transfer["ce_loss"]
+        ),
+        "commutator_anchor_residual_stream_l2": _stream_l2_delta(
+            forward_anchor["residual_delta"], reverse_anchor["residual_delta"]
+        ),
+        "commutator_transfer_residual_stream_l2": _stream_l2_delta(
+            forward_transfer["residual_delta"], reverse_transfer["residual_delta"]
+        ),
+        "anchor_residual_norm": forward_anchor["residual_norm_mean"],
+        "transfer_residual_norm": forward_transfer["residual_norm_mean"],
+        "commutator_anchor_support_churn": _support_churn(
+            forward_anchor.get("support"), reverse_anchor.get("support")
+        ),
+        "commutator_transfer_support_churn": _support_churn(
+            forward_transfer.get("support"), reverse_transfer.get("support")
+        ),
+        "anchor_used_columns": forward_anchor.get("used_columns", ""),
+        "transfer_used_columns": forward_transfer.get("used_columns", ""),
+    }
+
+
+def _scale_snapshot(
+    *,
+    base: Any,
+    inputs: Any,
+    targets: Any,
+    vocab_size: int,
+    snapshot: dict[str, Any],
+    residual_scale: float,
+) -> dict[str, Any]:
+    with __import__("torch").no_grad():
+        hidden = base.encode(inputs)
+        residual_delta = snapshot["residual_delta"] * residual_scale
+        logits = base.decode(hidden + residual_delta)
+    return {
+        "ce_loss": _ce_loss(logits, targets, vocab_size),
+        "logits": logits.detach().clone(),
+        "residual_delta": residual_delta.detach().clone(),
+        "residual_norm_mean": _residual_norm(residual_delta),
+        "support": snapshot.get("support"),
+        "used_columns": snapshot.get("used_columns", ""),
+        "unique_support_sets": snapshot.get("unique_support_sets", ""),
+    }
+
+
+def _symmetric_kl_mean(left_logits: Any, right_logits: Any) -> float:
+    import torch.nn.functional as F
+
+    left_log_probs = F.log_softmax(left_logits[:, :-1, :], dim=-1)
+    right_log_probs = F.log_softmax(right_logits[:, :-1, :], dim=-1)
+    left_probs = left_log_probs.exp()
+    right_probs = right_log_probs.exp()
+    left_right = (left_probs * (left_log_probs - right_log_probs)).sum(dim=-1)
+    right_left = (right_probs * (right_log_probs - left_log_probs)).sum(dim=-1)
+    return float((0.5 * (left_right + right_left)).mean().item())
 
 
 def _train_sparse(
@@ -1684,6 +1948,15 @@ def _residual_norm(delta: Any) -> float:
     return float(delta.norm(dim=-1).mean().detach().item())
 
 
+def _float_from(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _mse_delta(left: Any, right: Any) -> float:
     import torch
     import torch.nn.functional as F
@@ -1763,6 +2036,11 @@ def main() -> None:
         action="store_true",
         help="Also evaluate dominant-hub value-composition penalty top-k-2 variants.",
     )
+    parser.add_argument(
+        "--include-router-policy-interventions",
+        action="store_true",
+        help="Also evaluate dynamic, pinned, sticky, and residual-norm-matched router-policy intervention rows from the promoted top-k-2 packet.",
+    )
     args = parser.parse_args()
     summary = run_retention_churn_microtest(
         args.config,
@@ -1777,6 +2055,7 @@ def main() -> None:
         include_hub_value_composition_variants=(
             args.include_hub_value_composition_variants
         ),
+        include_router_policy_interventions=args.include_router_policy_interventions,
     )
     print(
         json.dumps(

@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from relaleap.experiments.promoted_topk2_router_policy_mitigation_probe import (
     INSUFFICIENT_EVIDENCE,
@@ -86,6 +87,65 @@ class PromotedTopk2RouterPolicyMitigationProbeTest(unittest.TestCase):
                 for failure in summary["failures"]
             }
             self.assertIn(("finite_update_order_control", "source_artifact"), fields)
+
+    def test_paired_intervention_rows_drive_router_policy_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            paths = _write_sources(root)
+            paired = {
+                "status": "ok",
+                "audit": {
+                    "router_policy_interventions": [
+                        {
+                            "policy": "dynamic_contextual_topk2",
+                            "anchor_forward_ce": 2.0,
+                            "commutator_anchor_logit_mse": 0.2,
+                            "commutator_anchor_symmetric_kl": 0.1,
+                            "commutator_anchor_residual_stream_l2": 4.0,
+                            "commutator_anchor_support_churn": 0.9,
+                            "residual_scale": 1.0,
+                        },
+                        {
+                            "policy": "pinned_pre_transfer_support_topk2",
+                            "anchor_forward_ce": 2.02,
+                            "commutator_anchor_logit_mse": 0.08,
+                            "commutator_anchor_symmetric_kl": 0.04,
+                            "commutator_anchor_residual_stream_l2": 3.7,
+                            "commutator_anchor_support_churn": 0.0,
+                            "residual_scale": 1.0,
+                        },
+                    ]
+                },
+            }
+
+            with patch(
+                "relaleap.experiments.promoted_topk2_router_policy_mitigation_probe.run_retention_churn_microtest",
+                return_value=paired,
+            ):
+                summary = run_promoted_topk2_router_policy_mitigation_probe(
+                    config_path=root / "config.yaml",
+                    out_dir=root / "probe",
+                    order_averaging_probe_path=paths["order"],
+                    retention_mitigation_probe_path=paths["retention"],
+                    update_decomposition_audit_path=paths["decomposition"],
+                    value_mitigation_gate_path=paths["value"],
+                    commutator_value_penalty_probe_path=paths["commutator"],
+                    finite_update_report_path=paths["finite"],
+                    strategy_review_path=root / "missing-review.md",
+                    run_paired_interventions=True,
+                )
+
+            self.assertEqual(summary["status"], "pass")
+            self.assertTrue(summary["paired_interventions_ran"])
+            self.assertEqual(
+                summary["decision"], "router_policy_mitigation_candidate_found"
+            )
+            rows = {row["variant"]: row for row in summary["router_policy_rows"]}
+            self.assertTrue(
+                rows["pinned_pre_transfer_support_topk2"][
+                    "passes_router_policy_gate"
+                ]
+            )
 
 
 def _write_sources(root: Path) -> dict[str, Path]:

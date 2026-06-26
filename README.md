@@ -468,7 +468,7 @@ architecture path, and emits the exact next command for the router-policy
 mitigation branch when the diagnostic source evidence is present.
 
 After order averaging points back to router-policy mitigation, run the
-fail-closed paired intervention/decomposition gate without retraining:
+fail-closed paired intervention/decomposition gate before spending GPU time:
 
 ```bash
 python -m relaleap.experiments.promoted_topk2_router_policy_mitigation_probe \
@@ -478,14 +478,20 @@ python -m relaleap.experiments.promoted_topk2_router_policy_mitigation_probe \
 
 This writes
 `results/audits/token_larger_promoted_topk2_router_policy_mitigation_probe/summary.json`,
-`source_rows.csv`, `router_policy_rows.csv`, `interpretation_rows.csv`, and
-`notes.md`. It consumes the explicit order-averaging probe, retention
-mitigation probe, update-decomposition audit, value-mitigation gate, and
-finite-update order-control packet. The gate only selects router-policy
-training if pinned/router-frozen support materially reduces commutator while
-preserving transfer and support usage; otherwise it records whether residual
-scale or value composition is the more coherent next branch and keeps top-k-2
-causal-cooperation claims blocked.
+`source_rows.csv`, `router_policy_rows.csv`, `interpretation_rows.csv`,
+`router_policy_interventions.csv`, and `notes.md`. By default the command runs
+a bounded local retention/churn microtest over the promoted contextual top-k
+`2` packet and compares dynamic routing with pinned pre-transfer support,
+pinned final support, sticky margin-0 support, and residual-norm-matched
+dynamic top-k `2` evaluation rows. It also consumes the explicit
+order-averaging probe, retention mitigation probe, update-decomposition audit,
+value-mitigation gate, commutator-value-penalty probe, finite-update
+order-control packet, and optional strategy review. The gate only selects
+router-policy training if an intervention materially reduces commutator while
+staying inside the CE guardrail; otherwise it records whether residual scale or
+value composition is the more coherent next branch and keeps top-k `2`
+causal-cooperation claims blocked. Add `--source-artifact-only` to skip the
+fresh paired microtest and reproduce the older source-artifact interpretation.
 
 After router-policy, simple value, low-rank value, commutator-aware value
 penalty, and diagnostic order-averaging probes all exist, close out the

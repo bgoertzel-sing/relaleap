@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from relaleap.experiments.retention_churn_microtest import run_retention_churn_microtest
+
 
 DEFAULT_CONFIG = Path(
     "configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml"
@@ -67,6 +69,8 @@ def run_promoted_topk2_router_policy_mitigation_probe(
     transfer_retention_fraction: float = 0.8,
     support_usage_retention_fraction: float = 0.8,
     scale_ratio_gate: float = 2.0,
+    ce_guardrail: float = 0.05,
+    run_paired_interventions: bool = False,
 ) -> dict[str, Any]:
     """Interpret existing pinned/sticky/router-policy evidence fail-closed."""
 
@@ -115,9 +119,31 @@ def run_promoted_topk2_router_policy_mitigation_probe(
         commutator_value_penalty=commutator_value_penalty,
         finite_update=finite_update,
     )
-    policy_rows = [_router_policy_row(retention_probe, thresholds)]
-    interpretation_rows = _interpretation_rows(evidence, policy_rows[0], thresholds)
-    failures = _failures(source_rows, evidence, policy_rows[0])
+    paired_microtest = None
+    if run_paired_interventions:
+        paired_microtest = run_retention_churn_microtest(
+            config_path,
+            out_dir,
+            include_router_policy_interventions=True,
+        )
+    policy_rows = _router_policy_rows(
+        retention_probe=retention_probe,
+        paired_microtest=paired_microtest,
+        thresholds=thresholds,
+        ce_guardrail=ce_guardrail,
+    )
+    selected_policy_row = _selected_policy_row(policy_rows)
+    interpretation_rows = _interpretation_rows(evidence, selected_policy_row, thresholds)
+    failures = _failures(source_rows, evidence, selected_policy_row)
+    if run_paired_interventions and not policy_rows:
+        failures.append(
+            {
+                "source": "paired_router_policy_interventions",
+                "field": "router_policy_interventions",
+                "expected": "non-empty rows",
+                "actual": "missing",
+            }
+        )
 
     if failures:
         status = "fail"
@@ -131,9 +157,9 @@ def run_promoted_topk2_router_policy_mitigation_probe(
         )
     else:
         status = "pass"
-        decision = _decision(evidence, policy_rows[0], thresholds)
+        decision = _decision(evidence, selected_policy_row, thresholds)
         selected_next_action, next_command, next_step = _next_action(decision)
-        rationale = _rationale(decision, evidence, policy_rows[0], thresholds)
+        rationale = _rationale(decision, evidence, selected_policy_row, thresholds)
 
     summary = {
         "status": status,
@@ -158,6 +184,8 @@ def run_promoted_topk2_router_policy_mitigation_probe(
         "source_rows": source_rows,
         "evidence": evidence,
         "router_policy_rows": policy_rows,
+        "paired_interventions_ran": run_paired_interventions,
+        "ce_guardrail": ce_guardrail,
         "interpretation_rows": interpretation_rows,
         "strategy_review": strategy_review,
         "failures": failures,
@@ -244,7 +272,32 @@ def _evidence_snapshot(
     }
 
 
-def _router_policy_row(
+def _router_policy_rows(
+    *,
+    retention_probe: dict[str, Any],
+    paired_microtest: dict[str, Any] | None,
+    thresholds: dict[str, float],
+    ce_guardrail: float,
+) -> list[dict[str, Any]]:
+    intervention_rows = []
+    if paired_microtest:
+        intervention_rows = [
+            row
+            for row in paired_microtest.get("audit", {}).get(
+                "router_policy_interventions", []
+            )
+            if isinstance(row, dict)
+        ]
+    if intervention_rows:
+        return _router_policy_rows_from_interventions(
+            intervention_rows,
+            thresholds=thresholds,
+            ce_guardrail=ce_guardrail,
+        )
+    return [_router_policy_row_from_retention(retention_probe, thresholds)]
+
+
+def _router_policy_row_from_retention(
     retention_probe: dict[str, Any],
     thresholds: dict[str, float],
 ) -> dict[str, Any]:
@@ -284,6 +337,116 @@ def _router_policy_row(
         "passes_router_policy_gate": qualifies,
         "claim_status": "candidate_not_promoted" if qualifies else "not_established",
     }
+
+
+def _router_policy_rows_from_interventions(
+    rows: list[dict[str, Any]],
+    *,
+    thresholds: dict[str, float],
+    ce_guardrail: float,
+) -> list[dict[str, Any]]:
+    baseline = next(
+        (row for row in rows if row.get("policy") == "dynamic_contextual_topk2"),
+        {},
+    )
+    baseline_anchor_logit_mse = _float_or_none(
+        baseline.get("commutator_anchor_logit_mse")
+    )
+    baseline_anchor_ce = _float_or_none(baseline.get("anchor_forward_ce"))
+    baseline_anchor_residual_l2 = _float_or_none(
+        baseline.get("commutator_anchor_residual_stream_l2")
+    )
+    out = []
+    for row in rows:
+        policy = str(row.get("policy"))
+        reduction = _fractional_reduction(
+            baseline_anchor_logit_mse,
+            row.get("commutator_anchor_logit_mse"),
+        )
+        anchor_ce = _float_or_none(row.get("anchor_forward_ce"))
+        ce_delta = (
+            None
+            if anchor_ce is None or baseline_anchor_ce is None
+            else anchor_ce - baseline_anchor_ce
+        )
+        residual_l2 = _float_or_none(row.get("commutator_anchor_residual_stream_l2"))
+        residual_l2_ratio = _ratio(residual_l2, baseline_anchor_residual_l2)
+        is_candidate = policy != "dynamic_contextual_topk2"
+        qualifies = (
+            is_candidate
+            and _at_least(reduction, thresholds["commutator_reduction_fraction"])
+            and ce_delta is not None
+            and ce_delta <= ce_guardrail
+            and (
+                policy != "residual_norm_matched_dynamic_topk2"
+                or residual_l2_ratio is not None
+            )
+        )
+        out.append(
+            {
+                "variant": policy,
+                "policy_family": _policy_family(policy),
+                "commutator_anchor_logit_mse": _float_or_none(
+                    row.get("commutator_anchor_logit_mse")
+                ),
+                "baseline_commutator_anchor_logit_mse": baseline_anchor_logit_mse,
+                "commutator_anchor_logit_mse_reduction_fraction": reduction,
+                "commutator_anchor_symmetric_kl": _float_or_none(
+                    row.get("commutator_anchor_symmetric_kl")
+                ),
+                "anchor_ce_delta_vs_dynamic": ce_delta,
+                "ce_guardrail": ce_guardrail,
+                "commutator_anchor_residual_stream_l2": residual_l2,
+                "baseline_commutator_anchor_residual_stream_l2": (
+                    baseline_anchor_residual_l2
+                ),
+                "commutator_anchor_residual_stream_l2_ratio": residual_l2_ratio,
+                "residual_scale": _float_or_none(row.get("residual_scale")),
+                "anchor_support_churn_after_transfer": "",
+                "commutator_anchor_support_churn": _float_or_none(
+                    row.get("commutator_anchor_support_churn")
+                ),
+                "transfer_retention_fraction": "",
+                "support_usage_retention_fraction": "",
+                "passes_router_policy_gate": qualifies,
+                "claim_status": (
+                    "candidate_not_promoted" if qualifies else "not_established"
+                ),
+            }
+        )
+    return out
+
+
+def _selected_policy_row(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    qualifying = [row for row in rows if row.get("passes_router_policy_gate")]
+    if qualifying:
+        return max(
+            qualifying,
+            key=lambda row: _float_or_none(
+                row.get("commutator_anchor_logit_mse_reduction_fraction")
+            )
+            or float("-inf"),
+        )
+    candidates = [row for row in rows if row.get("variant") != "dynamic_contextual_topk2"]
+    if candidates:
+        return max(
+            candidates,
+            key=lambda row: _float_or_none(
+                row.get("commutator_anchor_logit_mse_reduction_fraction")
+            )
+            or float("-inf"),
+        )
+    return rows[0] if rows else {}
+
+
+def _policy_family(policy: str) -> str:
+    if policy.startswith("pinned"):
+        return "pinned_support_eval_policy"
+    if policy.startswith("sticky"):
+        return "sticky_support_eval_policy"
+    if policy.startswith("residual_norm_matched"):
+        return "residual_norm_matched_eval_policy"
+    return "dynamic_contextual_router_policy"
 
 
 def _interpretation_rows(
@@ -608,6 +771,14 @@ def _ratio(numerator: Any, denominator: Any) -> float | None:
     return num / den
 
 
+def _fractional_reduction(baseline: Any, current: Any) -> float | None:
+    base = _float_or_none(baseline)
+    value = _float_or_none(current)
+    if base is None or value is None or abs(base) <= 1e-12:
+        return None
+    return (base - value) / base
+
+
 def _at_least(value: Any, threshold: float) -> bool:
     numeric = _float_or_none(value)
     return numeric is not None and numeric >= threshold
@@ -704,6 +875,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--transfer-retention-fraction", type=float, default=0.8)
     parser.add_argument("--support-usage-retention-fraction", type=float, default=0.8)
     parser.add_argument("--scale-ratio-gate", type=float, default=2.0)
+    parser.add_argument("--ce-guardrail", type=float, default=0.05)
+    parser.add_argument(
+        "--source-artifact-only",
+        action="store_true",
+        help="Skip the fresh paired router-policy intervention microtest and only interpret existing source artifacts.",
+    )
     args = parser.parse_args(argv)
     summary = run_promoted_topk2_router_policy_mitigation_probe(
         config_path=args.config,
@@ -718,6 +895,8 @@ def main(argv: list[str] | None = None) -> None:
         transfer_retention_fraction=args.transfer_retention_fraction,
         support_usage_retention_fraction=args.support_usage_retention_fraction,
         scale_ratio_gate=args.scale_ratio_gate,
+        ce_guardrail=args.ce_guardrail,
+        run_paired_interventions=not args.source_artifact_only,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     if summary["status"] != "pass":
