@@ -8,7 +8,7 @@
   "decision": "contextual_topk2_router_default_topk1_diagnostic",
   "failures": [],
   "metrics": {
-    "finite_update_topk2_to_topk1_commutator_ratio": 24.175604627278478,
+    "finite_update_topk2_to_topk1_commutator_ratio": 24.62488784270476,
     "mean_dense_transfer_ce_improvement": 0.4819493293762207,
     "mean_random_fixed_topk2_transfer_ce_improvement": 0.6496479511260986,
     "mean_topk1_commutator_anchor_logit_mse": 0.009696902241557837,

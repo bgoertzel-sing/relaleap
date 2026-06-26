@@ -28,7 +28,9 @@ DEFAULT_PROBE_DIRS = (
     ),
 )
 DEFAULT_MICROTEST_DIRS = (
+    Path("results/runpod_fetch/audits/runpod_token_larger_task_free_anchor_retention_matrix_20260626"),
     Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_microtest"),
+    Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_microtest_seed2"),
 )
 DEFAULT_FINGERPRINT_DIR = Path(
     "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1"
@@ -180,9 +182,9 @@ def run_promoted_topk2_finite_update_order_control_audit(
             "finite-update residual/order sensitivity as a real risk."
         )
         next_step = (
-            "run a fresh task-free continual-learning anchor-retention matrix with "
-            "promoted top-k-2, rank-matched top-k-1, random fixed top-k-2, and "
-            "dense rank/FLOP-matched residual controls"
+            "run a bounded finite-update order-averaging microtest on RunPod, "
+            "reusing promoted top-k-2, rank-matched top-k-1, random fixed top-k-2, "
+            "and dense active-rank controls"
         )
     else:
         status = "pass"
@@ -221,9 +223,11 @@ def run_promoted_topk2_finite_update_order_control_audit(
             "Fixed pre-update/post-update support replay rows are not present; "
             "previous-support controls are available only from the fingerprint "
             "functional-churn packet.",
-            "Microtest packet rows are included when fetched RunPod artifacts are "
-            "available; they provide random fixed top-k-2 and dense controls but "
-            "not per-token commutator rows.",
+            "Fetched RunPod microtest and task-free retention-matrix rows are "
+            "included when available; they provide random fixed top-k-2 and dense "
+            "controls but not per-token commutator rows.",
+            "Existing artifacts report A-then-B versus B-then-A order sensitivity; "
+            "they do not yet evaluate order-averaged or symmetrized inference.",
         ],
         "failures": failures,
         "rationale": rationale,
