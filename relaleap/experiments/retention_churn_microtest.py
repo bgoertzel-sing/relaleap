@@ -536,6 +536,15 @@ def run_retention_churn_microtest(
                 transfer_after=transfer_after,
             )
         )
+        order_average = _order_average_metrics(
+            anchor_after=anchor_after,
+            transfer_after=transfer_after,
+            reverse_anchor_final=reverse_anchor_final,
+            reverse_transfer_final=reverse_transfer_final,
+            anchor_targets=anchor_targets,
+            transfer_targets=transfer_targets,
+            vocab_size=vocab_size,
+        )
         row = {
             "variant": spec.name,
             "kind": spec.kind,
@@ -610,6 +619,7 @@ def run_retention_churn_microtest(
                 transfer_after.get("support"),
                 reverse_transfer_final.get("support"),
             ),
+            **order_average,
             "parameter_delta_after_anchor": parameter_delta_after_anchor,
             "parameter_delta_during_transfer": parameter_delta_during_transfer,
             "freeze_router_during_transfer": spec.freeze_router_during_transfer,
@@ -662,6 +672,10 @@ def run_retention_churn_microtest(
                 "commutator_transfer_logit_mse",
                 "commutator_anchor_residual_stream_l2",
                 "commutator_transfer_residual_stream_l2",
+                "order_averaged_anchor_ce_loss",
+                "order_averaged_transfer_ce_loss",
+                "order_averaged_anchor_logit_mse_to_forward",
+                "order_averaged_transfer_logit_mse_to_forward",
             ],
             "include_mitigation_variants": include_mitigation_variants,
             "include_decomposition_variants": include_decomposition_variants,
@@ -909,6 +923,76 @@ def _phase_rows(
             }
         )
     return rows
+
+
+def _order_average_metrics(
+    *,
+    anchor_after: dict[str, Any],
+    transfer_after: dict[str, Any],
+    reverse_anchor_final: dict[str, Any],
+    reverse_transfer_final: dict[str, Any],
+    anchor_targets: Any,
+    transfer_targets: Any,
+    vocab_size: int,
+) -> dict[str, float]:
+    anchor_logits = 0.5 * (
+        anchor_after["logits"] + reverse_anchor_final["logits"]
+    )
+    transfer_logits = 0.5 * (
+        transfer_after["logits"] + reverse_transfer_final["logits"]
+    )
+    anchor_residual = 0.5 * (
+        anchor_after["residual_delta"] + reverse_anchor_final["residual_delta"]
+    )
+    transfer_residual = 0.5 * (
+        transfer_after["residual_delta"] + reverse_transfer_final["residual_delta"]
+    )
+    anchor_forward_ce = float(anchor_after["ce_loss"])
+    anchor_reverse_ce = float(reverse_anchor_final["ce_loss"])
+    transfer_forward_ce = float(transfer_after["ce_loss"])
+    transfer_reverse_ce = float(reverse_transfer_final["ce_loss"])
+    anchor_average_ce = _ce_loss(anchor_logits, anchor_targets, vocab_size)
+    transfer_average_ce = _ce_loss(transfer_logits, transfer_targets, vocab_size)
+    return {
+        "order_averaged_anchor_ce_loss": anchor_average_ce,
+        "order_averaged_transfer_ce_loss": transfer_average_ce,
+        "order_averaged_anchor_ce_delta_vs_forward": (
+            anchor_average_ce - anchor_forward_ce
+        ),
+        "order_averaged_transfer_ce_delta_vs_forward": (
+            transfer_average_ce - transfer_forward_ce
+        ),
+        "order_averaged_anchor_ce_delta_vs_best_order": (
+            anchor_average_ce - min(anchor_forward_ce, anchor_reverse_ce)
+        ),
+        "order_averaged_transfer_ce_delta_vs_best_order": (
+            transfer_average_ce - min(transfer_forward_ce, transfer_reverse_ce)
+        ),
+        "order_averaged_anchor_logit_mse_to_forward": _mse_delta(
+            anchor_logits, anchor_after["logits"]
+        ),
+        "order_averaged_anchor_logit_mse_to_reverse": _mse_delta(
+            anchor_logits, reverse_anchor_final["logits"]
+        ),
+        "order_averaged_transfer_logit_mse_to_forward": _mse_delta(
+            transfer_logits, transfer_after["logits"]
+        ),
+        "order_averaged_transfer_logit_mse_to_reverse": _mse_delta(
+            transfer_logits, reverse_transfer_final["logits"]
+        ),
+        "order_averaged_anchor_residual_stream_l2_to_forward": _stream_l2_delta(
+            anchor_residual, anchor_after["residual_delta"]
+        ),
+        "order_averaged_anchor_residual_stream_l2_to_reverse": _stream_l2_delta(
+            anchor_residual, reverse_anchor_final["residual_delta"]
+        ),
+        "order_averaged_transfer_residual_stream_l2_to_forward": _stream_l2_delta(
+            transfer_residual, transfer_after["residual_delta"]
+        ),
+        "order_averaged_transfer_residual_stream_l2_to_reverse": _stream_l2_delta(
+            transfer_residual, reverse_transfer_final["residual_delta"]
+        ),
+    }
 
 
 def _support_churn(left: Any | None, right: Any | None) -> float | str:

@@ -31,6 +31,7 @@ DEFAULT_MICROTEST_DIRS = (
     Path("results/runpod_fetch/audits/runpod_token_larger_task_free_anchor_retention_matrix_20260626"),
     Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_microtest"),
     Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_microtest_seed2"),
+    Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_order_averaging_microtest"),
 )
 DEFAULT_FINGERPRINT_DIR = Path(
     "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1"
@@ -143,6 +144,10 @@ def run_promoted_topk2_finite_update_order_control_audit(
             metrics.get("topk2_mean_commutator_anchor_support_churn"),
             high_support_churn_threshold,
         ),
+        "order_averaged_rows_available": (
+            metrics.get("topk2_mean_order_averaged_anchor_logit_mse_to_forward")
+            is not None
+        ),
         "topk2_exceeds_topk1_commutator_logit": _positive(
             metrics.get("topk2_minus_topk1_mean_commutator_anchor_logit_mse")
         ),
@@ -226,8 +231,8 @@ def run_promoted_topk2_finite_update_order_control_audit(
             "Fetched RunPod microtest and task-free retention-matrix rows are "
             "included when available; they provide random fixed top-k-2 and dense "
             "controls but not per-token commutator rows.",
-            "Existing artifacts report A-then-B versus B-then-A order sensitivity; "
-            "they do not yet evaluate order-averaged or symmetrized inference.",
+            "Older finite-update packets report A-then-B versus B-then-A order "
+            "sensitivity but do not expose order-averaged inference fields.",
         ],
         "failures": failures,
         "rationale": rationale,
@@ -331,6 +336,30 @@ def _variant_row(packet: str, path: Path, variant: dict[str, Any]) -> dict[str, 
         "commutator_transfer_support_churn": _float_or_none(
             variant.get("commutator_transfer_support_churn")
         ),
+        "order_averaged_anchor_ce_delta_vs_forward": _float_or_none(
+            variant.get("order_averaged_anchor_ce_delta_vs_forward")
+        ),
+        "order_averaged_transfer_ce_delta_vs_forward": _float_or_none(
+            variant.get("order_averaged_transfer_ce_delta_vs_forward")
+        ),
+        "order_averaged_anchor_ce_delta_vs_best_order": _float_or_none(
+            variant.get("order_averaged_anchor_ce_delta_vs_best_order")
+        ),
+        "order_averaged_transfer_ce_delta_vs_best_order": _float_or_none(
+            variant.get("order_averaged_transfer_ce_delta_vs_best_order")
+        ),
+        "order_averaged_anchor_logit_mse_to_forward": _float_or_none(
+            variant.get("order_averaged_anchor_logit_mse_to_forward")
+        ),
+        "order_averaged_transfer_logit_mse_to_forward": _float_or_none(
+            variant.get("order_averaged_transfer_logit_mse_to_forward")
+        ),
+        "order_averaged_anchor_residual_stream_l2_to_forward": _float_or_none(
+            variant.get("order_averaged_anchor_residual_stream_l2_to_forward")
+        ),
+        "order_averaged_transfer_residual_stream_l2_to_forward": _float_or_none(
+            variant.get("order_averaged_transfer_residual_stream_l2_to_forward")
+        ),
     }
     return row
 
@@ -417,6 +446,15 @@ def _metrics(
     topk1_logit = _mean_field(topk1, "commutator_anchor_logit_mse")
     random_topk2_logit = _mean_field(random_topk2, "commutator_anchor_logit_mse")
     dense_logit = _mean_field(dense, "commutator_anchor_logit_mse")
+    topk2_order_avg_logit = _mean_field(
+        topk2, "order_averaged_anchor_logit_mse_to_forward"
+    )
+    topk2_order_avg_ce_delta = _mean_field(
+        topk2, "order_averaged_anchor_ce_delta_vs_forward"
+    )
+    topk2_order_avg_best_ce_delta = _mean_field(
+        topk2, "order_averaged_anchor_ce_delta_vs_best_order"
+    )
     all_stratum = _first(row for row in token_strata_rows if row["stratum"] == "all")
     return {
         "packet_count": len({row.get("packet") for row in variant_rows}),
@@ -457,6 +495,18 @@ def _metrics(
         ),
         "topk2_to_random_fixed_topk2_mean_commutator_anchor_logit_mse_ratio": _ratio(
             topk2_logit, random_topk2_logit
+        ),
+        "topk2_mean_order_averaged_anchor_ce_delta_vs_forward": (
+            topk2_order_avg_ce_delta
+        ),
+        "topk2_mean_order_averaged_anchor_ce_delta_vs_best_order": (
+            topk2_order_avg_best_ce_delta
+        ),
+        "topk2_mean_order_averaged_anchor_logit_mse_to_forward": (
+            topk2_order_avg_logit
+        ),
+        "topk2_order_averaged_to_commutator_anchor_logit_mse_ratio": _ratio(
+            topk2_order_avg_logit, topk2_logit
         ),
         "topk2_mean_commutator_anchor_residual_stream_l2": _mean_field(
             topk2, "commutator_anchor_residual_stream_l2"
@@ -621,6 +671,10 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"`{metrics['topk2_to_dense_mean_commutator_anchor_logit_mse_ratio']}`",
         "- Top-k-2/random-fixed-top-k-2 anchor commutator logit-MSE ratio: "
         f"`{metrics['topk2_to_random_fixed_topk2_mean_commutator_anchor_logit_mse_ratio']}`",
+        "- Top-k-2 order-averaged/commutator anchor logit-MSE ratio: "
+        f"`{metrics['topk2_order_averaged_to_commutator_anchor_logit_mse_ratio']}`",
+        "- Top-k-2 mean order-averaged anchor CE delta vs forward order: "
+        f"`{metrics['topk2_mean_order_averaged_anchor_ce_delta_vs_forward']}`",
         "- Top-k-2 mean anchor commutator residual-stream L2: "
         f"`{metrics['topk2_mean_commutator_anchor_residual_stream_l2']}`",
         "- Top-k-2 mean anchor commutator support churn: "

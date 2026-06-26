@@ -99,6 +99,13 @@ model:
             self.assertIn("transfer_ce_improvement", metric_rows[0])
             self.assertIn("commutator_anchor_logit_mse", metric_rows[0])
             self.assertIn("commutator_transfer_logit_mse", metric_rows[0])
+            self.assertIn("order_averaged_anchor_ce_loss", metric_rows[0])
+            self.assertIn("order_averaged_anchor_ce_delta_vs_forward", metric_rows[0])
+            self.assertIn("order_averaged_anchor_logit_mse_to_forward", metric_rows[0])
+            self.assertIn(
+                "order_averaged_anchor_residual_stream_l2_to_forward",
+                metric_rows[0],
+            )
             topk1 = next(
                 row
                 for row in metric_rows

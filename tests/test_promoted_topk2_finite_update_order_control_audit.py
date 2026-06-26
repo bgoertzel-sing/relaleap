@@ -63,6 +63,19 @@ class PromotedTopk2FiniteUpdateOrderControlAuditTest(unittest.TestCase):
                 1.0,
             )
             self.assertEqual(len(summary["microtest_packet_rows"]), 1)
+            self.assertTrue(summary["signals"]["order_averaged_rows_available"])
+            self.assertAlmostEqual(
+                summary["metrics"][
+                    "topk2_order_averaged_to_commutator_anchor_logit_mse_ratio"
+                ],
+                0.25,
+            )
+            self.assertAlmostEqual(
+                summary["metrics"][
+                    "topk2_mean_order_averaged_anchor_ce_delta_vs_forward"
+                ],
+                0.003,
+            )
             self.assertTrue((root / "out" / "summary.json").is_file())
             self.assertTrue((root / "out" / "variant_commutator.csv").is_file())
             self.assertTrue((root / "out" / "token_strata.csv").is_file())
@@ -234,6 +247,14 @@ def _variant(
         "commutator_transfer_residual_stream_l2": residual_l2,
         "commutator_anchor_support_churn": support_churn,
         "commutator_transfer_support_churn": support_churn,
+        "order_averaged_anchor_ce_delta_vs_forward": 0.003,
+        "order_averaged_transfer_ce_delta_vs_forward": 0.002,
+        "order_averaged_anchor_ce_delta_vs_best_order": 0.004,
+        "order_averaged_transfer_ce_delta_vs_best_order": 0.003,
+        "order_averaged_anchor_logit_mse_to_forward": logit_mse * 0.25,
+        "order_averaged_transfer_logit_mse_to_forward": logit_mse * 0.25,
+        "order_averaged_anchor_residual_stream_l2_to_forward": residual_l2 * 0.5,
+        "order_averaged_transfer_residual_stream_l2_to_forward": residual_l2 * 0.5,
     }
 
 
