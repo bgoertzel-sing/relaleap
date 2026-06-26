@@ -114,11 +114,26 @@ class PromotedTopk2FiniteUpdateOrderControlAuditTest(unittest.TestCase):
                 "per-token forward-vs-reverse CE",
                 summary["next_step"],
             )
+            self.assertTrue(
+                summary["signals"]["per_token_commutator_ce_kl_available"]
+            )
+            self.assertEqual(summary["metrics"]["per_token_commutator_row_count"], 2)
+            self.assertAlmostEqual(
+                summary["metrics"]["per_token_commutator_ce_abs_delta_mean"],
+                0.015,
+            )
+            self.assertAlmostEqual(
+                summary["metrics"]["per_token_commutator_symmetric_kl_mean"],
+                0.003,
+            )
             self.assertTrue((root / "out" / "summary.json").is_file())
             self.assertTrue((root / "out" / "variant_commutator.csv").is_file())
             self.assertTrue((root / "out" / "token_strata.csv").is_file())
             self.assertTrue((root / "out" / "token_correlations.csv").is_file())
-            self.assertIn(
+            self.assertTrue(
+                (root / "out" / "per_token_commutator_strata.csv").is_file()
+            )
+            self.assertNotIn(
                 "Existing artifacts do not expose finite-update KL deltas.",
                 summary["source_limitations"],
             )
@@ -255,6 +270,72 @@ def _write_microtest(path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
+    _write_microtest_per_token_commutator(path)
+
+
+def _write_microtest_per_token_commutator(path: Path) -> None:
+    fieldnames = [
+        "variant",
+        "split",
+        "batch_index",
+        "position_index",
+        "position_bin",
+        "target_token",
+        "token_class",
+        "ce_delta_forward_minus_reverse",
+        "ce_abs_delta",
+        "symmetric_kl",
+        "logit_mse",
+        "residual_delta_l2",
+        "residual_norm",
+        "residual_norm_bin",
+        "residual_delta_l2_bin",
+        "support_churn",
+    ]
+    rows = [
+        {
+            "variant": "promoted_contextual_topk2",
+            "split": "anchor",
+            "batch_index": 0,
+            "position_index": 0,
+            "position_bin": "even",
+            "target_token": 1,
+            "token_class": "common_target",
+            "ce_delta_forward_minus_reverse": 0.01,
+            "ce_abs_delta": 0.01,
+            "symmetric_kl": 0.002,
+            "logit_mse": 0.2,
+            "residual_delta_l2": 4.0,
+            "residual_norm": 3.0,
+            "residual_norm_bin": "low",
+            "residual_delta_l2_bin": "mid",
+            "support_churn": True,
+        },
+        {
+            "variant": "promoted_contextual_topk2",
+            "split": "transfer",
+            "batch_index": 0,
+            "position_index": 1,
+            "position_bin": "odd",
+            "target_token": 2,
+            "token_class": "rare_target",
+            "ce_delta_forward_minus_reverse": -0.02,
+            "ce_abs_delta": 0.02,
+            "symmetric_kl": 0.004,
+            "logit_mse": 0.4,
+            "residual_delta_l2": 5.0,
+            "residual_norm": 4.0,
+            "residual_norm_bin": "high",
+            "residual_delta_l2_bin": "high",
+            "support_churn": False,
+        },
+    ]
+    with (path / "per_token_commutator.csv").open(
+        "w", encoding="utf-8", newline=""
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def _variant(

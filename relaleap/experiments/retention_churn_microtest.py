@@ -263,6 +263,8 @@ def run_retention_churn_microtest(
 
     variant_rows: list[dict[str, Any]] = []
     phase_rows: list[dict[str, Any]] = []
+    per_token_commutator_rows: list[dict[str, Any]] = []
+    token_classes = _target_token_classes(targets)
     promoted_anchor_residual_norm: float | None = None
     for offset, spec in enumerate(specs):
         torch.manual_seed(seed + 100 * offset)
@@ -754,6 +756,28 @@ def run_retention_churn_microtest(
             identical_order_anchor_final=identical_order_anchor_final,
             identical_order_transfer_final=identical_order_transfer_final,
         )
+        per_token_commutator_rows.extend(
+            _per_token_commutator_rows(
+                variant=spec.name,
+                split="anchor",
+                forward=anchor_after,
+                reverse=reverse_anchor_final,
+                targets=anchor_targets,
+                vocab_size=vocab_size,
+                token_classes=token_classes,
+            )
+        )
+        per_token_commutator_rows.extend(
+            _per_token_commutator_rows(
+                variant=spec.name,
+                split="transfer",
+                forward=transfer_after,
+                reverse=reverse_transfer_final,
+                targets=transfer_targets,
+                vocab_size=vocab_size,
+                token_classes=token_classes,
+            )
+        )
         row = {
             "variant": spec.name,
             "kind": spec.kind,
@@ -857,6 +881,7 @@ def run_retention_churn_microtest(
     out_dir.mkdir(parents=True, exist_ok=True)
     _write_csv(out_dir / "variant_metrics.csv", variant_rows)
     _write_csv(out_dir / "phase_metrics.csv", phase_rows)
+    _write_csv(out_dir / "per_token_commutator.csv", per_token_commutator_rows)
     summary = {
         "status": "ok",
         "experiment_id": f"{experiment_id}_retention_churn_microtest",
@@ -897,6 +922,10 @@ def run_retention_churn_microtest(
                 "same_order_identical_replay_nonperturbation_pass",
                 "same_order_identical_anchor_logit_mse_to_primary",
                 "same_order_identical_transfer_logit_mse_to_primary",
+                "per_token_commutator_ce_delta",
+                "per_token_commutator_symmetric_kl",
+                "per_token_commutator_logit_mse",
+                "per_token_commutator_residual_delta_l2",
             ],
             "include_mitigation_variants": include_mitigation_variants,
             "include_decomposition_variants": include_decomposition_variants,
@@ -907,6 +936,7 @@ def run_retention_churn_microtest(
             "summary_json": str(out_dir / "summary.json"),
             "variant_metrics_csv": str(out_dir / "variant_metrics.csv"),
             "phase_metrics_csv": str(out_dir / "phase_metrics.csv"),
+            "per_token_commutator_csv": str(out_dir / "per_token_commutator.csv"),
             "notes_md": str(out_dir / "notes.md"),
         },
     }
@@ -1329,6 +1359,164 @@ def _same_order_identical_replay_metrics(
         )
         and all(float(value) <= 1e-12 for value in support_checks),
     }
+
+
+def _per_token_commutator_rows(
+    *,
+    variant: str,
+    split: str,
+    forward: dict[str, Any],
+    reverse: dict[str, Any],
+    targets: Any,
+    vocab_size: int,
+    token_classes: dict[int, str],
+) -> list[dict[str, Any]]:
+    import torch
+    import torch.nn.functional as F
+
+    forward_logits = forward["logits"][:, :-1, :]
+    reverse_logits = reverse["logits"][:, :-1, :]
+    target_tokens = targets[:, :-1]
+    forward_ce = F.cross_entropy(
+        forward_logits.reshape(-1, vocab_size),
+        target_tokens.reshape(-1),
+        reduction="none",
+    ).reshape(target_tokens.shape)
+    reverse_ce = F.cross_entropy(
+        reverse_logits.reshape(-1, vocab_size),
+        target_tokens.reshape(-1),
+        reduction="none",
+    ).reshape(target_tokens.shape)
+    forward_log_probs = F.log_softmax(forward_logits, dim=-1)
+    reverse_log_probs = F.log_softmax(reverse_logits, dim=-1)
+    forward_probs = forward_log_probs.exp()
+    reverse_probs = reverse_log_probs.exp()
+    kl_forward_reverse = (
+        forward_probs * (forward_log_probs - reverse_log_probs)
+    ).sum(dim=-1)
+    kl_reverse_forward = (
+        reverse_probs * (reverse_log_probs - forward_log_probs)
+    ).sum(dim=-1)
+    symmetric_kl = 0.5 * (kl_forward_reverse + kl_reverse_forward)
+    logit_mse = (forward_logits - reverse_logits).pow(2).mean(dim=-1)
+    residual_delta_l2 = (
+        forward["residual_delta"][:, :-1, :]
+        - reverse["residual_delta"][:, :-1, :]
+    ).norm(dim=-1)
+    residual_norm = forward["residual_delta"][:, :-1, :].norm(dim=-1)
+    residual_norm_thresholds = _tertile_thresholds(residual_norm)
+    residual_delta_thresholds = _tertile_thresholds(residual_delta_l2)
+    forward_support = forward.get("support")
+    reverse_support = reverse.get("support")
+    rows = []
+    for batch_index in range(int(target_tokens.shape[0])):
+        for position_index in range(int(target_tokens.shape[1])):
+            token_id = int(target_tokens[batch_index, position_index].item())
+            support_churn: bool | str = ""
+            forward_support_key = ""
+            reverse_support_key = ""
+            if forward_support is not None and reverse_support is not None:
+                left = forward_support[batch_index, position_index]
+                right = reverse_support[batch_index, position_index]
+                left_sorted = left.sort().values
+                right_sorted = right.sort().values
+                support_churn = bool((left_sorted != right_sorted).any().item())
+                forward_support_key = _support_key(left_sorted)
+                reverse_support_key = _support_key(right_sorted)
+            row_residual_norm = float(residual_norm[batch_index, position_index].item())
+            row_residual_delta = float(
+                residual_delta_l2[batch_index, position_index].item()
+            )
+            rows.append(
+                {
+                    "variant": variant,
+                    "split": split,
+                    "batch_index": batch_index,
+                    "position_index": position_index,
+                    "position_bin": (
+                        "even" if int(position_index) % 2 == 0 else "odd"
+                    ),
+                    "target_token": token_id,
+                    "token_class": token_classes.get(token_id, "unknown_target"),
+                    "forward_ce": float(forward_ce[batch_index, position_index].item()),
+                    "reverse_ce": float(reverse_ce[batch_index, position_index].item()),
+                    "ce_delta_forward_minus_reverse": float(
+                        (
+                            forward_ce[batch_index, position_index]
+                            - reverse_ce[batch_index, position_index]
+                        ).item()
+                    ),
+                    "ce_abs_delta": float(
+                        (
+                            forward_ce[batch_index, position_index]
+                            - reverse_ce[batch_index, position_index]
+                        )
+                        .abs()
+                        .item()
+                    ),
+                    "symmetric_kl": float(
+                        symmetric_kl[batch_index, position_index].item()
+                    ),
+                    "logit_mse": float(logit_mse[batch_index, position_index].item()),
+                    "residual_delta_l2": row_residual_delta,
+                    "residual_norm": row_residual_norm,
+                    "residual_norm_bin": _value_bin(
+                        row_residual_norm, residual_norm_thresholds
+                    ),
+                    "residual_delta_l2_bin": _value_bin(
+                        row_residual_delta, residual_delta_thresholds
+                    ),
+                    "support_churn": support_churn,
+                    "forward_support": forward_support_key,
+                    "reverse_support": reverse_support_key,
+                }
+            )
+    return rows
+
+
+def _target_token_classes(targets: Any) -> dict[int, str]:
+    import torch
+
+    target_tokens = targets[:, :-1].detach()
+    unique, counts = torch.unique(target_tokens.reshape(-1), return_counts=True)
+    if int(unique.numel()) == 0:
+        return {}
+    ordered = sorted(
+        (
+            (int(count.item()), int(token.item()))
+            for token, count in zip(unique.cpu(), counts.cpu())
+        ),
+        key=lambda item: (-item[0], item[1]),
+    )
+    split = max(1, len(ordered) // 2)
+    classes: dict[int, str] = {}
+    for _, token in ordered[:split]:
+        classes[token] = "common_target"
+    for _, token in ordered[split:]:
+        classes[token] = "rare_target"
+    return classes
+
+
+def _tertile_thresholds(values: Any) -> tuple[float, float]:
+    flat = values.detach().reshape(-1)
+    if int(flat.numel()) == 0:
+        return (0.0, 0.0)
+    lower = float(flat.quantile(1.0 / 3.0).item())
+    upper = float(flat.quantile(2.0 / 3.0).item())
+    return (lower, upper)
+
+
+def _value_bin(value: float, thresholds: tuple[float, float]) -> str:
+    lower, upper = thresholds
+    if value <= lower:
+        return "low"
+    if value <= upper:
+        return "mid"
+    return "high"
+
+
+def _support_key(values: Any) -> str:
+    return ",".join(str(int(value.item())) for value in values.detach().cpu().reshape(-1))
 
 
 def _support_churn(left: Any | None, right: Any | None) -> float | str:

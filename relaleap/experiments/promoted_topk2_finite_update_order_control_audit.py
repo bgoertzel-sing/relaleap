@@ -90,6 +90,14 @@ def run_promoted_topk2_finite_update_order_control_audit(
         for packet in all_packet_rows
         for variant in packet.pop("variant_rows", [])
     ]
+    per_token_commutator_rows = [
+        row
+        for packet in all_packet_rows
+        for row in _per_token_commutator_rows(packet)
+    ]
+    per_token_commutator_strata_rows = _per_token_commutator_strata_rows(
+        per_token_commutator_rows
+    )
     token_rows = _read_csv_dicts(fingerprint_dir / "per_token_pair_interventions.csv")
     baseline_token_rows = [
         row
@@ -114,12 +122,26 @@ def run_promoted_topk2_finite_update_order_control_audit(
             for index, path in enumerate(microtest_dirs, start=1)
             if path.is_dir()
         ],
+        *[
+            _source_row(
+                f"retention_microtest_{index}_per_token_commutator",
+                path / "per_token_commutator.csv",
+            )
+            for index, path in enumerate(microtest_dirs, start=1)
+            if (path / "per_token_commutator.csv").is_file()
+        ],
         _source_row(
             "causal_fingerprint_per_token",
             fingerprint_dir / "per_token_pair_interventions.csv",
         ),
     ]
-    metrics = _metrics(variant_rows, token_strata_rows, token_correlation_rows)
+    metrics = _metrics(
+        variant_rows,
+        token_strata_rows,
+        token_correlation_rows,
+        per_token_commutator_rows,
+        per_token_commutator_strata_rows,
+    )
     signals = {
         "functional_churn_control_bounded_with_commutator_risk": (
             functional_summary.get("decision")
@@ -156,7 +178,9 @@ def run_promoted_topk2_finite_update_order_control_audit(
             metrics.get("topk2_minus_dense_mean_commutator_anchor_logit_mse")
         ),
         "per_token_strata_available": bool(token_strata_rows),
-        "per_token_commutator_ce_kl_available": False,
+        "per_token_commutator_ce_kl_available": bool(
+            per_token_commutator_strata_rows
+        ),
         "same_order_identical_replay_nonperturbation_pass": _all_true_or_missing(
             variant_rows, "same_order_identical_replay_nonperturbation_pass"
         ),
@@ -251,11 +275,18 @@ def run_promoted_topk2_finite_update_order_control_audit(
         "variant_rows": variant_rows,
         "token_strata_rows": token_strata_rows,
         "token_correlation_rows": token_correlation_rows,
+        "per_token_commutator_strata_rows": per_token_commutator_strata_rows,
         "metrics": metrics,
         "signals": signals,
         "source_limitations": [
-            "Existing artifacts do not expose per-token finite-update commutator CE.",
-            "Existing artifacts do not expose finite-update KL deltas.",
+            *(
+                []
+                if per_token_commutator_strata_rows
+                else [
+                    "Existing artifacts do not expose per-token finite-update commutator CE.",
+                    "Existing artifacts do not expose finite-update KL deltas.",
+                ]
+            ),
             "Fixed pre-update/post-update support replay rows are not present; "
             "previous-support controls are available only from the fingerprint "
             "functional-churn packet.",
@@ -281,6 +312,9 @@ def run_promoted_topk2_finite_update_order_control_audit(
             "variant_commutator_csv": str(out_dir / "variant_commutator.csv"),
             "token_strata_csv": str(out_dir / "token_strata.csv"),
             "token_correlations_csv": str(out_dir / "token_correlations.csv"),
+            "per_token_commutator_strata_csv": str(
+                out_dir / "per_token_commutator_strata.csv"
+            ),
             "notes_md": str(out_dir / "notes.md"),
         },
     }
@@ -294,6 +328,10 @@ def run_promoted_topk2_finite_update_order_control_audit(
     _write_csv(out_dir / "variant_commutator.csv", variant_rows)
     _write_csv(out_dir / "token_strata.csv", token_strata_rows)
     _write_csv(out_dir / "token_correlations.csv", token_correlation_rows)
+    _write_csv(
+        out_dir / "per_token_commutator_strata.csv",
+        per_token_commutator_strata_rows,
+    )
     _write_notes(out_dir / "notes.md", summary)
     return summary
 
@@ -515,10 +553,63 @@ def _token_correlation_rows(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     return out
 
 
+def _per_token_commutator_rows(packet: dict[str, Any]) -> list[dict[str, Any]]:
+    path = Path(str(packet.get("probe_dir", ""))) / "per_token_commutator.csv"
+    rows = _read_csv_dicts(path)
+    out = []
+    for row in rows:
+        enriched = dict(row)
+        enriched["packet"] = packet.get("packet")
+        enriched["probe_dir"] = packet.get("probe_dir")
+        out.append(enriched)
+    return out
+
+
+def _per_token_commutator_strata_rows(
+    rows: list[dict[str, str]]
+) -> list[dict[str, Any]]:
+    strata = [
+        ("all", lambda row: "all"),
+        ("variant", lambda row: row.get("variant", "")),
+        ("split", lambda row: row.get("split", "")),
+        ("position_bin", lambda row: row.get("position_bin", "")),
+        ("token_class", lambda row: row.get("token_class", "")),
+        ("residual_norm_bin", lambda row: row.get("residual_norm_bin", "")),
+        ("residual_delta_l2_bin", lambda row: row.get("residual_delta_l2_bin", "")),
+        ("support_churn", lambda row: row.get("support_churn", "")),
+    ]
+    out: list[dict[str, Any]] = []
+    for stratum, key_fn in strata:
+        grouped: dict[str, list[dict[str, str]]] = {}
+        for row in rows:
+            grouped.setdefault(key_fn(row) or "missing", []).append(row)
+        for value, group in sorted(grouped.items()):
+            out.append(
+                {
+                    "stratum": stratum,
+                    "value": value,
+                    "row_count": len(group),
+                    "mean_ce_delta_forward_minus_reverse": _mean_csv_field(
+                        group, "ce_delta_forward_minus_reverse"
+                    ),
+                    "mean_ce_abs_delta": _mean_csv_field(group, "ce_abs_delta"),
+                    "mean_symmetric_kl": _mean_csv_field(group, "symmetric_kl"),
+                    "mean_logit_mse": _mean_csv_field(group, "logit_mse"),
+                    "mean_residual_delta_l2": _mean_csv_field(
+                        group, "residual_delta_l2"
+                    ),
+                    "mean_residual_norm": _mean_csv_field(group, "residual_norm"),
+                }
+            )
+    return out
+
+
 def _metrics(
     variant_rows: list[dict[str, Any]],
     token_strata_rows: list[dict[str, Any]],
     token_correlation_rows: list[dict[str, Any]],
+    per_token_commutator_rows: list[dict[str, Any]],
+    per_token_commutator_strata_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     topk2 = _rows_for_variant(variant_rows, "promoted_contextual_topk2")
     topk1 = _rows_for_variant(variant_rows, "rank_matched_contextual_topk1")
@@ -573,6 +664,9 @@ def _metrics(
         topk2, "commutator_transfer_residual_stream_l2"
     )
     all_stratum = _first(row for row in token_strata_rows if row["stratum"] == "all")
+    commutator_all_stratum = _first(
+        row for row in per_token_commutator_strata_rows if row["stratum"] == "all"
+    )
     return {
         "packet_count": len({row.get("packet") for row in variant_rows}),
         "variant_row_count": len(variant_rows),
@@ -693,6 +787,22 @@ def _metrics(
         ),
         "token_strata_row_count": len(token_strata_rows),
         "token_correlation_row_count": len(token_correlation_rows),
+        "per_token_commutator_row_count": len(per_token_commutator_rows),
+        "per_token_commutator_strata_row_count": len(
+            per_token_commutator_strata_rows
+        ),
+        "per_token_commutator_ce_abs_delta_mean": (
+            commutator_all_stratum or {}
+        ).get("mean_ce_abs_delta"),
+        "per_token_commutator_symmetric_kl_mean": (
+            commutator_all_stratum or {}
+        ).get("mean_symmetric_kl"),
+        "per_token_commutator_logit_mse_mean": (
+            commutator_all_stratum or {}
+        ).get("mean_logit_mse"),
+        "per_token_commutator_residual_delta_l2_mean": (
+            commutator_all_stratum or {}
+        ).get("mean_residual_delta_l2"),
         "per_token_fixed_support_logit_mse_mean": (
             all_stratum or {}
         ).get("mean_fixed_support_logit_mse"),
@@ -855,6 +965,12 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"`{metrics['topk2_same_order_identical_anchor_residual_l2_to_commutator_ratio']}`",
         "- Top-k-2 same-order identical replay transfer residual-L2/commutator ratio: "
         f"`{metrics['topk2_same_order_identical_transfer_residual_l2_to_commutator_ratio']}`",
+        "- Per-token commutator CE abs-delta mean: "
+        f"`{metrics['per_token_commutator_ce_abs_delta_mean']}`",
+        "- Per-token commutator symmetric KL mean: "
+        f"`{metrics['per_token_commutator_symmetric_kl_mean']}`",
+        "- Per-token commutator logit-MSE mean: "
+        f"`{metrics['per_token_commutator_logit_mse_mean']}`",
         "",
         "## Signals",
         "",

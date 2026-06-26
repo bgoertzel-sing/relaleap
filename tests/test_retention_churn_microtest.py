@@ -87,6 +87,7 @@ model:
             self.assertEqual(len(saved["audit"]["variants"]), 4)
             self.assertTrue((tmp_path / "audit" / "variant_metrics.csv").is_file())
             self.assertTrue((tmp_path / "audit" / "phase_metrics.csv").is_file())
+            self.assertTrue((tmp_path / "audit" / "per_token_commutator.csv").is_file())
             self.assertTrue((tmp_path / "audit" / "notes.md").is_file())
 
             with (tmp_path / "audit" / "variant_metrics.csv").open(
@@ -150,6 +151,19 @@ model:
                 phase_rows = list(csv.DictReader(handle))
             self.assertEqual(len(phase_rows), 16)
             self.assertIn("residual_norm_mean", phase_rows[0])
+
+            with (tmp_path / "audit" / "per_token_commutator.csv").open(
+                newline="",
+                encoding="utf-8",
+            ) as handle:
+                token_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(token_rows), 4 * 2 * 4 * 15)
+            self.assertIn("ce_delta_forward_minus_reverse", token_rows[0])
+            self.assertIn("symmetric_kl", token_rows[0])
+            self.assertIn("logit_mse", token_rows[0])
+            self.assertIn("residual_delta_l2", token_rows[0])
+            self.assertIn("support_churn", token_rows[0])
+            self.assertIn("forward_support", token_rows[0])
 
     def test_retention_churn_microtest_requires_contextual_topk_two(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
