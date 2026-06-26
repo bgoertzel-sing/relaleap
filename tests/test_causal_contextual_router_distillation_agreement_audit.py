@@ -74,6 +74,14 @@ outputs:
                 "teacher_student_disagreement_tokens::teacher_support_forced_into_student",
                 audit["intervention_aggregates"],
             )
+            self.assertIn(
+                "causal_distilled_from_shuffled_teacher_0.01",
+                audit["null_control_aggregates"],
+            )
+            self.assertIn(
+                "causal_distilled_from_frequency_matched_teacher_0.01",
+                audit["null_control_aggregates"],
+            )
             self.assertEqual(
                 audit["source_artifact_assessment"][0]["action"],
                 "fail_closed_bounded_rerun",
@@ -83,6 +91,7 @@ outputs:
             self.assertTrue((root / "audit" / "aggregate_metrics.csv").is_file())
             self.assertTrue((root / "audit" / "agreement_metrics.csv").is_file())
             self.assertTrue((root / "audit" / "intervention_metrics.csv").is_file())
+            self.assertTrue((root / "audit" / "null_control_metrics.csv").is_file())
             self.assertTrue((root / "audit" / "per_token_supports.csv").is_file())
             self.assertTrue((root / "audit" / "support_counts.csv").is_file())
             self.assertTrue((root / "audit" / "notes.md").is_file())
@@ -96,6 +105,7 @@ outputs:
             self.assertIn("teacher_support", token_row)
             self.assertIn("student_router_support_loss", token_row)
             self.assertGreater(len(saved["audit"]["agreement_rows"]), 0)
+            self.assertGreater(len(saved["audit"]["null_control_rows"]), 0)
 
     def test_requires_causal_contextual_topk2(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

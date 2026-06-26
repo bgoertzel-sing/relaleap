@@ -114,6 +114,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
     fold_rows: list[dict[str, Any]] = []
     agreement_rows: list[dict[str, Any]] = []
     intervention_rows: list[dict[str, Any]] = []
+    null_control_rows: list[dict[str, Any]] = []
     per_token_rows: list[dict[str, Any]] = []
     support_count_rows: list[dict[str, Any]] = []
 
@@ -150,6 +151,14 @@ def run_causal_contextual_router_distillation_agreement_audit(
                 teacher_train_hidden,
                 return_support=True,
             )
+        shuffled_teacher_train_support = _shuffle_support(
+            teacher_train_support,
+            seed=random_seed + 503 + fold_index,
+        )
+        frequency_matched_teacher_train_support = _frequency_matched_support(
+            teacher_train_support,
+            seed=random_seed + 907 + fold_index,
+        )
 
         variants: dict[str, tuple[Any, Any, dict[str, Any]]] = {}
         specs = [
@@ -188,11 +197,65 @@ def run_causal_contextual_router_distillation_agreement_audit(
                 distill_weight=spec["distill_weight"],
             )
             variants[spec["name"]] = (base, residual, spec)
+        null_specs = [
+            (
+                {
+                    "name": f"causal_distilled_from_shuffled_teacher_{student_distill_weight:g}",
+                    "support_router": "contextual_mlp_causal",
+                    "top_k": 2,
+                    "causal_feature_safe": True,
+                    "variant_kind": "shuffled_teacher_null",
+                    "teacher_oracle_weight": teacher_oracle_weight,
+                    "distill_weight": float(student_distill_weight),
+                    "distills_from_teacher": False,
+                    "null_control": "shuffled_teacher",
+                },
+                shuffled_teacher_train_support,
+            ),
+            (
+                {
+                    "name": f"causal_distilled_from_frequency_matched_teacher_{student_distill_weight:g}",
+                    "support_router": "contextual_mlp_causal",
+                    "top_k": 2,
+                    "causal_feature_safe": True,
+                    "variant_kind": "frequency_matched_teacher_null",
+                    "teacher_oracle_weight": teacher_oracle_weight,
+                    "distill_weight": float(student_distill_weight),
+                    "distills_from_teacher": False,
+                    "null_control": "frequency_matched_teacher",
+                },
+                frequency_matched_teacher_train_support,
+            ),
+        ]
+        for spec, null_support in null_specs:
+            torch.manual_seed(seed)
+            base, residual = _train_residual(
+                vocab_size=vocab_size,
+                seq_len=seq_len,
+                hidden_dim=hidden_dim,
+                layers=layers,
+                num_columns=num_columns,
+                atoms_per_column=atoms_per_column,
+                top_k=spec["top_k"],
+                support_router=spec["support_router"],
+                contextual_router_hidden_dim=contextual_router_hidden_dim,
+                learning_rate=learning_rate,
+                max_steps=max_steps,
+                residual_objective=residual_objective,
+                training_cfg=training_cfg,
+                train_inputs=train_inputs,
+                train_targets=train_targets,
+                all_pairs=all_pairs,
+                teacher_support=null_support,
+                distill_weight=spec["distill_weight"],
+            )
+            variants[spec["name"]] = (base, residual, spec)
 
         student_name = f"causal_distilled_from_oracle_target_{student_distill_weight:g}"
         student_base, student_residual, student_spec = variants[student_name]
         linear_base, linear_residual, _ = variants["linear_topk2"]
         causal_base, causal_residual, causal_spec = variants["causal_contextual_topk2"]
+        null_names = [spec["name"] for spec, _ in null_specs]
 
         with torch.no_grad():
             student_hidden = student_base.encode(holdout_inputs)
@@ -295,6 +358,44 @@ def run_causal_contextual_router_distillation_agreement_audit(
                     support=random_support,
                 ),
             }
+            null_eval_rows = []
+            null_supports = {}
+            for null_name in null_names:
+                null_base, null_residual, null_spec = variants[null_name]
+                null_hidden = null_base.encode(holdout_inputs)
+                null_logits, null_support = _forward_with_feature_ablation(
+                    null_base,
+                    null_residual,
+                    null_hidden,
+                    feature_mask=None,
+                )
+                null_token_support = null_support[:, :-1, :]
+                null_token_losses = _token_losses(null_logits, holdout_targets).reshape(-1)
+                null_supports[null_name] = null_token_support
+                null_eval_rows.append(
+                    _variant_fold_row(
+                        fold_index=fold_index,
+                        spec=null_spec,
+                        support=null_token_support,
+                        token_losses=null_token_losses,
+                        oracle_losses=oracle_losses,
+                        num_columns=num_columns,
+                    )
+                )
+                null_control_rows.append(
+                    _null_control_row(
+                        fold_index=fold_index,
+                        null_name=null_name,
+                        null_spec=null_spec,
+                        student_support=student_token_support,
+                        null_support=null_token_support,
+                        teacher_support=teacher_token_support,
+                        student_losses=student_token_losses,
+                        null_losses=null_token_losses,
+                        student_oracle_losses=oracle_losses,
+                        num_columns=num_columns,
+                    )
+                )
 
         fold_rows.extend(
             [
@@ -330,6 +431,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
                     ),
                     "teacher_oracle_weight": teacher_oracle_weight,
                 },
+                *null_eval_rows,
             ]
         )
         agreement_rows.extend(
@@ -376,13 +478,19 @@ def run_causal_contextual_router_distillation_agreement_audit(
         support_count_rows.extend(
             _support_count_rows(fold_index, "linear_support", linear_token_support)
         )
+        for null_name, null_support in null_supports.items():
+            support_count_rows.extend(
+                _support_count_rows(fold_index, f"{null_name}_support", null_support)
+            )
 
     aggregate_rows = _aggregate_rows(fold_rows)
     agreement_aggregates = _aggregate_agreement_rows(agreement_rows)
     intervention_aggregates = _aggregate_intervention_rows(intervention_rows)
+    null_control_aggregates = _aggregate_null_control_rows(null_control_rows)
     decision = _decision(
         agreement_aggregates=agreement_aggregates,
         intervention_aggregates=intervention_aggregates,
+        null_control_aggregates=null_control_aggregates,
         ce_guardrail=ce_guardrail,
     )
     summary = {
@@ -418,6 +526,8 @@ def run_causal_contextual_router_distillation_agreement_audit(
             "agreement_aggregates": agreement_aggregates,
             "intervention_rows": intervention_rows,
             "intervention_aggregates": intervention_aggregates,
+            "null_control_rows": null_control_rows,
+            "null_control_aggregates": null_control_aggregates,
             "gate_criteria": decision["criteria"],
             "failures": decision["failures"],
             "rationale": decision["rationale"],
@@ -428,6 +538,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
             "aggregate_metrics_csv": str(out_dir / "aggregate_metrics.csv"),
             "agreement_metrics_csv": str(out_dir / "agreement_metrics.csv"),
             "intervention_metrics_csv": str(out_dir / "intervention_metrics.csv"),
+            "null_control_metrics_csv": str(out_dir / "null_control_metrics.csv"),
             "per_token_supports_csv": str(out_dir / "per_token_supports.csv"),
             "support_counts_csv": str(out_dir / "support_counts.csv"),
             "notes_md": str(out_dir / "notes.md"),
@@ -439,6 +550,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
     _write_csv(out_dir / "aggregate_metrics.csv", aggregate_rows)
     _write_csv(out_dir / "agreement_metrics.csv", agreement_rows)
     _write_csv(out_dir / "intervention_metrics.csv", intervention_rows)
+    _write_csv(out_dir / "null_control_metrics.csv", null_control_rows)
     _write_csv(out_dir / "per_token_supports.csv", per_token_rows)
     _write_csv(out_dir / "support_counts.csv", support_count_rows)
     (out_dir / "summary.json").write_text(
@@ -498,6 +610,22 @@ def _shuffle_support(support: Any, *, seed: int) -> Any:
     generator.manual_seed(seed)
     permutation = torch.randperm(flat.shape[0], generator=generator, device=flat.device)
     return flat[permutation].reshape_as(support)
+
+
+def _frequency_matched_support(support: Any, *, seed: int) -> Any:
+    import torch
+
+    flat = support.reshape(-1, support.shape[-1])
+    generator = torch.Generator(device=flat.device)
+    generator.manual_seed(seed)
+    sample_indices = torch.randint(
+        low=0,
+        high=flat.shape[0],
+        size=(flat.shape[0],),
+        generator=generator,
+        device=flat.device,
+    )
+    return flat[sample_indices].reshape_as(support)
 
 
 def _random_support(all_pairs: list[tuple[int, ...]], *, like: Any, seed: int) -> Any:
@@ -732,6 +860,65 @@ def _support_count_rows(fold_index: int, source: str, support: Any) -> list[dict
     ]
 
 
+def _null_control_row(
+    *,
+    fold_index: int,
+    null_name: str,
+    null_spec: dict[str, Any],
+    student_support: Any,
+    null_support: Any,
+    teacher_support: Any,
+    student_losses: Any,
+    null_losses: Any,
+    student_oracle_losses: Any,
+    num_columns: int,
+) -> dict[str, Any]:
+    student_teacher = _pair_agreement_row(
+        fold_index,
+        "student_vs_teacher",
+        student_support,
+        teacher_support,
+        num_columns=num_columns,
+    )
+    null_teacher = _pair_agreement_row(
+        fold_index,
+        f"{null_name}_vs_teacher",
+        null_support,
+        teacher_support,
+        num_columns=num_columns,
+    )
+    student_regret = student_losses - student_oracle_losses
+    null_regret = null_losses - student_oracle_losses
+    return {
+        "fold": fold_index,
+        "null_control": null_name,
+        "null_control_kind": null_spec["null_control"],
+        "positions": int(student_losses.numel()),
+        "student_router_loss": float(student_losses.mean().item()),
+        "null_router_loss": float(null_losses.mean().item()),
+        "student_minus_null_router_loss": float(
+            (student_losses.mean() - null_losses.mean()).item()
+        ),
+        "student_oracle_regret": float(student_regret.mean().item()),
+        "null_oracle_regret": float(null_regret.mean().item()),
+        "student_minus_null_oracle_regret": float(
+            (student_regret.mean() - null_regret.mean()).item()
+        ),
+        "student_teacher_exact_pair_agreement": student_teacher["exact_pair_agreement"],
+        "null_teacher_exact_pair_agreement": null_teacher["exact_pair_agreement"],
+        "student_minus_null_teacher_exact_pair_agreement": (
+            student_teacher["exact_pair_agreement"] - null_teacher["exact_pair_agreement"]
+        ),
+        "student_teacher_mean_jaccard": student_teacher["mean_jaccard"],
+        "null_teacher_mean_jaccard": null_teacher["mean_jaccard"],
+        "student_minus_null_teacher_mean_jaccard": (
+            student_teacher["mean_jaccard"] - null_teacher["mean_jaccard"]
+        ),
+        "student_support_entropy": _normalized_load_entropy(student_support, num_columns),
+        "null_support_entropy": _normalized_load_entropy(null_support, num_columns),
+    }
+
+
 def _support_counts(support: Any) -> dict[str, int]:
     counts: dict[str, int] = {}
     for row in support.reshape(-1, support.shape[-1]).detach().cpu().tolist():
@@ -810,6 +997,13 @@ def _aggregate_intervention_rows(rows: list[dict[str, Any]]) -> dict[str, dict[s
     return {key: _mean_row(group, key_name="intervention_key", key_value=key) for key, group in grouped.items()}
 
 
+def _aggregate_null_control_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        null_control: _mean_row(group, key_name="null_control", key_value=null_control)
+        for null_control, group in _group_by(rows, "null_control").items()
+    }
+
+
 def _group_by(rows: list[dict[str, Any]], key: str) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -831,6 +1025,7 @@ def _decision(
     *,
     agreement_aggregates: dict[str, dict[str, Any]],
     intervention_aggregates: dict[str, dict[str, Any]],
+    null_control_aggregates: dict[str, dict[str, Any]],
     ce_guardrail: float,
 ) -> dict[str, Any]:
     student_teacher = agreement_aggregates.get("student_vs_teacher", {})
@@ -879,14 +1074,41 @@ def _decision(
             student_router.get("mean_positions"),
         ),
     ]
+    for null_name, null_row in sorted(null_control_aggregates.items()):
+        criteria.extend(
+            [
+                _criterion(
+                    f"real_student_ce_beats_{null_name}",
+                    _has_lt(null_row, "mean_student_minus_null_router_loss", 0.0),
+                    "real teacher-distilled student CE < null-distilled student CE",
+                    null_row.get("mean_student_minus_null_router_loss"),
+                ),
+                _criterion(
+                    f"real_student_regret_beats_{null_name}",
+                    _has_lt(null_row, "mean_student_minus_null_oracle_regret", 0.0),
+                    "real teacher-distilled student oracle regret < null-distilled student oracle regret",
+                    null_row.get("mean_student_minus_null_oracle_regret"),
+                ),
+                _criterion(
+                    f"real_student_teacher_agreement_beats_{null_name}",
+                    _has_gt(
+                        null_row,
+                        "mean_student_minus_null_teacher_exact_pair_agreement",
+                        0.0,
+                    ),
+                    "real teacher-distilled student agreement > null-distilled student agreement",
+                    null_row.get("mean_student_minus_null_teacher_exact_pair_agreement"),
+                ),
+            ]
+        )
     failures = [row for row in criteria if not row["passed"]]
     if failures:
         return {
             "decision": AGREEMENT_BLOCKED,
             "claim_status": "distilled_causal_router_mechanism_not_established",
             "next_step": (
-                "keep defaults blocked; inspect null distillation controls or rerun "
-                "with richer per-token checkpoint artifacts before broader promotion repeats"
+                "keep defaults blocked; inspect failed agreement or null-control criteria "
+                "before broader promotion repeats"
             ),
             "criteria": criteria,
             "failures": failures,
@@ -898,14 +1120,21 @@ def _decision(
         }
     return {
         "decision": AGREEMENT_SUPPORTED,
-        "claim_status": "distilled_causal_router_support_mechanism_supported_not_promoted",
-        "next_step": "add shuffled/frequency null distillation controls before any promotion repeat",
+        "claim_status": (
+            "distilled_causal_router_support_mechanism_and_null_controls_supported_not_promoted"
+        ),
+        "next_step": (
+            "repeat the real-vs-null causal-router distillation mechanism audit "
+            "across broader folds or a second dataset before any promotion repeat"
+        ),
         "criteria": criteria,
         "failures": [],
         "rationale": (
             "The student agrees with the teacher above chance, teacher-forced supports "
             "do not improve disagreement-token CE beyond the guardrail, and oracle "
-            "forcing still exposes bounded support headroom."
+            "forcing still exposes bounded support headroom. The real teacher-distilled "
+            "student also beats shuffled and frequency-matched null-distilled students "
+            "on the bounded CE, regret, and teacher-agreement checks."
         ),
     }
 
@@ -919,6 +1148,16 @@ def _value(row: dict[str, Any], key: str) -> float:
     if value is None:
         return float("-inf")
     return float(value)
+
+
+def _has_lt(row: dict[str, Any], key: str, threshold: float) -> bool:
+    value = row.get(key)
+    return value is not None and float(value) < threshold
+
+
+def _has_gt(row: dict[str, Any], key: str, threshold: float) -> bool:
+    value = row.get(key)
+    return value is not None and float(value) > threshold
 
 
 def _write_notes(path: Path, summary: dict[str, Any]) -> None:
@@ -966,6 +1205,15 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
             "- "
             f"{key}: loss `{row.get('mean_loss')}`, "
             f"delta `{row.get('mean_delta_vs_student_router_support')}`"
+        )
+    lines.extend(["", "## Null Distillation Controls"])
+    for key, row in sorted(audit["null_control_aggregates"].items()):
+        lines.append(
+            "- "
+            f"{key}: student-null CE delta `{row.get('mean_student_minus_null_router_loss')}`, "
+            f"student-null regret delta `{row.get('mean_student_minus_null_oracle_regret')}`, "
+            f"student-null agreement delta "
+            f"`{row.get('mean_student_minus_null_teacher_exact_pair_agreement')}`"
         )
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
