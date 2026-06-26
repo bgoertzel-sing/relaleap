@@ -44,6 +44,7 @@ class ActiveTopk1RetentionChurnProbeTest(unittest.TestCase):
             self.assertTrue(signals["topk1_support_churn_lower_than_topk2"])
             self.assertTrue(signals["topk1_logit_churn_not_higher_than_topk2"])
             self.assertTrue(signals["topk1_transfer_improvement_beats_dense"])
+            self.assertEqual(metrics["random_fixed_topk2_transfer_ce_improvement"], 0.25)
             self.assertLess(
                 metrics["topk1_anchor_support_churn_after_transfer"],
                 metrics["topk2_anchor_support_churn_after_transfer"],
@@ -152,6 +153,18 @@ def _write_microtest_packet(config_path: Path, out_dir: Path) -> dict[str, objec
                     "commutator_transfer_logit_mse": 0.07,
                     "commutator_anchor_residual_stream_l2": 0.8,
                     "commutator_transfer_residual_stream_l2": 0.7,
+                },
+                {
+                    "variant": "random_fixed_topk2",
+                    "anchor_support_churn_after_transfer": 0.0,
+                    "anchor_logit_mse_drift": 0.20,
+                    "anchor_residual_stream_l2_drift": 4.8,
+                    "anchor_ce_drift": 0.04,
+                    "transfer_ce_improvement": 0.25,
+                    "commutator_anchor_logit_mse": 0.30,
+                    "commutator_transfer_logit_mse": 0.29,
+                    "commutator_anchor_residual_stream_l2": 3.0,
+                    "commutator_transfer_residual_stream_l2": 2.9,
                 },
                 {
                     "variant": "rank_matched_contextual_topk1",

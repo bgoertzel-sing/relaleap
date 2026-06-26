@@ -22,6 +22,12 @@ ACTIVE_TOPK1_RETENTION_CHURN_PROBE_ESTABLISHED = (
     "active_topk1_retention_churn_probe_established"
 )
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+REQUIRED_VARIANTS = (
+    "rank_matched_contextual_topk1",
+    "promoted_contextual_topk2",
+    "random_fixed_topk2",
+    "norm_matched_dense_active_rank",
+)
 
 
 def run_active_topk1_retention_churn_probe(
@@ -136,6 +142,7 @@ def _build_evidence(
     }
     topk1 = variants.get("rank_matched_contextual_topk1", {})
     topk2 = variants.get("promoted_contextual_topk2", {})
+    random_topk2 = variants.get("random_fixed_topk2", {})
     dense = variants.get("norm_matched_dense_active_rank", {})
     metrics = {
         "source_separability_decision": separability.get("decision"),
@@ -171,12 +178,18 @@ def _build_evidence(
         ),
         "topk1_anchor_ce_drift": _float_or_none(topk1.get("anchor_ce_drift")),
         "topk2_anchor_ce_drift": _float_or_none(topk2.get("anchor_ce_drift")),
+        "random_fixed_topk2_anchor_ce_drift": _float_or_none(
+            random_topk2.get("anchor_ce_drift")
+        ),
         "dense_anchor_ce_drift": _float_or_none(dense.get("anchor_ce_drift")),
         "topk1_transfer_ce_improvement": _float_or_none(
             topk1.get("transfer_ce_improvement")
         ),
         "topk2_transfer_ce_improvement": _float_or_none(
             topk2.get("transfer_ce_improvement")
+        ),
+        "random_fixed_topk2_transfer_ce_improvement": _float_or_none(
+            random_topk2.get("transfer_ce_improvement")
         ),
         "dense_transfer_ce_improvement": _float_or_none(
             dense.get("transfer_ce_improvement")
@@ -187,6 +200,9 @@ def _build_evidence(
         "topk2_commutator_anchor_logit_mse": _float_or_none(
             topk2.get("commutator_anchor_logit_mse")
         ),
+        "random_fixed_topk2_commutator_anchor_logit_mse": _float_or_none(
+            random_topk2.get("commutator_anchor_logit_mse")
+        ),
         "dense_commutator_anchor_logit_mse": _float_or_none(
             dense.get("commutator_anchor_logit_mse")
         ),
@@ -195,6 +211,9 @@ def _build_evidence(
         ),
         "topk2_commutator_transfer_logit_mse": _float_or_none(
             topk2.get("commutator_transfer_logit_mse")
+        ),
+        "random_fixed_topk2_commutator_transfer_logit_mse": _float_or_none(
+            random_topk2.get("commutator_transfer_logit_mse")
         ),
         "dense_commutator_transfer_logit_mse": _float_or_none(
             dense.get("commutator_transfer_logit_mse")
@@ -205,11 +224,17 @@ def _build_evidence(
         "topk2_commutator_anchor_residual_stream_l2": _float_or_none(
             topk2.get("commutator_anchor_residual_stream_l2")
         ),
+        "random_fixed_topk2_commutator_anchor_residual_stream_l2": _float_or_none(
+            random_topk2.get("commutator_anchor_residual_stream_l2")
+        ),
         "topk1_commutator_transfer_residual_stream_l2": _float_or_none(
             topk1.get("commutator_transfer_residual_stream_l2")
         ),
         "topk2_commutator_transfer_residual_stream_l2": _float_or_none(
             topk2.get("commutator_transfer_residual_stream_l2")
+        ),
+        "random_fixed_topk2_commutator_transfer_residual_stream_l2": _float_or_none(
+            random_topk2.get("commutator_transfer_residual_stream_l2")
         ),
     }
     topk1_churn = metrics["topk1_anchor_support_churn_after_transfer"]
@@ -225,12 +250,7 @@ def _build_evidence(
         "metrics": metrics,
         "signals": {
             "required_variants_present": all(
-                key in variants
-                for key in (
-                    "rank_matched_contextual_topk1",
-                    "promoted_contextual_topk2",
-                    "norm_matched_dense_active_rank",
-                )
+                key in variants for key in REQUIRED_VARIANTS
             ),
             "topk1_support_churn_lower_than_topk2": (
                 topk1_churn is not None
@@ -262,9 +282,11 @@ def _build_evidence(
                 for field in (
                     "topk1_commutator_anchor_logit_mse",
                     "topk2_commutator_anchor_logit_mse",
+                    "random_fixed_topk2_commutator_anchor_logit_mse",
                     "dense_commutator_anchor_logit_mse",
                     "topk1_commutator_transfer_logit_mse",
                     "topk2_commutator_transfer_logit_mse",
+                    "random_fixed_topk2_commutator_transfer_logit_mse",
                     "dense_commutator_transfer_logit_mse",
                 )
             ),

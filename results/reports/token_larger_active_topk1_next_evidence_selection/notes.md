@@ -7,7 +7,7 @@
 - New training required: `False`
 - Matched-control coverage adequate: `True`
 - Top-k-2 causal cooperation blocked: `True`
-- Git commit: `0bc6962e0315b0453ebdeb793f95b2b8ca04a3a7`
+- Git commit: `67272aa66c0399f8d6425c205d3a9d9ce084a839`
 
 ## Rationale
 

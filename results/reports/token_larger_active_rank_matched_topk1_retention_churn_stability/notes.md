@@ -6,8 +6,8 @@
 - Mean top-k-1 support churn: `0.005859375`
 - Mean top-k-2 support churn: `0.86328125`
 - Minimum support-churn advantage: `0.8046875`
-- Minimum logit-churn advantage: `0.011958405375480652`
-- Minimum transfer-improvement advantage: `0.016793370246887207`
+- Minimum logit-churn advantage: `0.011922299861907959`
+- Minimum transfer-improvement advantage: `0.01635599136352539`
 
 ## Rationale
 

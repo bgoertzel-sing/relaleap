@@ -4,11 +4,11 @@
 - Decision: `functional_retention_bracket_only`
 - Claim status: `context_gated_singleton_efficacy_with_offcontext_interference`
 - Mean top-k-1 support churn: `0.005859375`
-- Mean top-k-2 support churn: `0.85546875`
+- Mean top-k-2 support churn: `0.86328125`
 - Minimum support-churn advantage: `0.8046875`
-- Minimum logit-churn advantage: `0.011935070157051086`
-- Minimum commutator anchor-logit advantage: `0.19262094981968403`
-- Minimum commutator transfer-logit advantage: `0.19381753914058208`
+- Minimum logit-churn advantage: `0.011922299861907959`
+- Minimum commutator anchor-logit advantage: `0.1751744169741869`
+- Minimum commutator transfer-logit advantage: `0.17229781858623028`
 - Mean source singleton gain: `-0.042048803633778095`
 - Reconciled selected singleton gain: `1.0019046117862065`
 - Reconciled off-context singleton gain: `-0.13995217362127335`

@@ -12,7 +12,7 @@
   ],
   "decision": "active_topk1_next_evidence_selected",
   "failures": [],
-  "git_commit": "0bc6962e0315b0453ebdeb793f95b2b8ca04a3a7",
+  "git_commit": "67272aa66c0399f8d6425c205d3a9d9ce084a839",
   "metrics": {
     "control_matrix_topk2_minus_topk1_logit_mse": 0.22752397570613553,
     "deconfounded_matched_exact_context_count": 210,
@@ -30,17 +30,17 @@
     "finite_topk2_minus_topk1_logit_mse": 0.2784630590280149,
     "finite_topk2_support_churn": 0.9247085715595466,
     "functional_mean_topk1_support_churn": 0.005859375,
-    "functional_mean_topk2_support_churn": 0.85546875,
-    "functional_topk1_commutator_advantage_vs_dense": 0.06801410252228379,
-    "functional_topk1_commutator_advantage_vs_topk2": 0.23237817594781518,
-    "functional_topk1_transfer_advantage_vs_dense": 0.5444295406341553,
-    "functional_topk1_transfer_advantage_vs_topk2": 0.03069305419921875
+    "functional_mean_topk2_support_churn": 0.86328125,
+    "functional_topk1_commutator_advantage_vs_dense": 0.05367883155122399,
+    "functional_topk1_commutator_advantage_vs_topk2": 0.2236471609212458,
+    "functional_topk1_transfer_advantage_vs_dense": 0.47648465633392334,
+    "functional_topk1_transfer_advantage_vs_topk2": 0.0297243595123291
   },
   "next_step": "run the retention/functional-churn follow-up as the next bounded branch: promoted contextual top-k-2, rank-matched contextual top-k-1, dense active-rank, and random fixed top-k-2 controls; prioritize anchor drift, functional churn, support identity churn, finite-update commutator risk, residual/logit deltas, and CE guardrails",
   "out_dir": "results/reports/token_larger_active_topk1_next_evidence_selection",
   "platform": "macOS-26.5.1-x86_64-i386-64bit",
   "rationale": "The matched-control coverage is adequate and the active rank-matched top-k-1 bracket already has favorable support churn, functional/logit churn, finite-update commutator, transfer, and dense-control evidence. The finite-update-augmented causal gate keeps top-k-2 causal-cooperation claims blocked, so the highest-information follow-up is retention and functional churn rather than another mitigation family or CE variant.",
-  "runtime_seconds": 0.0019,
+  "runtime_seconds": 0.0041,
   "selected_experiment": "retention_churn",
   "selection_gate": {
     "duplicates_completed_work": false,
