@@ -88,6 +88,17 @@ class PromotedTopk2FiniteUpdateOrderControlAuditTest(unittest.TestCase):
                 ],
                 -0.002,
             )
+            self.assertEqual(
+                summary["metrics"][
+                    "topk2_mean_same_order_identical_anchor_logit_mse_to_primary"
+                ],
+                0.0,
+            )
+            self.assertTrue(
+                summary["signals"][
+                    "same_order_identical_replay_nonperturbation_pass"
+                ]
+            )
             self.assertTrue((root / "out" / "summary.json").is_file())
             self.assertTrue((root / "out" / "variant_commutator.csv").is_file())
             self.assertTrue((root / "out" / "token_strata.csv").is_file())
@@ -273,6 +284,19 @@ def _variant(
         "same_order_ensemble_transfer_ce_delta_vs_best_endpoint": 0.005,
         "same_order_ensemble_anchor_logit_mse_to_primary": logit_mse * 0.2,
         "same_order_ensemble_transfer_logit_mse_to_primary": logit_mse * 0.2,
+        "same_order_identical_anchor_ce_abs_delta_to_primary": 0.0,
+        "same_order_identical_transfer_ce_abs_delta_to_primary": 0.0,
+        "same_order_identical_anchor_logit_mse_to_primary": 0.0,
+        "same_order_identical_transfer_logit_mse_to_primary": 0.0,
+        "same_order_identical_anchor_residual_stream_l2_to_primary": 0.0,
+        "same_order_identical_transfer_residual_stream_l2_to_primary": 0.0,
+        "same_order_identical_anchor_support_churn_to_primary": (
+            "" if support_churn == "" else 0.0
+        ),
+        "same_order_identical_transfer_support_churn_to_primary": (
+            "" if support_churn == "" else 0.0
+        ),
+        "same_order_identical_replay_nonperturbation_pass": True,
     }
 
 

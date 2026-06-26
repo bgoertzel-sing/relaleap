@@ -115,6 +115,27 @@ model:
                 "same_order_ensemble_anchor_logit_mse_to_primary",
                 metric_rows[0],
             )
+            self.assertIn(
+                "same_order_identical_replay_nonperturbation_pass",
+                metric_rows[0],
+            )
+            promoted = next(
+                row
+                for row in metric_rows
+                if row["variant"] == "promoted_contextual_topk2"
+            )
+            self.assertEqual(
+                promoted["same_order_identical_replay_nonperturbation_pass"],
+                "True",
+            )
+            self.assertLessEqual(
+                float(promoted["same_order_identical_anchor_logit_mse_to_primary"]),
+                1e-12,
+            )
+            self.assertLessEqual(
+                float(promoted["same_order_identical_transfer_logit_mse_to_primary"]),
+                1e-12,
+            )
             topk1 = next(
                 row
                 for row in metric_rows

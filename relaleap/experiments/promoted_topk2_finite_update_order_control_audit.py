@@ -157,6 +157,9 @@ def run_promoted_topk2_finite_update_order_control_audit(
         ),
         "per_token_strata_available": bool(token_strata_rows),
         "per_token_commutator_ce_kl_available": False,
+        "same_order_identical_replay_nonperturbation_pass": _all_true_or_missing(
+            variant_rows, "same_order_identical_replay_nonperturbation_pass"
+        ),
     }
     failures = _failures(
         functional_summary=functional_summary,
@@ -237,6 +240,8 @@ def run_promoted_topk2_finite_update_order_control_audit(
             "Order-averaged logit-MSE shrinkage is expected from midpoint "
             "geometry; CE deltas versus the best order and same-order ensemble "
             "controls are the primary order-averaging interpretation fields.",
+            "Same-order independent ensemble controls are only endpoint-comparable "
+            "when the same-seed A-then-B replay non-perturbation checks pass.",
         ],
         "failures": failures,
         "rationale": rationale,
@@ -382,6 +387,33 @@ def _variant_row(packet: str, path: Path, variant: dict[str, Any]) -> dict[str, 
         "same_order_ensemble_transfer_logit_mse_to_primary": _float_or_none(
             variant.get("same_order_ensemble_transfer_logit_mse_to_primary")
         ),
+        "same_order_identical_anchor_ce_abs_delta_to_primary": _float_or_none(
+            variant.get("same_order_identical_anchor_ce_abs_delta_to_primary")
+        ),
+        "same_order_identical_transfer_ce_abs_delta_to_primary": _float_or_none(
+            variant.get("same_order_identical_transfer_ce_abs_delta_to_primary")
+        ),
+        "same_order_identical_anchor_logit_mse_to_primary": _float_or_none(
+            variant.get("same_order_identical_anchor_logit_mse_to_primary")
+        ),
+        "same_order_identical_transfer_logit_mse_to_primary": _float_or_none(
+            variant.get("same_order_identical_transfer_logit_mse_to_primary")
+        ),
+        "same_order_identical_anchor_residual_stream_l2_to_primary": _float_or_none(
+            variant.get("same_order_identical_anchor_residual_stream_l2_to_primary")
+        ),
+        "same_order_identical_transfer_residual_stream_l2_to_primary": _float_or_none(
+            variant.get("same_order_identical_transfer_residual_stream_l2_to_primary")
+        ),
+        "same_order_identical_anchor_support_churn_to_primary": _float_or_none(
+            variant.get("same_order_identical_anchor_support_churn_to_primary")
+        ),
+        "same_order_identical_transfer_support_churn_to_primary": _float_or_none(
+            variant.get("same_order_identical_transfer_support_churn_to_primary")
+        ),
+        "same_order_identical_replay_nonperturbation_pass": _bool_or_none(
+            variant.get("same_order_identical_replay_nonperturbation_pass")
+        ),
     }
     return row
 
@@ -483,6 +515,12 @@ def _metrics(
     topk2_same_order_transfer_best_ce_delta = _mean_field(
         topk2, "same_order_ensemble_transfer_ce_delta_vs_best_endpoint"
     )
+    topk2_same_order_replay_anchor_logit = _mean_field(
+        topk2, "same_order_identical_anchor_logit_mse_to_primary"
+    )
+    topk2_same_order_replay_transfer_logit = _mean_field(
+        topk2, "same_order_identical_transfer_logit_mse_to_primary"
+    )
     topk1_order_avg_best_ce_delta = _mean_field(
         topk1, "order_averaged_anchor_ce_delta_vs_best_order"
     )
@@ -547,6 +585,12 @@ def _metrics(
         ),
         "topk2_mean_same_order_ensemble_transfer_ce_delta_vs_best_endpoint": (
             topk2_same_order_transfer_best_ce_delta
+        ),
+        "topk2_mean_same_order_identical_anchor_logit_mse_to_primary": (
+            topk2_same_order_replay_anchor_logit
+        ),
+        "topk2_mean_same_order_identical_transfer_logit_mse_to_primary": (
+            topk2_same_order_replay_transfer_logit
         ),
         "topk2_order_avg_minus_same_order_anchor_ce_delta_vs_best": _delta(
             topk2_order_avg_best_ce_delta, topk2_same_order_best_ce_delta
@@ -828,6 +872,28 @@ def _float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes"}:
+            return True
+        if normalized in {"false", "0", "no"}:
+            return False
+    return None
+
+
+def _all_true_or_missing(rows: list[dict[str, Any]], field: str) -> bool | None:
+    values = [_bool_or_none(row.get(field)) for row in rows]
+    present = [value for value in values if value is not None]
+    if not present:
+        return None
+    return all(present)
 
 
 def _delta(left: float | None, right: float | None) -> float | None:

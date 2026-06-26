@@ -416,6 +416,47 @@ def run_retention_churn_microtest(
                 vocab_size=vocab_size,
                 eval_scale=eval_scale,
             )
+            torch.manual_seed(seed + 100 * offset)
+            identical_order_adapter = nn.Sequential(
+                nn.Linear(hidden_dim, int(spec.dense_rank or active_rank), bias=False),
+                nn.Linear(int(spec.dense_rank or active_rank), hidden_dim, bias=False),
+            )
+            nn.init.normal_(identical_order_adapter[0].weight, mean=0.0, std=0.02)
+            nn.init.zeros_(identical_order_adapter[1].weight)
+            _train_dense(
+                base=base,
+                adapter=identical_order_adapter,
+                hidden=anchor_hidden,
+                targets=anchor_targets,
+                vocab_size=vocab_size,
+                steps=max_steps,
+                learning_rate=learning_rate,
+            )
+            _train_dense(
+                base=base,
+                adapter=identical_order_adapter,
+                hidden=transfer_hidden,
+                targets=transfer_targets,
+                vocab_size=vocab_size,
+                steps=max_steps,
+                learning_rate=learning_rate,
+            )
+            identical_order_anchor_final = _dense_snapshot(
+                base=base,
+                adapter=identical_order_adapter,
+                hidden=anchor_hidden,
+                targets=anchor_targets,
+                vocab_size=vocab_size,
+                eval_scale=eval_scale,
+            )
+            identical_order_transfer_final = _dense_snapshot(
+                base=base,
+                adapter=identical_order_adapter,
+                hidden=transfer_hidden,
+                targets=transfer_targets,
+                vocab_size=vocab_size,
+                eval_scale=eval_scale,
+            )
         else:
             residual = ResidualColumns(
                 hidden_dim=hidden_dim,
@@ -623,6 +664,62 @@ def run_retention_churn_microtest(
                 vocab_size=vocab_size,
                 support_indices=fixed_transfer_support,
             )
+            torch.manual_seed(seed + 100 * offset)
+            identical_order_residual = ResidualColumns(
+                hidden_dim=hidden_dim,
+                num_columns=spec.num_columns,
+                atoms_per_column=spec.atoms_per_column,
+                top_k=spec.top_k,
+                support_router=spec.support_router,
+                contextual_router_hidden_dim=spec.contextual_router_hidden_dim,
+            )
+            _train_sparse(
+                base=base,
+                residual=identical_order_residual,
+                inputs=anchor_inputs,
+                targets=anchor_targets,
+                vocab_size=vocab_size,
+                steps=max_steps,
+                learning_rate=learning_rate,
+                support_indices=fixed_anchor_support,
+                gradient_clip_norm=spec.gradient_clip_norm,
+                value_gradient_clip_norm=spec.value_gradient_clip_norm,
+                value_gradient_low_rank=spec.value_gradient_low_rank,
+                value_update_scale=spec.value_update_scale,
+                update_group=spec.anchor_update_group,
+            )
+            _train_sparse(
+                base=base,
+                residual=identical_order_residual,
+                inputs=transfer_inputs,
+                targets=transfer_targets,
+                vocab_size=vocab_size,
+                steps=max_steps,
+                learning_rate=learning_rate,
+                support_indices=fixed_transfer_support,
+                freeze_router=spec.freeze_router_during_transfer,
+                gradient_clip_norm=spec.gradient_clip_norm,
+                value_gradient_clip_norm=spec.value_gradient_clip_norm,
+                value_gradient_low_rank=spec.value_gradient_low_rank,
+                value_update_scale=spec.value_update_scale,
+                update_group=spec.transfer_update_group,
+            )
+            identical_order_anchor_final = _sparse_snapshot(
+                base=base,
+                residual=identical_order_residual,
+                inputs=anchor_inputs,
+                targets=anchor_targets,
+                vocab_size=vocab_size,
+                support_indices=fixed_anchor_support,
+            )
+            identical_order_transfer_final = _sparse_snapshot(
+                base=base,
+                residual=identical_order_residual,
+                inputs=transfer_inputs,
+                targets=transfer_targets,
+                vocab_size=vocab_size,
+                support_indices=fixed_transfer_support,
+            )
 
         phase_rows.extend(
             _phase_rows(
@@ -650,6 +747,12 @@ def run_retention_churn_microtest(
             anchor_targets=anchor_targets,
             transfer_targets=transfer_targets,
             vocab_size=vocab_size,
+        )
+        same_order_sanity = _same_order_identical_replay_metrics(
+            anchor_after=anchor_after,
+            transfer_after=transfer_after,
+            identical_order_anchor_final=identical_order_anchor_final,
+            identical_order_transfer_final=identical_order_transfer_final,
         )
         row = {
             "variant": spec.name,
@@ -727,6 +830,10 @@ def run_retention_churn_microtest(
             ),
             **order_average,
             **same_order_ensemble,
+            **same_order_sanity,
+            "same_order_primary_seed": seed + 100 * offset,
+            "same_order_identical_replay_seed": seed + 100 * offset,
+            "same_order_independent_seed": seed + 10_000 + 100 * offset,
             "parameter_delta_after_anchor": parameter_delta_after_anchor,
             "parameter_delta_during_transfer": parameter_delta_during_transfer,
             "freeze_router_during_transfer": spec.freeze_router_during_transfer,
@@ -787,6 +894,9 @@ def run_retention_churn_microtest(
                 "same_order_ensemble_transfer_ce_loss",
                 "same_order_ensemble_anchor_ce_delta_vs_best_endpoint",
                 "same_order_ensemble_transfer_ce_delta_vs_best_endpoint",
+                "same_order_identical_replay_nonperturbation_pass",
+                "same_order_identical_anchor_logit_mse_to_primary",
+                "same_order_identical_transfer_logit_mse_to_primary",
             ],
             "include_mitigation_variants": include_mitigation_variants,
             "include_decomposition_variants": include_decomposition_variants,
@@ -1149,6 +1259,75 @@ def _same_order_ensemble_metrics(
         "same_order_ensemble_transfer_logit_mse_to_primary": _mse_delta(
             transfer_logits, transfer_after["logits"]
         ),
+    }
+
+
+def _same_order_identical_replay_metrics(
+    *,
+    anchor_after: dict[str, Any],
+    transfer_after: dict[str, Any],
+    identical_order_anchor_final: dict[str, Any],
+    identical_order_transfer_final: dict[str, Any],
+) -> dict[str, float | bool | str]:
+    anchor_ce_abs_delta = abs(
+        float(identical_order_anchor_final["ce_loss"]) - float(anchor_after["ce_loss"])
+    )
+    transfer_ce_abs_delta = abs(
+        float(identical_order_transfer_final["ce_loss"])
+        - float(transfer_after["ce_loss"])
+    )
+    anchor_logit_mse = _mse_delta(
+        identical_order_anchor_final["logits"], anchor_after["logits"]
+    )
+    transfer_logit_mse = _mse_delta(
+        identical_order_transfer_final["logits"], transfer_after["logits"]
+    )
+    anchor_residual_l2 = _stream_l2_delta(
+        identical_order_anchor_final["residual_delta"],
+        anchor_after["residual_delta"],
+    )
+    transfer_residual_l2 = _stream_l2_delta(
+        identical_order_transfer_final["residual_delta"],
+        transfer_after["residual_delta"],
+    )
+    anchor_support_churn = _support_churn(
+        identical_order_anchor_final.get("support"),
+        anchor_after.get("support"),
+    )
+    transfer_support_churn = _support_churn(
+        identical_order_transfer_final.get("support"),
+        transfer_after.get("support"),
+    )
+    numeric_checks = [
+        anchor_ce_abs_delta,
+        transfer_ce_abs_delta,
+        anchor_logit_mse,
+        transfer_logit_mse,
+        anchor_residual_l2,
+        transfer_residual_l2,
+    ]
+    support_checks = [
+        churn
+        for churn in (anchor_support_churn, transfer_support_churn)
+        if churn != ""
+    ]
+    return {
+        "same_order_identical_anchor_ce_abs_delta_to_primary": anchor_ce_abs_delta,
+        "same_order_identical_transfer_ce_abs_delta_to_primary": transfer_ce_abs_delta,
+        "same_order_identical_anchor_logit_mse_to_primary": anchor_logit_mse,
+        "same_order_identical_transfer_logit_mse_to_primary": transfer_logit_mse,
+        "same_order_identical_anchor_residual_stream_l2_to_primary": (
+            anchor_residual_l2
+        ),
+        "same_order_identical_transfer_residual_stream_l2_to_primary": (
+            transfer_residual_l2
+        ),
+        "same_order_identical_anchor_support_churn_to_primary": anchor_support_churn,
+        "same_order_identical_transfer_support_churn_to_primary": transfer_support_churn,
+        "same_order_identical_replay_nonperturbation_pass": all(
+            value <= 1e-12 for value in numeric_checks
+        )
+        and all(float(value) <= 1e-12 for value in support_checks),
     }
 
 
