@@ -364,6 +364,24 @@ bounded support-stability/finite-update mitigation probe while retaining the
 promoted top-k-2, rank-matched top-k-1, random fixed top-k-2, and dense
 active-rank controls.
 
+To materialize the promoted contextual top-k-2 causal-adequacy matrix as a
+single fail-closed packet before choosing any default-router interpretation:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_causal_adequacy_matrix
+```
+
+This writes
+`results/reports/token_larger_promoted_topk2_causal_adequacy_matrix/summary.json`,
+`causal_adequacy_matrix.csv`, `source_rows.csv`, and `notes.md`. It is a
+no-training synthesis over command-generated artifacts and compares promoted
+contextual top-k-2 with rank-matched contextual top-k-1, random fixed top-k-2,
+and dense active-rank controls. The gate treats CE as a guardrail and requires
+retention/churn, finite-update commutator, deconfounded intervention
+cleanliness, and oracle-support-regret evidence before allowing any
+causal-adequacy claim; otherwise top-k-2 remains only the predictive
+support-routing default and top-k-1 remains the retention/churn control.
+
 To run that bounded mitigation probe through the command-driven microtest
 harness, including router-freeze and update-clipped top-k-2 variants against
 the same controls:

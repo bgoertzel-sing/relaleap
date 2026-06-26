@@ -1,0 +1,159 @@
+{
+  "artifacts": {
+    "causal_adequacy_matrix_csv": "results/reports/token_larger_promoted_topk2_causal_adequacy_matrix/causal_adequacy_matrix.csv",
+    "notes_md": "results/reports/token_larger_promoted_topk2_causal_adequacy_matrix/notes.md",
+    "source_rows_csv": "results/reports/token_larger_promoted_topk2_causal_adequacy_matrix/source_rows.csv",
+    "summary_json": "results/reports/token_larger_promoted_topk2_causal_adequacy_matrix/summary.json"
+  },
+  "decision": "predictive_default_causal_adequacy_not_established",
+  "failures": [],
+  "git_commit": "22079588797eb2b6df47ff268f0c664933d4edee",
+  "interpretation": "Promoted contextual top-k-2 remains the predictive support-routing default because it beats random fixed top-k-2 and dense active-rank controls on transfer and has small oracle-support regret. It does not pass the stronger causal-adequacy gate: support churn and finite-update logit/residual risk are high versus rank-matched top-k-1, and deconfounded intervention strata do not clear the pre-registered causal-cooperation threshold. Rank-matched top-k-1 therefore stays a retention/churn control, not the default router.",
+  "matrix_rows": [
+    {
+      "ce_deficit_vs_topk1": 0.045946598052978516,
+      "ce_loss": 2.912400960922241,
+      "claim": "predictive_default_candidate",
+      "finite_update_ce_abs_delta": 0.3973325586005572,
+      "finite_update_logit_mse": 0.23669071559276747,
+      "finite_update_residual_delta_l2": 5.156413700982248,
+      "functional_churn_cleaner_strata_fraction": 0.6086956521739131,
+      "incremental_pair_gain_positive_strata_fraction": 0.6521739130434783,
+      "intervention_cleaner_strata_fraction": 0.6521739130434783,
+      "mean_transfer_ce_improvement": 0.9286322593688965,
+      "oracle_support_regret": 0.002528395038098097,
+      "oracle_support_regret_positive_fraction": 0.0555555559694767,
+      "role": "promoted_default",
+      "support_churn": 0.86328125,
+      "variant": "promoted_contextual_topk2"
+    },
+    {
+      "ce_loss": 2.8664543628692627,
+      "claim": "local_retention_control_only",
+      "deployable_gain_minus_ungated": -0.0430041712427896,
+      "deployable_offcontext_harm_suppression_fraction": 0.12859360459083627,
+      "finite_update_ce_abs_delta": 0.10445518272795848,
+      "finite_update_logit_mse": 0.00916673988663195,
+      "finite_update_residual_delta_l2": 1.2693865260680757,
+      "mean_transfer_ce_improvement": 0.9584337472915649,
+      "role": "retention_churn_control",
+      "selected_singleton_gain_mean": 1.0019046117862065,
+      "support_churn": 0.005859375,
+      "variant": "rank_matched_contextual_topk1"
+    },
+    {
+      "claim": "negative_support_selection_control",
+      "finite_update_ce_abs_delta": 0.4437421860675963,
+      "finite_update_logit_mse": 0.35416280732504907,
+      "mean_transfer_ce_improvement": 0.6496479511260986,
+      "role": "random_topk2_control",
+      "variant": "random_fixed_topk2"
+    },
+    {
+      "claim": "rank_matched_dense_control",
+      "finite_update_ce_abs_delta": 0.0659256594048606,
+      "finite_update_logit_mse": 0.06350247136368933,
+      "mean_transfer_ce_improvement": 0.4819493293762207,
+      "role": "dense_active_rank_control",
+      "variant": "norm_matched_dense_active_rank"
+    }
+  ],
+  "metrics": {
+    "matrix_variant_count": 4,
+    "oracle_support_regret": 0.002528395038098097,
+    "oracle_support_regret_positive_fraction": 0.0555555559694767,
+    "topk1_deployable_gain_minus_ungated": -0.0430041712427896,
+    "topk1_deployable_offcontext_harm_suppression_fraction": 0.12859360459083627,
+    "topk1_finite_update_logit_mse": 0.00916673988663195,
+    "topk1_support_churn": 0.005859375,
+    "topk2_ce_deficit_vs_topk1": 0.045946598052978516,
+    "topk2_finite_update_logit_mse": 0.23669071559276747,
+    "topk2_fixed_support_cleaner_strata_fraction": 0.6521739130434783,
+    "topk2_functional_churn_cleaner_strata_fraction": 0.6086956521739131,
+    "topk2_incremental_pair_gain_positive_strata_fraction": 0.6521739130434783,
+    "topk2_minus_topk1_support_churn": 0.857421875,
+    "topk2_support_churn": 0.86328125,
+    "topk2_to_dense_finite_update_logit_mse_ratio": 3.7272677820237883,
+    "topk2_to_topk1_finite_update_logit_mse_ratio": 25.820599091934366,
+    "topk2_transfer_advantage_vs_dense": 0.4466829299926758,
+    "topk2_transfer_advantage_vs_random_fixed_topk2": 0.27898430824279785,
+    "topk2_transfer_delta_vs_topk1": -0.029801487922668457
+  },
+  "next_step": "run the already-selected local no-training finite-update order-symmetrization audit for promoted contextual top-k-2",
+  "out_dir": "results/reports/token_larger_promoted_topk2_causal_adequacy_matrix",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "runtime_seconds": 0.001,
+  "signals": {
+    "ce_guardrail_passed": true,
+    "finite_update_risk_high_vs_topk1": true,
+    "intervention_cleanliness_gate_passed": false,
+    "oracle_support_regret_low": true,
+    "promoted_topk2_causal_adequacy_supported": false,
+    "topk1_cleaner_retention_control": true,
+    "topk1_deployable_gate_failed": true,
+    "topk2_predictive_control_win": true
+  },
+  "source_rows": [
+    {
+      "decision": "contextual_topk2_router_default_topk1_diagnostic",
+      "expected_decision": "contextual_topk2_router_default_topk1_diagnostic",
+      "expected_status": "pass",
+      "path": "results/reports/token_larger_promoted_topk2_retention_synthesis_gate/summary.json",
+      "present": true,
+      "source": "retention_synthesis",
+      "status": "pass"
+    },
+    {
+      "decision": "finite_update_control_matrix_ready",
+      "expected_decision": "finite_update_control_matrix_ready",
+      "expected_status": "pass",
+      "path": "results/reports/token_larger_promoted_topk2_finite_update_control_matrix/summary.json",
+      "present": true,
+      "source": "finite_update_control_matrix",
+      "status": "pass"
+    },
+    {
+      "decision": "support_identity_churn_functional_impact_bounded_with_commutator_risk",
+      "expected_decision": "support_identity_churn_functional_impact_bounded_with_commutator_risk",
+      "expected_status": "pass",
+      "path": "results/reports/token_larger_promoted_topk2_functional_churn_control_audit/summary.json",
+      "present": true,
+      "source": "functional_churn_control",
+      "status": "pass"
+    },
+    {
+      "decision": "promoted_topk2_support_selection_quality_established",
+      "expected_decision": "promoted_topk2_support_selection_quality_established",
+      "expected_status": "pass",
+      "path": "results/reports/token_larger_promoted_topk2_support_selection_quality_audit/summary.json",
+      "present": true,
+      "source": "support_selection_quality",
+      "status": "pass"
+    },
+    {
+      "decision": "topk2_comparative_causal_cooperation_not_supported",
+      "expected_decision": "topk2_comparative_causal_cooperation_not_supported",
+      "expected_status": "pass",
+      "path": "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention/summary.json",
+      "present": true,
+      "source": "deconfounded_intervention",
+      "status": "pass"
+    },
+    {
+      "decision": "causal_retention_claim_blocked_by_deployable_gate",
+      "expected_decision": "causal_retention_claim_blocked_by_deployable_gate",
+      "expected_status": "pass",
+      "path": "results/reports/token_larger_active_topk1_causal_retention_synthesis/summary.json",
+      "present": true,
+      "source": "active_topk1_causal_retention",
+      "status": "pass"
+    }
+  ],
+  "status": "pass",
+  "thresholds": {
+    "ce_guardrail_tolerance": 0.05,
+    "high_support_churn_threshold": 0.5,
+    "low_support_churn_threshold": 0.05,
+    "topk2_required_cleaner_strata_fraction": 0.8
+  }
+}
