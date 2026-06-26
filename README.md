@@ -487,6 +487,24 @@ preserving transfer and support usage; otherwise it records whether residual
 scale or value composition is the more coherent next branch and keeps top-k-2
 causal-cooperation claims blocked.
 
+After router-policy, simple value, low-rank value, commutator-aware value
+penalty, and diagnostic order-averaging probes all exist, close out the
+completed mitigation family without retraining:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_post_value_router_mitigation_closeout \
+  --out results/reports/token_larger_promoted_topk2_post_value_router_mitigation_closeout
+```
+
+This writes
+`results/reports/token_larger_promoted_topk2_post_value_router_mitigation_closeout/summary.json`,
+`source_rows.csv`, `closeout_rows.csv`, and `notes.md`. It fails closed if any
+required mitigation packet is missing or inconsistent, keeps contextual top-k
+`2` as the operational train-time support router, keeps order averaging
+diagnostic-only, blocks top-k `2` causal-cooperation claims, and selects a
+no-training pairwise value-interaction localization audit before proposing a
+new mitigation family.
+
 After refreshed per-token finite-update packets exist, turn the finite-update
 evidence into an explicit causal-control matrix input without rerunning
 training:

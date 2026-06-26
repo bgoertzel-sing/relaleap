@@ -1,0 +1,176 @@
+{
+  "artifacts": {
+    "closeout_rows_csv": "results/reports/token_larger_promoted_topk2_post_value_router_mitigation_closeout/closeout_rows.csv",
+    "notes_md": "results/reports/token_larger_promoted_topk2_post_value_router_mitigation_closeout/notes.md",
+    "source_rows_csv": "results/reports/token_larger_promoted_topk2_post_value_router_mitigation_closeout/source_rows.csv",
+    "summary_json": "results/reports/token_larger_promoted_topk2_post_value_router_mitigation_closeout/summary.json"
+  },
+  "claim_statuses": {
+    "commutator_value_penalty": "not_established",
+    "contextual_topk2_router": "promoted_operational_default_train_time_support_selection",
+    "low_rank_value_mitigation": "not_established",
+    "order_averaging": "diagnostic_only_not_promoted",
+    "router_policy_mitigation": "not_established",
+    "simple_value_mitigation": "not_established",
+    "topk2_causal_cooperation": "not_supported",
+    "topk2_finite_update_interference": "unresolved"
+  },
+  "closeout_rows": [
+    {
+      "branch": "router_policy",
+      "decision": "value_composition_prioritized_over_router_policy",
+      "disposition": "closed_not_established",
+      "key_metric": "commutator_anchor_logit_mse_reduction_fraction",
+      "key_value": -0.013875435318412323
+    },
+    {
+      "branch": "simple_value_update",
+      "decision": "value_mitigation_not_established",
+      "disposition": "closed_not_established",
+      "key_metric": "best_value_mitigation_reduction_fraction",
+      "key_value": 0.1266509238864246
+    },
+    {
+      "branch": "low_rank_value_update",
+      "decision": "low_rank_value_not_established",
+      "disposition": "closed_not_established",
+      "key_metric": "best_low_rank_reduction_fraction",
+      "key_value": 0.08746147951831357
+    },
+    {
+      "branch": "commutator_value_penalty",
+      "decision": "commutator_value_penalty_not_established",
+      "disposition": "closed_not_established",
+      "key_metric": "best_penalty_reduction_fraction",
+      "key_value": 0.23063087609231459
+    },
+    {
+      "branch": "explicit_order_averaging",
+      "decision": "explicit_order_averaging_diagnostic_candidate_not_promoted",
+      "disposition": "diagnostic_only_not_promoted",
+      "key_metric": "order_averaged_to_commutator_anchor_logit_mse_ratio",
+      "key_value": 0.24796639122347383
+    },
+    {
+      "branch": "update_decomposition",
+      "decision": "value_update_dominated_order_sensitivity",
+      "disposition": "mechanism_prior_for_next_audit",
+      "key_metric": "value_only_fraction_of_full",
+      "key_value": 1.2560724600135986
+    }
+  ],
+  "decision": "promoted_topk2_mitigation_closeout_no_promotion",
+  "evidence": {
+    "branch_selector_decision": "promoted_topk2_mitigation_branch_selected",
+    "branch_selector_selected_next_action": "explicit_order_averaging_mitigation_probe",
+    "commutator_value_penalty_best_reduction_fraction": 0.23063087609231459,
+    "commutator_value_penalty_decision": "commutator_value_penalty_not_established",
+    "finite_update_decision": "finite_update_order_sensitivity_ce_bounded_but_residual_material",
+    "low_rank_best_reduction_fraction": 0.08746147951831357,
+    "low_rank_value_decision": "low_rank_value_not_established",
+    "order_averaging_decision": "explicit_order_averaging_diagnostic_candidate_not_promoted",
+    "router_only_fraction_of_full": 0.22705120722820915,
+    "router_policy_decision": "value_composition_prioritized_over_router_policy",
+    "router_policy_reduction_fraction": -0.013875435318412323,
+    "simple_value_best_reduction_fraction": 0.1266509238864246,
+    "simple_value_mitigation_decision": "value_mitigation_not_established",
+    "topk2_mean_commutator_anchor_support_churn": 0.9189453125,
+    "topk2_mean_order_averaged_anchor_ce_delta_vs_best_order": -0.05719125270843506,
+    "topk2_order_averaged_to_commutator_anchor_logit_mse_ratio": 0.24796639122347383,
+    "update_decomposition_decision": "value_update_dominated_order_sensitivity",
+    "value_only_fraction_of_full": 1.2560724600135986
+  },
+  "failures": [],
+  "git_commit": "83b6f42b6cbdc06e6bb071f3cea2396eeb833b61",
+  "next_command": null,
+  "next_step": "implement a no-training pairwise value-interaction localization audit over the promoted top-k-2 checkpoint before proposing another mitigation family",
+  "out_dir": "results/reports/token_larger_promoted_topk2_post_value_router_mitigation_closeout",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "rationale": "Router-policy pinning/freezing did not reduce the commutator, simple value clipping/scaling did not clear the gate, low-rank value updates did not clear the gate, and commutator-aware value penalties did not clear the gate. Explicit order averaging remains diagnostic-only. Because the update decomposition is value-dominated, the next non-duplicative step is to localize pairwise fixed-value interactions before designing another trainable mitigation.",
+  "runtime_seconds": 0.0016,
+  "selected_next_action": "pairwise_value_interaction_localization_audit",
+  "source_rows": [
+    {
+      "claim_status": null,
+      "decision": "value_composition_prioritized_over_router_policy",
+      "path": "results/audits/token_larger_promoted_topk2_router_policy_mitigation_probe/summary.json",
+      "present": true,
+      "source": "router_policy_probe",
+      "status": "pass"
+    },
+    {
+      "claim_status": null,
+      "decision": "promoted_topk2_mitigation_branch_selected",
+      "path": "results/reports/token_larger_promoted_topk2_mitigation_branch_selector/summary.json",
+      "present": true,
+      "source": "branch_selector",
+      "status": "pass"
+    },
+    {
+      "claim_status": null,
+      "decision": "explicit_order_averaging_diagnostic_candidate_not_promoted",
+      "path": "results/audits/token_larger_promoted_topk2_explicit_order_averaging_mitigation_probe/summary.json",
+      "present": true,
+      "source": "order_averaging_probe",
+      "status": "pass"
+    },
+    {
+      "claim_status": null,
+      "decision": "value_update_dominated_order_sensitivity",
+      "path": "results/audits/token_larger_promoted_topk2_update_decomposition_audit/summary.json",
+      "present": true,
+      "source": "update_decomposition_audit",
+      "status": "pass"
+    },
+    {
+      "claim_status": null,
+      "decision": "value_mitigation_not_established",
+      "path": "results/audits/token_larger_promoted_topk2_value_mitigation_gate/summary.json",
+      "present": true,
+      "source": "simple_value_mitigation_gate",
+      "status": "pass"
+    },
+    {
+      "claim_status": null,
+      "decision": "low_rank_value_not_established",
+      "path": "results/audits/token_larger_promoted_topk2_low_rank_value_gate/summary.json",
+      "present": true,
+      "source": "low_rank_value_gate",
+      "status": "pass"
+    },
+    {
+      "claim_status": null,
+      "decision": "commutator_value_penalty_not_established",
+      "path": "results/audits/token_larger_promoted_topk2_commutator_value_penalty_probe/summary.json",
+      "present": true,
+      "source": "commutator_value_penalty_probe",
+      "status": "pass"
+    },
+    {
+      "claim_status": null,
+      "decision": "finite_update_order_sensitivity_ce_bounded_but_residual_material",
+      "path": "results/reports/token_larger_promoted_topk2_finite_update_order_control_audit/summary.json",
+      "present": true,
+      "source": "finite_update_order_control",
+      "status": "pass"
+    },
+    {
+      "claim_status": "strategic_change_level=minor; notify_ben=False",
+      "decision": "Run the planned router-policy mitigation probe, but make it a paired intervention/decomposition over the promoted token-larger contextual top-k-2 model with pinned/sticky/norm-matched router policies and pre-registered commutator/CE/residual-norm gates before any new training.",
+      "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
+      "present": true,
+      "source": "strategy_review",
+      "status": "present"
+    }
+  ],
+  "status": "pass",
+  "strategy_review": {
+    "ben_notification_required": false,
+    "incorporation": "accepted the recommendation to keep contextual top-k-2 as the operational default, withhold causal-cooperation claims, and close out failed router/value mitigation branches before proposing another mitigation family",
+    "notify_ben": false,
+    "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
+    "present": true,
+    "recommended_next_action": "Run the planned router-policy mitigation probe, but make it a paired intervention/decomposition over the promoted token-larger contextual top-k-2 model with pinned/sticky/norm-matched router policies and pre-registered commutator/CE/residual-norm gates before any new training.",
+    "strategic_change_level": "minor"
+  }
+}
