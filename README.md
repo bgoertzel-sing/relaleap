@@ -704,6 +704,38 @@ packet, the report recommends bounded RunPod validation when
 `RELALEAP_GPU_BACKEND=runpod`, while still recording
 `broad_reusable_singleton_claim_excluded`.
 
+After the bounded backend closeout validates the context-conditioned singleton
+decomposition, calibrate whether a deployable no-training context gate is good
+enough to turn the diagnostic into a reusable singleton mechanism:
+
+```bash
+python -m relaleap.experiments.active_topk1_context_gate_suppression_calibration_audit
+```
+
+This writes
+`results/audits/token_larger_active_topk1_context_gate_suppression_calibration/summary.json`,
+`policy_metrics.csv`, `stratum_decisions.csv`, `bootstrap_intervals.csv`,
+`source_rows.csv`, and `notes.md`. It consumes the context-conditioned
+interference packet plus the backend closeout, then tests a deployable stratum
+gate against pre-registered retained-gain, off-context harm-suppression, and
+coverage-matched random-control criteria.
+
+After the retention/churn bracket, singleton reconciliation, context-conditioned
+interference, and deployable gate-calibration packets all exist, synthesize the
+causal-retention interpretation without retraining:
+
+```bash
+python -m relaleap.experiments.active_topk1_causal_retention_synthesis_audit
+```
+
+This writes
+`results/reports/token_larger_active_topk1_causal_retention_synthesis/summary.json`,
+`source_rows.csv`, `evidence_rows.csv`, and `notes.md`. It records active
+rank-matched top-k `1` as a local low-churn retention/control bracket with
+context-gated singleton efficacy when supported, but fails closed on the broad
+causal-retention claim unless the deployable context gate also passes its
+suppression and random-control criteria.
+
 If direct per-token pair synergy and the incremental matched top-k-2 gain gate
 survive the deconfounded intervention audit, run the local null-controlled
 synergy audit before making a causal-cooperation claim or spending Colab/GPU
