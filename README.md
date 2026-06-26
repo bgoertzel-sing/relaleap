@@ -451,6 +451,22 @@ fails closed on missing or inconsistent packets and chooses exactly one of
 order averaging remains a mitigation candidate only, not a causal-cooperation
 claim.
 
+After the selector chooses explicit order averaging, record it as a fail-closed
+diagnostic and choose the next branch without rerunning training:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_explicit_order_averaging_mitigation_probe \
+  --out results/audits/token_larger_promoted_topk2_explicit_order_averaging_mitigation_probe
+```
+
+This writes
+`results/audits/token_larger_promoted_topk2_explicit_order_averaging_mitigation_probe/summary.json`,
+`source_rows.csv`, `order_averaging_rows.csv`, and `notes.md`. The report
+consumes the mitigation-branch selector plus finite-update order-control
+packet, treats order averaging as diagnostic-only and not a promoted
+architecture path, and emits the exact next command for the router-policy
+mitigation branch when the diagnostic source evidence is present.
+
 After refreshed per-token finite-update packets exist, turn the finite-update
 evidence into an explicit causal-control matrix input without rerunning
 training:
