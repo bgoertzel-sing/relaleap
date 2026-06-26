@@ -45,6 +45,8 @@ class _VariantSpec:
     value_gradient_low_rank: int | None = None
     value_update_scale: float = 1.0
     commutator_value_penalty_weight: float = 0.0
+    hub_value_composition_penalty_weight: float = 0.0
+    hub_value_composition_column: int = 2
     anchor_update_group: str = "full"
     transfer_update_group: str = "full"
 
@@ -58,6 +60,7 @@ def run_retention_churn_microtest(
     include_value_mitigation_variants: bool = False,
     include_low_rank_value_variants: bool = False,
     include_commutator_value_penalty_variants: bool = False,
+    include_hub_value_composition_variants: bool = False,
 ) -> dict[str, Any]:
     """Train on slice A then slice B and measure anchor drift/churn."""
 
@@ -284,6 +287,31 @@ def run_retention_churn_microtest(
                     support_router="contextual_mlp",
                     contextual_router_hidden_dim=contextual_router_hidden_dim,
                     commutator_value_penalty_weight=1.00,
+                ),
+            ]
+        )
+    if include_hub_value_composition_variants:
+        specs.extend(
+            [
+                _VariantSpec(
+                    name="hub_value_composition_w010_contextual_topk2",
+                    kind="sparse",
+                    top_k=2,
+                    num_columns=num_columns,
+                    atoms_per_column=atoms_per_column,
+                    support_router="contextual_mlp",
+                    contextual_router_hidden_dim=contextual_router_hidden_dim,
+                    hub_value_composition_penalty_weight=0.10,
+                ),
+                _VariantSpec(
+                    name="hub_value_composition_w100_contextual_topk2",
+                    kind="sparse",
+                    top_k=2,
+                    num_columns=num_columns,
+                    atoms_per_column=atoms_per_column,
+                    support_router="contextual_mlp",
+                    contextual_router_hidden_dim=contextual_router_hidden_dim,
+                    hub_value_composition_penalty_weight=1.00,
                 ),
             ]
         )
@@ -525,6 +553,10 @@ def run_retention_churn_microtest(
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
                 commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
+                hub_value_composition_penalty_weight=(
+                    spec.hub_value_composition_penalty_weight
+                ),
+                hub_value_composition_column=spec.hub_value_composition_column,
                 update_group=spec.anchor_update_group,
             )
             before_b = {key: value.detach().clone() for key, value in residual.state_dict().items()}
@@ -569,6 +601,10 @@ def run_retention_churn_microtest(
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
                 commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
+                hub_value_composition_penalty_weight=(
+                    spec.hub_value_composition_penalty_weight
+                ),
+                hub_value_composition_column=spec.hub_value_composition_column,
                 update_group=spec.anchor_update_group,
             )
             _train_sparse(
@@ -586,6 +622,10 @@ def run_retention_churn_microtest(
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
                 commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
+                hub_value_composition_penalty_weight=(
+                    spec.hub_value_composition_penalty_weight
+                ),
+                hub_value_composition_column=spec.hub_value_composition_column,
                 update_group=spec.transfer_update_group,
             )
             same_order_anchor_final = _sparse_snapshot(
@@ -619,6 +659,10 @@ def run_retention_churn_microtest(
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
                 commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
+                hub_value_composition_penalty_weight=(
+                    spec.hub_value_composition_penalty_weight
+                ),
+                hub_value_composition_column=spec.hub_value_composition_column,
                 update_group=spec.transfer_update_group,
             )
             anchor_after = _sparse_snapshot(
@@ -664,6 +708,10 @@ def run_retention_churn_microtest(
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
                 commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
+                hub_value_composition_penalty_weight=(
+                    spec.hub_value_composition_penalty_weight
+                ),
+                hub_value_composition_column=spec.hub_value_composition_column,
                 update_group=spec.anchor_update_group,
             )
             _train_sparse(
@@ -681,6 +729,10 @@ def run_retention_churn_microtest(
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
                 commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
+                hub_value_composition_penalty_weight=(
+                    spec.hub_value_composition_penalty_weight
+                ),
+                hub_value_composition_column=spec.hub_value_composition_column,
                 update_group=spec.transfer_update_group,
             )
             reverse_anchor_final = _sparse_snapshot(
@@ -722,6 +774,10 @@ def run_retention_churn_microtest(
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
                 commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
+                hub_value_composition_penalty_weight=(
+                    spec.hub_value_composition_penalty_weight
+                ),
+                hub_value_composition_column=spec.hub_value_composition_column,
                 update_group=spec.anchor_update_group,
             )
             _train_sparse(
@@ -739,6 +795,10 @@ def run_retention_churn_microtest(
                 value_gradient_low_rank=spec.value_gradient_low_rank,
                 value_update_scale=spec.value_update_scale,
                 commutator_value_penalty_weight=spec.commutator_value_penalty_weight,
+                hub_value_composition_penalty_weight=(
+                    spec.hub_value_composition_penalty_weight
+                ),
+                hub_value_composition_column=spec.hub_value_composition_column,
                 update_group=spec.transfer_update_group,
             )
             identical_order_anchor_final = _sparse_snapshot(
@@ -909,6 +969,10 @@ def run_retention_churn_microtest(
             ),
             "value_update_scale": spec.value_update_scale,
             "commutator_value_penalty_weight": spec.commutator_value_penalty_weight,
+            "hub_value_composition_penalty_weight": (
+                spec.hub_value_composition_penalty_weight
+            ),
+            "hub_value_composition_column": spec.hub_value_composition_column,
             "anchor_update_group": spec.anchor_update_group,
             "transfer_update_group": spec.transfer_update_group,
         }
@@ -970,6 +1034,9 @@ def run_retention_churn_microtest(
             "include_commutator_value_penalty_variants": (
                 include_commutator_value_penalty_variants
             ),
+            "include_hub_value_composition_variants": (
+                include_hub_value_composition_variants
+            ),
         },
         "artifacts": {
             "summary_json": str(out_dir / "summary.json"),
@@ -1003,6 +1070,8 @@ def _train_sparse(
     value_gradient_low_rank: int | None = None,
     value_update_scale: float = 1.0,
     commutator_value_penalty_weight: float = 0.0,
+    hub_value_composition_penalty_weight: float = 0.0,
+    hub_value_composition_column: int = 2,
     update_group: str = "full",
 ) -> None:
     import torch
@@ -1060,6 +1129,11 @@ def _train_sparse(
                 current_residual_delta,
                 reference_residual_delta,
             )
+        if hub_value_composition_penalty_weight > 0.0:
+            loss = loss + hub_value_composition_penalty_weight * _hub_value_penalty(
+                residual,
+                hub_value_composition_column,
+            )
         loss.backward()
         if value_gradient_low_rank is not None:
             _project_value_gradients_low_rank(value_parameters, value_gradient_low_rank)
@@ -1073,6 +1147,24 @@ def _train_sparse(
                     parameter.grad.mul_(value_update_scale)
         optimizer.step()
     residual.eval()
+
+
+def _hub_value_penalty(residual: Any, hub_column: int) -> Any:
+    import torch
+    import torch.nn.functional as F
+
+    atom_weights = F.softmax(residual.atom_logits, dim=-1)
+    column_values = torch.einsum("ca,cah->ch", atom_weights, residual.atom_values)
+    if hub_column < 0 or hub_column >= int(column_values.shape[0]):
+        hub_column = 0
+    normalized = F.normalize(column_values, dim=-1)
+    hub = normalized[hub_column : hub_column + 1]
+    others = torch.cat([normalized[:hub_column], normalized[hub_column + 1 :]], dim=0)
+    if int(others.numel()) == 0:
+        return column_values.sum() * 0.0
+    cosine_sq = torch.matmul(others, hub.transpose(0, 1)).squeeze(-1).pow(2).mean()
+    hub_norm = column_values[hub_column].pow(2).mean()
+    return cosine_sq + 1e-3 * hub_norm
 
 
 def _project_value_gradients_low_rank(value_parameters: list[Any], rank: int) -> None:
@@ -1666,6 +1758,11 @@ def main() -> None:
         action="store_true",
         help="Also evaluate residual-change penalty top-k-2 variants.",
     )
+    parser.add_argument(
+        "--include-hub-value-composition-variants",
+        action="store_true",
+        help="Also evaluate dominant-hub value-composition penalty top-k-2 variants.",
+    )
     args = parser.parse_args()
     summary = run_retention_churn_microtest(
         args.config,
@@ -1676,6 +1773,9 @@ def main() -> None:
         include_low_rank_value_variants=args.include_low_rank_value_variants,
         include_commutator_value_penalty_variants=(
             args.include_commutator_value_penalty_variants
+        ),
+        include_hub_value_composition_variants=(
+            args.include_hub_value_composition_variants
         ),
     )
     print(

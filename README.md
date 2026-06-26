@@ -523,6 +523,25 @@ audit, finite-update order-control report, and mitigation closeout. The report
 localizes value-composition risk for mitigation design only; it keeps top-k `2`
 causal-cooperation claims blocked and does not promote a new architecture.
 
+After the localization audit identifies a dominant hub-family value interaction,
+run the bounded hub-focused value-composition mitigation probe:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_hub_value_composition_mitigation_probe \
+  --config configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml \
+  --out results/audits/token_larger_promoted_topk2_hub_value_composition_mitigation_probe
+```
+
+This writes
+`results/audits/token_larger_promoted_topk2_hub_value_composition_mitigation_probe/summary.json`,
+`source_rows.csv`, `hub_value_composition_rows.csv`, `variant_metrics.csv`,
+`phase_metrics.csv`, `per_token_commutator.csv`, and
+`hub_value_composition_notes.md`. It adds opt-in local microtest variants that
+penalize value-vector co-activation around the localized hub column, then gates
+them against commutator reduction, transfer retention, support usage, CE drift,
+and residual-stream L2. A passing local gate only selects a candidate for
+RunPod validation; it does not promote top-k `2` causal-cooperation claims.
+
 After refreshed per-token finite-update packets exist, turn the finite-update
 evidence into an explicit causal-control matrix input without rerunning
 training:
