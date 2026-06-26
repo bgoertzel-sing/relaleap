@@ -413,6 +413,22 @@ preserving the rank-matched top-k-1, random fixed top-k-2, and dense active-rank
 controls. A candidate must materially reduce absolute anchor commutator logit
 MSE while retaining transfer improvement and support usage.
 
+After refreshed per-token finite-update packets exist, turn the finite-update
+evidence into an explicit causal-control matrix input without rerunning
+training:
+
+```bash
+python -m relaleap.experiments.promoted_topk2_finite_update_order_control_audit
+```
+
+This writes
+`results/reports/token_larger_promoted_topk2_finite_update_order_control_audit/summary.json`,
+`variant_commutator.csv`, `per_token_commutator_strata.csv`, and
+`causal_control_matrix_extension.csv`. The matrix extension covers promoted
+contextual top-k-2, rank-matched contextual top-k-1, random fixed top-k-2, and
+dense active-rank controls, while keeping top-k-2 causal-cooperation claims
+blocked until downstream selection controls pass.
+
 To inspect the older fixed-singleton gain/regret packet that motivated the
 singleton reconciliation audit, run:
 

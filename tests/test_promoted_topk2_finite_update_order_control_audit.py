@@ -133,6 +133,31 @@ class PromotedTopk2FiniteUpdateOrderControlAuditTest(unittest.TestCase):
             self.assertTrue(
                 (root / "out" / "per_token_commutator_strata.csv").is_file()
             )
+            self.assertTrue(
+                (root / "out" / "causal_control_matrix_extension.csv").is_file()
+            )
+            self.assertEqual(
+                [
+                    row["matrix_role"]
+                    for row in summary["causal_control_matrix_extension_rows"]
+                ],
+                [
+                    "promoted_contextual_topk2",
+                    "rank_matched_contextual_topk1",
+                    "random_fixed_topk2",
+                    "dense_active_rank",
+                ],
+            )
+            topk2_matrix_row = summary["causal_control_matrix_extension_rows"][0]
+            self.assertTrue(topk2_matrix_row["per_token_commutator_rows_available"])
+            self.assertEqual(
+                topk2_matrix_row["claim_gate"],
+                "matrix_input_only_not_causal_cooperation_evidence",
+            )
+            self.assertIn(
+                "position_bin",
+                topk2_matrix_row["available_per_token_strata"],
+            )
             self.assertNotIn(
                 "Existing artifacts do not expose finite-update KL deltas.",
                 summary["source_limitations"],

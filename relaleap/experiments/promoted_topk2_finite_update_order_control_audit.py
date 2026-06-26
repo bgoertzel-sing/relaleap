@@ -28,11 +28,8 @@ DEFAULT_PROBE_DIRS = (
     ),
 )
 DEFAULT_MICROTEST_DIRS = (
-    Path("results/runpod_fetch/audits/runpod_token_larger_task_free_anchor_retention_matrix_20260626"),
-    Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_microtest"),
-    Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_microtest_seed2"),
-    Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_order_averaging_microtest"),
     Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_order_averaging_microtest_seed2"),
+    Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_order_averaging_microtest_seed3"),
 )
 DEFAULT_FINGERPRINT_DIR = Path(
     "results/audits/token_larger_support_wide_promoted_default_causal_column_fingerprint_stability_topk1"
@@ -140,6 +137,10 @@ def run_promoted_topk2_finite_update_order_control_audit(
         token_strata_rows,
         token_correlation_rows,
         per_token_commutator_rows,
+        per_token_commutator_strata_rows,
+    )
+    causal_control_matrix_extension_rows = _causal_control_matrix_extension_rows(
+        variant_rows,
         per_token_commutator_strata_rows,
     )
     signals = {
@@ -276,6 +277,9 @@ def run_promoted_topk2_finite_update_order_control_audit(
         "token_strata_rows": token_strata_rows,
         "token_correlation_rows": token_correlation_rows,
         "per_token_commutator_strata_rows": per_token_commutator_strata_rows,
+        "causal_control_matrix_extension_rows": (
+            causal_control_matrix_extension_rows
+        ),
         "metrics": metrics,
         "signals": signals,
         "source_limitations": [
@@ -315,6 +319,9 @@ def run_promoted_topk2_finite_update_order_control_audit(
             "per_token_commutator_strata_csv": str(
                 out_dir / "per_token_commutator_strata.csv"
             ),
+            "causal_control_matrix_extension_csv": str(
+                out_dir / "causal_control_matrix_extension.csv"
+            ),
             "notes_md": str(out_dir / "notes.md"),
         },
     }
@@ -331,6 +338,10 @@ def run_promoted_topk2_finite_update_order_control_audit(
     _write_csv(
         out_dir / "per_token_commutator_strata.csv",
         per_token_commutator_strata_rows,
+    )
+    _write_csv(
+        out_dir / "causal_control_matrix_extension.csv",
+        causal_control_matrix_extension_rows,
     )
     _write_notes(out_dir / "notes.md", summary)
     return summary
@@ -601,6 +612,106 @@ def _per_token_commutator_strata_rows(
                     "mean_residual_norm": _mean_csv_field(group, "residual_norm"),
                 }
             )
+    return out
+
+
+def _causal_control_matrix_extension_rows(
+    variant_rows: list[dict[str, Any]],
+    per_token_commutator_strata_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Describe finite-update controls for the next causal fingerprint matrix."""
+
+    roles = [
+        (
+            "promoted_contextual_topk2",
+            "promoted_contextual_topk2",
+            "active promoted support-routing default; causal-cooperation claim remains blocked",
+        ),
+        (
+            "rank_matched_contextual_topk1",
+            "rank_matched_contextual_topk1",
+            "rank-matched sparse active causal bracket",
+        ),
+        (
+            "random_fixed_topk2",
+            "random_fixed_topk2",
+            "router-free fixed-support sparse control",
+        ),
+        (
+            "norm_matched_dense_active_rank",
+            "dense_active_rank",
+            "dense active-rank control",
+        ),
+    ]
+    available_strata = sorted(
+        {
+            str(row.get("stratum"))
+            for row in per_token_commutator_strata_rows
+            if row.get("stratum")
+        }
+    )
+    out: list[dict[str, Any]] = []
+    for variant, matrix_role, interpretation in roles:
+        rows = _rows_for_variant(variant_rows, variant)
+        variant_strata = [
+            row
+            for row in per_token_commutator_strata_rows
+            if row.get("stratum") == "variant" and row.get("value") == variant
+        ]
+        variant_stratum = variant_strata[0] if variant_strata else {}
+        out.append(
+            {
+                "variant": variant,
+                "matrix_role": matrix_role,
+                "interpretation": interpretation,
+                "source_packet_count": len({row.get("packet") for row in rows}),
+                "kind": _first(row.get("kind") for row in rows if row.get("kind")),
+                "top_k": _mean_field(rows, "top_k"),
+                "num_columns": _mean_field(rows, "num_columns"),
+                "active_parameters_proxy": _mean_field(
+                    rows, "active_parameters_proxy"
+                ),
+                "mean_anchor_ce_abs_delta": _mean_field(
+                    rows, "commutator_anchor_ce_abs_delta"
+                ),
+                "mean_transfer_ce_abs_delta": _mean_field(
+                    rows, "commutator_transfer_ce_abs_delta"
+                ),
+                "mean_anchor_logit_mse": _mean_field(
+                    rows, "commutator_anchor_logit_mse"
+                ),
+                "mean_transfer_logit_mse": _mean_field(
+                    rows, "commutator_transfer_logit_mse"
+                ),
+                "mean_anchor_residual_stream_l2": _mean_field(
+                    rows, "commutator_anchor_residual_stream_l2"
+                ),
+                "mean_transfer_residual_stream_l2": _mean_field(
+                    rows, "commutator_transfer_residual_stream_l2"
+                ),
+                "mean_anchor_support_churn": _mean_field(
+                    rows, "commutator_anchor_support_churn"
+                ),
+                "per_token_commutator_rows_available": bool(variant_stratum),
+                "per_token_commutator_row_count": variant_stratum.get("row_count"),
+                "per_token_mean_ce_abs_delta": variant_stratum.get(
+                    "mean_ce_abs_delta"
+                ),
+                "per_token_mean_symmetric_kl": variant_stratum.get(
+                    "mean_symmetric_kl"
+                ),
+                "per_token_mean_logit_mse": variant_stratum.get("mean_logit_mse"),
+                "per_token_mean_residual_delta_l2": variant_stratum.get(
+                    "mean_residual_delta_l2"
+                ),
+                "available_per_token_strata": ";".join(available_strata),
+                "claim_gate": (
+                    "matrix_input_only_not_causal_cooperation_evidence"
+                    if variant == "promoted_contextual_topk2"
+                    else "control_matrix_input"
+                ),
+            }
+        )
     return out
 
 
