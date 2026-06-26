@@ -12,6 +12,7 @@ from relaleap.experiments.promoted_topk2_functional_churn_control_audit import (
     FUNCTIONAL_CHURN_BOUNDED_WITH_COMMUTATOR_RISK,
 )
 from relaleap.experiments.promoted_topk2_retention_synthesis_gate import (
+    CONTEXTUAL_TOPK2_ROUTER_DEFAULT_TOPK1_DIAGNOSTIC,
     INSUFFICIENT_EVIDENCE,
     RETENTION_SEPARABILITY_RISK_MITIGATION_RECOMMENDED,
     run_promoted_topk2_retention_synthesis_gate,
@@ -81,6 +82,7 @@ class PromotedTopk2RetentionSynthesisGateTest(unittest.TestCase):
                 functional_churn_dir=functional,
                 support_selection_dir=support,
                 deconfounded_dir=deconfounded,
+                context_gate_dir=None,
                 out_dir=root / "out",
             )
 
@@ -111,6 +113,7 @@ class PromotedTopk2RetentionSynthesisGateTest(unittest.TestCase):
                 functional_churn_dir=root / "missing_functional",
                 support_selection_dir=root / "missing_support",
                 deconfounded_dir=root / "missing_deconfounded",
+                context_gate_dir=None,
                 out_dir=root / "out",
             )
 
@@ -120,6 +123,81 @@ class PromotedTopk2RetentionSynthesisGateTest(unittest.TestCase):
             self.assertIn("artifact", fields)
             self.assertIn("status", fields)
             self.assertIn("required_variants", fields)
+
+    def test_keeps_topk2_default_when_topk1_gate_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            seed1 = root / "seed1"
+            seed2 = root / "seed2"
+            finite = root / "finite"
+            functional = root / "functional"
+            support = root / "support"
+            deconfounded = root / "deconfounded"
+            context_gate = root / "context_gate"
+            _write_microtest(seed1, topk2_transfer=0.91, topk1_transfer=0.92)
+            _write_microtest(seed2, topk2_transfer=0.95, topk1_transfer=0.96)
+            _write_json(
+                finite / "summary.json",
+                {
+                    "status": "pass",
+                    "decision": FINITE_UPDATE_ORDER_SENSITIVITY_CE_BOUNDED,
+                    "metrics": {
+                        "topk2_to_topk1_mean_commutator_anchor_logit_mse_ratio": 24.0
+                    },
+                },
+            )
+            _write_json(
+                functional / "summary.json",
+                {
+                    "status": "pass",
+                    "decision": FUNCTIONAL_CHURN_BOUNDED_WITH_COMMUTATOR_RISK,
+                },
+            )
+            _write_json(
+                support / "summary.json",
+                {
+                    "status": "pass",
+                    "decision": PROMOTED_TOPK2_SUPPORT_SELECTION_QUALITY_ESTABLISHED,
+                    "metrics": {
+                        "oracle_support_regret": 0.0025,
+                        "oracle_support_regret_positive_fraction": 0.05,
+                    },
+                },
+            )
+            _write_json(
+                deconfounded / "summary.json",
+                {
+                    "status": "pass",
+                    "decision": "topk2_comparative_causal_cooperation_not_supported",
+                    "evidence": {"topk2_ce_deficit_vs_topk1": 0.04},
+                },
+            )
+            _write_json(
+                context_gate / "summary.json",
+                {
+                    "status": "pass",
+                    "decision": "deployable_context_gate_suppression_calibration_failed",
+                },
+            )
+
+            summary = run_promoted_topk2_retention_synthesis_gate(
+                microtest_dirs=(seed1, seed2),
+                finite_update_dir=finite,
+                functional_churn_dir=functional,
+                support_selection_dir=support,
+                deconfounded_dir=deconfounded,
+                context_gate_dir=context_gate,
+                out_dir=root / "out",
+            )
+
+            self.assertEqual(summary["status"], "pass")
+            self.assertEqual(
+                summary["decision"],
+                CONTEXTUAL_TOPK2_ROUTER_DEFAULT_TOPK1_DIAGNOSTIC,
+            )
+            self.assertTrue(summary["signals"]["topk1_transfer_competitive"])
+            self.assertTrue(summary["signals"]["topk1_context_gate_failed"])
+            self.assertIn("finite-update order-symmetrization", summary["next_step"])
 
 
 def _write_microtest(path: Path, *, topk2_transfer: float, topk1_transfer: float) -> None:

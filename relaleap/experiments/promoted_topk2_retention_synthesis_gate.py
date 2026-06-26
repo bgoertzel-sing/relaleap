@@ -21,7 +21,10 @@ from relaleap.experiments.promoted_topk2_support_selection_quality_audit import 
 
 
 DEFAULT_MICROTEST_DIRS = (
-    Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_microtest"),
+    Path(
+        "results/runpod_fetch/audits/"
+        "runpod_token_larger_task_free_anchor_retention_matrix_20260626"
+    ),
     Path("results/runpod_fetch/audits/runpod_token_larger_retention_churn_microtest_seed2"),
 )
 DEFAULT_FINITE_UPDATE_DIR = Path(
@@ -36,6 +39,9 @@ DEFAULT_SUPPORT_SELECTION_DIR = Path(
 DEFAULT_DECONFOUNDED_DIR = Path(
     "results/audits/token_larger_topk2_vs_rank_matched_topk1_deconfounded_intervention"
 )
+DEFAULT_CONTEXT_GATE_DIR = Path(
+    "results/audits/token_larger_active_topk1_context_gate_suppression_calibration"
+)
 DEFAULT_OUT_DIR = Path(
     "results/reports/token_larger_promoted_topk2_retention_synthesis_gate"
 )
@@ -43,8 +49,12 @@ DEFAULT_OUT_DIR = Path(
 RETENTION_SEPARABILITY_RISK_MITIGATION_RECOMMENDED = (
     "retention_separability_risk_mitigation_recommended"
 )
+CONTEXTUAL_TOPK2_ROUTER_DEFAULT_TOPK1_DIAGNOSTIC = (
+    "contextual_topk2_router_default_topk1_diagnostic"
+)
 ANOTHER_RETENTION_SEED_RECOMMENDED = "another_retention_seed_recommended"
 INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+TOPK1_GATE_FAILED = "deployable_context_gate_suppression_calibration_failed"
 
 _REQUIRED_VARIANTS = (
     "promoted_contextual_topk2",
@@ -61,6 +71,7 @@ def run_promoted_topk2_retention_synthesis_gate(
     functional_churn_dir: Path = DEFAULT_FUNCTIONAL_CHURN_DIR,
     support_selection_dir: Path = DEFAULT_SUPPORT_SELECTION_DIR,
     deconfounded_dir: Path = DEFAULT_DECONFOUNDED_DIR,
+    context_gate_dir: Path | None = DEFAULT_CONTEXT_GATE_DIR,
     out_dir: Path = DEFAULT_OUT_DIR,
     high_support_churn_threshold: float = 0.5,
     commutator_ratio_threshold: float = 10.0,
@@ -72,6 +83,11 @@ def run_promoted_topk2_retention_synthesis_gate(
     functional_churn = _read_json_object(functional_churn_dir / "summary.json")
     support_selection = _read_json_object(support_selection_dir / "summary.json")
     deconfounded = _read_json_object(deconfounded_dir / "summary.json")
+    context_gate = (
+        _read_json_object(context_gate_dir / "summary.json")
+        if context_gate_dir is not None and (context_gate_dir / "summary.json").is_file()
+        else {}
+    )
     microtest_rows = [
         _microtest_row(index, path) for index, path in enumerate(microtest_dirs, start=1)
     ]
@@ -84,6 +100,17 @@ def run_promoted_topk2_retention_synthesis_gate(
         _source_row("functional_churn_control", functional_churn_dir / "summary.json", functional_churn),
         _source_row("support_selection_quality", support_selection_dir / "summary.json", support_selection),
         _source_row("deconfounded_intervention", deconfounded_dir / "summary.json", deconfounded),
+        *(
+            [
+                _source_row(
+                    "context_gate_suppression_calibration",
+                    context_gate_dir / "summary.json",
+                    context_gate,
+                )
+            ]
+            if context_gate
+            else []
+        ),
     ]
     metrics = _metrics(microtest_rows, finite_update, support_selection, deconfounded)
     signals = _signals(
@@ -92,6 +119,7 @@ def run_promoted_topk2_retention_synthesis_gate(
         functional_churn,
         support_selection,
         deconfounded,
+        context_gate,
         high_support_churn_threshold=high_support_churn_threshold,
         commutator_ratio_threshold=commutator_ratio_threshold,
         low_topk1_support_churn_threshold=low_topk1_support_churn_threshold,
@@ -107,6 +135,34 @@ def run_promoted_topk2_retention_synthesis_gate(
             "missing, failing, or lacks required variant metrics."
         )
         next_step = "repair_missing_retention_synthesis_source_packets"
+    elif (
+        signals["topk2_transfer_beats_random_and_dense"]
+        and signals["topk2_support_selection_quality_established"]
+        and signals["topk2_high_support_churn_replicated"]
+        and signals["topk2_commutator_risk_replicated"]
+        and signals["topk1_low_churn_replicated"]
+        and signals["topk1_transfer_competitive"]
+        and signals["topk1_context_gate_failed"]
+    ):
+        status = "pass"
+        decision = CONTEXTUAL_TOPK2_ROUTER_DEFAULT_TOPK1_DIAGNOSTIC
+        rationale = (
+            "The newest fetched RunPod anchor-retention matrix repeats the same "
+            "tradeoff: rank-matched contextual top-k-1 is cleaner on support churn "
+            "and finite-update commutators and is transfer-competitive, but the "
+            "deployable context-gate suppression audit failed. That blocks a "
+            "scientific shift to top-k-1 as a reusable singleton mechanism. "
+            "Promoted contextual top-k-2 should remain the router default for CE "
+            "and support-selection evidence while top-k-1 stays a diagnostic "
+            "retention bracket. The next non-duplicative step is to probe "
+            "finite-update order symmetrization rather than adding more low-rank "
+            "value or top-k-1 singleton-gate variants."
+        )
+        next_step = (
+            "run a local no-training finite-update order-symmetrization audit for "
+            "promoted contextual top-k-2, retaining rank-matched top-k-1, random "
+            "fixed top-k-2, and dense active-rank controls"
+        )
     elif (
         signals["topk2_transfer_beats_random_and_dense"]
         and signals["topk2_support_selection_quality_established"]
@@ -266,6 +322,11 @@ def _metrics(
         "mean_topk1_transfer_ce_improvement": _mean_field(
             microtest_rows, "topk1_transfer_ce_improvement"
         ),
+        "mean_topk2_transfer_improvement_minus_topk1": _mean_delta_fields(
+            microtest_rows,
+            "topk2_transfer_ce_improvement",
+            "topk1_transfer_ce_improvement",
+        ),
         "mean_random_fixed_topk2_transfer_ce_improvement": _mean_field(
             microtest_rows, "random_fixed_topk2_transfer_ce_improvement"
         ),
@@ -327,6 +388,7 @@ def _signals(
     functional_churn: dict[str, Any],
     support_selection: dict[str, Any],
     deconfounded: dict[str, Any],
+    context_gate: dict[str, Any],
     *,
     high_support_churn_threshold: float,
     commutator_ratio_threshold: float,
@@ -338,6 +400,9 @@ def _signals(
             metrics.get("min_topk2_transfer_advantage_vs_random_fixed_topk2")
         )
         and _positive(metrics.get("min_topk2_transfer_advantage_vs_dense")),
+        "topk1_transfer_competitive": _at_most(
+            metrics.get("mean_topk2_transfer_improvement_minus_topk1"), 0.02
+        ),
         "topk2_high_support_churn_replicated": _at_least(
             metrics.get("mean_topk2_support_churn_after_transfer"),
             high_support_churn_threshold,
@@ -359,6 +424,7 @@ def _signals(
         == PROMOTED_TOPK2_SUPPORT_SELECTION_QUALITY_ESTABLISHED,
         "topk2_causal_cooperation_not_supported": deconfounded.get("decision")
         == "topk2_comparative_causal_cooperation_not_supported",
+        "topk1_context_gate_failed": context_gate.get("decision") == TOPK1_GATE_FAILED,
     }
 
 
@@ -539,6 +605,12 @@ def _mean_field(rows: list[dict[str, Any]], field: str) -> float | None:
     return mean(numeric) if numeric else None
 
 
+def _mean_delta_fields(rows: list[dict[str, Any]], left: str, right: str) -> float | None:
+    values = [_delta(row.get(left), row.get(right)) for row in rows]
+    numeric = [value for value in values if value is not None]
+    return mean(numeric) if numeric else None
+
+
 def _min_field(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_float_or_none(row.get(field)) for row in rows]
     numeric = [value for value in values if value is not None]
@@ -591,6 +663,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--functional-churn-dir", type=Path, default=DEFAULT_FUNCTIONAL_CHURN_DIR)
     parser.add_argument("--support-selection-dir", type=Path, default=DEFAULT_SUPPORT_SELECTION_DIR)
     parser.add_argument("--deconfounded-dir", type=Path, default=DEFAULT_DECONFOUNDED_DIR)
+    parser.add_argument("--context-gate-dir", type=Path, default=DEFAULT_CONTEXT_GATE_DIR)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     args = parser.parse_args(argv)
     summary = run_promoted_topk2_retention_synthesis_gate(
@@ -599,6 +672,7 @@ def main(argv: list[str] | None = None) -> int:
         functional_churn_dir=args.functional_churn_dir,
         support_selection_dir=args.support_selection_dir,
         deconfounded_dir=args.deconfounded_dir,
+        context_gate_dir=args.context_gate_dir,
         out_dir=args.out,
     )
     print(json.dumps({"status": summary["status"], "decision": summary["decision"]}))
