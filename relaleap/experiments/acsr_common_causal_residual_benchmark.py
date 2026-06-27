@@ -299,6 +299,16 @@ def _run_benchmark(
     teacher_update = dense_causal.get("residual_update_tensor")
     if teacher_update is None:
         teacher_update = torch.zeros_like(hidden)
+    frequency_support = _frequency_matched_random_support(
+        torch,
+        topk2_support,
+        num_columns=num_columns,
+        seed=seed + 17,
+    )
+    shuffled_support = _shuffle_support(torch, topk2_support, seed=seed + 29)
+    token_position_support = _token_position_support(torch, topk2_support, num_columns)
+    oracle_support = _oracle_support_topk(torch, F, base, topk2, hidden, targets, vocab_size, topk2_scores, k=2)
+
     teacher_distilled = _train_sparse_teacher_distilled_arm(
         torch,
         F,
@@ -319,6 +329,99 @@ def _run_benchmark(
         base_loss=base_loss,
         heldout_base=heldout_base,
         heldout_mask=mask,
+    )
+    teacher_distilled_target_norm = _train_sparse_teacher_distilled_arm(
+        torch,
+        F,
+        base,
+        ResidualColumns,
+        hidden,
+        targets,
+        vocab_size,
+        teacher_update,
+        label="sparse_teacher_distilled_target_norm_topk2",
+        hidden_dim=hidden_dim,
+        num_columns=num_columns,
+        atoms_per_column=atoms_per_column,
+        contextual_width=contextual_width,
+        learning_rate=learning_rate,
+        steps=max(train_steps * 4, train_steps + 24),
+        base_losses=base_losses,
+        base_loss=base_loss,
+        heldout_base=heldout_base,
+        heldout_mask=mask,
+        norm_loss_weight=1.0,
+        posthoc_target_norm_scale=True,
+    )
+    teacher_distilled_oracle = _train_sparse_teacher_distilled_arm(
+        torch,
+        F,
+        base,
+        ResidualColumns,
+        hidden,
+        targets,
+        vocab_size,
+        teacher_update,
+        label="sparse_teacher_distilled_oracle_support_topk2",
+        hidden_dim=hidden_dim,
+        num_columns=num_columns,
+        atoms_per_column=atoms_per_column,
+        contextual_width=contextual_width,
+        learning_rate=learning_rate,
+        steps=max(train_steps * 4, train_steps + 24),
+        base_losses=base_losses,
+        base_loss=base_loss,
+        heldout_base=heldout_base,
+        heldout_mask=mask,
+        fixed_support=oracle_support,
+        norm_loss_weight=1.0,
+        posthoc_target_norm_scale=True,
+    )
+    teacher_distilled_soft = _train_sparse_teacher_distilled_soft_arm(
+        torch,
+        F,
+        base,
+        ResidualColumns,
+        hidden,
+        targets,
+        vocab_size,
+        teacher_update,
+        label="sparse_teacher_distilled_soft_temperature_topk2",
+        hidden_dim=hidden_dim,
+        num_columns=num_columns,
+        atoms_per_column=atoms_per_column,
+        contextual_width=contextual_width,
+        learning_rate=learning_rate,
+        steps=max(train_steps * 4, train_steps + 24),
+        base_losses=base_losses,
+        base_loss=base_loss,
+        heldout_base=heldout_base,
+        heldout_mask=mask,
+        temperature=0.5,
+    )
+    teacher_distilled_token_position = _train_sparse_teacher_distilled_arm(
+        torch,
+        F,
+        base,
+        ResidualColumns,
+        hidden,
+        targets,
+        vocab_size,
+        teacher_update,
+        label="sparse_teacher_distilled_token_position_null",
+        hidden_dim=hidden_dim,
+        num_columns=num_columns,
+        atoms_per_column=atoms_per_column,
+        contextual_width=contextual_width,
+        learning_rate=learning_rate,
+        steps=max(train_steps * 4, train_steps + 24),
+        base_losses=base_losses,
+        base_loss=base_loss,
+        heldout_base=heldout_base,
+        heldout_mask=mask,
+        fixed_support=token_position_support,
+        norm_loss_weight=1.0,
+        posthoc_target_norm_scale=True,
     )
     shuffled_teacher_update = _shuffle_teacher_update(torch, teacher_update, seed=seed + 43)
     shuffled_teacher_distilled = _train_sparse_teacher_distilled_arm(
@@ -373,20 +476,31 @@ def _run_benchmark(
         target_update_l2=target_l2,
         heldout_mask=mask,
     )
-
-    frequency_support = _frequency_matched_random_support(
+    shuffled_causal_inputs = _shuffle_feature_rows(torch, causal_inputs, seed=seed + 59)
+    dense_shuffled_causal, dense_shuffled_causal_losses, dense_shuffled_causal_l2 = _train_dense_arm(
         torch,
-        topk2_support,
-        num_columns=num_columns,
-        seed=seed + 17,
+        F,
+        nn,
+        base,
+        hidden,
+        targets,
+        vocab_size,
+        shuffled_causal_inputs,
+        label="rank_flop_matched_shuffled_causal_feature_dense_null",
+        target_parameter_count=sparse_value_params,
+        steps=dense_steps,
+        base_losses=base_losses,
+        target_update_l2=target_l2,
+        heldout_mask=mask,
     )
-    shuffled_support = _shuffle_support(torch, topk2_support, seed=seed + 29)
-    token_position_support = _token_position_support(torch, topk2_support, num_columns)
-    oracle_support = _oracle_support_topk(torch, F, base, topk2, hidden, targets, vocab_size, topk2_scores, k=2)
     sparse_arms = [
         contextual2,
         contextual1,
         teacher_distilled,
+        teacher_distilled_target_norm,
+        teacher_distilled_oracle,
+        teacher_distilled_soft,
+        teacher_distilled_token_position,
         shuffled_teacher_distilled,
         _eval_sparse_arm(torch, F, base, topk2, hidden, targets, vocab_size, "sparse_frequency_matched_random", frequency_support, topk2_scores, base_losses, base_loss, heldout_base, mask),
         _eval_sparse_arm(torch, F, base, topk2, hidden, targets, vocab_size, "sparse_shuffled_support_marginals", shuffled_support, topk2_scores, base_losses, base_loss, heldout_base, mask),
@@ -394,14 +508,22 @@ def _run_benchmark(
         _eval_sparse_arm(torch, F, base, topk2, hidden, targets, vocab_size, "sparse_oracle_support", oracle_support, topk2_scores, base_losses, base_loss, heldout_base, mask),
     ]
     dense_ladder_rows = [row for row, _, _ in dense_ladder]
-    arm_rows = [_base_arm(base_loss, heldout_base)] + sparse_arms + [dense_causal] + dense_ladder_rows + [dense_position]
+    arm_rows = (
+        [_base_arm(base_loss, heldout_base)]
+        + sparse_arms
+        + [dense_causal]
+        + dense_ladder_rows
+        + [dense_position, dense_shuffled_causal]
+    )
     dense_loss_by_arm = {
         "rank_flop_matched_causal_dense": dense_causal_losses,
         "rank_flop_matched_token_position_dense": dense_position_losses,
+        "rank_flop_matched_shuffled_causal_feature_dense_null": dense_shuffled_causal_losses,
     }
     dense_l2_by_arm = {
         "rank_flop_matched_causal_dense": dense_causal_l2,
         "rank_flop_matched_token_position_dense": dense_position_l2,
+        "rank_flop_matched_shuffled_causal_feature_dense_null": dense_shuffled_causal_l2,
     }
     for row, losses, l2 in dense_ladder:
         dense_loss_by_arm[str(row["arm"])] = losses
@@ -414,6 +536,10 @@ def _run_benchmark(
             "sparse_contextual_topk2": contextual2["per_token_losses"],
             "sparse_rank_matched_topk1": contextual1["per_token_losses"],
             "sparse_teacher_distilled_norm_topk2": teacher_distilled["per_token_losses"],
+            "sparse_teacher_distilled_target_norm_topk2": teacher_distilled_target_norm["per_token_losses"],
+            "sparse_teacher_distilled_oracle_support_topk2": teacher_distilled_oracle["per_token_losses"],
+            "sparse_teacher_distilled_soft_temperature_topk2": teacher_distilled_soft["per_token_losses"],
+            "sparse_teacher_distilled_token_position_null": teacher_distilled_token_position["per_token_losses"],
             "sparse_teacher_distilled_shuffled_teacher_null": shuffled_teacher_distilled["per_token_losses"],
             },
             **dense_loss_by_arm,
@@ -423,6 +549,10 @@ def _run_benchmark(
             "sparse_contextual_topk2": contextual2["residual_update_l2_per_token"],
             "sparse_rank_matched_topk1": contextual1["residual_update_l2_per_token"],
             "sparse_teacher_distilled_norm_topk2": teacher_distilled["residual_update_l2_per_token"],
+            "sparse_teacher_distilled_target_norm_topk2": teacher_distilled_target_norm["residual_update_l2_per_token"],
+            "sparse_teacher_distilled_oracle_support_topk2": teacher_distilled_oracle["residual_update_l2_per_token"],
+            "sparse_teacher_distilled_soft_temperature_topk2": teacher_distilled_soft["residual_update_l2_per_token"],
+            "sparse_teacher_distilled_token_position_null": teacher_distilled_token_position["residual_update_l2_per_token"],
             "sparse_teacher_distilled_shuffled_teacher_null": shuffled_teacher_distilled["residual_update_l2_per_token"],
             },
             **dense_l2_by_arm,
@@ -605,6 +735,9 @@ def _train_sparse_teacher_distilled_arm(
     base_loss: float,
     heldout_base: float,
     heldout_mask: Any,
+    fixed_support: Any | None = None,
+    norm_loss_weight: float = 0.25,
+    posthoc_target_norm_scale: bool = False,
 ) -> dict[str, Any]:
     residual = residual_cls(
         hidden_dim=hidden_dim,
@@ -622,7 +755,7 @@ def _train_sparse_teacher_distilled_arm(
     target_l2 = teacher_l2.mean().detach()
     for _ in range(max(1, steps)):
         optimizer.zero_grad(set_to_none=True)
-        updated = residual(hidden.detach())
+        updated = residual(hidden.detach(), support_indices=fixed_support)
         update = updated - hidden.detach()
         logits = base.decode(updated)
         update_l2 = update[:, :-1, :].reshape(-1, update.shape[-1]).norm(dim=-1).mean()
@@ -632,16 +765,22 @@ def _train_sparse_teacher_distilled_arm(
             logits[:, :-1, :].reshape(-1, vocab_size),
             targets[:, :-1].reshape(-1),
         )
-        loss = direction_loss + 0.25 * norm_loss + 0.05 * ce_loss
+        loss = direction_loss + norm_loss_weight * norm_loss + 0.05 * ce_loss
         loss.backward()
         optimizer.step()
     residual.eval()
     with torch.no_grad():
+        if posthoc_target_norm_scale:
+            scored = residual(hidden.detach(), support_indices=fixed_support)
+            scored_update = scored - hidden.detach()
+            scored_l2 = scored_update[:, :-1, :].reshape(-1, scored_update.shape[-1]).norm(dim=-1).mean()
+            if float(scored_l2.item()) > 1e-12:
+                residual.atom_values.mul_(float((target_l2 / scored_l2).item()))
         scores = residual._score_columns(hidden) + residual.score_tie_breaker.to(
             device=hidden.device,
             dtype=hidden.dtype,
         )
-        support = scores.topk(2, dim=-1).indices
+        support = fixed_support if fixed_support is not None else scores.topk(2, dim=-1).indices
     row = _eval_sparse_arm(
         torch,
         F,
@@ -682,6 +821,124 @@ def _train_sparse_teacher_distilled_arm(
     return row
 
 
+def _train_sparse_teacher_distilled_soft_arm(
+    torch: Any,
+    F: Any,
+    base: Any,
+    residual_cls: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    teacher_update: Any,
+    *,
+    label: str,
+    hidden_dim: int,
+    num_columns: int,
+    atoms_per_column: int,
+    contextual_width: int,
+    learning_rate: float,
+    steps: int,
+    base_losses: Any,
+    base_loss: float,
+    heldout_base: float,
+    heldout_mask: Any,
+    temperature: float,
+) -> dict[str, Any]:
+    residual = residual_cls(
+        hidden_dim=hidden_dim,
+        num_columns=num_columns,
+        atoms_per_column=atoms_per_column,
+        top_k=2,
+        support_router="contextual_mlp",
+        contextual_router_hidden_dim=contextual_width,
+    )
+    residual.train()
+    optimizer = torch.optim.AdamW(residual.parameters(), lr=learning_rate)
+    teacher = teacher_update.detach()
+    teacher_direction = _normalize_update(F, teacher)
+    teacher_l2 = teacher[:, :-1, :].reshape(-1, teacher.shape[-1]).norm(dim=-1)
+    target_l2 = teacher_l2.mean().detach()
+    for _ in range(max(1, steps)):
+        optimizer.zero_grad(set_to_none=True)
+        updated, update = _soft_residual_update(torch, F, residual, hidden.detach(), temperature=temperature)
+        logits = base.decode(updated)
+        update_l2 = update[:, :-1, :].reshape(-1, update.shape[-1]).norm(dim=-1).mean()
+        direction_loss = F.mse_loss(_normalize_update(F, update), teacher_direction)
+        norm_loss = (update_l2 - target_l2) ** 2
+        ce_loss = F.cross_entropy(
+            logits[:, :-1, :].reshape(-1, vocab_size),
+            targets[:, :-1].reshape(-1),
+        )
+        loss = direction_loss + norm_loss + 0.05 * ce_loss
+        loss.backward()
+        optimizer.step()
+    residual.eval()
+    with torch.no_grad():
+        updated, residual_update = _soft_residual_update(torch, F, residual, hidden, temperature=temperature)
+        raw_l2 = residual_update[:, :-1, :].reshape(-1, residual_update.shape[-1]).norm(dim=-1).mean()
+        if float(raw_l2.item()) > 1e-12:
+            residual.atom_values.mul_(float((target_l2 / raw_l2).item()))
+            updated, residual_update = _soft_residual_update(torch, F, residual, hidden, temperature=temperature)
+        logits = base.decode(updated)
+        losses = _per_token_ce(F, logits, targets, vocab_size)
+        l2 = residual_update[:, :-1, :].reshape(-1, residual_update.shape[-1]).norm(dim=-1)
+        heldout_loss = float(losses[heldout_mask].mean().item())
+        teacher_flat = teacher[:, :-1, :].reshape(-1, teacher.shape[-1])
+        residual_flat = residual_update[:, :-1, :].reshape(-1, residual_update.shape[-1])
+        teacher_l2_flat = teacher_flat.norm(dim=-1)
+        residual_l2_flat = residual_flat.norm(dim=-1)
+        cosine = F.cosine_similarity(residual_flat, teacher_flat, dim=-1, eps=1e-8)
+        mse = ((residual_flat - teacher_flat) ** 2).mean(dim=-1)
+    return {
+        "arm": label,
+        "family": "sparse",
+        "top_k": "soft_all",
+        "temperature": temperature,
+        "all_ce_loss": float(losses.mean().item()),
+        "heldout_ce_loss": heldout_loss,
+        "delta_vs_base_ce": float(losses.mean().item()) - base_loss,
+        "heldout_delta_vs_base_ce": heldout_loss - heldout_base,
+        "residual_update_l2_mean": float(l2.mean().item()),
+        "heldout_residual_update_l2": float(l2[heldout_mask].mean().item()),
+        "active_params_proxy": int(residual.atom_values.shape[-1] * residual.num_columns),
+        "stored_params_proxy": _parameter_count(residual),
+        "flops_proxy": int(residual.atom_values.shape[-1] * residual.num_columns),
+        "support_entropy": "",
+        "used_columns": residual.num_columns,
+        "unique_support_sets": "soft_all",
+        "teacher_residual_cosine": float(cosine[heldout_mask].mean().item()),
+        "teacher_residual_mse": float(mse[heldout_mask].mean().item()),
+        "teacher_heldout_residual_update_l2": float(teacher_l2_flat[heldout_mask].mean().item()),
+        "heldout_residual_l2_ratio_to_teacher": (
+            ""
+            if float(teacher_l2_flat[heldout_mask].mean().item()) <= 1e-12
+            else float(residual_l2_flat[heldout_mask].mean().item())
+            / float(teacher_l2_flat[heldout_mask].mean().item())
+        ),
+        "per_token_losses": losses.detach(),
+        "residual_update_l2_per_token": l2.detach(),
+    }
+
+
+def _soft_residual_update(
+    torch: Any,
+    F: Any,
+    residual: Any,
+    hidden: Any,
+    *,
+    temperature: float,
+) -> tuple[Any, Any]:
+    scores = residual._score_columns(hidden) + residual.score_tie_breaker.to(
+        device=hidden.device,
+        dtype=hidden.dtype,
+    )
+    column_weights = F.softmax(scores / max(temperature, 1e-6), dim=-1)
+    atom_weights = F.softmax(residual.atom_logits, dim=-1)
+    column_values = torch.einsum("ca,cah->ch", atom_weights, residual.atom_values)
+    update = torch.einsum("bsc,ch->bsh", column_weights, column_values)
+    return hidden + update, update
+
+
 def _normalize_update(F: Any, update: Any) -> Any:
     return F.normalize(update[:, :-1, :], p=2, dim=-1, eps=1e-8)
 
@@ -699,6 +956,15 @@ def _shuffle_teacher_update(torch: Any, teacher_update: Any, *, seed: int) -> An
     )
     shuffled[:, -1:, :] = shuffled[:, -2:-1, :]
     return shuffled
+
+
+def _shuffle_feature_rows(torch: Any, features: Any, *, seed: int) -> Any:
+    generator = torch.Generator(device=features.device)
+    generator.manual_seed(seed)
+    shuffled = features.clone()
+    flat = features.reshape(-1, features.shape[-1])
+    order = torch.randperm(flat.shape[0], generator=generator, device=features.device)
+    return flat[order].view_as(shuffled)
 
 
 def _train_dense_arm(
@@ -1030,9 +1296,14 @@ def _benchmark_gate_rows(
         "sparse_contextual_topk2",
         "sparse_rank_matched_topk1",
         "sparse_teacher_distilled_norm_topk2",
+        "sparse_teacher_distilled_target_norm_topk2",
+        "sparse_teacher_distilled_oracle_support_topk2",
+        "sparse_teacher_distilled_soft_temperature_topk2",
+        "sparse_teacher_distilled_token_position_null",
         "sparse_teacher_distilled_shuffled_teacher_null",
         "rank_flop_matched_causal_dense",
         "rank_flop_matched_token_position_dense",
+        "rank_flop_matched_shuffled_causal_feature_dense_null",
         "sparse_frequency_matched_random",
         "sparse_shuffled_support_marginals",
         "sparse_token_position_null",
@@ -1042,15 +1313,28 @@ def _benchmark_gate_rows(
     dense = arms.get("rank_flop_matched_causal_dense", {})
     token_dense = arms.get("rank_flop_matched_token_position_dense", {})
     teacher_distilled = arms.get("sparse_teacher_distilled_norm_topk2", {})
+    target_norm_teacher = arms.get("sparse_teacher_distilled_target_norm_topk2", {})
+    oracle_teacher = arms.get("sparse_teacher_distilled_oracle_support_topk2", {})
+    soft_teacher = arms.get("sparse_teacher_distilled_soft_temperature_topk2", {})
+    token_position_teacher = arms.get("sparse_teacher_distilled_token_position_null", {})
     shuffled_teacher = arms.get("sparse_teacher_distilled_shuffled_teacher_null", {})
     random = arms.get("sparse_frequency_matched_random", {})
     oracle = arms.get("sparse_oracle_support", {})
     sparse_delta = _float_or_none(sparse.get("heldout_delta_vs_base_ce"))
     dense_delta = _float_or_none(dense.get("heldout_delta_vs_base_ce"))
     teacher_distilled_delta = _float_or_none(teacher_distilled.get("heldout_delta_vs_base_ce"))
+    target_norm_delta = _float_or_none(target_norm_teacher.get("heldout_delta_vs_base_ce"))
+    oracle_teacher_delta = _float_or_none(oracle_teacher.get("heldout_delta_vs_base_ce"))
+    soft_teacher_delta = _float_or_none(soft_teacher.get("heldout_delta_vs_base_ce"))
+    token_position_teacher_delta = _float_or_none(token_position_teacher.get("heldout_delta_vs_base_ce"))
     shuffled_teacher_delta = _float_or_none(shuffled_teacher.get("heldout_delta_vs_base_ce"))
     teacher_distilled_mse = _float_or_none(teacher_distilled.get("teacher_residual_mse"))
+    target_norm_mse = _float_or_none(target_norm_teacher.get("teacher_residual_mse"))
+    oracle_teacher_mse = _float_or_none(oracle_teacher.get("teacher_residual_mse"))
+    soft_teacher_mse = _float_or_none(soft_teacher.get("teacher_residual_mse"))
+    token_position_teacher_mse = _float_or_none(token_position_teacher.get("teacher_residual_mse"))
     shuffled_teacher_mse = _float_or_none(shuffled_teacher.get("teacher_residual_mse"))
+    hard_distill_best_mse = _min_present([teacher_distilled_mse, target_norm_mse, oracle_teacher_mse])
     token_dense_delta = _float_or_none(token_dense.get("heldout_delta_vs_base_ce"))
     sparse_l2 = _float_or_none(sparse.get("heldout_residual_update_l2"))
     dense_l2 = _float_or_none(dense.get("heldout_residual_update_l2"))
@@ -1064,6 +1348,10 @@ def _benchmark_gate_rows(
         _criterion("causal_dense_beats_token_position_null", dense_delta is not None and token_dense_delta is not None and dense_delta < token_dense_delta, "causal dense should beat token-position dense null", {"causal_dense_delta": dense_delta, "token_position_dense_delta": token_dense_delta}, "causal dense did not beat token-position dense null"),
         _criterion("sparse_beats_causal_dense", sparse_delta is not None and dense_delta is not None and sparse_delta < dense_delta, "sparse top-k2 held-out CE delta must beat rank/FLOP-matched causal dense", {"sparse_delta": sparse_delta, "dense_delta": dense_delta}, "sparse top-k2 did not beat causal dense"),
         _criterion("teacher_distilled_sparse_beats_shuffled_teacher_null", teacher_distilled_mse is not None and shuffled_teacher_mse is not None and teacher_distilled_mse < shuffled_teacher_mse and teacher_distilled_delta is not None and shuffled_teacher_delta is not None and teacher_distilled_delta < shuffled_teacher_delta, "dense-teacher-distilled sparse arm should beat shuffled-teacher null on teacher residual MSE and held-out CE", {"teacher_distilled_mse": teacher_distilled_mse, "shuffled_teacher_mse": shuffled_teacher_mse, "teacher_distilled_delta": teacher_distilled_delta, "shuffled_teacher_delta": shuffled_teacher_delta}, "teacher-distilled sparse rescue did not beat shuffled-teacher null"),
+        _criterion("target_norm_distill_beats_current_distill_mse", target_norm_mse is not None and teacher_distilled_mse is not None and target_norm_mse <= teacher_distilled_mse, "target-norm-scaled distillation should improve or match current sparse teacher MSE", {"target_norm_mse": target_norm_mse, "current_mse": teacher_distilled_mse, "target_norm_delta": target_norm_delta, "current_delta": teacher_distilled_delta}, "target-norm scaling did not improve the current distill MSE"),
+        _criterion("oracle_support_distill_tests_discovery_bottleneck", oracle_teacher_mse is not None and target_norm_mse is not None and oracle_teacher_mse <= target_norm_mse, "oracle-support distill should be at least as good as learned-support target-norm distill if discovery is the bottleneck", {"oracle_support_mse": oracle_teacher_mse, "target_norm_mse": target_norm_mse, "oracle_support_delta": oracle_teacher_delta, "target_norm_delta": target_norm_delta}, "oracle-support distill did not improve on learned-support target-norm distill"),
+        _criterion("soft_topk_distill_tests_representation_ceiling", soft_teacher_mse is not None and hard_distill_best_mse is not None and soft_teacher_mse <= hard_distill_best_mse, "soft/temperature sparse mixture should provide a representation ceiling no worse than hard sparse distill arms", {"soft_mse": soft_teacher_mse, "best_hard_sparse_distill_mse": hard_distill_best_mse, "current_mse": teacher_distilled_mse, "target_norm_mse": target_norm_mse, "oracle_support_mse": oracle_teacher_mse, "soft_delta": soft_teacher_delta}, "soft/temperature sparse mixture did not improve the hard sparse distill ceiling"),
+        _criterion("teacher_distill_beats_token_position_null", target_norm_mse is not None and token_position_teacher_mse is not None and target_norm_mse < token_position_teacher_mse and target_norm_delta is not None and token_position_teacher_delta is not None and target_norm_delta < token_position_teacher_delta, "teacher-distilled learned support should beat token/position-only support null", {"target_norm_mse": target_norm_mse, "token_position_mse": token_position_teacher_mse, "target_norm_delta": target_norm_delta, "token_position_delta": token_position_teacher_delta}, "teacher-distilled learned support did not beat token/position-only support null"),
         _criterion("support_identity_matters", isinstance(random_damage, float) and random_damage > 0.0, "frequency-matched random support should hurt held-out CE versus selected sparse support", random_damage, "selected support was not better than frequency-matched random support"),
         _criterion("oracle_regret_nonnegative", isinstance(oracle_regret, float) and oracle_regret >= -1e-8, "exhaustive oracle support should not be worse than selected support", oracle_regret, "oracle support sanity check failed"),
         _criterion("intervention_fingerprints_present", len(fingerprint_rows) >= 5, "fingerprint rows include oracle/random/support-overlap observables", len(fingerprint_rows), "missing intervention fingerprint rows"),
@@ -1188,11 +1476,37 @@ def _benchmark_outcome_flags(arm_rows: list[dict[str, Any]]) -> dict[str, Any]:
     dense_l2 = _float_or_none(dense.get("heldout_residual_update_l2"))
     sparse_l2 = _float_or_none(sparse.get("heldout_residual_update_l2"))
     teacher_distilled = arms.get("sparse_teacher_distilled_norm_topk2", {})
+    target_norm_teacher = arms.get("sparse_teacher_distilled_target_norm_topk2", {})
+    oracle_teacher = arms.get("sparse_teacher_distilled_oracle_support_topk2", {})
+    soft_teacher = arms.get("sparse_teacher_distilled_soft_temperature_topk2", {})
+    token_position_teacher = arms.get("sparse_teacher_distilled_token_position_null", {})
     shuffled_teacher = arms.get("sparse_teacher_distilled_shuffled_teacher_null", {})
     teacher_distilled_delta = _float_or_none(teacher_distilled.get("heldout_delta_vs_base_ce"))
+    target_norm_delta = _float_or_none(target_norm_teacher.get("heldout_delta_vs_base_ce"))
+    oracle_teacher_delta = _float_or_none(oracle_teacher.get("heldout_delta_vs_base_ce"))
+    soft_teacher_delta = _float_or_none(soft_teacher.get("heldout_delta_vs_base_ce"))
+    token_position_teacher_delta = _float_or_none(token_position_teacher.get("heldout_delta_vs_base_ce"))
     shuffled_teacher_delta = _float_or_none(shuffled_teacher.get("heldout_delta_vs_base_ce"))
     teacher_distilled_mse = _float_or_none(teacher_distilled.get("teacher_residual_mse"))
+    target_norm_mse = _float_or_none(target_norm_teacher.get("teacher_residual_mse"))
+    oracle_teacher_mse = _float_or_none(oracle_teacher.get("teacher_residual_mse"))
+    soft_teacher_mse = _float_or_none(soft_teacher.get("teacher_residual_mse"))
+    token_position_teacher_mse = _float_or_none(token_position_teacher.get("teacher_residual_mse"))
     shuffled_teacher_mse = _float_or_none(shuffled_teacher.get("teacher_residual_mse"))
+    hard_distill_mses = [
+        ("current", teacher_distilled_mse),
+        ("target_norm", target_norm_mse),
+        ("oracle_support", oracle_teacher_mse),
+    ]
+    best_hard_distill = min(
+        (
+            {"arm": name, "teacher_residual_mse": value}
+            for name, value in hard_distill_mses
+            if value is not None
+        ),
+        key=lambda row: float(row["teacher_residual_mse"]),
+        default={},
+    )
     compute_matched_deltas = []
     if sparse_active is not None and sparse_active > 0:
         for row in arm_rows:
@@ -1256,6 +1570,49 @@ def _benchmark_outcome_flags(arm_rows: list[dict[str, Any]]) -> dict[str, Any]:
             shuffled_teacher_mse,
             teacher_distilled_mse,
         ),
+        "target_norm_distill_mse_margin_vs_current": _maybe_subtract(
+            teacher_distilled_mse,
+            target_norm_mse,
+        ),
+        "oracle_support_distill_mse_margin_vs_target_norm": _maybe_subtract(
+            target_norm_mse,
+            oracle_teacher_mse,
+        ),
+        "soft_topk_distill_mse_margin_vs_best_hard_sparse": _maybe_subtract(
+            _float_or_none(best_hard_distill.get("teacher_residual_mse")),
+            soft_teacher_mse,
+        ),
+        "target_norm_distill_gap_vs_default_sparse_ce_delta": _maybe_subtract(
+            target_norm_delta,
+            sparse_delta,
+        ),
+        "oracle_support_distill_gap_vs_default_sparse_ce_delta": _maybe_subtract(
+            oracle_teacher_delta,
+            sparse_delta,
+        ),
+        "soft_topk_distill_gap_vs_default_sparse_ce_delta": _maybe_subtract(
+            soft_teacher_delta,
+            sparse_delta,
+        ),
+        "target_norm_distill_beats_token_position_null": (
+            target_norm_mse is not None
+            and token_position_teacher_mse is not None
+            and target_norm_delta is not None
+            and token_position_teacher_delta is not None
+            and target_norm_mse < token_position_teacher_mse
+            and target_norm_delta < token_position_teacher_delta
+        ),
+        "best_hard_sparse_teacher_distill_by_mse": best_hard_distill,
+        "columnability_gate_interpretation": _columnability_interpretation(
+            default_sparse_delta=sparse_delta,
+            dense_teacher_delta=dense_delta,
+            current_mse=teacher_distilled_mse,
+            target_norm_mse=target_norm_mse,
+            oracle_support_mse=oracle_teacher_mse,
+            soft_mse=soft_teacher_mse,
+            token_position_mse=token_position_teacher_mse,
+            shuffled_teacher_mse=shuffled_teacher_mse,
+        ),
         "teacher_distilled_heldout_cosine_to_teacher": _float_or_none(
             teacher_distilled.get("teacher_residual_cosine")
         ),
@@ -1269,6 +1626,13 @@ def _selected_next_step(status: str, failures: list[dict[str, Any]]) -> str:
     if status == "pass":
         return "escalate the common benchmark to a seed-2 or RunPod repeat only if sparse beats dense"
     failed = {str(row.get("criterion")) for row in failures}
+    if (
+        "target_norm_distill_beats_current_distill_mse" in failed
+        or "oracle_support_distill_tests_discovery_bottleneck" in failed
+        or "soft_topk_distill_tests_representation_ceiling" in failed
+        or "teacher_distill_beats_token_position_null" in failed
+    ):
+        return "synthesize the local columnability/discovery gate before any RunPod repeat or sparse-support identity claim"
     if "active_compute_matched_or_bracketed" in failed:
         return "repair local compute-matched dense bottleneck ladder and sparse teacher-distilled rescue controls"
     if "teacher_distilled_sparse_beats_shuffled_teacher_null" in failed:
@@ -1276,6 +1640,37 @@ def _selected_next_step(status: str, failures: list[dict[str, Any]]) -> str:
     if "sparse_beats_causal_dense" in failed:
         return "synthesize the negative sparse teacher-distilled rescue result and decide whether to retire sparse-support identity claims or test a stronger sparse rescue objective"
     return "inspect failed common-benchmark gate criteria and repair the lowest-level local artifact issue"
+
+
+def _columnability_interpretation(
+    *,
+    default_sparse_delta: float | None,
+    dense_teacher_delta: float | None,
+    current_mse: float | None,
+    target_norm_mse: float | None,
+    oracle_support_mse: float | None,
+    soft_mse: float | None,
+    token_position_mse: float | None,
+    shuffled_teacher_mse: float | None,
+) -> str:
+    hard_best = _min_present([current_mse, target_norm_mse, oracle_support_mse])
+    if hard_best is None or soft_mse is None:
+        return "columnability_gate_missing_required_teacher_mse"
+    if shuffled_teacher_mse is not None and hard_best >= shuffled_teacher_mse:
+        return "sparse_teacher_distill_not_separated_from_shuffled_teacher_null"
+    if token_position_mse is not None and target_norm_mse is not None and target_norm_mse >= token_position_mse:
+        return "learned_sparse_distill_not_separated_from_token_position_null"
+    if oracle_support_mse is not None and target_norm_mse is not None and oracle_support_mse < target_norm_mse:
+        return "support_discovery_bottleneck_candidate"
+    if soft_mse < hard_best:
+        return "hard_support_discretization_or_columnability_bottleneck_candidate"
+    if (
+        default_sparse_delta is not None
+        and dense_teacher_delta is not None
+        and default_sparse_delta > dense_teacher_delta
+    ):
+        return "sparse_columns_remain_below_dense_teacher_after_local_columnability_gate"
+    return "sparse_columnability_not_rejected_by_local_gate"
 
 
 def _write_artifacts(
@@ -1366,6 +1761,11 @@ def _maybe_subtract(left: Any, right: Any) -> float | str:
     if left_value is None or right_value is None:
         return ""
     return left_value - right_value
+
+
+def _min_present(values: list[float | None]) -> float | None:
+    present = [value for value in values if value is not None]
+    return min(present) if present else None
 
 
 def _norm_bucket(value: float | None) -> str:
