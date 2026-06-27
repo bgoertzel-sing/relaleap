@@ -296,6 +296,52 @@ def _run_benchmark(
         target_update_l2=target_l2,
         heldout_mask=mask,
     )
+    teacher_update = dense_causal.get("residual_update_tensor")
+    if teacher_update is None:
+        teacher_update = torch.zeros_like(hidden)
+    teacher_distilled = _train_sparse_teacher_distilled_arm(
+        torch,
+        F,
+        base,
+        ResidualColumns,
+        hidden,
+        targets,
+        vocab_size,
+        teacher_update,
+        label="sparse_teacher_distilled_norm_topk2",
+        hidden_dim=hidden_dim,
+        num_columns=num_columns,
+        atoms_per_column=atoms_per_column,
+        contextual_width=contextual_width,
+        learning_rate=learning_rate,
+        steps=max(train_steps * 4, train_steps + 24),
+        base_losses=base_losses,
+        base_loss=base_loss,
+        heldout_base=heldout_base,
+        heldout_mask=mask,
+    )
+    shuffled_teacher_update = _shuffle_teacher_update(torch, teacher_update, seed=seed + 43)
+    shuffled_teacher_distilled = _train_sparse_teacher_distilled_arm(
+        torch,
+        F,
+        base,
+        ResidualColumns,
+        hidden,
+        targets,
+        vocab_size,
+        shuffled_teacher_update,
+        label="sparse_teacher_distilled_shuffled_teacher_null",
+        hidden_dim=hidden_dim,
+        num_columns=num_columns,
+        atoms_per_column=atoms_per_column,
+        contextual_width=contextual_width,
+        learning_rate=learning_rate,
+        steps=max(train_steps * 4, train_steps + 24),
+        base_losses=base_losses,
+        base_loss=base_loss,
+        heldout_base=heldout_base,
+        heldout_mask=mask,
+    )
     dense_ladder = _train_dense_ladder(
         torch,
         F,
@@ -340,6 +386,8 @@ def _run_benchmark(
     sparse_arms = [
         contextual2,
         contextual1,
+        teacher_distilled,
+        shuffled_teacher_distilled,
         _eval_sparse_arm(torch, F, base, topk2, hidden, targets, vocab_size, "sparse_frequency_matched_random", frequency_support, topk2_scores, base_losses, base_loss, heldout_base, mask),
         _eval_sparse_arm(torch, F, base, topk2, hidden, targets, vocab_size, "sparse_shuffled_support_marginals", shuffled_support, topk2_scores, base_losses, base_loss, heldout_base, mask),
         _eval_sparse_arm(torch, F, base, topk2, hidden, targets, vocab_size, "sparse_token_position_null", token_position_support, topk2_scores, base_losses, base_loss, heldout_base, mask),
@@ -365,6 +413,8 @@ def _run_benchmark(
             {
             "sparse_contextual_topk2": contextual2["per_token_losses"],
             "sparse_rank_matched_topk1": contextual1["per_token_losses"],
+            "sparse_teacher_distilled_norm_topk2": teacher_distilled["per_token_losses"],
+            "sparse_teacher_distilled_shuffled_teacher_null": shuffled_teacher_distilled["per_token_losses"],
             },
             **dense_loss_by_arm,
         ),
@@ -372,6 +422,8 @@ def _run_benchmark(
             {
             "sparse_contextual_topk2": contextual2["residual_update_l2_per_token"],
             "sparse_rank_matched_topk1": contextual1["residual_update_l2_per_token"],
+            "sparse_teacher_distilled_norm_topk2": teacher_distilled["residual_update_l2_per_token"],
+            "sparse_teacher_distilled_shuffled_teacher_null": shuffled_teacher_distilled["residual_update_l2_per_token"],
             },
             **dense_l2_by_arm,
         ),
@@ -532,6 +584,123 @@ def _eval_sparse_arm(
     return row
 
 
+def _train_sparse_teacher_distilled_arm(
+    torch: Any,
+    F: Any,
+    base: Any,
+    residual_cls: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    teacher_update: Any,
+    *,
+    label: str,
+    hidden_dim: int,
+    num_columns: int,
+    atoms_per_column: int,
+    contextual_width: int,
+    learning_rate: float,
+    steps: int,
+    base_losses: Any,
+    base_loss: float,
+    heldout_base: float,
+    heldout_mask: Any,
+) -> dict[str, Any]:
+    residual = residual_cls(
+        hidden_dim=hidden_dim,
+        num_columns=num_columns,
+        atoms_per_column=atoms_per_column,
+        top_k=2,
+        support_router="contextual_mlp",
+        contextual_router_hidden_dim=contextual_width,
+    )
+    residual.train()
+    optimizer = torch.optim.AdamW(residual.parameters(), lr=learning_rate)
+    teacher = teacher_update.detach()
+    teacher_direction = _normalize_update(F, teacher)
+    teacher_l2 = teacher[:, :-1, :].reshape(-1, teacher.shape[-1]).norm(dim=-1)
+    target_l2 = teacher_l2.mean().detach()
+    for _ in range(max(1, steps)):
+        optimizer.zero_grad(set_to_none=True)
+        updated = residual(hidden.detach())
+        update = updated - hidden.detach()
+        logits = base.decode(updated)
+        update_l2 = update[:, :-1, :].reshape(-1, update.shape[-1]).norm(dim=-1).mean()
+        direction_loss = F.mse_loss(_normalize_update(F, update), teacher_direction)
+        norm_loss = (update_l2 - target_l2) ** 2
+        ce_loss = F.cross_entropy(
+            logits[:, :-1, :].reshape(-1, vocab_size),
+            targets[:, :-1].reshape(-1),
+        )
+        loss = direction_loss + 0.25 * norm_loss + 0.05 * ce_loss
+        loss.backward()
+        optimizer.step()
+    residual.eval()
+    with torch.no_grad():
+        scores = residual._score_columns(hidden) + residual.score_tie_breaker.to(
+            device=hidden.device,
+            dtype=hidden.dtype,
+        )
+        support = scores.topk(2, dim=-1).indices
+    row = _eval_sparse_arm(
+        torch,
+        F,
+        base,
+        residual,
+        hidden,
+        targets,
+        vocab_size,
+        label,
+        support,
+        scores,
+        base_losses,
+        base_loss,
+        heldout_base,
+        heldout_mask,
+    )
+    with torch.no_grad():
+        residual_update = residual(hidden, support_indices=support) - hidden
+        teacher_flat = teacher[:, :-1, :].reshape(-1, teacher.shape[-1])
+        residual_flat = residual_update[:, :-1, :].reshape(-1, residual_update.shape[-1])
+        teacher_l2_flat = teacher_flat.norm(dim=-1)
+        residual_l2_flat = residual_flat.norm(dim=-1)
+        cosine = F.cosine_similarity(residual_flat, teacher_flat, dim=-1, eps=1e-8)
+        mse = ((residual_flat - teacher_flat) ** 2).mean(dim=-1)
+    row.update(
+        {
+            "teacher_residual_cosine": float(cosine[heldout_mask].mean().item()),
+            "teacher_residual_mse": float(mse[heldout_mask].mean().item()),
+            "teacher_heldout_residual_update_l2": float(teacher_l2_flat[heldout_mask].mean().item()),
+            "heldout_residual_l2_ratio_to_teacher": (
+                ""
+                if float(teacher_l2_flat[heldout_mask].mean().item()) <= 1e-12
+                else float(residual_l2_flat[heldout_mask].mean().item())
+                / float(teacher_l2_flat[heldout_mask].mean().item())
+            ),
+        }
+    )
+    return row
+
+
+def _normalize_update(F: Any, update: Any) -> Any:
+    return F.normalize(update[:, :-1, :], p=2, dim=-1, eps=1e-8)
+
+
+def _shuffle_teacher_update(torch: Any, teacher_update: Any, *, seed: int) -> Any:
+    generator = torch.Generator(device=teacher_update.device)
+    generator.manual_seed(seed)
+    shuffled = teacher_update.clone()
+    flat = teacher_update[:, :-1, :].reshape(-1, teacher_update.shape[-1])
+    order = torch.randperm(flat.shape[0], generator=generator, device=teacher_update.device)
+    shuffled[:, :-1, :] = flat[order].view(
+        teacher_update.shape[0],
+        teacher_update.shape[1] - 1,
+        teacher_update.shape[-1],
+    )
+    shuffled[:, -1:, :] = shuffled[:, -2:-1, :]
+    return shuffled
+
+
 def _train_dense_arm(
     torch: Any,
     F: Any,
@@ -586,6 +755,7 @@ def _train_dense_arm(
                 "support_entropy": "",
                 "used_columns": "",
                 "unique_support_sets": "",
+                "residual_update_tensor": update.detach(),
             },
             losses.detach(),
             l2.detach(),
@@ -636,6 +806,7 @@ def _train_dense_arm(
             "support_entropy": "",
             "used_columns": "",
             "unique_support_sets": "",
+            "residual_update_tensor": update.detach(),
         },
         losses.detach(),
         l2.detach(),
@@ -858,6 +1029,8 @@ def _benchmark_gate_rows(
         "base_no_residual",
         "sparse_contextual_topk2",
         "sparse_rank_matched_topk1",
+        "sparse_teacher_distilled_norm_topk2",
+        "sparse_teacher_distilled_shuffled_teacher_null",
         "rank_flop_matched_causal_dense",
         "rank_flop_matched_token_position_dense",
         "sparse_frequency_matched_random",
@@ -868,10 +1041,16 @@ def _benchmark_gate_rows(
     sparse = arms.get("sparse_contextual_topk2", {})
     dense = arms.get("rank_flop_matched_causal_dense", {})
     token_dense = arms.get("rank_flop_matched_token_position_dense", {})
+    teacher_distilled = arms.get("sparse_teacher_distilled_norm_topk2", {})
+    shuffled_teacher = arms.get("sparse_teacher_distilled_shuffled_teacher_null", {})
     random = arms.get("sparse_frequency_matched_random", {})
     oracle = arms.get("sparse_oracle_support", {})
     sparse_delta = _float_or_none(sparse.get("heldout_delta_vs_base_ce"))
     dense_delta = _float_or_none(dense.get("heldout_delta_vs_base_ce"))
+    teacher_distilled_delta = _float_or_none(teacher_distilled.get("heldout_delta_vs_base_ce"))
+    shuffled_teacher_delta = _float_or_none(shuffled_teacher.get("heldout_delta_vs_base_ce"))
+    teacher_distilled_mse = _float_or_none(teacher_distilled.get("teacher_residual_mse"))
+    shuffled_teacher_mse = _float_or_none(shuffled_teacher.get("teacher_residual_mse"))
     token_dense_delta = _float_or_none(token_dense.get("heldout_delta_vs_base_ce"))
     sparse_l2 = _float_or_none(sparse.get("heldout_residual_update_l2"))
     dense_l2 = _float_or_none(dense.get("heldout_residual_update_l2"))
@@ -884,6 +1063,7 @@ def _benchmark_gate_rows(
         _criterion("active_compute_matched_or_bracketed", bool(active_compute["matched_or_bracketed"]), "causal dense active params/FLOPs must be matched to or bracket sparse top-k2 before dense-vs-sparse claims", active_compute, "dense control is not active-param/FLOP matched or bracketed"),
         _criterion("causal_dense_beats_token_position_null", dense_delta is not None and token_dense_delta is not None and dense_delta < token_dense_delta, "causal dense should beat token-position dense null", {"causal_dense_delta": dense_delta, "token_position_dense_delta": token_dense_delta}, "causal dense did not beat token-position dense null"),
         _criterion("sparse_beats_causal_dense", sparse_delta is not None and dense_delta is not None and sparse_delta < dense_delta, "sparse top-k2 held-out CE delta must beat rank/FLOP-matched causal dense", {"sparse_delta": sparse_delta, "dense_delta": dense_delta}, "sparse top-k2 did not beat causal dense"),
+        _criterion("teacher_distilled_sparse_beats_shuffled_teacher_null", teacher_distilled_mse is not None and shuffled_teacher_mse is not None and teacher_distilled_mse < shuffled_teacher_mse and teacher_distilled_delta is not None and shuffled_teacher_delta is not None and teacher_distilled_delta < shuffled_teacher_delta, "dense-teacher-distilled sparse arm should beat shuffled-teacher null on teacher residual MSE and held-out CE", {"teacher_distilled_mse": teacher_distilled_mse, "shuffled_teacher_mse": shuffled_teacher_mse, "teacher_distilled_delta": teacher_distilled_delta, "shuffled_teacher_delta": shuffled_teacher_delta}, "teacher-distilled sparse rescue did not beat shuffled-teacher null"),
         _criterion("support_identity_matters", isinstance(random_damage, float) and random_damage > 0.0, "frequency-matched random support should hurt held-out CE versus selected sparse support", random_damage, "selected support was not better than frequency-matched random support"),
         _criterion("oracle_regret_nonnegative", isinstance(oracle_regret, float) and oracle_regret >= -1e-8, "exhaustive oracle support should not be worse than selected support", oracle_regret, "oracle support sanity check failed"),
         _criterion("intervention_fingerprints_present", len(fingerprint_rows) >= 5, "fingerprint rows include oracle/random/support-overlap observables", len(fingerprint_rows), "missing intervention fingerprint rows"),
@@ -992,6 +1172,8 @@ def _summary(
         "runtime_seconds": round(time.time() - start, 4),
         "platform": platform.platform(),
         "git_commit": _git_commit(),
+        "git_dirty": _git_dirty(),
+        "git_diff_hash": _git_diff_hash(),
         "artifacts": {name.replace(".", "_"): str(out_dir / name) for name in REQUIRED_ARTIFACTS},
     }
 
@@ -1005,6 +1187,12 @@ def _benchmark_outcome_flags(arm_rows: list[dict[str, Any]]) -> dict[str, Any]:
     dense_delta = _float_or_none(dense.get("heldout_delta_vs_base_ce"))
     dense_l2 = _float_or_none(dense.get("heldout_residual_update_l2"))
     sparse_l2 = _float_or_none(sparse.get("heldout_residual_update_l2"))
+    teacher_distilled = arms.get("sparse_teacher_distilled_norm_topk2", {})
+    shuffled_teacher = arms.get("sparse_teacher_distilled_shuffled_teacher_null", {})
+    teacher_distilled_delta = _float_or_none(teacher_distilled.get("heldout_delta_vs_base_ce"))
+    shuffled_teacher_delta = _float_or_none(shuffled_teacher.get("heldout_delta_vs_base_ce"))
+    teacher_distilled_mse = _float_or_none(teacher_distilled.get("teacher_residual_mse"))
+    shuffled_teacher_mse = _float_or_none(shuffled_teacher.get("teacher_residual_mse"))
     compute_matched_deltas = []
     if sparse_active is not None and sparse_active > 0:
         for row in arm_rows:
@@ -1038,6 +1226,42 @@ def _benchmark_outcome_flags(arm_rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "best_compute_matched_dense": best_compute or {},
         "compute_matched_dense_count": len(compute_matched_deltas),
+        "teacher_distilled_sparse_beats_shuffled_teacher_null": (
+            teacher_distilled_mse is not None
+            and shuffled_teacher_mse is not None
+            and teacher_distilled_delta is not None
+            and shuffled_teacher_delta is not None
+            and teacher_distilled_mse < shuffled_teacher_mse
+            and teacher_distilled_delta < shuffled_teacher_delta
+        ),
+        "teacher_distilled_sparse_beats_default_sparse": (
+            sparse_delta is not None
+            and teacher_distilled_delta is not None
+            and teacher_distilled_delta < sparse_delta
+        ),
+        "teacher_distilled_sparse_beats_l2_matched_dense": (
+            dense_delta is not None
+            and teacher_distilled_delta is not None
+            and teacher_distilled_delta < dense_delta
+        ),
+        "teacher_distilled_gap_vs_default_sparse_ce_delta": _maybe_subtract(
+            teacher_distilled_delta,
+            sparse_delta,
+        ),
+        "teacher_distilled_gap_vs_l2_matched_dense_ce_delta": _maybe_subtract(
+            teacher_distilled_delta,
+            dense_delta,
+        ),
+        "teacher_distilled_mse_margin_vs_shuffled_teacher": _maybe_subtract(
+            shuffled_teacher_mse,
+            teacher_distilled_mse,
+        ),
+        "teacher_distilled_heldout_cosine_to_teacher": _float_or_none(
+            teacher_distilled.get("teacher_residual_cosine")
+        ),
+        "teacher_distilled_heldout_norm_ratio_to_teacher": _float_or_none(
+            teacher_distilled.get("heldout_residual_l2_ratio_to_teacher")
+        ),
     }
 
 
@@ -1047,8 +1271,10 @@ def _selected_next_step(status: str, failures: list[dict[str, Any]]) -> str:
     failed = {str(row.get("criterion")) for row in failures}
     if "active_compute_matched_or_bracketed" in failed:
         return "repair local compute-matched dense bottleneck ladder and sparse teacher-distilled rescue controls"
+    if "teacher_distilled_sparse_beats_shuffled_teacher_null" in failed:
+        return "inspect sparse teacher-distillation objective and null construction before any RunPod repeat"
     if "sparse_beats_causal_dense" in failed:
-        return "add sparse teacher-distilled norm-normalized rescue controls before any RunPod repeat"
+        return "synthesize the negative sparse teacher-distilled rescue result and decide whether to retire sparse-support identity claims or test a stronger sparse rescue objective"
     return "inspect failed common-benchmark gate criteria and repair the lowest-level local artifact issue"
 
 
@@ -1108,7 +1334,7 @@ def _serializable_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value
         for key, value in row.items()
-        if key not in {"per_token_losses", "residual_update_l2_per_token"}
+        if key not in {"per_token_losses", "residual_update_l2_per_token", "residual_update_tensor"}
     }
 
 
@@ -1157,6 +1383,25 @@ def _git_commit() -> str:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL).strip()
     except Exception:
         return ""
+
+
+def _git_dirty() -> bool:
+    try:
+        return bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip())
+    except Exception:
+        return False
+
+
+def _git_diff_hash() -> str:
+    try:
+        diff = subprocess.check_output(["git", "diff", "--binary"], stderr=subprocess.DEVNULL)
+    except Exception:
+        return ""
+    if not diff:
+        return ""
+    import hashlib
+
+    return hashlib.sha256(diff).hexdigest()
 
 
 def main() -> None:
