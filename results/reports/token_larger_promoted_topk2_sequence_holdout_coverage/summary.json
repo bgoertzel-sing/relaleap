@@ -8,7 +8,7 @@
   "claim_status": "deployable_support_head_sequence_generalization_blocked",
   "decision": "sequence_holdout_support_head_generalization_failed",
   "failures": [],
-  "git_commit": "0c9339f4b9c326a8dc579c959035aa924c3f3f1f",
+  "git_commit": "482bf415e1eda54d4c9c26adb9a0b65e04de7e2a",
   "metrics": {
     "causal_adequacy_decision": "predictive_default_causal_adequacy_not_established",
     "config_path": "configs/token_larger_support_wide_hep_temporal_clipped_objective_gate.yaml",
@@ -32,7 +32,7 @@
   "out_dir": "results/reports/token_larger_promoted_topk2_sequence_holdout_coverage",
   "platform": "macOS-26.5.1-x86_64-i386-64bit",
   "rationale": "The refreshed exhaustive support audit now includes sequence-level holdout coverage, but the train-time-style contextual support head is worse than the learned router on held-out full sequences. The sequence-head absolute intervention-minus-router CE delta is `0.016779184341430664`; because the router-oracle gap is tiny, recovery fractions are numerically fragile. Treat contextual routing as the operational predictive default from prior local/Colab evidence, but block deployable contextual support-selection claims until K-fold sequence-heldout and causal-feature-safe router evidence exists.",
-  "runtime_seconds": 0.0014,
+  "runtime_seconds": 0.0016,
   "signals": {
     "deployable_support_selection_claim_blocked_by_split_coverage": true,
     "position_holdout_present": true,
@@ -68,7 +68,7 @@
     },
     {
       "claim_status": "strategic_change_level=minor; notify_ben=False",
-      "decision": "Finalize the refreshed audit as a sequence-holdout blocker for support-head deployability, then run a local K-fold sequence-heldout causal-feature ablation of the actual promoted contextual router versus the linear/top-k controls.",
+      "decision": "Run the promoted top-k-2 sequence-holdout coverage report and, if coverage is inadequate, execute the local K-fold sequence-heldout causal-feature ablation of the promoted contextual router versus linear, token/position-only, and rank-matched controls before any RunPod or new distillation work.",
       "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
       "present": true,
       "source": "strategy_review",
@@ -212,7 +212,7 @@
     "notify_ben": false,
     "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
     "present": true,
-    "recommended_next_action": "Finalize the refreshed audit as a sequence-holdout blocker for support-head deployability, then run a local K-fold sequence-heldout causal-feature ablation of the actual promoted contextual router versus the linear/top-k controls.",
+    "recommended_next_action": "Run the promoted top-k-2 sequence-holdout coverage report and, if coverage is inadequate, execute the local K-fold sequence-heldout causal-feature ablation of the promoted contextual router versus linear, token/position-only, and rank-matched controls before any RunPod or new distillation work.",
     "sequence_holdout_recommended": true,
     "strategic_change_level": "minor"
   }
