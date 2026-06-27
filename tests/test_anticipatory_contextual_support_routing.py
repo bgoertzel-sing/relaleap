@@ -39,15 +39,32 @@ class AnticipatoryContextualSupportRoutingSmokeTest(unittest.TestCase):
             self.assertEqual(written["decision"], summary["decision"])
             router_metrics = (out_dir / "router_metrics.csv").read_text(encoding="utf-8")
             self.assertIn("acsr_mlp_predicted_future", router_metrics)
+            self.assertIn("acsr_gru_predicted_future", router_metrics)
             self.assertIn("shuffled_predicted_features", router_metrics)
+            predictor_metrics = (out_dir / "predictor_metrics.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("gru_causal", predictor_metrics)
             same_student = (out_dir / "same_student_metrics.csv").read_text(
                 encoding="utf-8"
             )
-            self.assertIn("acsr_support_vs_token_position_only_predicted_features", same_student)
+            self.assertIn(
+                "acsr_mlp_predicted_future_support_vs_token_position_only_predicted_features",
+                same_student,
+            )
+            self.assertIn(
+                "acsr_gru_predicted_future_support_vs_token_position_only_predicted_features",
+                same_student,
+            )
             perturbation = (out_dir / "feature_perturbation.csv").read_text(
                 encoding="utf-8"
             )
             self.assertIn("future_positions_do_not_change_prefix", perturbation)
+            retention = (out_dir / "retention_churn_metrics.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("second_context_transfer", retention)
+            self.assertIn("anchor_support_churn_after_transfer", retention)
 
 
 def _write_tiny_config(path: Path) -> None:

@@ -8,6 +8,7 @@ import json
 import platform
 import subprocess
 import time
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -139,6 +140,12 @@ def run_anticipatory_contextual_support_routing(
         targets_future = torch.cat([chunks["next"], chunks["next_delta"]], dim=-1)
 
     predictor = _FuturePredictor(nn, causal_inputs.shape[-1], hidden_dim * 2, hidden_dim)
+    gru_predictor = _FutureGRUPredictor(
+        nn,
+        causal_inputs.shape[-1],
+        hidden_dim * 2,
+        hidden_dim,
+    )
     token_position_predictor = _FuturePredictor(
         nn,
         position_inputs.shape[-1],
@@ -161,6 +168,17 @@ def run_anticipatory_contextual_support_routing(
         _train_predictor_row(
             torch,
             F,
+            gru_predictor,
+            causal_inputs,
+            targets_future,
+            steps=predictor_steps,
+            label="gru_causal",
+        )
+    )
+    predictor_rows.append(
+        _train_predictor_row(
+            torch,
+            F,
             token_position_predictor,
             position_inputs,
             targets_future,
@@ -171,6 +189,7 @@ def run_anticipatory_contextual_support_routing(
 
     with torch.no_grad():
         predicted = predictor(causal_inputs)
+        gru_predicted = gru_predictor(causal_inputs)
         token_position_predicted = token_position_predictor(position_inputs)
         mean_predicted = targets_future.mean(dim=(0, 1), keepdim=True).expand_as(
             targets_future
@@ -190,6 +209,7 @@ def run_anticipatory_contextual_support_routing(
                 zero_predicted,
             ),
             "acsr_mlp_predicted_future": _feature_tensor(torch, chunks, predicted),
+            "acsr_gru_predicted_future": _feature_tensor(torch, chunks, gru_predicted),
             "shuffled_predicted_features": _feature_tensor(
                 torch,
                 chunks,
@@ -290,16 +310,49 @@ def run_anticipatory_contextual_support_routing(
             predictor,
             perturb_start=max(2, seq_len // 2),
         )
-        retention_rows = _retention_churn_rows(
-            torch,
-            F,
-            base,
-            residual,
-            hidden,
-            targets,
-            vocab_size,
-            score_rows,
-            top_k=top_k,
+
+    transfer_inputs, transfer_targets, transfer_vocab_size = _build_batch(
+        dataset=dataset,
+        seq_len=seq_len,
+        batch_size=8,
+    )
+    if transfer_vocab_size != vocab_size:
+        raise RuntimeError("transfer batch vocab size diverged from anchor batch")
+    transfer_inputs = transfer_inputs[4:].detach().clone()
+    transfer_targets = transfer_targets[4:].detach().clone()
+    retention_rows = _second_context_retention_churn_rows(
+        torch,
+        F,
+        ResidualColumns,
+        base,
+        residual,
+        predictor,
+        gru_predictor,
+        token_position_predictor,
+        inputs,
+        targets,
+        transfer_inputs,
+        transfer_targets,
+        vocab_size,
+        learning_rate=learning_rate,
+        transfer_steps=max(1, min(10, train_steps)),
+        top_k=top_k,
+        contextual_router_hidden_dim=contextual_router_hidden_dim,
+        residual_objective=residual_objective,
+    )
+    with torch.no_grad():
+        retention_rows.extend(
+            _teacher_context_churn_rows(
+                torch,
+                F,
+                base,
+                residual,
+                hidden,
+                targets,
+                vocab_size,
+                score_rows,
+                top_k=top_k,
+            )
         )
 
     router_by_name = {row["variant"]: row for row in router_rows}
@@ -458,6 +511,33 @@ class _FuturePredictor:
             nn.GELU(),
             nn.Linear(hidden_dim, output_dim),
         )
+
+
+class _FutureGRUPredictor:
+    def __new__(
+        cls,
+        nn: Any,
+        input_dim: int,
+        output_dim: int,
+        hidden_dim: int,
+    ) -> Any:
+        class _CausalGRUPredictor(nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.input_norm = nn.LayerNorm(input_dim)
+                self.gru = nn.GRU(
+                    input_size=input_dim,
+                    hidden_size=hidden_dim,
+                    batch_first=True,
+                )
+                self.output = nn.Linear(hidden_dim, output_dim)
+
+            def forward(self, inputs: Any) -> Any:
+                normalized = self.input_norm(inputs)
+                states, _ = self.gru(normalized)
+                return self.output(states)
+
+        return _CausalGRUPredictor()
 
 
 def _train_predictor_row(
@@ -682,25 +762,12 @@ def _same_student_rows(
     *,
     top_k: int,
 ) -> list[dict[str, Any]]:
-    baseline = _forced_support_loss(
-        torch,
-        F,
-        base,
-        residual,
-        hidden,
-        targets,
-        vocab_size,
-        score_rows["acsr_mlp_predicted_future"],
-        top_k=top_k,
-    )
     rows = []
-    for control in [
-        "shuffled_predicted_features",
-        "token_position_only_predicted_features",
-        "mean_predicted_features",
-        "zero_predicted_features",
+    for baseline_name in [
+        "acsr_mlp_predicted_future",
+        "acsr_gru_predicted_future",
     ]:
-        control_loss = _forced_support_loss(
+        baseline = _forced_support_loss(
             torch,
             F,
             base,
@@ -708,17 +775,34 @@ def _same_student_rows(
             hidden,
             targets,
             vocab_size,
-            score_rows[control],
+            score_rows[baseline_name],
             top_k=top_k,
         )
-        rows.append(
-            {
-                "comparison": f"acsr_support_vs_{control}",
-                "acsr_forced_ce_loss": baseline,
-                "control_forced_ce_loss": control_loss,
-                "acsr_minus_control_ce_loss": baseline - control_loss,
-            }
-        )
+        for control in [
+            "shuffled_predicted_features",
+            "token_position_only_predicted_features",
+            "mean_predicted_features",
+            "zero_predicted_features",
+        ]:
+            control_loss = _forced_support_loss(
+                torch,
+                F,
+                base,
+                residual,
+                hidden,
+                targets,
+                vocab_size,
+                score_rows[control],
+                top_k=top_k,
+            )
+            rows.append(
+                {
+                    "comparison": f"{baseline_name}_support_vs_{control}",
+                    "acsr_forced_ce_loss": baseline,
+                    "control_forced_ce_loss": control_loss,
+                    "acsr_minus_control_ce_loss": baseline - control_loss,
+                }
+            )
     return rows
 
 
@@ -785,7 +869,222 @@ def _future_perturbation_rows(
     ]
 
 
-def _retention_churn_rows(
+def _second_context_retention_churn_rows(
+    torch: Any,
+    F: Any,
+    ResidualColumns: Any,
+    base: Any,
+    residual: Any,
+    predictor: Any,
+    gru_predictor: Any,
+    token_position_predictor: Any,
+    anchor_inputs: Any,
+    anchor_targets: Any,
+    transfer_inputs: Any,
+    transfer_targets: Any,
+    vocab_size: int,
+    *,
+    learning_rate: float,
+    transfer_steps: int,
+    top_k: int,
+    contextual_router_hidden_dim: int,
+    residual_objective: str,
+) -> list[dict[str, Any]]:
+    if residual_objective != "supervised_ce":
+        return [
+            {
+                "phase": "second_context_transfer",
+                "variant": "not_run",
+                "reason": "second-context ACSR microtest currently requires supervised_ce",
+            }
+        ]
+
+    transfer_residual = ResidualColumns(
+        hidden_dim=int(residual.atom_values.shape[-1]),
+        num_columns=int(residual.num_columns),
+        atoms_per_column=int(residual.atom_logits.shape[-1]),
+        top_k=int(residual.top_k),
+        support_router="contextual_mlp",
+        contextual_router_hidden_dim=contextual_router_hidden_dim,
+    )
+    transfer_residual.load_state_dict(deepcopy(residual.state_dict()))
+    transfer_residual.train()
+    optimizer = torch.optim.AdamW(transfer_residual.parameters(), lr=learning_rate)
+    for _ in range(max(1, transfer_steps)):
+        optimizer.zero_grad(set_to_none=True)
+        logits = base(transfer_inputs, residual_adapter=transfer_residual)
+        loss = F.cross_entropy(
+            logits[:, :-1, :].reshape(-1, vocab_size),
+            transfer_targets[:, :-1].reshape(-1),
+        )
+        loss.backward()
+        optimizer.step()
+    transfer_residual.eval()
+
+    with torch.no_grad():
+        anchor_hidden = base.encode(anchor_inputs)
+        transfer_hidden = base.encode(transfer_inputs)
+        before_anchor_scores = _acsr_score_rows_for_hidden(
+            torch,
+            residual,
+            predictor,
+            gru_predictor,
+            token_position_predictor,
+            anchor_hidden,
+        )
+        after_anchor_scores = _acsr_score_rows_for_hidden(
+            torch,
+            transfer_residual,
+            predictor,
+            gru_predictor,
+            token_position_predictor,
+            anchor_hidden,
+        )
+        before_transfer_scores = _acsr_score_rows_for_hidden(
+            torch,
+            residual,
+            predictor,
+            gru_predictor,
+            token_position_predictor,
+            transfer_hidden,
+        )
+        after_transfer_scores = _acsr_score_rows_for_hidden(
+            torch,
+            transfer_residual,
+            predictor,
+            gru_predictor,
+            token_position_predictor,
+            transfer_hidden,
+        )
+
+        rows = []
+        for variant in [
+            "causal_feature_safe_contextual_topk2",
+            "acsr_mlp_predicted_future",
+            "acsr_gru_predicted_future",
+            "shuffled_predicted_features",
+            "token_position_only_predicted_features",
+        ]:
+            before_scores = before_anchor_scores[variant]
+            after_scores = after_anchor_scores[variant]
+            before_support = before_scores.topk(top_k, dim=-1).indices
+            after_support = after_scores.topk(top_k, dim=-1).indices
+            before_anchor_logits = _decode_for_support(
+                torch,
+                base,
+                residual,
+                anchor_hidden,
+                before_support,
+                before_scores.gather(dim=-1, index=before_support),
+            )
+            after_anchor_logits = _decode_for_support(
+                torch,
+                base,
+                transfer_residual,
+                anchor_hidden,
+                after_support,
+                after_scores.gather(dim=-1, index=after_support),
+            )
+            before_transfer_loss = _forced_support_loss(
+                torch,
+                F,
+                base,
+                residual,
+                transfer_hidden,
+                transfer_targets,
+                vocab_size,
+                before_transfer_scores[variant],
+                top_k=top_k,
+            )
+            after_transfer_loss = _forced_support_loss(
+                torch,
+                F,
+                base,
+                transfer_residual,
+                transfer_hidden,
+                transfer_targets,
+                vocab_size,
+                after_transfer_scores[variant],
+                top_k=top_k,
+            )
+            before_anchor_loss = F.cross_entropy(
+                before_anchor_logits[:, :-1, :].reshape(-1, vocab_size),
+                anchor_targets[:, :-1].reshape(-1),
+            )
+            after_anchor_loss = F.cross_entropy(
+                after_anchor_logits[:, :-1, :].reshape(-1, vocab_size),
+                anchor_targets[:, :-1].reshape(-1),
+            )
+            rows.append(
+                {
+                    "phase": "second_context_transfer",
+                    "variant": variant,
+                    "transfer_steps": int(transfer_steps),
+                    "anchor_ce_before_transfer": float(before_anchor_loss.item()),
+                    "anchor_ce_after_transfer": float(after_anchor_loss.item()),
+                    "anchor_ce_drift": float(
+                        after_anchor_loss.item() - before_anchor_loss.item()
+                    ),
+                    "transfer_ce_before_update": before_transfer_loss,
+                    "transfer_ce_after_update": after_transfer_loss,
+                    "transfer_ce_improvement": before_transfer_loss
+                    - after_transfer_loss,
+                    "anchor_support_churn_after_transfer": float(
+                        (before_support != after_support)
+                        .to(dtype=anchor_hidden.dtype)
+                        .mean()
+                        .item()
+                    ),
+                    "anchor_logit_mse_after_transfer": float(
+                        F.mse_loss(after_anchor_logits, before_anchor_logits).item()
+                    ),
+                }
+            )
+    return rows
+
+
+def _acsr_score_rows_for_hidden(
+    torch: Any,
+    residual: Any,
+    predictor: Any,
+    gru_predictor: Any,
+    token_position_predictor: Any,
+    hidden: Any,
+) -> dict[str, Any]:
+    chunks = _contextual_chunks(torch, hidden)
+    causal_inputs = _causal_predictor_inputs(torch, chunks)
+    position_inputs = _position_predictor_inputs(torch, chunks)
+    targets_future = torch.cat([chunks["next"], chunks["next_delta"]], dim=-1)
+    predicted = predictor(causal_inputs)
+    gru_predicted = gru_predictor(causal_inputs)
+    token_position_predicted = token_position_predictor(position_inputs)
+    zero_predicted = torch.zeros_like(targets_future)
+    shuffled_predicted = _shuffle_tokens(torch, predicted)
+    return {
+        "causal_feature_safe_contextual_topk2": _score_from_features(
+            residual,
+            _feature_tensor(torch, chunks, zero_predicted),
+        ),
+        "acsr_mlp_predicted_future": _score_from_features(
+            residual,
+            _feature_tensor(torch, chunks, predicted),
+        ),
+        "acsr_gru_predicted_future": _score_from_features(
+            residual,
+            _feature_tensor(torch, chunks, gru_predicted),
+        ),
+        "shuffled_predicted_features": _score_from_features(
+            residual,
+            _feature_tensor(torch, chunks, shuffled_predicted),
+        ),
+        "token_position_only_predicted_features": _score_from_features(
+            residual,
+            _feature_tensor(torch, chunks, token_position_predicted),
+        ),
+    }
+
+
+def _teacher_context_churn_rows(
     torch: Any,
     F: Any,
     base: Any,
@@ -802,6 +1101,7 @@ def _retention_churn_rows(
     for variant in [
         "causal_feature_safe_contextual_topk2",
         "acsr_mlp_predicted_future",
+        "acsr_gru_predicted_future",
         "shuffled_predicted_features",
         "token_position_only_predicted_features",
     ]:
@@ -828,6 +1128,7 @@ def _retention_churn_rows(
         logit_mse = float(F.mse_loss(logits, teacher_logits).item())
         rows.append(
             {
+                "phase": "fixed_context_teacher_reference",
                 "variant": variant,
                 "teacher_support_churn": support_churn,
                 "teacher_logit_mse": logit_mse,
@@ -987,7 +1288,11 @@ def _write_artifacts(
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if rows:
-        fieldnames = list(rows[0].keys())
+        fieldnames = []
+        for row in rows:
+            for key in row:
+                if key not in fieldnames:
+                    fieldnames.append(key)
     else:
         fieldnames = ["status"]
         rows = [{"status": "missing"}]
