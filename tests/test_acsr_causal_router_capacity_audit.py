@@ -59,6 +59,15 @@ class ACSRCausalRouterCapacityAuditTest(unittest.TestCase):
             )
             self.assertTrue(summary["aggregate_metrics"]["support_agreement_available"])
             self.assertTrue(
+                summary["aggregate_metrics"][
+                    "support_margin_sequence_inspection_available"
+                ]
+            )
+            self.assertEqual(
+                summary["aggregate_metrics"]["support_margin_sequence_inspection_count"],
+                2,
+            )
+            self.assertTrue(
                 any(
                     failure["reason"]
                     == "acsr_not_strictly_better_than_parameter_matched_causal_mlp"
@@ -97,6 +106,12 @@ class ACSRCausalRouterCapacityAuditTest(unittest.TestCase):
                 "acsr_mlp_predicted_future_support_vs_parameter_matched_causal_mlp_control",
                 support,
             )
+            inspection = (
+                out_dir / "support_margin_sequence_inspection.csv"
+            ).read_text(encoding="utf-8")
+            self.assertIn("high_set_match", inspection)
+            self.assertIn("acsr_lower_p25_margin", inspection)
+            self.assertIn("acsr_minus_parameter_matched_ce_loss", inspection)
 
     def test_missing_packet_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -167,8 +182,8 @@ def _write_source_packet(path: Path) -> None:
                 "comparison": "acsr_mlp_predicted_future_support_vs_parameter_matched_causal_mlp_control",
                 "status": "available",
                 "slot_match_fraction": 0.75,
-                "set_match_fraction": 0.8,
-                "changed_support_fraction": 0.2,
+                "set_match_fraction": 0.95,
+                "changed_support_fraction": 0.05,
             }
         ],
     )
@@ -178,11 +193,13 @@ def _write_source_packet(path: Path) -> None:
             {
                 "variant": "acsr_mlp_predicted_future",
                 "mean_topk_margin": 1.0,
+                "p25_topk_margin": 0.4,
                 "feature_noise_flip_rate": 0.1,
             },
             {
                 "variant": "parameter_matched_causal_mlp_control",
                 "mean_topk_margin": 1.1,
+                "p25_topk_margin": 0.5,
                 "feature_noise_flip_rate": 0.05,
             },
         ],

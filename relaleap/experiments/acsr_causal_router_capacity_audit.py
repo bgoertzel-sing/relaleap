@@ -43,6 +43,7 @@ REQUIRED_ARTIFACTS = (
     "same_student_capacity.csv",
     "support_agreement.csv",
     "margin_fragility_capacity.csv",
+    "support_margin_sequence_inspection.csv",
     "missing_mechanism_evidence.csv",
     "notes.md",
 )
@@ -66,6 +67,11 @@ def run_acsr_causal_router_capacity_audit(
     same_student_rows = _same_student_rows(packets)
     support_agreement_rows = _support_agreement_rows(packets)
     margin_rows = _margin_rows(packets)
+    support_margin_sequence_rows = _support_margin_sequence_rows(
+        per_sequence_rows,
+        support_agreement_rows,
+        margin_rows,
+    )
     missing_rows = _missing_mechanism_rows(
         packets,
         gate_dir,
@@ -108,6 +114,20 @@ def run_acsr_causal_router_capacity_audit(
             row["evidence"] == "support_agreement" and row["status"] == "available"
             for row in missing_rows
         ),
+        "support_margin_sequence_inspection_available": any(
+            row.get("status") == "available" for row in support_margin_sequence_rows
+        ),
+        "support_margin_sequence_inspection_count": sum(
+            1 for row in support_margin_sequence_rows if row.get("status") == "available"
+        ),
+        "mean_high_support_match_acsr_minus_parameter_matched_ce_loss": _mean_key(
+            [
+                row
+                for row in support_margin_sequence_rows
+                if row.get("support_agreement_stratum") == "high_set_match"
+            ],
+            "acsr_minus_parameter_matched_ce_loss",
+        ),
         "dual_student_cross_forcing_available": any(
             row["evidence"] == "dual_student_cross_forcing" and row["status"] == "available"
             for row in missing_rows
@@ -125,16 +145,7 @@ def run_acsr_causal_router_capacity_audit(
             if status == "pass"
             else "acsr_as_anticipation_blocked_by_capacity_matched_causal_router"
         ),
-        "selected_next_step": (
-            "implement dual-student support cross-forcing with stored support tensors"
-            if not aggregate["dual_student_cross_forcing_available"]
-            else (
-                "add a local support-agreement and margin-stratified inspection of "
-                "ACSR versus parameter-matched causal-router per-sequence deltas"
-                if aggregate["paired_sequence_bootstrap_available"]
-                else "run paired sequence bootstrap over ACSR versus causal-router deltas"
-            )
-        ),
+        "selected_next_step": _selected_next_step(aggregate),
         "source_dirs": [str(path) for path in source_dirs],
         "gate_dir": str(gate_dir),
         "strategy_review": review,
@@ -157,6 +168,7 @@ def run_acsr_causal_router_capacity_audit(
         same_student_rows=same_student_rows,
         support_agreement_rows=support_agreement_rows,
         margin_rows=margin_rows,
+        support_margin_sequence_rows=support_margin_sequence_rows,
         missing_rows=missing_rows,
     )
     return summary
@@ -441,8 +453,12 @@ def _margin_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "source_dir": packet["source_dir"],
                 "seed": _seed_label(packet),
                 "acsr_mean_topk_margin": _number(acsr.get("mean_topk_margin")),
+                "acsr_p25_topk_margin": _number(acsr.get("p25_topk_margin")),
                 "parameter_matched_mean_topk_margin": _number(
                     control.get("mean_topk_margin")
+                ),
+                "parameter_matched_p25_topk_margin": _number(
+                    control.get("p25_topk_margin")
                 ),
                 "acsr_feature_noise_flip_rate": _number(
                     acsr.get("feature_noise_flip_rate")
@@ -453,6 +469,113 @@ def _margin_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return rows
+
+
+def _support_margin_sequence_rows(
+    per_sequence_rows: list[dict[str, Any]],
+    support_agreement_rows: list[dict[str, Any]],
+    margin_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    support_by_packet = {row["packet"]: row for row in support_agreement_rows}
+    margin_by_packet = {row["packet"]: row for row in margin_rows}
+    rows = []
+    for row in per_sequence_rows:
+        support = support_by_packet.get(row["packet"], {})
+        margin = margin_by_packet.get(row["packet"], {})
+        acsr_margin = margin.get("acsr_p25_topk_margin")
+        control_margin = margin.get("parameter_matched_p25_topk_margin")
+        set_match = support.get("set_match_fraction")
+        missing = []
+        if not support:
+            missing.append("support_agreement")
+        if not isinstance(acsr_margin, (int, float)):
+            missing.append("acsr_margin")
+        if not isinstance(control_margin, (int, float)):
+            missing.append("parameter_matched_margin")
+        if missing:
+            rows.append(
+                {
+                    "packet": row["packet"],
+                    "source_dir": row["source_dir"],
+                    "seed": row["seed"],
+                    "split": row["split"],
+                    "sequence_index": row["sequence_index"],
+                    "status": "missing",
+                    "missing": ";".join(missing),
+                }
+            )
+            continue
+        rows.append(
+            {
+                "packet": row["packet"],
+                "source_dir": row["source_dir"],
+                "seed": row["seed"],
+                "split": row["split"],
+                "sequence_index": row["sequence_index"],
+                "status": "available",
+                "support_agreement_stratum": _support_agreement_stratum(set_match),
+                "margin_stratum": _margin_stratum(acsr_margin, control_margin),
+                "slot_match_fraction": support.get("slot_match_fraction"),
+                "set_match_fraction": set_match,
+                "changed_support_fraction": support.get("changed_support_fraction"),
+                "acsr_p25_topk_margin": acsr_margin,
+                "parameter_matched_p25_topk_margin": control_margin,
+                "acsr_minus_parameter_matched_p25_topk_margin": acsr_margin
+                - control_margin,
+                "acsr_mean_topk_margin": margin.get("acsr_mean_topk_margin"),
+                "parameter_matched_mean_topk_margin": margin.get(
+                    "parameter_matched_mean_topk_margin"
+                ),
+                "acsr_ce_loss": row.get("acsr_ce_loss"),
+                "parameter_matched_ce_loss": row.get("parameter_matched_ce_loss"),
+                "acsr_minus_parameter_matched_ce_loss": row.get(
+                    "acsr_minus_parameter_matched_ce_loss"
+                ),
+                "acsr_oracle_regret": row.get("acsr_oracle_regret"),
+                "parameter_matched_oracle_regret": row.get(
+                    "parameter_matched_oracle_regret"
+                ),
+                "acsr_minus_parameter_matched_oracle_regret": row.get(
+                    "acsr_minus_parameter_matched_oracle_regret"
+                ),
+                "acsr_strictly_better": row.get("acsr_strictly_better"),
+            }
+        )
+    return rows
+
+
+def _support_agreement_stratum(set_match: Any) -> str:
+    if not isinstance(set_match, (int, float)):
+        return "unknown_support_match"
+    if set_match >= 0.9:
+        return "high_set_match"
+    if set_match >= 0.5:
+        return "medium_set_match"
+    return "low_set_match"
+
+
+def _margin_stratum(acsr_margin: float, control_margin: float) -> str:
+    if acsr_margin < control_margin:
+        return "acsr_lower_p25_margin"
+    if acsr_margin > control_margin:
+        return "acsr_higher_p25_margin"
+    return "matched_p25_margin"
+
+
+def _selected_next_step(aggregate: dict[str, Any]) -> str:
+    if not aggregate["dual_student_cross_forcing_available"]:
+        return "implement dual-student support cross-forcing with stored support tensors"
+    if not aggregate["paired_sequence_bootstrap_available"]:
+        return "run paired sequence bootstrap over ACSR versus causal-router deltas"
+    if not aggregate["support_margin_sequence_inspection_available"]:
+        return (
+            "add a local support-agreement and margin-stratified inspection of "
+            "ACSR versus parameter-matched causal-router per-sequence deltas"
+        )
+    return (
+        "pivot from ACSR-as-anticipation to a direct causal support-router "
+        "mechanism audit with ACSR retained only as a diagnostic teacher path"
+    )
 
 
 def _missing_mechanism_rows(
@@ -589,6 +712,7 @@ def _write_artifacts(
     same_student_rows: list[dict[str, Any]],
     support_agreement_rows: list[dict[str, Any]],
     margin_rows: list[dict[str, Any]],
+    support_margin_sequence_rows: list[dict[str, Any]],
     missing_rows: list[dict[str, Any]],
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -604,6 +728,7 @@ def _write_artifacts(
     _write_csv(out_dir / "same_student_capacity.csv", same_student_rows)
     _write_csv(out_dir / "support_agreement.csv", support_agreement_rows)
     _write_csv(out_dir / "margin_fragility_capacity.csv", margin_rows)
+    _write_csv(out_dir / "support_margin_sequence_inspection.csv", support_margin_sequence_rows)
     _write_csv(out_dir / "missing_mechanism_evidence.csv", missing_rows)
     _write_notes(out_dir / "notes.md", summary)
 

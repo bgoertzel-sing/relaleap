@@ -1627,6 +1627,24 @@ def _margin_fragility_rows(
                 "low_margin_feature_noise_flip_rate": low_margin_flip_rate,
             }
         )
+    for variant in ["parameter_matched_causal_mlp_control"]:
+        if variant not in score_rows:
+            continue
+        scores = score_rows[variant]
+        margin = _topk_margin_tensor(scores, top_k)
+        low_margin_threshold = torch.quantile(margin.reshape(-1), 0.25)
+        rows.append(
+            {
+                "variant": variant,
+                "top_k": int(top_k),
+                "noise_kind": "score_margin_only",
+                "noise_scale_fraction": 0.0,
+                "mean_topk_margin": float(margin.mean().item()),
+                "p25_topk_margin": float(low_margin_threshold.item()),
+                "feature_noise_flip_rate": "",
+                "low_margin_feature_noise_flip_rate": "",
+            }
+        )
     return rows
 
 
