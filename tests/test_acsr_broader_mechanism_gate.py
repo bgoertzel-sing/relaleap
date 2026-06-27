@@ -31,8 +31,9 @@ class ACSRBroaderMechanismGateTest(unittest.TestCase):
             )
             self.assertEqual(summary["loaded_packet_count"], 1)
             self.assertTrue(summary["gates"]["source_artifacts_present"])
-            self.assertFalse(summary["gates"]["sequence_heldout_available"])
+            self.assertTrue(summary["gates"]["sequence_heldout_available"])
             self.assertFalse(summary["gates"]["dual_student_cross_forcing_available"])
+            self.assertTrue(summary["gates"]["leaky_positive_control_available"])
             self.assertIn(
                 "acsr_beats_nulls_on_available_packets", summary["aggregate_metrics"]
             )
@@ -52,6 +53,8 @@ class ACSRBroaderMechanismGateTest(unittest.TestCase):
                 encoding="utf-8"
             )
             self.assertIn("leaky_future_positive", perturbation)
+            margin = (out_dir / "margin_fragility.csv").read_text(encoding="utf-8")
+            self.assertIn("feature_noise_flip_rate", margin)
             notes = (out_dir / "notes.md").read_text(encoding="utf-8")
             self.assertIn("_score_from_features", notes)
 
@@ -117,6 +120,7 @@ def _write_source_packet(path: Path) -> None:
         path / "feature_perturbation.csv",
         [
             {
+                "control_type": "future_perturbation_negative",
                 "check": "future_positions_do_not_change_prefix_predictions_or_support",
                 "perturb_start": 4,
                 "checked_prefix_positions": 4,
@@ -124,6 +128,46 @@ def _write_source_packet(path: Path) -> None:
                 "max_router_score_delta": 0.0,
                 "support_unchanged": True,
                 "passed": True,
+            },
+            {
+                "control_type": "leaky_future_positive",
+                "check": "full_context_features_detect_future_perturbation",
+                "perturb_start": 4,
+                "checked_prefix_positions": 4,
+                "max_predicted_feature_delta": 0.5,
+                "max_router_score_delta": 0.1,
+                "support_unchanged": False,
+                "passed": True,
+            }
+        ],
+    )
+    _write_csv(
+        path / "sequence_heldout_metrics.csv",
+        [
+            {
+                "split": "sequence_suffix_holdout",
+                "variant": "acsr_mlp_predicted_future",
+                "top_k": 2,
+                "holdout_start": 4,
+                "heldout_positions": 3,
+                "ce_loss": 2.6,
+                "oracle_loss": 2.4,
+                "oracle_regret": 0.2,
+            }
+        ],
+    )
+    _write_csv(
+        path / "margin_fragility.csv",
+        [
+            {
+                "variant": "acsr_mlp_predicted_future",
+                "top_k": 2,
+                "noise_kind": "gaussian_feature_noise",
+                "noise_scale_fraction": 0.01,
+                "mean_topk_margin": 1.5,
+                "p25_topk_margin": 0.7,
+                "feature_noise_flip_rate": 0.1,
+                "low_margin_feature_noise_flip_rate": 0.2,
             }
         ],
     )

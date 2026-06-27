@@ -25,6 +25,8 @@ REQUIRED_ARTIFACTS = [
     "router_metrics.csv",
     "same_student_metrics.csv",
     "feature_perturbation.csv",
+    "sequence_heldout_metrics.csv",
+    "margin_fragility.csv",
     "retention_churn_metrics.csv",
     "notes.md",
 ]
@@ -65,6 +67,8 @@ def run_anticipatory_contextual_support_routing(
             router_rows=[],
             same_student_rows=[],
             perturbation_rows=[],
+            sequence_rows=[],
+            margin_rows=[],
             retention_rows=[],
         )
         return summary
@@ -310,6 +314,34 @@ def run_anticipatory_contextual_support_routing(
             predictor,
             perturb_start=max(2, seq_len // 2),
         )
+        perturbation_rows.extend(
+            _leaky_future_positive_control_rows(
+                torch,
+                residual,
+                hidden,
+                perturb_start=max(2, seq_len // 2),
+            )
+        )
+        sequence_rows = _sequence_heldout_rows(
+            torch,
+            F,
+            base,
+            residual,
+            hidden,
+            targets,
+            vocab_size,
+            score_rows,
+            top_k=top_k,
+            holdout_start=max(1, seq_len // 2),
+        )
+        margin_rows = _margin_fragility_rows(
+            torch,
+            residual,
+            variants,
+            score_rows,
+            top_k=top_k,
+            seed=seed + 101,
+        )
 
     transfer_inputs, transfer_targets, transfer_vocab_size = _build_batch(
         dataset=dataset,
@@ -393,8 +425,16 @@ def run_anticipatory_contextual_support_routing(
         },
         "gates": {
             "future_perturbation_invariance": not any(
-                not row["passed"] for row in perturbation_rows
+                not row["passed"]
+                for row in perturbation_rows
+                if row.get("control_type") != "leaky_future_positive"
             ),
+            "leaky_future_positive_control": any(
+                row.get("control_type") == "leaky_future_positive" and row["passed"]
+                for row in perturbation_rows
+            ),
+            "sequence_heldout_available": bool(sequence_rows),
+            "margin_fragility_available": bool(margin_rows),
             "acsr_beats_shuffled_ce": _metric_lt(
                 router_by_name,
                 "acsr_mlp_predicted_future",
@@ -428,6 +468,8 @@ def run_anticipatory_contextual_support_routing(
         router_rows=router_rows,
         same_student_rows=same_student_rows,
         perturbation_rows=perturbation_rows,
+        sequence_rows=sequence_rows,
+        margin_rows=margin_rows,
         retention_rows=retention_rows,
     )
     return summary
@@ -858,6 +900,7 @@ def _future_perturbation_rows(
     )
     return [
         {
+            "control_type": "future_perturbation_negative",
             "check": "future_positions_do_not_change_prefix_predictions_or_support",
             "perturb_start": int(perturb_start),
             "checked_prefix_positions": int(perturb_start),
@@ -867,6 +910,202 @@ def _future_perturbation_rows(
             "passed": pred_delta <= 1e-8 and score_delta <= 1e-8 and support_same,
         }
     ]
+
+
+def _leaky_future_positive_control_rows(
+    torch: Any,
+    residual: Any,
+    hidden: Any,
+    *,
+    perturb_start: int,
+) -> list[dict[str, Any]]:
+    perturbed = hidden.clone()
+    perturbed[:, perturb_start:, :] = torch.flip(perturbed[:, perturb_start:, :], dims=[1])
+    base_chunks = _contextual_chunks(torch, hidden)
+    perturbed_chunks = _contextual_chunks(torch, perturbed)
+    base_future = torch.cat([base_chunks["next"], base_chunks["next_delta"]], dim=-1)
+    perturbed_future = torch.cat(
+        [perturbed_chunks["next"], perturbed_chunks["next_delta"]],
+        dim=-1,
+    )
+    base_scores = _score_from_features(residual, _feature_tensor(torch, base_chunks, base_future))
+    perturbed_scores = _score_from_features(
+        residual,
+        _feature_tensor(torch, perturbed_chunks, perturbed_future),
+    )
+    earlier = slice(0, perturb_start)
+    score_delta = float(
+        (base_scores[:, earlier, :] - perturbed_scores[:, earlier, :]).abs().max().item()
+    )
+    feature_delta = float(
+        (base_future[:, earlier, :] - perturbed_future[:, earlier, :]).abs().max().item()
+    )
+    support_same = bool(
+        torch.equal(
+            base_scores[:, earlier, :].topk(residual.top_k, dim=-1).indices,
+            perturbed_scores[:, earlier, :].topk(residual.top_k, dim=-1).indices,
+        )
+    )
+    return [
+        {
+            "control_type": "leaky_future_positive",
+            "check": "full_context_features_detect_future_perturbation",
+            "perturb_start": int(perturb_start),
+            "checked_prefix_positions": int(perturb_start),
+            "max_predicted_feature_delta": feature_delta,
+            "max_router_score_delta": score_delta,
+            "support_unchanged": support_same,
+            "passed": feature_delta > 1e-8 or score_delta > 1e-8 or not support_same,
+        }
+    ]
+
+
+def _sequence_heldout_rows(
+    torch: Any,
+    F: Any,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    score_rows: dict[str, Any],
+    *,
+    top_k: int,
+    holdout_start: int,
+) -> list[dict[str, Any]]:
+    rows = []
+    token_slice = slice(holdout_start, max(holdout_start + 1, hidden.shape[1] - 1))
+    target_slice = targets[:, token_slice].reshape(-1)
+    teacher_scores = score_rows["full_context_contextual_topk2_teacher"]
+    oracle_loss = _oracle_loss_for_slice(
+        torch,
+        F,
+        base,
+        residual,
+        hidden,
+        target_slice,
+        vocab_size,
+        teacher_scores,
+        token_slice=token_slice,
+    )
+    for variant, scores in score_rows.items():
+        if variant == "full_context_contextual_topk2_teacher" or top_k != 2:
+            variant_top_k = min(top_k, int(scores.shape[-1]))
+        else:
+            variant_top_k = top_k
+        top_values, support = scores.topk(variant_top_k, dim=-1)
+        logits = _decode_for_support(torch, base, residual, hidden, support, top_values)
+        loss = F.cross_entropy(
+            logits[:, token_slice, :].reshape(-1, vocab_size),
+            target_slice,
+        )
+        rows.append(
+            {
+                "split": "sequence_suffix_holdout",
+                "variant": variant,
+                "top_k": int(variant_top_k),
+                "holdout_start": int(holdout_start),
+                "heldout_positions": int(logits[:, token_slice, :].shape[1]),
+                "ce_loss": float(loss.item()),
+                "oracle_loss": oracle_loss,
+                "oracle_regret": float(loss.item()) - oracle_loss,
+            }
+        )
+    return rows
+
+
+def _oracle_loss_for_slice(
+    torch: Any,
+    F: Any,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    target_flat: Any,
+    vocab_size: int,
+    reference_scores: Any,
+    *,
+    token_slice: slice,
+) -> float:
+    losses = []
+    for left in range(residual.num_columns):
+        for right in range(left + 1, residual.num_columns):
+            support = torch.empty(
+                hidden.shape[0],
+                hidden.shape[1],
+                2,
+                dtype=torch.long,
+                device=hidden.device,
+            )
+            support[..., 0] = left
+            support[..., 1] = right
+            top_values = reference_scores.gather(dim=-1, index=support)
+            logits = _decode_for_support(torch, base, residual, hidden, support, top_values)
+            per_token = F.cross_entropy(
+                logits[:, token_slice, :].reshape(-1, vocab_size),
+                target_flat,
+                reduction="none",
+            )
+            losses.append(per_token)
+    pair_losses = torch.stack(losses, dim=0)
+    return float(pair_losses.min(dim=0).values.mean().item())
+
+
+def _margin_fragility_rows(
+    torch: Any,
+    residual: Any,
+    variants: dict[str, Any],
+    score_rows: dict[str, Any],
+    *,
+    top_k: int,
+    seed: int,
+) -> list[dict[str, Any]]:
+    rows = []
+    generator = torch.Generator(device=next(iter(variants.values())).device)
+    generator.manual_seed(seed)
+    for variant, features in variants.items():
+        scores = score_rows[variant]
+        base_support = scores.topk(top_k, dim=-1).indices
+        feature_scale = features.detach().std().clamp_min(1e-6)
+        noise = torch.randn(
+            features.shape,
+            generator=generator,
+            device=features.device,
+            dtype=features.dtype,
+        ) * (0.01 * feature_scale)
+        noisy_scores = _score_from_features(residual, features + noise)
+        noisy_support = noisy_scores.topk(top_k, dim=-1).indices
+        margin = _topk_margin_tensor(scores, top_k)
+        low_margin_threshold = torch.quantile(margin.reshape(-1), 0.25)
+        low_margin_mask = margin <= low_margin_threshold
+        support_changed = (base_support != noisy_support).any(dim=-1)
+        if bool(low_margin_mask.any().item()):
+            low_margin_flip_rate = float(
+                support_changed[low_margin_mask].to(dtype=features.dtype).mean().item()
+            )
+        else:
+            low_margin_flip_rate = 0.0
+        rows.append(
+            {
+                "variant": variant,
+                "top_k": int(top_k),
+                "noise_kind": "gaussian_feature_noise",
+                "noise_scale_fraction": 0.01,
+                "mean_topk_margin": float(margin.mean().item()),
+                "p25_topk_margin": float(low_margin_threshold.item()),
+                "feature_noise_flip_rate": float(
+                    support_changed.to(dtype=features.dtype).mean().item()
+                ),
+                "low_margin_feature_noise_flip_rate": low_margin_flip_rate,
+            }
+        )
+    return rows
+
+
+def _topk_margin_tensor(scores: Any, top_k: int) -> Any:
+    if scores.shape[-1] <= top_k:
+        return scores.new_zeros(scores.shape[:-1])
+    sorted_scores = scores.sort(dim=-1, descending=True).values
+    return sorted_scores[..., top_k - 1] - sorted_scores[..., top_k]
 
 
 def _second_context_retention_churn_rows(
@@ -1177,11 +1416,25 @@ def _gate_failures(
     perturbation_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     failures = []
-    if any(not row["passed"] for row in perturbation_rows):
+    if any(
+        not row["passed"]
+        for row in perturbation_rows
+        if row.get("control_type") != "leaky_future_positive"
+    ):
         failures.append(
             {
                 "gate": "future_perturbation_invariance",
                 "reason": "future perturbation changed prefix predictions, scores, or support",
+            }
+        )
+    if not any(
+        row.get("control_type") == "leaky_future_positive" and row["passed"]
+        for row in perturbation_rows
+    ):
+        failures.append(
+            {
+                "gate": "leaky_future_positive_control",
+                "reason": "future perturbation power check did not detect deliberately leaky features",
             }
         )
     acsr = router_by_name.get("acsr_mlp_predicted_future")
@@ -1271,6 +1524,8 @@ def _write_artifacts(
     router_rows: list[dict[str, Any]],
     same_student_rows: list[dict[str, Any]],
     perturbation_rows: list[dict[str, Any]],
+    sequence_rows: list[dict[str, Any]],
+    margin_rows: list[dict[str, Any]],
     retention_rows: list[dict[str, Any]],
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1282,6 +1537,8 @@ def _write_artifacts(
     _write_csv(out_dir / "router_metrics.csv", router_rows)
     _write_csv(out_dir / "same_student_metrics.csv", same_student_rows)
     _write_csv(out_dir / "feature_perturbation.csv", perturbation_rows)
+    _write_csv(out_dir / "sequence_heldout_metrics.csv", sequence_rows)
+    _write_csv(out_dir / "margin_fragility.csv", margin_rows)
     _write_csv(out_dir / "retention_churn_metrics.csv", retention_rows)
     _write_notes(out_dir / "notes.md", summary)
 

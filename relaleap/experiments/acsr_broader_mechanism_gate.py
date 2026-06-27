@@ -33,6 +33,8 @@ REQUIRED_SOURCE_ARTIFACTS = [
     "router_metrics.csv",
     "same_student_metrics.csv",
     "feature_perturbation.csv",
+    "sequence_heldout_metrics.csv",
+    "margin_fragility.csv",
     "retention_churn_metrics.csv",
 ]
 
@@ -111,9 +113,13 @@ def run_acsr_broader_mechanism_gate(
                 "future_perturbation_negative_control"
             ],
             "same_student_available": bool(same_student_rows),
-            "sequence_heldout_available": False,
+            "sequence_heldout_available": any(packet["sequence_rows"] for packet in packets),
             "dual_student_cross_forcing_available": False,
-            "leaky_positive_control_available": False,
+            "leaky_positive_control_available": any(
+                row.get("control_type") == "leaky_future_positive"
+                and str(row.get("passed", "")).lower() == "true"
+                for row in perturbation_rows
+            ),
             "parameter_matched_causal_control_available": False,
         },
         "aggregate_metrics": aggregate,
@@ -150,6 +156,8 @@ def _load_packet(source_dir: Path) -> dict[str, Any]:
         "router_rows": [],
         "same_student_rows": [],
         "perturbation_rows": [],
+        "sequence_rows": [],
+        "margin_rows": [],
         "retention_rows": [],
     }
     missing = [
@@ -162,6 +170,8 @@ def _load_packet(source_dir: Path) -> dict[str, Any]:
     packet["router_rows"] = _read_csv(source_dir / "router_metrics.csv")
     packet["same_student_rows"] = _read_csv(source_dir / "same_student_metrics.csv")
     packet["perturbation_rows"] = _read_csv(source_dir / "feature_perturbation.csv")
+    packet["sequence_rows"] = _read_csv(source_dir / "sequence_heldout_metrics.csv")
+    packet["margin_rows"] = _read_csv(source_dir / "margin_fragility.csv")
     packet["retention_rows"] = _read_csv(source_dir / "retention_churn_metrics.csv")
     packet["loaded"] = True
     return packet
@@ -229,6 +239,27 @@ def _variant_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if acsr and causal:
             rows.append(
                 _margin_gated_proxy_row(packet["source_dir"], summary, acsr, causal)
+            )
+        for row in packet["sequence_rows"]:
+            rows.append(
+                {
+                    "source_dir": packet["source_dir"],
+                    "seed": _seed_label(summary),
+                    "split": row.get("split", "sequence_suffix_holdout"),
+                    "variant": row.get("variant", ""),
+                    "control_family": _control_family(row.get("variant", "")),
+                    "status": "available_sequence_heldout",
+                    "ce_loss": _float_or_blank(row.get("ce_loss")),
+                    "oracle_regret": _float_or_blank(row.get("oracle_regret")),
+                    "oracle_loss": _float_or_blank(row.get("oracle_loss")),
+                    "used_columns": "",
+                    "unique_support_sets": "",
+                    "support_entropy": "",
+                    "mean_topk_margin": "",
+                    "top_k": _int_or_blank(row.get("top_k")),
+                    "holdout_start": _int_or_blank(row.get("holdout_start")),
+                    "heldout_positions": _int_or_blank(row.get("heldout_positions")),
+                }
             )
     return rows
 
@@ -312,15 +343,19 @@ def _perturbation_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
             enriched.update(row)
             rows.append(enriched)
-        rows.append(
-            {
-                "source_dir": packet["source_dir"],
-                "seed": _seed_label(packet["summary"]),
-                "control_type": "leaky_future_positive",
-                "status": "not_available_in_source_artifact",
-                "reason": "existing perturbation artifact lacks intentionally leaky positive control",
-            }
-        )
+        if not any(
+            row.get("control_type") == "leaky_future_positive"
+            for row in packet["perturbation_rows"]
+        ):
+            rows.append(
+                {
+                    "source_dir": packet["source_dir"],
+                    "seed": _seed_label(packet["summary"]),
+                    "control_type": "leaky_future_positive",
+                    "status": "not_available_in_source_artifact",
+                    "reason": "existing perturbation artifact lacks intentionally leaky positive control",
+                }
+            )
     return rows
 
 
@@ -329,19 +364,29 @@ def _margin_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for packet in packets:
         if not packet["loaded"]:
             continue
-        for row in packet["router_rows"]:
-            if not row.get("variant"):
-                continue
-            rows.append(
-                {
+        if packet["margin_rows"]:
+            for row in packet["margin_rows"]:
+                enriched = {
                     "source_dir": packet["source_dir"],
                     "seed": _seed_label(packet["summary"]),
-                    "variant": row["variant"],
-                    "mean_topk_margin": _float_or_blank(row.get("mean_topk_margin")),
-                    "feature_noise_flip_rate": "",
-                    "status": "margin_available_fragility_noise_not_available",
+                    "status": "available",
                 }
-            )
+                enriched.update(row)
+                rows.append(enriched)
+        else:
+            for row in packet["router_rows"]:
+                if not row.get("variant"):
+                    continue
+                rows.append(
+                    {
+                        "source_dir": packet["source_dir"],
+                        "seed": _seed_label(packet["summary"]),
+                        "variant": row["variant"],
+                        "mean_topk_margin": _float_or_blank(row.get("mean_topk_margin")),
+                        "feature_noise_flip_rate": "",
+                        "status": "margin_available_fragility_noise_not_available",
+                    }
+                )
     return rows
 
 
@@ -432,13 +477,18 @@ def _missing_required_controls(
             reasons.append(f"missing required variant {required}")
     if "margin_gated_acsr_proxy" not in variants:
         reasons.append("missing margin-gated ACSR variant")
-    if any(row.get("forcing_type") == "dual_student_cross_forcing" for row in same_student_rows):
-        reasons.append("dual-student cross-forcing is declared but not available")
-    else:
+    if not any(
+        row.get("forcing_type") == "dual_student_cross_forcing"
+        and row.get("status") == "available"
+        for row in same_student_rows
+    ):
         reasons.append("dual-student cross-forcing rows missing")
-    if any(row.get("control_type") == "leaky_future_positive" for row in perturbation_rows):
-        reasons.append("leaky positive future-control is declared but not available")
-    else:
+    if not any(
+        row.get("control_type") == "leaky_future_positive"
+        and row.get("status") == "available"
+        and str(row.get("passed", "")).lower() == "true"
+        for row in perturbation_rows
+    ):
         reasons.append("leaky positive future-control rows missing")
     if not any(row.get("feature_noise_flip_rate") not in ("", None) for row in margin_rows):
         reasons.append("margin fragility under feature noise is missing")
@@ -448,7 +498,8 @@ def _missing_required_controls(
         for row in parameter_rows
     ):
         reasons.append("parameter-matched causal MLP control is missing")
-    reasons.append("sequence-heldout split is missing from source artifacts")
+    if not any(row.get("split") == "sequence_suffix_holdout" for row in variant_rows):
+        reasons.append("sequence-heldout split is missing from source artifacts")
     return reasons
 
 
