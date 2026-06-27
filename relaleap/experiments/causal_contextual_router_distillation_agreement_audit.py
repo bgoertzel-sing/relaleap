@@ -115,6 +115,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
     agreement_rows: list[dict[str, Any]] = []
     intervention_rows: list[dict[str, Any]] = []
     null_control_rows: list[dict[str, Any]] = []
+    null_sampling_rows: list[dict[str, Any]] = []
     per_token_rows: list[dict[str, Any]] = []
     support_count_rows: list[dict[str, Any]] = []
 
@@ -159,6 +160,25 @@ def run_causal_contextual_router_distillation_agreement_audit(
             teacher_train_support,
             seed=random_seed + 907 + fold_index,
         )
+        (
+            token_position_frequency_matched_teacher_train_support,
+            token_position_sampling_rows,
+        ) = _token_position_frequency_matched_support(
+            teacher_train_support,
+            train_targets,
+            seed=random_seed + 1301 + fold_index,
+        )
+        for row in token_position_sampling_rows:
+            null_sampling_rows.append(
+                {
+                    "fold": fold_index,
+                    "null_control": (
+                        "causal_distilled_from_token_position_frequency_matched_teacher_"
+                        f"{student_distill_weight:g}"
+                    ),
+                    **row,
+                }
+            )
 
         variants: dict[str, tuple[Any, Any, dict[str, Any]]] = {}
         specs = [
@@ -225,6 +245,23 @@ def run_causal_contextual_router_distillation_agreement_audit(
                     "null_control": "frequency_matched_teacher",
                 },
                 frequency_matched_teacher_train_support,
+            ),
+            (
+                {
+                    "name": (
+                        "causal_distilled_from_token_position_frequency_matched_teacher_"
+                        f"{student_distill_weight:g}"
+                    ),
+                    "support_router": "contextual_mlp_causal",
+                    "top_k": 2,
+                    "causal_feature_safe": True,
+                    "variant_kind": "token_position_frequency_matched_teacher_null",
+                    "teacher_oracle_weight": teacher_oracle_weight,
+                    "distill_weight": float(student_distill_weight),
+                    "distills_from_teacher": False,
+                    "null_control": "token_position_frequency_matched_teacher",
+                },
+                token_position_frequency_matched_teacher_train_support,
             ),
         ]
         for spec, null_support in null_specs:
@@ -528,6 +565,8 @@ def run_causal_contextual_router_distillation_agreement_audit(
             "intervention_aggregates": intervention_aggregates,
             "null_control_rows": null_control_rows,
             "null_control_aggregates": null_control_aggregates,
+            "null_sampling_rows": null_sampling_rows,
+            "null_sampling_aggregates": _aggregate_null_sampling_rows(null_sampling_rows),
             "gate_criteria": decision["criteria"],
             "failures": decision["failures"],
             "rationale": decision["rationale"],
@@ -539,6 +578,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
             "agreement_metrics_csv": str(out_dir / "agreement_metrics.csv"),
             "intervention_metrics_csv": str(out_dir / "intervention_metrics.csv"),
             "null_control_metrics_csv": str(out_dir / "null_control_metrics.csv"),
+            "null_sampling_diagnostics_csv": str(out_dir / "null_sampling_diagnostics.csv"),
             "per_token_supports_csv": str(out_dir / "per_token_supports.csv"),
             "support_counts_csv": str(out_dir / "support_counts.csv"),
             "notes_md": str(out_dir / "notes.md"),
@@ -551,6 +591,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
     _write_csv(out_dir / "agreement_metrics.csv", agreement_rows)
     _write_csv(out_dir / "intervention_metrics.csv", intervention_rows)
     _write_csv(out_dir / "null_control_metrics.csv", null_control_rows)
+    _write_csv(out_dir / "null_sampling_diagnostics.csv", null_sampling_rows)
     _write_csv(out_dir / "per_token_supports.csv", per_token_rows)
     _write_csv(out_dir / "support_counts.csv", support_count_rows)
     (out_dir / "summary.json").write_text(
@@ -626,6 +667,97 @@ def _frequency_matched_support(support: Any, *, seed: int) -> Any:
         device=flat.device,
     )
     return flat[sample_indices].reshape_as(support)
+
+
+def _token_position_frequency_matched_support(
+    support: Any,
+    targets: Any,
+    *,
+    seed: int,
+) -> tuple[Any, list[dict[str, Any]]]:
+    """Resample teacher support within target-token/position strata when possible."""
+
+    import torch
+
+    flat_support = support.reshape(-1, support.shape[-1])
+    target_rows = targets.reshape(targets.shape[0], targets.shape[1])
+    if target_rows.shape[:2] != support.shape[:2]:
+        raise ValueError("targets must align with support batch/sequence dimensions")
+    flat_targets = target_rows.reshape(-1).detach().cpu().tolist()
+    positions = (
+        torch.arange(support.shape[1], device=support.device)
+        .repeat(support.shape[0])
+        .detach()
+        .cpu()
+        .tolist()
+    )
+    token_position_groups: dict[tuple[int, int], list[int]] = {}
+    token_groups: dict[int, list[int]] = {}
+    for index, (target, position) in enumerate(zip(flat_targets, positions, strict=True)):
+        token = int(target)
+        pos = int(position)
+        token_position_groups.setdefault((token, pos), []).append(index)
+        token_groups.setdefault(token, []).append(index)
+
+    generator = torch.Generator(device=flat_support.device)
+    generator.manual_seed(seed)
+    global_indices = list(range(flat_support.shape[0]))
+    sampled_indices = []
+    diagnostic_rows = []
+    for index, (target, position) in enumerate(zip(flat_targets, positions, strict=True)):
+        token = int(target)
+        pos = int(position)
+        candidates = token_position_groups.get((token, pos), [])
+        sampling_mode = "target_position"
+        if len(candidates) <= 1:
+            candidates = token_groups.get(token, [])
+            sampling_mode = "target_only"
+        if len(candidates) <= 1:
+            candidates = global_indices
+            sampling_mode = "global"
+        original_stratum_size = len(candidates)
+        if len(candidates) > 1 and index in candidates:
+            candidates = [candidate for candidate in candidates if candidate != index]
+        choice = torch.randint(
+            low=0,
+            high=len(candidates),
+            size=(1,),
+            generator=generator,
+            device=flat_support.device,
+        )
+        sampled_indices.append(candidates[int(choice.item())])
+        diagnostic_rows.append(
+            {
+                "flat_position": index,
+                "target_token": token,
+                "position_index": pos,
+                "sampling_mode": sampling_mode,
+                "candidate_count": len(candidates),
+                "original_stratum_size": original_stratum_size,
+                "candidate_support_entropy": _candidate_support_entropy(
+                    flat_support,
+                    candidates,
+                ),
+            }
+        )
+    sample_tensor = torch.tensor(sampled_indices, dtype=torch.long, device=flat_support.device)
+    return flat_support[sample_tensor].reshape_as(support), diagnostic_rows
+
+
+def _candidate_support_entropy(flat_support: Any, candidates: list[int]) -> float:
+    counts: dict[str, int] = {}
+    for candidate in candidates:
+        row = flat_support[candidate].detach().cpu().tolist()
+        key = _support_key(tuple(sorted(int(value) for value in row)))
+        counts[key] = counts.get(key, 0) + 1
+    total = sum(counts.values())
+    if total <= 1:
+        return 0.0
+    entropy = 0.0
+    for count in counts.values():
+        probability = count / total
+        entropy -= probability * math.log(probability)
+    return entropy / math.log(total)
 
 
 def _random_support(all_pairs: list[tuple[int, ...]], *, like: Any, seed: int) -> Any:
@@ -1004,6 +1136,31 @@ def _aggregate_null_control_rows(rows: list[dict[str, Any]]) -> dict[str, dict[s
     }
 
 
+def _aggregate_null_sampling_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    aggregates = {}
+    for null_control, group in _group_by(rows, "null_control").items():
+        total = len(group)
+        by_mode = _group_by(group, "sampling_mode")
+        aggregates[null_control] = {
+            "null_control": null_control,
+            "positions": total,
+            "target_position_fraction": len(by_mode.get("target_position", [])) / total
+            if total
+            else 0.0,
+            "target_only_fraction": len(by_mode.get("target_only", [])) / total
+            if total
+            else 0.0,
+            "global_fraction": len(by_mode.get("global", [])) / total if total else 0.0,
+            "mean_candidate_count": _mean_numeric(group, "candidate_count"),
+            "mean_original_stratum_size": _mean_numeric(group, "original_stratum_size"),
+            "mean_candidate_support_entropy": _mean_numeric(
+                group,
+                "candidate_support_entropy",
+            ),
+        }
+    return aggregates
+
+
 def _group_by(rows: list[dict[str, Any]], key: str) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -1019,6 +1176,13 @@ def _mean_row(rows: list[dict[str, Any]], *, key_name: str, key_value: str) -> d
         if values:
             result[f"mean_{field}"] = sum(float(value) for value in values) / len(values)
     return result
+
+
+def _mean_numeric(rows: list[dict[str, Any]], key: str) -> float | None:
+    values = [float(row[key]) for row in rows if isinstance(row.get(key), (int, float))]
+    if not values:
+        return None
+    return sum(values) / len(values)
 
 
 def _decision(
@@ -1133,8 +1297,9 @@ def _decision(
             "The student agrees with the teacher above chance, teacher-forced supports "
             "do not improve disagreement-token CE beyond the guardrail, and oracle "
             "forcing still exposes bounded support headroom. The real teacher-distilled "
-            "student also beats shuffled and frequency-matched null-distilled students "
-            "on the bounded CE, regret, and teacher-agreement checks."
+            "student also beats shuffled, frequency-matched, and token/position-stratified "
+            "frequency-matched null-distilled students on the bounded CE, regret, and "
+            "teacher-agreement checks."
         ),
     }
 

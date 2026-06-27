@@ -82,6 +82,10 @@ outputs:
                 "causal_distilled_from_frequency_matched_teacher_0.01",
                 audit["null_control_aggregates"],
             )
+            self.assertIn(
+                "causal_distilled_from_token_position_frequency_matched_teacher_0.01",
+                audit["null_control_aggregates"],
+            )
             self.assertEqual(
                 audit["source_artifact_assessment"][0]["action"],
                 "fail_closed_bounded_rerun",
@@ -92,6 +96,7 @@ outputs:
             self.assertTrue((root / "audit" / "agreement_metrics.csv").is_file())
             self.assertTrue((root / "audit" / "intervention_metrics.csv").is_file())
             self.assertTrue((root / "audit" / "null_control_metrics.csv").is_file())
+            self.assertTrue((root / "audit" / "null_sampling_diagnostics.csv").is_file())
             self.assertTrue((root / "audit" / "per_token_supports.csv").is_file())
             self.assertTrue((root / "audit" / "support_counts.csv").is_file())
             self.assertTrue((root / "audit" / "notes.md").is_file())
