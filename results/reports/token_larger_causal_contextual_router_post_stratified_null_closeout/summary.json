@@ -1,0 +1,114 @@
+{
+  "artifacts": {
+    "closure_rows_csv": "results/reports/token_larger_causal_contextual_router_post_stratified_null_closeout/closure_rows.csv",
+    "notes_md": "results/reports/token_larger_causal_contextual_router_post_stratified_null_closeout/notes.md",
+    "source_rows_csv": "results/reports/token_larger_causal_contextual_router_post_stratified_null_closeout/source_rows.csv",
+    "summary_json": "results/reports/token_larger_causal_contextual_router_post_stratified_null_closeout/summary.json"
+  },
+  "claim_status": "causal_router_ce_baseline_only_support_mechanism_not_established",
+  "claim_statuses": {
+    "causal_router_distillation": "closed_not_functionally_established",
+    "contextual_mlp_causal": "ce_supported_not_promoted",
+    "contextual_mlp_full_context": "nondeployable_oracle_diagnostic_only",
+    "teacher_exact_pair_agreement": "insufficient_without_functional_null_margin",
+    "topk2_causal_cooperation": "not_supported"
+  },
+  "closure_rows": [
+    {
+      "branch": "causal_contextual_router_support_quality",
+      "disposition": "blocks_default_promotion",
+      "key_metric": "causal_oracle_regret_delta_vs_linear",
+      "key_value": 0.06303172116167843,
+      "source_decision": "causal_contextual_router_support_audit_blocks_promotion"
+    },
+    {
+      "branch": "same_student_teacher_support_intervention",
+      "disposition": "blocks_functional_teacher_support_claim",
+      "key_metric": "teacher_minus_token_position_null_gain_all_tokens",
+      "key_value": 0.0009184288127079832,
+      "source_decision": "same_student_token_position_null_discriminator_blocks_claim"
+    },
+    {
+      "branch": "distillation_discriminative_mechanism",
+      "disposition": "superseded_by_stratified_null",
+      "key_metric": "stratified_null_passes_reversal_gate",
+      "key_value": true,
+      "source_decision": "real_teacher_distilled_causal_router_preferred_over_control_family"
+    }
+  ],
+  "decision": "causal_contextual_router_distillation_branch_closed_no_promotion",
+  "failures": [],
+  "git_commit": "a393495a9a9bb5ed07d139830e68bb2ebec40dc4",
+  "metrics": {
+    "causal_functional_churn_delta_vs_linear": 0.11099452897906303,
+    "causal_oracle_regret_delta_vs_linear": 0.06303172116167843,
+    "causal_oracle_support_regret": 0.0824038339778781,
+    "causal_router_loss_delta_vs_linear": -0.5773137211799622,
+    "discriminative_decision": "real_teacher_distilled_causal_router_preferred_over_control_family",
+    "linear_oracle_support_regret": 0.01937211281619966,
+    "same_student_decision": "same_student_token_position_null_discriminator_blocks_claim",
+    "stratified_null_decision": "prior_distillation_mechanism_claim_superseded_by_stratified_null",
+    "stratified_null_passes_reversal_gate": true,
+    "stratified_null_seed_count": 3,
+    "support_audit_decision": "causal_contextual_router_support_audit_blocks_promotion",
+    "teacher_forced_gain_all_tokens": -0.02325348879294431,
+    "teacher_minus_token_position_null_gain_all_tokens": 0.0009184288127079832
+  },
+  "out_dir": "results/reports/token_larger_causal_contextual_router_post_stratified_null_closeout",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "rationale": "The causal contextual router remains a useful CE/support-diversity baseline, but the support-quality audit blocks promotion, the same-student matrix shows teacher support is not functionally better than the token/position null, and the stratified-null reversal supersedes the earlier discriminative-mechanism claim. Default promotion and distillation-mechanism claims therefore stay blocked.",
+  "runtime_seconds": 0.002,
+  "selected_next_step": "return_to_non_distillation_architecture_loop_with_causal_router_as_ce_baseline",
+  "source_rows": [
+    {
+      "claim_status": "distilled_causal_router_functional_mechanism_not_established_under_token_position_null",
+      "decision": "prior_distillation_mechanism_claim_superseded_by_stratified_null",
+      "path": "results/reports/token_larger_causal_contextual_router_stratified_null_reversal/summary.json",
+      "present": true,
+      "source": "stratified_null_reversal",
+      "status": "pass"
+    },
+    {
+      "claim_status": "distilled_causal_router_functional_mechanism_not_established_under_same_student_token_position_null",
+      "decision": "same_student_token_position_null_discriminator_blocks_claim",
+      "path": "results/reports/token_larger_causal_contextual_router_same_student_intervention_matrix/summary.json",
+      "present": true,
+      "source": "same_student_intervention_matrix",
+      "status": "pass"
+    },
+    {
+      "claim_status": "distilled_causal_router_discriminative_mechanism_supported_not_promoted",
+      "decision": "real_teacher_distilled_causal_router_preferred_over_control_family",
+      "path": "results/reports/token_larger_causal_contextual_router_discriminative_mechanism_audit/summary.json",
+      "present": true,
+      "source": "discriminative_mechanism_audit",
+      "status": "pass"
+    },
+    {
+      "claim_status": "causal_contextual_router_ce_supported_support_quality_not_established",
+      "decision": "causal_contextual_router_support_audit_blocks_promotion",
+      "path": "results/audits/local_causal_contextual_router_support_audit/summary.json",
+      "present": true,
+      "source": "causal_support_audit",
+      "status": "pass"
+    },
+    {
+      "claim_status": "strategic_change_level=minor; notify_ben=False",
+      "decision": "Run the planned no-training post-localization closeout, record hub-pair/top-k-2 pairwise mitigation as unsupported, and then execute a local same-student retention/functional-churn gate using existing rank-matched top-k-1 plus linear/random top-k-2 controls before any new RunPod or distillation work.",
+      "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
+      "present": true,
+      "source": "strategy_review",
+      "status": "present"
+    }
+  ],
+  "status": "pass",
+  "strategy_review": {
+    "ben_notification_required": false,
+    "incorporation": "accepted where applicable: this closeout follows the latest review's preference for non-CE retention/churn and same-student controls, and records that the existing stronger token/position nulls block causal router distillation/default-promotion claims",
+    "notify_ben": false,
+    "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
+    "present": true,
+    "recommended_next_action": "Run the planned no-training post-localization closeout, record hub-pair/top-k-2 pairwise mitigation as unsupported, and then execute a local same-student retention/functional-churn gate using existing rank-matched top-k-1 plus linear/random top-k-2 controls before any new RunPod or distillation work.",
+    "strategic_change_level": "minor"
+  }
+}
