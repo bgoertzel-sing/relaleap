@@ -27,6 +27,7 @@ REQUIRED_ARTIFACTS = [
     "feature_perturbation.csv",
     "sequence_heldout_metrics.csv",
     "margin_fragility.csv",
+    "parameter_counts.csv",
     "retention_churn_metrics.csv",
     "notes.md",
 ]
@@ -69,6 +70,7 @@ def run_anticipatory_contextual_support_routing(
             perturbation_rows=[],
             sequence_rows=[],
             margin_rows=[],
+            parameter_rows=[],
             retention_rows=[],
         )
         return summary
@@ -156,6 +158,20 @@ def run_anticipatory_contextual_support_routing(
         hidden_dim * 2,
         max(8, min(hidden_dim, 64)),
     )
+    acsr_predictor_parameter_count = _parameter_count(predictor)
+    contextual_router_parameter_count = _parameter_count(residual.contextual_column_scores)
+    parameter_matched_width = _matched_mlp_width(
+        input_dim=causal_inputs.shape[-1],
+        output_dim=num_columns,
+        target_parameter_count=acsr_predictor_parameter_count
+        + contextual_router_parameter_count,
+    )
+    parameter_matched_causal_score_mlp = _CausalScoreMLP(
+        nn,
+        causal_inputs.shape[-1],
+        num_columns,
+        parameter_matched_width,
+    )
     predictor_rows = []
     predictor_rows.append(
         _train_predictor_row(
@@ -190,6 +206,16 @@ def run_anticipatory_contextual_support_routing(
             label="token_position_only",
         )
     )
+    parameter_matched_row = _train_causal_score_control_row(
+        torch,
+        F,
+        parameter_matched_causal_score_mlp,
+        causal_inputs,
+        _score_from_features(residual, _feature_tensor(torch, chunks, targets_future)).detach(),
+        steps=predictor_steps,
+        label="parameter_matched_causal_mlp_control",
+    )
+    predictor_rows.append(parameter_matched_row)
 
     with torch.no_grad():
         predicted = predictor(causal_inputs)
@@ -231,6 +257,10 @@ def run_anticipatory_contextual_support_routing(
             name: _score_from_features(residual, features)
             for name, features in variants.items()
         }
+        score_rows["parameter_matched_causal_mlp_control"] = (
+            parameter_matched_causal_score_mlp(causal_inputs)
+            + residual.score_tie_breaker.to(device=causal_inputs.device, dtype=causal_inputs.dtype)
+        )
         router_rows = [
             _router_metric_row(
                 torch,
@@ -342,6 +372,19 @@ def run_anticipatory_contextual_support_routing(
             top_k=top_k,
             seed=seed + 101,
         )
+        parameter_rows = _parameter_count_rows(
+            residual=residual,
+            predictor=predictor,
+            gru_predictor=gru_predictor,
+            token_position_predictor=token_position_predictor,
+            parameter_matched_causal_score_mlp=parameter_matched_causal_score_mlp,
+            hidden_dim=hidden_dim,
+            num_columns=num_columns,
+            top_k=top_k,
+            acsr_predictor_parameter_count=acsr_predictor_parameter_count,
+            contextual_router_parameter_count=contextual_router_parameter_count,
+            parameter_matched_row=parameter_matched_row,
+        )
 
     transfer_inputs, transfer_targets, transfer_vocab_size = _build_batch(
         dataset=dataset,
@@ -435,6 +478,11 @@ def run_anticipatory_contextual_support_routing(
             ),
             "sequence_heldout_available": bool(sequence_rows),
             "margin_fragility_available": bool(margin_rows),
+            "parameter_matched_causal_control_available": any(
+                row.get("component") == "parameter_matched_causal_mlp_control"
+                and row.get("status") == "available"
+                for row in parameter_rows
+            ),
             "acsr_beats_shuffled_ce": _metric_lt(
                 router_by_name,
                 "acsr_mlp_predicted_future",
@@ -470,6 +518,7 @@ def run_anticipatory_contextual_support_routing(
         perturbation_rows=perturbation_rows,
         sequence_rows=sequence_rows,
         margin_rows=margin_rows,
+        parameter_rows=parameter_rows,
         retention_rows=retention_rows,
     )
     return summary
@@ -582,6 +631,39 @@ class _FutureGRUPredictor:
         return _CausalGRUPredictor()
 
 
+class _CausalScoreMLP:
+    def __new__(
+        cls,
+        nn: Any,
+        input_dim: int,
+        output_dim: int,
+        hidden_dim: int,
+    ) -> Any:
+        return nn.Sequential(
+            nn.LayerNorm(input_dim),
+            nn.Linear(input_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, output_dim, bias=False),
+        )
+
+
+def _matched_mlp_width(
+    *,
+    input_dim: int,
+    output_dim: int,
+    target_parameter_count: int,
+) -> int:
+    best_width = 1
+    best_gap = None
+    for width in range(1, 2049):
+        candidate = input_dim * 2 + input_dim * width + width + width * output_dim
+        gap = abs(candidate - target_parameter_count)
+        if best_gap is None or gap < best_gap:
+            best_gap = gap
+            best_width = width
+    return best_width
+
+
 def _train_predictor_row(
     torch: Any,
     F: Any,
@@ -621,6 +703,47 @@ def _train_predictor_row(
         "holdout_mse": float(mse.item()),
         "holdout_r2": float(r2.item()),
         "holdout_cosine": float(cosine.item()),
+    }
+
+
+def _train_causal_score_control_row(
+    torch: Any,
+    F: Any,
+    model: Any,
+    inputs: Any,
+    target_scores: Any,
+    *,
+    steps: int,
+    label: str,
+) -> dict[str, Any]:
+    optimizer = torch.optim.AdamW(model.parameters(), lr=3e-3)
+    split = max(1, int(inputs.shape[1]) // 2)
+    train_x = inputs[:, :split, :]
+    train_y = target_scores[:, :split, :]
+    holdout_x = inputs[:, split:, :]
+    holdout_y = target_scores[:, split:, :]
+    for _ in range(max(1, steps)):
+        optimizer.zero_grad(set_to_none=True)
+        loss = F.mse_loss(model(train_x), train_y)
+        loss.backward()
+        optimizer.step()
+    with torch.no_grad():
+        pred = model(holdout_x)
+        mse = F.mse_loss(pred, holdout_y)
+        centered_target = holdout_y - holdout_y.mean()
+        sst = centered_target.pow(2).mean().clamp_min(1e-12)
+        r2 = 1.0 - mse / sst
+        support_match = (
+            pred.topk(min(2, pred.shape[-1]), dim=-1).indices
+            == holdout_y.topk(min(2, holdout_y.shape[-1]), dim=-1).indices
+        ).all(dim=-1).to(dtype=pred.dtype).mean()
+    return {
+        "predictor": label,
+        "train_positions": int(split),
+        "holdout_positions": int(inputs.shape[1] - split),
+        "holdout_mse": float(mse.item()),
+        "holdout_r2": float(r2.item()),
+        "holdout_topk_support_match": float(support_match.item()),
     }
 
 
@@ -825,6 +948,7 @@ def _same_student_rows(
             "token_position_only_predicted_features",
             "mean_predicted_features",
             "zero_predicted_features",
+            "parameter_matched_causal_mlp_control",
         ]:
             control_loss = _forced_support_loss(
                 torch,
@@ -1376,6 +1500,89 @@ def _teacher_context_churn_rows(
     return rows
 
 
+def _parameter_count_rows(
+    *,
+    residual: Any,
+    predictor: Any,
+    gru_predictor: Any,
+    token_position_predictor: Any,
+    parameter_matched_causal_score_mlp: Any,
+    hidden_dim: int,
+    num_columns: int,
+    top_k: int,
+    acsr_predictor_parameter_count: int,
+    contextual_router_parameter_count: int,
+    parameter_matched_row: dict[str, Any],
+) -> list[dict[str, Any]]:
+    residual_count = _parameter_count(residual)
+    active_sparse_proxy = top_k * hidden_dim * int(residual.atom_logits.shape[-1])
+    control_count = _parameter_count(parameter_matched_causal_score_mlp)
+    target_count = acsr_predictor_parameter_count + contextual_router_parameter_count
+    return [
+        {
+            "component": "residual_columns",
+            "active_parameter_count": active_sparse_proxy,
+            "stored_parameter_count": residual_count,
+            "basis": f"hidden_dim={hidden_dim};num_columns={num_columns};top_k={top_k}",
+            "status": "available",
+        },
+        {
+            "component": "acsr_mlp_predictor",
+            "active_parameter_count": acsr_predictor_parameter_count,
+            "stored_parameter_count": acsr_predictor_parameter_count,
+            "basis": "causal_inputs_to_predicted_future_chunks",
+            "status": "available",
+        },
+        {
+            "component": "acsr_gru_predictor",
+            "active_parameter_count": _parameter_count(gru_predictor),
+            "stored_parameter_count": _parameter_count(gru_predictor),
+            "basis": "causal_inputs_to_predicted_future_chunks",
+            "status": "available",
+        },
+        {
+            "component": "token_position_predictor",
+            "active_parameter_count": _parameter_count(token_position_predictor),
+            "stored_parameter_count": _parameter_count(token_position_predictor),
+            "basis": "position_sin_cos_to_predicted_future_chunks",
+            "status": "available",
+        },
+        {
+            "component": "contextual_router_mlp",
+            "active_parameter_count": contextual_router_parameter_count,
+            "stored_parameter_count": contextual_router_parameter_count,
+            "basis": "contextual_feature_tensor_to_column_scores",
+            "status": "available",
+        },
+        {
+            "component": "acsr_mlp_predictor_plus_contextual_router",
+            "active_parameter_count": target_count,
+            "stored_parameter_count": target_count,
+            "basis": "predictor plus shared contextual score MLP",
+            "status": "available",
+        },
+        {
+            "component": "parameter_matched_causal_mlp_control",
+            "active_parameter_count": control_count,
+            "stored_parameter_count": control_count,
+            "basis": (
+                "causal_inputs_directly_to_column_scores;"
+                f"target_parameter_count={target_count};"
+                f"holdout_r2={parameter_matched_row.get('holdout_r2')};"
+                f"holdout_topk_support_match={parameter_matched_row.get('holdout_topk_support_match')}"
+            ),
+            "status": "available",
+            "parameter_count_ratio_to_acsr_path": (
+                control_count / target_count if target_count else ""
+            ),
+        },
+    ]
+
+
+def _parameter_count(module: Any) -> int:
+    return int(sum(parameter.numel() for parameter in module.parameters()))
+
+
 def _shuffle_tokens(torch: Any, tensor: Any) -> Any:
     flat = tensor.reshape(-1, tensor.shape[-1])
     order = torch.randperm(flat.shape[0], device=tensor.device)
@@ -1526,6 +1733,7 @@ def _write_artifacts(
     perturbation_rows: list[dict[str, Any]],
     sequence_rows: list[dict[str, Any]],
     margin_rows: list[dict[str, Any]],
+    parameter_rows: list[dict[str, Any]],
     retention_rows: list[dict[str, Any]],
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1539,6 +1747,7 @@ def _write_artifacts(
     _write_csv(out_dir / "feature_perturbation.csv", perturbation_rows)
     _write_csv(out_dir / "sequence_heldout_metrics.csv", sequence_rows)
     _write_csv(out_dir / "margin_fragility.csv", margin_rows)
+    _write_csv(out_dir / "parameter_counts.csv", parameter_rows)
     _write_csv(out_dir / "retention_churn_metrics.csv", retention_rows)
     _write_notes(out_dir / "notes.md", summary)
 

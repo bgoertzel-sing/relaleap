@@ -34,8 +34,21 @@ class ACSRBroaderMechanismGateTest(unittest.TestCase):
             self.assertTrue(summary["gates"]["sequence_heldout_available"])
             self.assertFalse(summary["gates"]["dual_student_cross_forcing_available"])
             self.assertTrue(summary["gates"]["leaky_positive_control_available"])
+            self.assertTrue(
+                summary["gates"]["parameter_matched_causal_control_available"]
+            )
             self.assertIn(
                 "acsr_beats_nulls_on_available_packets", summary["aggregate_metrics"]
+            )
+            self.assertFalse(
+                summary["gates"]["acsr_beats_parameter_matched_causal_control"]
+            )
+            self.assertTrue(
+                any(
+                    failure["reason"]
+                    == "acsr_not_better_than_parameter_matched_causal_control"
+                    for failure in summary["failures"]
+                )
             )
             for artifact in REQUIRED_ARTIFACTS:
                 self.assertTrue((out_dir / artifact).is_file(), artifact)
@@ -44,6 +57,7 @@ class ACSRBroaderMechanismGateTest(unittest.TestCase):
                 encoding="utf-8"
             )
             self.assertIn("acsr_mlp_predicted_future", variant_metrics)
+            self.assertIn("parameter_matched_causal_mlp_control", variant_metrics)
             self.assertIn("margin_gated_acsr_proxy", variant_metrics)
             cross_forcing = (out_dir / "same_student_cross_forcing.csv").read_text(
                 encoding="utf-8"
@@ -55,6 +69,10 @@ class ACSRBroaderMechanismGateTest(unittest.TestCase):
             self.assertIn("leaky_future_positive", perturbation)
             margin = (out_dir / "margin_fragility.csv").read_text(encoding="utf-8")
             self.assertIn("feature_noise_flip_rate", margin)
+            parameter_counts = (out_dir / "parameter_counts.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("parameter_matched_causal_mlp_control", parameter_counts)
             notes = (out_dir / "notes.md").read_text(encoding="utf-8")
             self.assertIn("_score_from_features", notes)
 
@@ -102,6 +120,7 @@ def _write_source_packet(path: Path) -> None:
             _router_row("token_position_only_predicted_features", 3.1, 0.3, 1.2),
             _router_row("mean_predicted_features", 3.2, 0.4, 1.0),
             _router_row("zero_predicted_features", 3.0, 0.2, 1.0),
+            _router_row("parameter_matched_causal_mlp_control", 2.45, 0.05, 1.3),
             _router_row("random_fixed_topk2", 4.0, 1.0, 0.0),
         ],
     )
@@ -153,6 +172,16 @@ def _write_source_packet(path: Path) -> None:
                 "ce_loss": 2.6,
                 "oracle_loss": 2.4,
                 "oracle_regret": 0.2,
+            },
+            {
+                "split": "sequence_suffix_holdout",
+                "variant": "parameter_matched_causal_mlp_control",
+                "top_k": 2,
+                "holdout_start": 4,
+                "heldout_positions": 3,
+                "ce_loss": 2.55,
+                "oracle_loss": 2.4,
+                "oracle_regret": 0.15,
             }
         ],
     )
@@ -169,6 +198,26 @@ def _write_source_packet(path: Path) -> None:
                 "feature_noise_flip_rate": 0.1,
                 "low_margin_feature_noise_flip_rate": 0.2,
             }
+        ],
+    )
+    _write_csv(
+        path / "parameter_counts.csv",
+        [
+            {
+                "component": "residual_columns",
+                "active_parameter_count": 64,
+                "stored_parameter_count": 512,
+                "basis": "unit",
+                "status": "available",
+            },
+            {
+                "component": "parameter_matched_causal_mlp_control",
+                "active_parameter_count": 1024,
+                "stored_parameter_count": 1024,
+                "basis": "unit",
+                "status": "available",
+                "parameter_count_ratio_to_acsr_path": 1.0,
+            },
         ],
     )
     _write_csv(
@@ -202,7 +251,11 @@ def _router_row(
 
 
 def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
-    fieldnames = list(rows[0].keys())
+    fieldnames = []
+    for row in rows:
+        for key in row:
+            if key not in fieldnames:
+                fieldnames.append(key)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()

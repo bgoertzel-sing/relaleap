@@ -44,10 +44,12 @@ class AnticipatoryContextualSupportRoutingSmokeTest(unittest.TestCase):
             self.assertIn("acsr_mlp_predicted_future", router_metrics)
             self.assertIn("acsr_gru_predicted_future", router_metrics)
             self.assertIn("shuffled_predicted_features", router_metrics)
+            self.assertIn("parameter_matched_causal_mlp_control", router_metrics)
             predictor_metrics = (out_dir / "predictor_metrics.csv").read_text(
                 encoding="utf-8"
             )
             self.assertIn("gru_causal", predictor_metrics)
+            self.assertIn("parameter_matched_causal_mlp_control", predictor_metrics)
             same_student = (out_dir / "same_student_metrics.csv").read_text(
                 encoding="utf-8"
             )
@@ -70,6 +72,10 @@ class AnticipatoryContextualSupportRoutingSmokeTest(unittest.TestCase):
             self.assertIn("sequence_suffix_holdout", sequence)
             margin = (out_dir / "margin_fragility.csv").read_text(encoding="utf-8")
             self.assertIn("feature_noise_flip_rate", margin)
+            parameter_counts = (out_dir / "parameter_counts.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("parameter_matched_causal_mlp_control", parameter_counts)
             retention = (out_dir / "retention_churn_metrics.csv").read_text(
                 encoding="utf-8"
             )

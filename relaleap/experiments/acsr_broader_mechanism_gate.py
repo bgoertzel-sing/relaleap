@@ -35,6 +35,7 @@ REQUIRED_SOURCE_ARTIFACTS = [
     "feature_perturbation.csv",
     "sequence_heldout_metrics.csv",
     "margin_fragility.csv",
+    "parameter_counts.csv",
     "retention_churn_metrics.csv",
 ]
 
@@ -45,6 +46,7 @@ REQUIRED_VARIANTS = [
     "token_position_only_predicted_features",
     "mean_predicted_features",
     "zero_predicted_features",
+    "parameter_matched_causal_mlp_control",
     "random_fixed_topk2",
 ]
 
@@ -80,6 +82,15 @@ def run_acsr_broader_mechanism_gate(
         {"gate": "required_control", "reason": reason}
         for reason in missing_controls
     )
+    if aggregate["parameter_matched_causal_control_available"] and not aggregate[
+        "acsr_beats_parameter_matched_causal_control"
+    ]:
+        failures.append(
+            {
+                "gate": "acsr_anticipation_specific_claim",
+                "reason": "acsr_not_better_than_parameter_matched_causal_control",
+            }
+        )
 
     accepted_review_notes = _strategy_review_notes(strategy_review)
     status = "pass" if not failures else "fail"
@@ -93,7 +104,12 @@ def run_acsr_broader_mechanism_gate(
         "claim_status": (
             "acsr_broader_local_mechanism_gate_supported"
             if status == "pass"
-            else "acsr_broader_local_mechanism_gate_incomplete_no_default_change"
+            else (
+                "acsr_anticipation_specific_claim_blocked_no_default_change"
+                if aggregate["parameter_matched_causal_control_available"]
+                and not aggregate["acsr_beats_parameter_matched_causal_control"]
+                else "acsr_broader_local_mechanism_gate_incomplete_no_default_change"
+            )
         ),
         "source_dirs": [str(path) for path in source_dirs],
         "source_packet_count": len(packets),
@@ -120,7 +136,14 @@ def run_acsr_broader_mechanism_gate(
                 and str(row.get("passed", "")).lower() == "true"
                 for row in perturbation_rows
             ),
-            "parameter_matched_causal_control_available": False,
+            "parameter_matched_causal_control_available": any(
+                row.get("component") == "parameter_matched_causal_mlp_control"
+                and row.get("status") == "available"
+                for row in parameter_rows
+            ),
+            "acsr_beats_parameter_matched_causal_control": aggregate[
+                "acsr_beats_parameter_matched_causal_control"
+            ],
         },
         "aggregate_metrics": aggregate,
         "failures": failures,
@@ -128,7 +151,7 @@ def run_acsr_broader_mechanism_gate(
         "direction_shift": {
             "level": accepted_review_notes.get("strategic_change_level"),
             "notify_ben": accepted_review_notes.get("notify_ben"),
-            "record": "No major direction shift; accepted broader local ACSR gate recommendation.",
+            "record": _direction_shift_record(accepted_review_notes),
         },
         "runtime_seconds": round(time.time() - start, 4),
         "platform": platform.platform(),
@@ -158,6 +181,7 @@ def _load_packet(source_dir: Path) -> dict[str, Any]:
         "perturbation_rows": [],
         "sequence_rows": [],
         "margin_rows": [],
+        "parameter_rows": [],
         "retention_rows": [],
     }
     missing = [
@@ -172,6 +196,7 @@ def _load_packet(source_dir: Path) -> dict[str, Any]:
     packet["perturbation_rows"] = _read_csv(source_dir / "feature_perturbation.csv")
     packet["sequence_rows"] = _read_csv(source_dir / "sequence_heldout_metrics.csv")
     packet["margin_rows"] = _read_csv(source_dir / "margin_fragility.csv")
+    packet["parameter_rows"] = _read_csv(source_dir / "parameter_counts.csv")
     packet["retention_rows"] = _read_csv(source_dir / "retention_churn_metrics.csv")
     packet["loaded"] = True
     return packet
@@ -396,6 +421,16 @@ def _parameter_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not packet["loaded"]:
             continue
         summary = packet["summary"]
+        if packet["parameter_rows"]:
+            for row in packet["parameter_rows"]:
+                enriched = {
+                    "source_dir": packet["source_dir"],
+                    "seed": _seed_label(summary),
+                    "status": row.get("status", "available"),
+                }
+                enriched.update(row)
+                rows.append(enriched)
+            continue
         hidden_dim = int(summary.get("hidden_dim", 0) or 0)
         num_columns = int(summary.get("num_columns", 0) or 0)
         top_k = int(summary.get("top_k", 0) or 0)
@@ -445,6 +480,15 @@ def _aggregate_metrics(
         if row.get("forcing_type") == "same_student"
         and row.get("acsr_minus_control_ce_loss") not in ("", None)
     ]
+    parameter_matched_deltas = _paired_acsr_parameter_matched_deltas(variant_rows)
+    acsr_beats_parameter_matched = bool(parameter_matched_deltas) and all(
+        delta["acsr_minus_parameter_matched_ce_loss"] < 0.0
+        and (
+            delta["acsr_minus_parameter_matched_oracle_regret"] in ("", None)
+            or delta["acsr_minus_parameter_matched_oracle_regret"] < 0.0
+        )
+        for delta in parameter_matched_deltas
+    )
     negative_control_passed = all(
         str(row.get("passed", "")).lower() == "true"
         for row in perturbation_rows
@@ -460,7 +504,65 @@ def _aggregate_metrics(
         "future_perturbation_negative_control": negative_control_passed,
         "same_student_available_count": len(same_student_deltas),
         "available_packet_count": len({row["source_dir"] for row in variant_rows}),
+        "parameter_matched_causal_control_available": bool(parameter_matched_deltas),
+        "acsr_beats_parameter_matched_causal_control": acsr_beats_parameter_matched,
+        "acsr_parameter_matched_paired_deltas": parameter_matched_deltas,
     }
+
+
+def _paired_acsr_parameter_matched_deltas(
+    variant_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows = []
+    grouped: dict[tuple[Any, ...], dict[str, dict[str, Any]]] = {}
+    for row in variant_rows:
+        variant = row.get("variant")
+        if variant not in {
+            "acsr_mlp_predicted_future",
+            "parameter_matched_causal_mlp_control",
+        }:
+            continue
+        key = (
+            row.get("source_dir"),
+            row.get("seed"),
+            row.get("status"),
+            row.get("split", "fixed_context"),
+            row.get("holdout_start", ""),
+        )
+        grouped.setdefault(key, {})[variant] = row
+    for key, group in grouped.items():
+        acsr = group.get("acsr_mlp_predicted_future")
+        control = group.get("parameter_matched_causal_mlp_control")
+        if not acsr or not control:
+            continue
+        acsr_ce = _float_or_none(acsr.get("ce_loss"))
+        control_ce = _float_or_none(control.get("ce_loss"))
+        acsr_regret = _float_or_none(acsr.get("oracle_regret"))
+        control_regret = _float_or_none(control.get("oracle_regret"))
+        if acsr_ce is None or control_ce is None:
+            continue
+        rows.append(
+            {
+                "source_dir": key[0],
+                "seed": key[1],
+                "status": key[2],
+                "split": key[3],
+                "holdout_start": key[4],
+                "acsr_ce_loss": acsr_ce,
+                "parameter_matched_ce_loss": control_ce,
+                "acsr_minus_parameter_matched_ce_loss": acsr_ce - control_ce,
+                "acsr_oracle_regret": acsr_regret if acsr_regret is not None else "",
+                "parameter_matched_oracle_regret": (
+                    control_regret if control_regret is not None else ""
+                ),
+                "acsr_minus_parameter_matched_oracle_regret": (
+                    acsr_regret - control_regret
+                    if acsr_regret is not None and control_regret is not None
+                    else ""
+                ),
+            }
+        )
+    return rows
 
 
 def _missing_required_controls(
@@ -492,9 +594,9 @@ def _missing_required_controls(
         reasons.append("leaky positive future-control rows missing")
     if not any(row.get("feature_noise_flip_rate") not in ("", None) for row in margin_rows):
         reasons.append("margin fragility under feature noise is missing")
-    if any(
+    if not any(
         row.get("component") == "parameter_matched_causal_mlp_control"
-        and row.get("status") == "not_available_in_source_artifact"
+        and row.get("status") == "available"
         for row in parameter_rows
     ):
         reasons.append("parameter-matched causal MLP control is missing")
@@ -522,6 +624,17 @@ def _strategy_review_notes(strategy_review: Path | None) -> dict[str, Any]:
         if key in {"strategic_change_level", "notify_ben", "recommended_next_action", "verdict"}:
             notes[key] = value.strip()
     return notes
+
+
+def _direction_shift_record(review_notes: dict[str, Any]) -> str:
+    if review_notes.get("strategic_change_level") == "major":
+        notify = review_notes.get("notify_ben")
+        return (
+            "Major urgent-review pivot accepted: freeze ACSR-as-anticipation "
+            "promotion/GPU repeats and pivot locally to a capacity-matched causal "
+            f"support-router mechanism audit. Ben should be notified: {notify}."
+        )
+    return "No major direction shift; accepted broader local ACSR gate recommendation."
 
 
 def _write_artifacts(
@@ -579,6 +692,19 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
                 "- Recommendation accepted: broader local ACSR gate before GPU repeat or dense-teacher revisit.",
             ]
         )
+    aggregate = summary.get("aggregate_metrics", {})
+    if not aggregate.get("acsr_beats_parameter_matched_causal_control", True):
+        lines.extend(
+            [
+                "",
+                "## Anticipation-Specific Blocker",
+                "",
+                "The parameter-matched direct causal MLP control is available and "
+                "ACSR does not beat it on the paired CE/regret gate. This blocks "
+                "the claim that predicted future-context features are currently "
+                "needed for the observed support-routing gain.",
+            ]
+        )
     if summary.get("failures"):
         lines.extend(["", "## Fail-Closed Reasons"])
         for failure in summary["failures"]:
@@ -631,6 +757,8 @@ def _control_family(variant: str) -> str:
         return "token_position"
     if "zero" in variant or "mean" in variant:
         return "zero_mean"
+    if "parameter_matched_causal" in variant:
+        return "causal_contextual_parameter_matched"
     if "random" in variant or "fixed" in variant:
         return "random_fixed"
     if "causal" in variant:
@@ -647,6 +775,12 @@ def _float(value: Any) -> float:
 def _float_or_blank(value: Any) -> float | str:
     if value in ("", None):
         return ""
+    return float(value)
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value in ("", None):
+        return None
     return float(value)
 
 
