@@ -55,6 +55,8 @@ model:
             self.assertEqual(
                 sorted(variants),
                 [
+                    "causal_feature_safe_contextual_topk2",
+                    "linear_topk2",
                     "norm_matched_dense_active_rank",
                     "promoted_contextual_topk2",
                     "random_fixed_topk2",
@@ -62,6 +64,11 @@ model:
                 ],
             )
             self.assertEqual(variants["promoted_contextual_topk2"]["top_k"], 2)
+            self.assertEqual(
+                variants["causal_feature_safe_contextual_topk2"]["support_router"],
+                "contextual_mlp_causal",
+            )
+            self.assertEqual(variants["linear_topk2"]["support_router"], "linear")
             self.assertEqual(variants["rank_matched_contextual_topk1"]["top_k"], 1)
             self.assertEqual(variants["random_fixed_topk2"]["kind"], "sparse_fixed")
             self.assertEqual(
@@ -84,7 +91,7 @@ model:
             )
 
             saved = json.loads((tmp_path / "audit" / "summary.json").read_text())
-            self.assertEqual(len(saved["audit"]["variants"]), 4)
+            self.assertEqual(len(saved["audit"]["variants"]), 6)
             self.assertTrue((tmp_path / "audit" / "variant_metrics.csv").is_file())
             self.assertTrue((tmp_path / "audit" / "phase_metrics.csv").is_file())
             self.assertTrue((tmp_path / "audit" / "per_token_commutator.csv").is_file())
@@ -95,7 +102,8 @@ model:
                 encoding="utf-8",
             ) as handle:
                 metric_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(metric_rows), 4)
+            self.assertEqual(len(metric_rows), 6)
+            self.assertIn("support_router", metric_rows[0])
             self.assertIn("anchor_logit_mse_drift", metric_rows[0])
             self.assertIn("transfer_ce_improvement", metric_rows[0])
             self.assertIn("commutator_anchor_logit_mse", metric_rows[0])
@@ -149,7 +157,7 @@ model:
                 encoding="utf-8",
             ) as handle:
                 phase_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(phase_rows), 16)
+            self.assertEqual(len(phase_rows), 24)
             self.assertIn("residual_norm_mean", phase_rows[0])
 
             with (tmp_path / "audit" / "per_token_commutator.csv").open(
@@ -157,7 +165,7 @@ model:
                 encoding="utf-8",
             ) as handle:
                 token_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(token_rows), 4 * 2 * 4 * 15)
+            self.assertEqual(len(token_rows), 6 * 2 * 4 * 15)
             self.assertIn("ce_delta_forward_minus_reverse", token_rows[0])
             self.assertIn("symmetric_kl", token_rows[0])
             self.assertIn("logit_mse", token_rows[0])

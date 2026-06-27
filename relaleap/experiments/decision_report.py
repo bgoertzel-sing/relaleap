@@ -15928,12 +15928,16 @@ def write_retention_churn_microtest_decision_report(
     audit = _retention_churn_microtest_entry(audit_dir, failures)
     variants = audit.get("variants_by_name") or {}
     topk2 = variants.get("promoted_contextual_topk2") or {}
+    causal_topk2 = variants.get("causal_feature_safe_contextual_topk2") or {}
+    linear_topk2 = variants.get("linear_topk2") or {}
     topk1 = variants.get("rank_matched_contextual_topk1") or {}
     random_topk2 = variants.get("random_fixed_topk2") or {}
     dense = variants.get("norm_matched_dense_active_rank") or {}
 
     required_variants = (
         "promoted_contextual_topk2",
+        "causal_feature_safe_contextual_topk2",
+        "linear_topk2",
         "rank_matched_contextual_topk1",
         "random_fixed_topk2",
         "norm_matched_dense_active_rank",
@@ -15972,6 +15976,23 @@ def write_retention_churn_microtest_decision_report(
         and topk1_churn is not None
         and topk2_churn >= max(0.5, topk1_churn + 0.25)
     )
+    causal_anchor_ce_better_than_linear = (
+        _float_or_none(causal_topk2.get("anchor_ce_after_transfer")) is not None
+        and _float_or_none(linear_topk2.get("anchor_ce_after_transfer")) is not None
+        and _float_or_none(causal_topk2.get("anchor_ce_after_transfer"))
+        < _float_or_none(linear_topk2.get("anchor_ce_after_transfer"))
+    )
+    causal_churn_not_worse_than_promoted = (
+        _float_or_none(causal_topk2.get("anchor_support_churn_after_transfer"))
+        is not None
+        and _float_or_none(topk2.get("anchor_support_churn_after_transfer")) is not None
+        and _float_or_none(causal_topk2.get("anchor_support_churn_after_transfer"))
+        <= _float_or_none(topk2.get("anchor_support_churn_after_transfer"))
+    )
+    linear_churn_reference_present = (
+        _float_or_none(linear_topk2.get("anchor_support_churn_after_transfer"))
+        is not None
+    )
     random_topk2_support_fixed = (
         _float_or_none(random_topk2.get("anchor_support_churn_after_transfer"))
         is not None
@@ -15981,7 +16002,7 @@ def write_retention_churn_microtest_decision_report(
     anchor_ce_drift_improves_all = all(
         _float_or_none(row.get("anchor_ce_drift")) is not None
         and _float_or_none(row.get("anchor_ce_drift")) < 0.0
-        for row in (topk2, topk1, random_topk2, dense)
+        for row in (topk2, causal_topk2, linear_topk2, topk1, random_topk2, dense)
         if row
     )
     status = "fail" if failures else "pass"
@@ -16001,17 +16022,20 @@ def write_retention_churn_microtest_decision_report(
         )
         rationale = (
             "The local retention/churn microtest is complete and includes the "
-            "promoted contextual top-k-2 sparse model, the rank-matched "
-            "contextual top-k-1 sparse control, the random fixed top-k-2 "
-            "control, and the norm-matched dense active-rank control. "
+            "promoted full-context top-k-2 sparse model, the causal-feature-safe "
+            "top-k-2 sparse model, the linear top-k-2 sparse control, the "
+            "rank-matched contextual top-k-1 sparse control, the random fixed "
+            "top-k-2 control, and the norm-matched dense active-rank control. "
             f"{random_fixed_clause} The sparse contextual variants "
             "remain better than the norm-matched dense control. The top-k-2 "
             "variant has a small CE edge after transfer, but its anchor support "
             "churn is much higher than rank-matched top-k-1, so this result "
-            "does not support a stable top-k-2 causal-cooperation claim."
+            "does not support a stable top-k-2 causal-cooperation claim. The "
+            "causal-feature-safe and linear controls are interpreted as local "
+            "same-student retention/churn evidence, not as a backend-repeat trigger."
         )
         next_step = (
-            "defer Colab replication of this interpretive microtest and return to the causal-column fingerprint/control matrix before making any top-k-2 cooperation claim"
+            "synthesize the local same-student retention/churn gate with the existing support-quality and router/value disentanglement reports before any RunPod, distillation, hub-pair, or order-averaging branch"
         )
     else:
         rationale = "The retention/churn microtest artifacts are missing, incomplete, or inconsistent."
@@ -16032,6 +16056,9 @@ def write_retention_churn_microtest_decision_report(
                 "sparse_beats_dense_after_transfer": sparse_beats_dense_after_transfer,
                 "topk2_anchor_ce_better_than_topk1": topk2_anchor_ce_better_than_topk1,
                 "topk2_churn_much_higher_than_topk1": topk2_churn_much_higher_than_topk1,
+                "causal_anchor_ce_better_than_linear": causal_anchor_ce_better_than_linear,
+                "causal_churn_not_worse_than_promoted": causal_churn_not_worse_than_promoted,
+                "linear_churn_reference_present": linear_churn_reference_present,
                 "random_topk2_support_fixed": random_topk2_support_fixed,
             },
             "failures": failures,
@@ -16162,6 +16189,8 @@ def _write_retention_churn_microtest_markdown(
     ]
     for name in (
         "promoted_contextual_topk2",
+        "causal_feature_safe_contextual_topk2",
+        "linear_topk2",
         "rank_matched_contextual_topk1",
         "random_fixed_topk2",
         "norm_matched_dense_active_rank",

@@ -138,6 +138,24 @@ def run_retention_churn_microtest(
             contextual_router_hidden_dim=contextual_router_hidden_dim,
         ),
         _VariantSpec(
+            name="causal_feature_safe_contextual_topk2",
+            kind="sparse",
+            top_k=2,
+            num_columns=num_columns,
+            atoms_per_column=atoms_per_column,
+            support_router="contextual_mlp_causal",
+            contextual_router_hidden_dim=contextual_router_hidden_dim,
+        ),
+        _VariantSpec(
+            name="linear_topk2",
+            kind="sparse",
+            top_k=2,
+            num_columns=num_columns,
+            atoms_per_column=atoms_per_column,
+            support_router="linear",
+            contextual_router_hidden_dim=contextual_router_hidden_dim,
+        ),
+        _VariantSpec(
             name="rank_matched_contextual_topk1",
             kind="sparse",
             top_k=1,
@@ -891,6 +909,7 @@ def run_retention_churn_microtest(
         row = {
             "variant": spec.name,
             "kind": spec.kind,
+            "support_router": spec.support_router,
             "top_k": spec.top_k,
             "num_columns": support_columns,
             "stored_parameters": stored_parameters,
@@ -1997,6 +2016,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Lowest anchor CE drift: `{lowest_drift['variant']}` ({lowest_drift['anchor_ce_drift']})",
         "",
         "This local diagnostic trains each control on anchor slice A, continues on transfer slice B, and measures anchor CE/logit/residual drift plus sparse support churn.",
+        "The default controls include the promoted full-context top-k-2 router, a causal-feature-safe top-k-2 router, linear top-k-2, rank-matched top-k-1, random fixed top-k-2, and a norm-matched dense active-rank adapter.",
         "",
     ]
     path.write_text("\n".join(lines), encoding="utf-8")

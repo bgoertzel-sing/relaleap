@@ -811,6 +811,9 @@ class RetentionChurnMicrotestDecisionReportTest(unittest.TestCase):
             self.assertTrue(signals["sparse_beats_dense_after_transfer"])
             self.assertTrue(signals["topk2_anchor_ce_better_than_topk1"])
             self.assertTrue(signals["topk2_churn_much_higher_than_topk1"])
+            self.assertTrue(signals["causal_anchor_ce_better_than_linear"])
+            self.assertTrue(signals["causal_churn_not_worse_than_promoted"])
+            self.assertTrue(signals["linear_churn_reference_present"])
             self.assertTrue(signals["random_topk2_support_fixed"])
             self.assertTrue((tmp_path / "report" / "decision_report.json").is_file())
             self.assertTrue((tmp_path / "report" / "decision_report.md").is_file())
@@ -6734,6 +6737,7 @@ def _write_retention_churn_microtest(
         {
             "variant": "promoted_contextual_topk2",
             "kind": "sparse",
+            "support_router": "contextual_mlp",
             "top_k": 2,
             "anchor_ce_before_transfer": 2.85,
             "anchor_ce_after_transfer": 1.95,
@@ -6742,8 +6746,31 @@ def _write_retention_churn_microtest(
             "transfer_ce_improvement": 0.90,
         },
         {
+            "variant": "causal_feature_safe_contextual_topk2",
+            "kind": "sparse",
+            "support_router": "contextual_mlp_causal",
+            "top_k": 2,
+            "anchor_ce_before_transfer": 2.87,
+            "anchor_ce_after_transfer": 1.97,
+            "anchor_ce_drift": -0.90,
+            "anchor_support_churn_after_transfer": 0.74,
+            "transfer_ce_improvement": 0.86,
+        },
+        {
+            "variant": "linear_topk2",
+            "kind": "sparse",
+            "support_router": "linear",
+            "top_k": 2,
+            "anchor_ce_before_transfer": 3.04,
+            "anchor_ce_after_transfer": 2.44,
+            "anchor_ce_drift": -0.60,
+            "anchor_support_churn_after_transfer": 0.31,
+            "transfer_ce_improvement": 0.52,
+        },
+        {
             "variant": "rank_matched_contextual_topk1",
             "kind": "sparse",
+            "support_router": "contextual_mlp",
             "top_k": 1,
             "anchor_ce_before_transfer": 2.88,
             "anchor_ce_after_transfer": 1.99,
@@ -6754,6 +6781,7 @@ def _write_retention_churn_microtest(
         {
             "variant": "random_fixed_topk2",
             "kind": "sparse_fixed",
+            "support_router": "contextual_mlp",
             "top_k": 2,
             "anchor_ce_before_transfer": 3.02,
             "anchor_ce_after_transfer": 3.12,
@@ -6767,6 +6795,7 @@ def _write_retention_churn_microtest(
             {
                 "variant": "norm_matched_dense_active_rank",
                 "kind": "dense",
+                "support_router": "none",
                 "top_k": 0,
                 "anchor_ce_before_transfer": 3.25,
                 "anchor_ce_after_transfer": 2.84,
