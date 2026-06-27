@@ -27,6 +27,7 @@ REQUIRED_ARTIFACTS = [
     "support_agreement.csv",
     "feature_perturbation.csv",
     "sequence_heldout_metrics.csv",
+    "per_sequence_paired_deltas.csv",
     "margin_fragility.csv",
     "parameter_counts.csv",
     "retention_churn_metrics.csv",
@@ -74,6 +75,7 @@ def run_anticipatory_contextual_support_routing(
             margin_rows=[],
             parameter_rows=[],
             retention_rows=[],
+            per_sequence_rows=[],
         )
         return summary
 
@@ -413,6 +415,18 @@ def run_anticipatory_contextual_support_routing(
             top_k=top_k,
             holdout_start=max(1, seq_len // 2),
         )
+        per_sequence_rows = _per_sequence_paired_delta_rows(
+            torch,
+            F,
+            base,
+            residual,
+            hidden,
+            targets,
+            vocab_size,
+            score_rows,
+            top_k=top_k,
+            holdout_start=max(1, seq_len // 2),
+        )
         margin_rows = _margin_fragility_rows(
             torch,
             residual,
@@ -527,6 +541,7 @@ def run_anticipatory_contextual_support_routing(
             ),
             "sequence_heldout_available": bool(sequence_rows),
             "margin_fragility_available": bool(margin_rows),
+            "per_sequence_paired_deltas_available": bool(per_sequence_rows),
             "parameter_matched_causal_control_available": any(
                 row.get("component") == "parameter_matched_causal_mlp_control"
                 and row.get("status") == "available"
@@ -573,6 +588,7 @@ def run_anticipatory_contextual_support_routing(
         support_agreement_rows=support_agreement_rows,
         perturbation_rows=perturbation_rows,
         sequence_rows=sequence_rows,
+        per_sequence_rows=per_sequence_rows,
         margin_rows=margin_rows,
         parameter_rows=parameter_rows,
         retention_rows=retention_rows,
@@ -1386,6 +1402,147 @@ def _sequence_heldout_rows(
     return rows
 
 
+def _per_sequence_paired_delta_rows(
+    torch: Any,
+    F: Any,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    score_rows: dict[str, Any],
+    *,
+    top_k: int,
+    holdout_start: int,
+) -> list[dict[str, Any]]:
+    primary = "acsr_mlp_predicted_future"
+    control = "parameter_matched_causal_mlp_control"
+    if primary not in score_rows or control not in score_rows or top_k != 2:
+        return []
+    token_slice = slice(holdout_start, max(holdout_start + 1, hidden.shape[1] - 1))
+    oracle_loss_by_sequence = _oracle_loss_by_sequence_for_slice(
+        torch,
+        F,
+        base,
+        residual,
+        hidden,
+        targets,
+        vocab_size,
+        score_rows["full_context_contextual_topk2_teacher"],
+        token_slice=token_slice,
+    )
+    acsr_loss_by_sequence = _loss_by_sequence_for_scores(
+        torch,
+        F,
+        base,
+        residual,
+        hidden,
+        targets,
+        vocab_size,
+        score_rows[primary],
+        top_k=top_k,
+        token_slice=token_slice,
+    )
+    control_loss_by_sequence = _loss_by_sequence_for_scores(
+        torch,
+        F,
+        base,
+        residual,
+        hidden,
+        targets,
+        vocab_size,
+        score_rows[control],
+        top_k=top_k,
+        token_slice=token_slice,
+    )
+    rows = []
+    heldout_positions = int(hidden[:, token_slice, :].shape[1])
+    for sequence_index in range(int(hidden.shape[0])):
+        acsr_ce = float(acsr_loss_by_sequence[sequence_index].item())
+        control_ce = float(control_loss_by_sequence[sequence_index].item())
+        oracle_loss = float(oracle_loss_by_sequence[sequence_index].item())
+        acsr_regret = acsr_ce - oracle_loss
+        control_regret = control_ce - oracle_loss
+        rows.append(
+            {
+                "split": "sequence_suffix_holdout",
+                "sequence_index": int(sequence_index),
+                "top_k": int(top_k),
+                "holdout_start": int(holdout_start),
+                "heldout_positions": heldout_positions,
+                "acsr_ce_loss": acsr_ce,
+                "parameter_matched_ce_loss": control_ce,
+                "acsr_minus_parameter_matched_ce_loss": acsr_ce - control_ce,
+                "oracle_loss": oracle_loss,
+                "acsr_oracle_regret": acsr_regret,
+                "parameter_matched_oracle_regret": control_regret,
+                "acsr_minus_parameter_matched_oracle_regret": acsr_regret
+                - control_regret,
+                "acsr_strictly_better": acsr_ce < control_ce
+                and acsr_regret < control_regret,
+            }
+        )
+    return rows
+
+
+def _loss_by_sequence_for_scores(
+    torch: Any,
+    F: Any,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    scores: Any,
+    *,
+    top_k: int,
+    token_slice: slice,
+) -> Any:
+    top_values, support = scores.topk(top_k, dim=-1)
+    logits = _decode_for_support(torch, base, residual, hidden, support, top_values)
+    per_token = F.cross_entropy(
+        logits[:, token_slice, :].reshape(-1, vocab_size),
+        targets[:, token_slice].reshape(-1),
+        reduction="none",
+    )
+    return per_token.view(hidden.shape[0], -1).mean(dim=1)
+
+
+def _oracle_loss_by_sequence_for_slice(
+    torch: Any,
+    F: Any,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    reference_scores: Any,
+    *,
+    token_slice: slice,
+) -> Any:
+    losses = []
+    for left in range(residual.num_columns):
+        for right in range(left + 1, residual.num_columns):
+            support = torch.empty(
+                hidden.shape[0],
+                hidden.shape[1],
+                2,
+                dtype=torch.long,
+                device=hidden.device,
+            )
+            support[..., 0] = left
+            support[..., 1] = right
+            top_values = reference_scores.gather(dim=-1, index=support)
+            logits = _decode_for_support(torch, base, residual, hidden, support, top_values)
+            per_token = F.cross_entropy(
+                logits[:, token_slice, :].reshape(-1, vocab_size),
+                targets[:, token_slice].reshape(-1),
+                reduction="none",
+            )
+            losses.append(per_token.view(hidden.shape[0], -1))
+    return torch.stack(losses, dim=0).min(dim=0).values.mean(dim=1)
+
+
 def _oracle_loss_for_slice(
     torch: Any,
     F: Any,
@@ -1981,6 +2138,7 @@ def _write_artifacts(
     support_agreement_rows: list[dict[str, Any]],
     perturbation_rows: list[dict[str, Any]],
     sequence_rows: list[dict[str, Any]],
+    per_sequence_rows: list[dict[str, Any]],
     margin_rows: list[dict[str, Any]],
     parameter_rows: list[dict[str, Any]],
     retention_rows: list[dict[str, Any]],
@@ -1996,6 +2154,7 @@ def _write_artifacts(
     _write_csv(out_dir / "support_agreement.csv", support_agreement_rows)
     _write_csv(out_dir / "feature_perturbation.csv", perturbation_rows)
     _write_csv(out_dir / "sequence_heldout_metrics.csv", sequence_rows)
+    _write_csv(out_dir / "per_sequence_paired_deltas.csv", per_sequence_rows)
     _write_csv(out_dir / "margin_fragility.csv", margin_rows)
     _write_csv(out_dir / "parameter_counts.csv", parameter_rows)
     _write_csv(out_dir / "retention_churn_metrics.csv", retention_rows)

@@ -50,6 +50,10 @@ class ACSRCausalRouterCapacityAuditTest(unittest.TestCase):
             self.assertEqual(summary["strategy_review"]["strategic_change_level"], "major")
             self.assertEqual(summary["direction_shift"].count("Ben should be notified"), 1)
             self.assertEqual(summary["aggregate_metrics"]["paired_delta_count"], 2)
+            self.assertEqual(summary["aggregate_metrics"]["per_sequence_delta_count"], 2)
+            self.assertTrue(
+                summary["aggregate_metrics"]["paired_sequence_bootstrap_available"]
+            )
             self.assertFalse(
                 summary["aggregate_metrics"]["dual_student_cross_forcing_available"]
             )
@@ -75,10 +79,19 @@ class ACSRCausalRouterCapacityAuditTest(unittest.TestCase):
             )
             self.assertIn("sequence_suffix_holdout", deltas)
             self.assertIn("parameter_matched_ce_loss", deltas)
+            sequence_deltas = (out_dir / "per_sequence_capacity_deltas.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("sequence_index", sequence_deltas)
+            bootstrap = (out_dir / "paired_sequence_bootstrap.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("paired_sequence_count", bootstrap)
             missing = (out_dir / "missing_mechanism_evidence.csv").read_text(
                 encoding="utf-8"
             )
             self.assertIn("dual_student_cross_forcing", missing)
+            self.assertIn("per_sequence_bootstrap", missing)
             support = (out_dir / "support_agreement.csv").read_text(encoding="utf-8")
             self.assertIn(
                 "acsr_mlp_predicted_future_support_vs_parameter_matched_causal_mlp_control",
@@ -127,6 +140,13 @@ def _write_source_packet(path: Path) -> None:
         [
             _sequence_row("acsr_mlp_predicted_future", 2.90, 0.20),
             _sequence_row("parameter_matched_causal_mlp_control", 2.90, 0.20),
+        ],
+    )
+    _write_csv(
+        path / "per_sequence_paired_deltas.csv",
+        [
+            _per_sequence_row(0, 2.8, 2.7, 2.5),
+            _per_sequence_row(1, 3.0, 3.1, 2.6),
         ],
     )
     _write_csv(
@@ -207,6 +227,33 @@ def _sequence_row(variant: str, ce_loss: float, regret: float) -> dict[str, obje
         "holdout_start": 4,
         "ce_loss": ce_loss,
         "oracle_regret": regret,
+    }
+
+
+def _per_sequence_row(
+    sequence_index: int,
+    acsr_ce_loss: float,
+    parameter_matched_ce_loss: float,
+    oracle_loss: float,
+) -> dict[str, object]:
+    acsr_regret = acsr_ce_loss - oracle_loss
+    control_regret = parameter_matched_ce_loss - oracle_loss
+    return {
+        "split": "sequence_suffix_holdout",
+        "sequence_index": sequence_index,
+        "top_k": 2,
+        "holdout_start": 4,
+        "heldout_positions": 3,
+        "acsr_ce_loss": acsr_ce_loss,
+        "parameter_matched_ce_loss": parameter_matched_ce_loss,
+        "acsr_minus_parameter_matched_ce_loss": acsr_ce_loss
+        - parameter_matched_ce_loss,
+        "oracle_loss": oracle_loss,
+        "acsr_oracle_regret": acsr_regret,
+        "parameter_matched_oracle_regret": control_regret,
+        "acsr_minus_parameter_matched_oracle_regret": acsr_regret - control_regret,
+        "acsr_strictly_better": acsr_ce_loss < parameter_matched_ce_loss
+        and acsr_regret < control_regret,
     }
 
 

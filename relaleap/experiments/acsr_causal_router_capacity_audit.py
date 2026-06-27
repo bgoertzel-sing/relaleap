@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 import platform
+import random
 import subprocess
 import time
 from pathlib import Path
@@ -28,6 +29,7 @@ REQUIRED_FILES = (
     "same_student_metrics.csv",
     "support_agreement.csv",
     "sequence_heldout_metrics.csv",
+    "per_sequence_paired_deltas.csv",
     "margin_fragility.csv",
     "parameter_counts.csv",
 )
@@ -35,6 +37,8 @@ REQUIRED_ARTIFACTS = (
     "summary.json",
     "packet_status.csv",
     "paired_capacity_deltas.csv",
+    "per_sequence_capacity_deltas.csv",
+    "paired_sequence_bootstrap.csv",
     "parameter_match.csv",
     "same_student_capacity.csv",
     "support_agreement.csv",
@@ -56,6 +60,8 @@ def run_acsr_causal_router_capacity_audit(
     start = time.time()
     packets = [_load_packet(index + 1, source_dir) for index, source_dir in enumerate(source_dirs)]
     paired_rows = _paired_capacity_deltas(packets)
+    per_sequence_rows = _per_sequence_capacity_deltas(packets)
+    bootstrap_rows = _paired_sequence_bootstrap_rows(per_sequence_rows)
     parameter_rows = _parameter_rows(packets)
     same_student_rows = _same_student_rows(packets)
     support_agreement_rows = _support_agreement_rows(packets)
@@ -65,6 +71,7 @@ def run_acsr_causal_router_capacity_audit(
         gate_dir,
         same_student_rows=same_student_rows,
         support_agreement_rows=support_agreement_rows,
+        per_sequence_rows=per_sequence_rows,
     )
     review = _strategy_review_notes(strategy_review)
 
@@ -91,6 +98,12 @@ def run_acsr_causal_router_capacity_audit(
         "mean_same_student_acsr_minus_parameter_matched_ce_loss": _mean_key(
             same_student_rows, "acsr_minus_control_ce_loss"
         ),
+        "per_sequence_delta_count": len(per_sequence_rows),
+        "mean_per_sequence_acsr_minus_parameter_matched_ce_loss": _mean_key(
+            per_sequence_rows, "acsr_minus_parameter_matched_ce_loss"
+        ),
+        "paired_sequence_bootstrap_available": bool(bootstrap_rows),
+        "paired_sequence_bootstrap": bootstrap_rows[0] if bootstrap_rows else {},
         "support_agreement_available": any(
             row["evidence"] == "support_agreement" and row["status"] == "available"
             for row in missing_rows
@@ -115,7 +128,12 @@ def run_acsr_causal_router_capacity_audit(
         "selected_next_step": (
             "implement dual-student support cross-forcing with stored support tensors"
             if not aggregate["dual_student_cross_forcing_available"]
-            else "run paired sequence bootstrap over ACSR versus causal-router deltas"
+            else (
+                "add a local support-agreement and margin-stratified inspection of "
+                "ACSR versus parameter-matched causal-router per-sequence deltas"
+                if aggregate["paired_sequence_bootstrap_available"]
+                else "run paired sequence bootstrap over ACSR versus causal-router deltas"
+            )
         ),
         "source_dirs": [str(path) for path in source_dirs],
         "gate_dir": str(gate_dir),
@@ -134,6 +152,8 @@ def run_acsr_causal_router_capacity_audit(
         packet_rows=[_public_packet(packet) for packet in packets],
         paired_rows=paired_rows,
         parameter_rows=parameter_rows,
+        per_sequence_rows=per_sequence_rows,
+        bootstrap_rows=bootstrap_rows,
         same_student_rows=same_student_rows,
         support_agreement_rows=support_agreement_rows,
         margin_rows=margin_rows,
@@ -157,6 +177,7 @@ def _load_packet(index: int, source_dir: Path) -> dict[str, Any]:
         "_same_student_rows": [],
         "_support_agreement_rows": [],
         "_sequence_rows": [],
+        "_per_sequence_rows": [],
         "_margin_rows": [],
         "_parameter_rows": [],
     }
@@ -172,6 +193,7 @@ def _load_packet(index: int, source_dir: Path) -> dict[str, Any]:
             "_same_student_rows": _read_csv(source_dir / "same_student_metrics.csv"),
             "_support_agreement_rows": _read_csv(source_dir / "support_agreement.csv"),
             "_sequence_rows": _read_csv(source_dir / "sequence_heldout_metrics.csv"),
+            "_per_sequence_rows": _read_csv(source_dir / "per_sequence_paired_deltas.csv"),
             "_margin_rows": _read_csv(source_dir / "margin_fragility.csv"),
             "_parameter_rows": _read_csv(source_dir / "parameter_counts.csv"),
         }
@@ -238,6 +260,93 @@ def _paired_rows_for_split(
             "acsr_strictly_better": acsr_ce < control_ce and acsr_regret < control_regret,
         }
     ]
+
+
+def _per_sequence_capacity_deltas(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = []
+    for packet in packets:
+        if not packet["required_files_present"]:
+            continue
+        for row in packet["_per_sequence_rows"]:
+            ce_delta = _number(row.get("acsr_minus_parameter_matched_ce_loss"))
+            regret_delta = _number(row.get("acsr_minus_parameter_matched_oracle_regret"))
+            if ce_delta is None or regret_delta is None:
+                continue
+            rows.append(
+                {
+                    "packet": packet["packet"],
+                    "source_dir": packet["source_dir"],
+                    "seed": _seed_label(packet),
+                    "split": row.get("split", "sequence_suffix_holdout"),
+                    "sequence_index": row.get("sequence_index", ""),
+                    "holdout_start": row.get("holdout_start", ""),
+                    "heldout_positions": row.get("heldout_positions", ""),
+                    "acsr_ce_loss": _number(row.get("acsr_ce_loss")),
+                    "parameter_matched_ce_loss": _number(
+                        row.get("parameter_matched_ce_loss")
+                    ),
+                    "acsr_minus_parameter_matched_ce_loss": ce_delta,
+                    "oracle_loss": _number(row.get("oracle_loss")),
+                    "acsr_oracle_regret": _number(row.get("acsr_oracle_regret")),
+                    "parameter_matched_oracle_regret": _number(
+                        row.get("parameter_matched_oracle_regret")
+                    ),
+                    "acsr_minus_parameter_matched_oracle_regret": regret_delta,
+                    "acsr_strictly_better": ce_delta < 0.0 and regret_delta < 0.0,
+                }
+            )
+    return rows
+
+
+def _paired_sequence_bootstrap_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ce_deltas = [
+        row["acsr_minus_parameter_matched_ce_loss"]
+        for row in rows
+        if isinstance(row.get("acsr_minus_parameter_matched_ce_loss"), (int, float))
+    ]
+    regret_deltas = [
+        row["acsr_minus_parameter_matched_oracle_regret"]
+        for row in rows
+        if isinstance(row.get("acsr_minus_parameter_matched_oracle_regret"), (int, float))
+    ]
+    if not ce_deltas or len(ce_deltas) != len(regret_deltas):
+        return []
+    ce_ci = _bootstrap_mean_ci(ce_deltas, seed=20260627)
+    regret_ci = _bootstrap_mean_ci(regret_deltas, seed=20260628)
+    acsr_ce_wins = sum(1 for delta in ce_deltas if delta < 0.0)
+    acsr_regret_wins = sum(1 for delta in regret_deltas if delta < 0.0)
+    return [
+        {
+            "status": "available",
+            "paired_sequence_count": len(ce_deltas),
+            "mean_acsr_minus_parameter_matched_ce_loss": sum(ce_deltas) / len(ce_deltas),
+            "bootstrap_ce_mean_ci95_low": ce_ci[0],
+            "bootstrap_ce_mean_ci95_high": ce_ci[1],
+            "acsr_ce_win_count": acsr_ce_wins,
+            "parameter_matched_ce_win_or_tie_count": len(ce_deltas) - acsr_ce_wins,
+            "mean_acsr_minus_parameter_matched_oracle_regret": sum(regret_deltas)
+            / len(regret_deltas),
+            "bootstrap_oracle_regret_mean_ci95_low": regret_ci[0],
+            "bootstrap_oracle_regret_mean_ci95_high": regret_ci[1],
+            "acsr_oracle_regret_win_count": acsr_regret_wins,
+            "parameter_matched_oracle_regret_win_or_tie_count": len(regret_deltas)
+            - acsr_regret_wins,
+            "sign_test_supports_acsr": acsr_ce_wins > len(ce_deltas) / 2
+            and acsr_regret_wins > len(regret_deltas) / 2,
+        }
+    ]
+
+
+def _bootstrap_mean_ci(values: list[float], *, seed: int, draws: int = 1000) -> tuple[float, float]:
+    rng = random.Random(seed)
+    means = []
+    for _ in range(draws):
+        sample = [values[rng.randrange(len(values))] for _ in values]
+        means.append(sum(sample) / len(sample))
+    means.sort()
+    low_index = int(0.025 * (draws - 1))
+    high_index = int(0.975 * (draws - 1))
+    return float(means[low_index]), float(means[high_index])
 
 
 def _parameter_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -352,6 +461,7 @@ def _missing_mechanism_rows(
     *,
     same_student_rows: list[dict[str, Any]],
     support_agreement_rows: list[dict[str, Any]],
+    per_sequence_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     gate_summary = _read_json_object(gate_dir / "summary.json")
     gate_status = gate_summary.get("gates", {})
@@ -385,8 +495,15 @@ def _missing_mechanism_rows(
         },
         {
             "evidence": "per_sequence_bootstrap",
-            "status": "missing",
-            "reason": "source packets expose aggregate sequence-heldout deltas, not per-sequence paired losses",
+            "status": "available" if per_sequence_rows else "missing",
+            "reason": (
+                "source packets expose per-sequence paired ACSR/control deltas"
+                if per_sequence_rows
+                else (
+                    "source packets expose aggregate sequence-heldout deltas, "
+                    "not per-sequence paired losses"
+                )
+            ),
         },
     ]
     if not any(packet["required_files_present"] for packet in packets):
@@ -446,9 +563,11 @@ def _failures(
             }
         )
     for row in missing_rows:
-        if row["evidence"] in {"dual_student_cross_forcing", "support_agreement"} and row[
-            "status"
-        ] != "available":
+        if row["evidence"] in {
+            "dual_student_cross_forcing",
+            "support_agreement",
+            "per_sequence_bootstrap",
+        } and row["status"] != "available":
             failures.append(
                 {
                     "gate": row["evidence"],
@@ -465,6 +584,8 @@ def _write_artifacts(
     packet_rows: list[dict[str, Any]],
     paired_rows: list[dict[str, Any]],
     parameter_rows: list[dict[str, Any]],
+    per_sequence_rows: list[dict[str, Any]],
+    bootstrap_rows: list[dict[str, Any]],
     same_student_rows: list[dict[str, Any]],
     support_agreement_rows: list[dict[str, Any]],
     margin_rows: list[dict[str, Any]],
@@ -477,6 +598,8 @@ def _write_artifacts(
     )
     _write_csv(out_dir / "packet_status.csv", packet_rows)
     _write_csv(out_dir / "paired_capacity_deltas.csv", paired_rows)
+    _write_csv(out_dir / "per_sequence_capacity_deltas.csv", per_sequence_rows)
+    _write_csv(out_dir / "paired_sequence_bootstrap.csv", bootstrap_rows)
     _write_csv(out_dir / "parameter_match.csv", parameter_rows)
     _write_csv(out_dir / "same_student_capacity.csv", same_student_rows)
     _write_csv(out_dir / "support_agreement.csv", support_agreement_rows)

@@ -31,6 +31,7 @@ class AnticipatoryContextualSupportRoutingSmokeTest(unittest.TestCase):
             self.assertIn("leaky_future_positive_control", summary["gates"])
             self.assertIn("sequence_heldout_available", summary["gates"])
             self.assertIn("margin_fragility_available", summary["gates"])
+            self.assertTrue(summary["gates"]["per_sequence_paired_deltas_available"])
             self.assertEqual(summary["train_steps"], 2)
             self.assertEqual(summary["predictor_steps"], 3)
             self.assertEqual(summary["top_k"], 2)
@@ -78,6 +79,10 @@ class AnticipatoryContextualSupportRoutingSmokeTest(unittest.TestCase):
                 encoding="utf-8"
             )
             self.assertIn("sequence_suffix_holdout", sequence)
+            per_sequence = (out_dir / "per_sequence_paired_deltas.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("acsr_minus_parameter_matched_ce_loss", per_sequence)
             margin = (out_dir / "margin_fragility.csv").read_text(encoding="utf-8")
             self.assertIn("feature_noise_flip_rate", margin)
             parameter_counts = (out_dir / "parameter_counts.csv").read_text(
