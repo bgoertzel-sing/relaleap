@@ -1,0 +1,12 @@
+criterion,passed,severity,requirement,observed,failure_reason
+strategy_review_consumed,True,hard,latest strategy review is read,read,
+source_audit_present,True,hard,support audit summary exists,True,
+prior_acsr_gate_present,True,hard,prior ACSR support-discovery gate exists,True,
+identity_claim_retired,True,hard,upstream ACSR gate keeps sparse identity retired,deployable_support_discovery_not_established_sparse_identity_retired,
+learned_support_head_present,True,hard,learned support-head artifact exists,True,
+same_student_forcing_present,True,claim_blocker,same-student fixed-support forcing exists,True,
+learned_head_holdout_improves_router,True,claim_blocker,learned head improves heldout router loss,-0.00047850608825683594,
+learned_head_recovers_oracle_gap,False,claim_blocker,learned head recovers enough oracle gap on holdout,0.1893932244974993,learned support head recovery is too small
+oracle_support_headroom_positive,False,claim_blocker,upstream oracle support has nontrivial CE headroom,-0.0023670196533203125,upstream oracle CE headroom is too small for a deployable target
+token_position_null_present,True,claim_blocker,token/position support null exists,True,
+shuffled_feature_support_head_null_present,True,claim_blocker,learned support head has shuffled-causal-feature null,True,

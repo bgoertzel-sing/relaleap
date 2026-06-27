@@ -9,8 +9,10 @@ Exhaustive fixed-batch residual support audit.
 - Oracle-support regret: `0.00252841`
 - Dominant router support: `14,18`
 - Best one-swap support: `0,14`
-- Router-target holdout gap recovery: `-70.37554255519909`
-- Router-target nonlinear holdout gap recovery: `-74.88299679184752`
+- Router-target holdout gap recovery: `-71.08360856846278`
+- Router-target nonlinear holdout gap recovery: `-72.3902991412664`
 - Router-target contextual holdout gap recovery: `1.0`
 - Contextual support-intervention holdout gap recovery: `1.0`
-- Contextual support-head holdout gap recovery: `0.1892809964144178`
+- Contextual support-head holdout gap recovery: `0.1893932244974993`
+- Shuffled-feature support-head holdout gap recovery: `-552.2935736529206`
+- Token/position support-head holdout gap recovery: `-485.6624516372558`

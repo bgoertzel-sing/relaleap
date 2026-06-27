@@ -235,6 +235,30 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
         router_token_losses=router_token_losses,
         seed=seed,
     )
+    shuffled_causal_head = _contextual_router_support_head(
+        base,
+        residual,
+        hidden,
+        targets,
+        vocab_size,
+        rows=pair_rows,
+        train_mask=router_target["_train_mask"],
+        router_token_losses=router_token_losses,
+        seed=seed + 31,
+        feature_mode="shuffled_contextual",
+    )
+    token_position_head = _contextual_router_support_head(
+        base,
+        residual,
+        hidden,
+        targets,
+        vocab_size,
+        rows=pair_rows,
+        train_mask=router_target["_train_mask"],
+        router_token_losses=router_token_losses,
+        seed=seed + 43,
+        feature_mode="token_position_only",
+    )
     contextual_sequence_head = _contextual_router_support_head(
         base,
         residual,
@@ -250,6 +274,38 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
         train_split_name="train_even_sequences",
         holdout_split_name="holdout_odd_sequences",
     )
+    shuffled_causal_sequence_head = _contextual_router_support_head(
+        base,
+        residual,
+        hidden,
+        targets,
+        vocab_size,
+        rows=pair_rows,
+        train_mask=router_target["_sequence_train_mask"],
+        router_token_losses=router_token_losses,
+        seed=seed + 59,
+        train_split_label="even full sequences",
+        holdout_split_label="odd full sequences",
+        train_split_name="train_even_sequences",
+        holdout_split_name="holdout_odd_sequences",
+        feature_mode="shuffled_contextual",
+    )
+    token_position_sequence_head = _contextual_router_support_head(
+        base,
+        residual,
+        hidden,
+        targets,
+        vocab_size,
+        rows=pair_rows,
+        train_mask=router_target["_sequence_train_mask"],
+        router_token_losses=router_token_losses,
+        seed=seed + 71,
+        train_split_label="even full sequences",
+        holdout_split_label="odd full sequences",
+        train_split_name="train_even_sequences",
+        holdout_split_name="holdout_odd_sequences",
+        feature_mode="token_position_only",
+    )
     _write_router_support_intervention(
         out_dir / "router_support_intervention.csv",
         contextual_intervention["splits"],
@@ -259,12 +315,28 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
         contextual_head["splits"],
     )
     _write_router_support_intervention(
+        out_dir / "shuffled_causal_feature_support_head.csv",
+        shuffled_causal_head["splits"],
+    )
+    _write_router_support_intervention(
+        out_dir / "token_position_support_head.csv",
+        token_position_head["splits"],
+    )
+    _write_router_support_intervention(
         out_dir / "router_support_sequence_intervention.csv",
         contextual_sequence_intervention["splits"],
     )
     _write_router_support_intervention(
         out_dir / "contextual_router_support_sequence_head.csv",
         contextual_sequence_head["splits"],
+    )
+    _write_router_support_intervention(
+        out_dir / "shuffled_causal_feature_support_sequence_head.csv",
+        shuffled_causal_sequence_head["splits"],
+    )
+    _write_router_support_intervention(
+        out_dir / "token_position_support_sequence_head.csv",
+        token_position_sequence_head["splits"],
     )
     summary = {
         "status": "ok",
@@ -332,10 +404,20 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
                 "summary"
             ],
             "contextual_router_support_head": contextual_head["summary"],
+            "shuffled_causal_feature_support_head": shuffled_causal_head[
+                "summary"
+            ],
+            "token_position_support_head": token_position_head["summary"],
             "contextual_router_support_sequence_intervention": contextual_sequence_intervention[
                 "summary"
             ],
             "contextual_router_support_sequence_head": contextual_sequence_head[
+                "summary"
+            ],
+            "shuffled_causal_feature_support_sequence_head": shuffled_causal_sequence_head[
+                "summary"
+            ],
+            "token_position_support_sequence_head": token_position_sequence_head[
                 "summary"
             ],
             "support_audit": _residual_support_audit(base, residual, inputs),
@@ -361,11 +443,23 @@ def run_support_audit(config_path: Path, out_dir: Path) -> dict[str, Any]:
             "contextual_router_support_head_csv": str(
                 out_dir / "contextual_router_support_head.csv"
             ),
+            "shuffled_causal_feature_support_head_csv": str(
+                out_dir / "shuffled_causal_feature_support_head.csv"
+            ),
+            "token_position_support_head_csv": str(
+                out_dir / "token_position_support_head.csv"
+            ),
             "router_support_sequence_intervention_csv": str(
                 out_dir / "router_support_sequence_intervention.csv"
             ),
             "contextual_router_support_sequence_head_csv": str(
                 out_dir / "contextual_router_support_sequence_head.csv"
+            ),
+            "shuffled_causal_feature_support_sequence_head_csv": str(
+                out_dir / "shuffled_causal_feature_support_sequence_head.csv"
+            ),
+            "token_position_support_sequence_head_csv": str(
+                out_dir / "token_position_support_sequence_head.csv"
             ),
             "notes_md": str(out_dir / "notes.md"),
         },
@@ -897,6 +991,7 @@ def _contextual_router_support_head(
     holdout_split_label: str = "odd flattened token positions",
     train_split_name: str = "train_even_positions",
     holdout_split_name: str = "holdout_odd_positions",
+    feature_mode: str = "contextual",
 ) -> dict[str, Any]:
     """Train a contextual support head against fixed-batch support CE losses."""
 
@@ -904,7 +999,12 @@ def _contextual_router_support_head(
     import torch.nn as nn
 
     torch.manual_seed(seed + 2027)
-    features = _contextual_router_features(hidden)
+    features = _support_head_features(
+        hidden,
+        train_mask=train_mask,
+        seed=seed,
+        feature_mode=feature_mode,
+    )
     token_loss_matrix = torch.stack([row["_token_losses"] for row in rows], dim=1)
     width = max(16, min(128, features.shape[-1]))
     selector = nn.Sequential(
@@ -948,9 +1048,10 @@ def _contextual_router_support_head(
         selected_counts[key] = selected_counts.get(key, 0) + 1
     intervention["summary"] = {
         **intervention["summary"],
-        "selector": "mlp_contextual_support_head_ce_minimizer",
+        "selector": _support_head_selector_name(feature_mode),
         "training_steps": steps,
         "training_objective": "expected_fixed_batch_support_ce",
+        "feature_mode": feature_mode,
         "temperature": temperature,
         "hidden_width": width,
         "train_split": train_split_label,
@@ -960,6 +1061,45 @@ def _contextual_router_support_head(
         ),
     }
     return intervention
+
+
+def _support_head_features(
+    hidden: Any,
+    *,
+    train_mask: Any,
+    seed: int,
+    feature_mode: str,
+) -> Any:
+    import torch
+
+    contextual = _contextual_router_features(hidden)
+    if feature_mode == "contextual":
+        return contextual
+    if feature_mode == "token_position_only":
+        return contextual[:, -3:].detach()
+    if feature_mode != "shuffled_contextual":
+        raise ValueError(f"unknown support-head feature mode: {feature_mode}")
+
+    generator = torch.Generator(device=contextual.device)
+    generator.manual_seed(seed + 4049)
+    shuffled = contextual.detach().clone()
+    for mask in (train_mask, ~train_mask):
+        indices = torch.nonzero(mask, as_tuple=False).reshape(-1)
+        if int(indices.numel()) <= 1:
+            continue
+        permutation = indices[torch.randperm(indices.numel(), generator=generator, device=contextual.device)]
+        shuffled[indices] = contextual[permutation]
+    return shuffled
+
+
+def _support_head_selector_name(feature_mode: str) -> str:
+    if feature_mode == "contextual":
+        return "mlp_contextual_support_head_ce_minimizer"
+    if feature_mode == "shuffled_contextual":
+        return "mlp_shuffled_causal_feature_support_head_ce_minimizer"
+    if feature_mode == "token_position_only":
+        return "mlp_token_position_support_head_ce_minimizer"
+    return f"mlp_{feature_mode}_support_head_ce_minimizer"
 
 
 def _router_support_intervention_split(
@@ -1227,6 +1367,10 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
                 f"`{audit['contextual_router_support_intervention']['holdout']['oracle_gap_recovery_fraction']}`",
                 "- Contextual support-head holdout gap recovery: "
                 f"`{audit['contextual_router_support_head']['holdout']['oracle_gap_recovery_fraction']}`",
+                "- Shuffled-feature support-head holdout gap recovery: "
+                f"`{audit['shuffled_causal_feature_support_head']['holdout']['oracle_gap_recovery_fraction']}`",
+                "- Token/position support-head holdout gap recovery: "
+                f"`{audit['token_position_support_head']['holdout']['oracle_gap_recovery_fraction']}`",
                 "",
             ]
         ),

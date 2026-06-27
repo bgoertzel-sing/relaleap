@@ -1,0 +1,243 @@
+{
+  "aggregate_metrics": {
+    "dense_minus_sparse_ce_delta": -0.1026909351348877,
+    "learned_head_holdout_intervention_minus_router_loss": -0.00047850608825683594,
+    "learned_head_holdout_oracle_gap_recovery_fraction": 0.1893932244974993,
+    "oracle_support_mse_margin_vs_target_norm": 0.004448847845196724,
+    "retire_sparse_identity_primary_claim": true,
+    "same_student_holdout_oracle_gap_recovery_fraction": 1.0,
+    "secondary_support_discovery_followup_warranted": true,
+    "soft_topk_mse_margin_vs_best_hard_sparse": -0.007986396551132202,
+    "sparse_oracle_minus_sparse_default_heldout_ce_delta": -0.0023670196533203125,
+    "target_norm_mse_margin_vs_current": -0.00518491305410862,
+    "teacher_distill_gap_vs_default_sparse_ce_delta": 0.23944520950317383,
+    "teacher_distill_mse_margin_vs_shuffled_teacher": 0.0017448607832193375
+  },
+  "artifacts": {
+    "gate_criteria_csv": "results/reports/acsr_deployable_support_head_gate_local/gate_criteria.csv",
+    "notes_md": "results/reports/acsr_deployable_support_head_gate_local/notes.md",
+    "null_controls_csv": "results/reports/acsr_deployable_support_head_gate_local/null_controls.csv",
+    "summary_json": "results/reports/acsr_deployable_support_head_gate_local/summary.json",
+    "support_head_metrics_csv": "results/reports/acsr_deployable_support_head_gate_local/support_head_metrics.csv"
+  },
+  "claim_blockers": [
+    {
+      "criterion": "learned_head_recovers_oracle_gap",
+      "failure_reason": "learned support head recovery is too small",
+      "observed": 0.1893932244974993,
+      "passed": false,
+      "requirement": "learned head recovers enough oracle gap on holdout",
+      "severity": "claim_blocker"
+    },
+    {
+      "criterion": "oracle_support_headroom_positive",
+      "failure_reason": "upstream oracle CE headroom is too small for a deployable target",
+      "observed": -0.0023670196533203125,
+      "passed": false,
+      "requirement": "upstream oracle support has nontrivial CE headroom",
+      "severity": "claim_blocker"
+    }
+  ],
+  "claim_boundaries": {
+    "not_supported": [
+      "deployable support-discovery claim while shuffled-causal-feature support-head null is absent",
+      "RunPod validation target while oracle CE headroom remains below the local gate",
+      "default-router promotion or sparse-support identity revival"
+    ],
+    "supported": [
+      "same-student fixed-support forcing is represented by router-support intervention artifacts",
+      "the local support head can be evaluated as a deployable mechanism probe",
+      "sparse-support identity remains retired by the upstream ACSR gate"
+    ]
+  },
+  "claim_status": "deployable_support_discovery_not_established_sparse_identity_retired",
+  "decision": "deployable_support_head_gate_blocks_claim_pending_nulls_or_headroom",
+  "direction_shift": "No major strategy-review direction shift recorded for this gate.",
+  "failures": [],
+  "gate_criteria": [
+    {
+      "criterion": "strategy_review_consumed",
+      "failure_reason": "",
+      "observed": "read",
+      "passed": true,
+      "requirement": "latest strategy review is read",
+      "severity": "hard"
+    },
+    {
+      "criterion": "source_audit_present",
+      "failure_reason": "",
+      "observed": true,
+      "passed": true,
+      "requirement": "support audit summary exists",
+      "severity": "hard"
+    },
+    {
+      "criterion": "prior_acsr_gate_present",
+      "failure_reason": "",
+      "observed": true,
+      "passed": true,
+      "requirement": "prior ACSR support-discovery gate exists",
+      "severity": "hard"
+    },
+    {
+      "criterion": "identity_claim_retired",
+      "failure_reason": "",
+      "observed": "deployable_support_discovery_not_established_sparse_identity_retired",
+      "passed": true,
+      "requirement": "upstream ACSR gate keeps sparse identity retired",
+      "severity": "hard"
+    },
+    {
+      "criterion": "learned_support_head_present",
+      "failure_reason": "",
+      "observed": true,
+      "passed": true,
+      "requirement": "learned support-head artifact exists",
+      "severity": "hard"
+    },
+    {
+      "criterion": "same_student_forcing_present",
+      "failure_reason": "",
+      "observed": true,
+      "passed": true,
+      "requirement": "same-student fixed-support forcing exists",
+      "severity": "claim_blocker"
+    },
+    {
+      "criterion": "learned_head_holdout_improves_router",
+      "failure_reason": "",
+      "observed": -0.00047850608825683594,
+      "passed": true,
+      "requirement": "learned head improves heldout router loss",
+      "severity": "claim_blocker"
+    },
+    {
+      "criterion": "learned_head_recovers_oracle_gap",
+      "failure_reason": "learned support head recovery is too small",
+      "observed": 0.1893932244974993,
+      "passed": false,
+      "requirement": "learned head recovers enough oracle gap on holdout",
+      "severity": "claim_blocker"
+    },
+    {
+      "criterion": "oracle_support_headroom_positive",
+      "failure_reason": "upstream oracle CE headroom is too small for a deployable target",
+      "observed": -0.0023670196533203125,
+      "passed": false,
+      "requirement": "upstream oracle support has nontrivial CE headroom",
+      "severity": "claim_blocker"
+    },
+    {
+      "criterion": "token_position_null_present",
+      "failure_reason": "",
+      "observed": true,
+      "passed": true,
+      "requirement": "token/position support null exists",
+      "severity": "claim_blocker"
+    },
+    {
+      "criterion": "shuffled_feature_support_head_null_present",
+      "failure_reason": "",
+      "observed": true,
+      "passed": true,
+      "requirement": "learned support head has shuffled-causal-feature null",
+      "severity": "claim_blocker"
+    }
+  ],
+  "git_commit": "24d5a783aa5a125b255b427c7ebd5f72261f3335",
+  "next_command": "./.venv-conda/bin/python -m relaleap.experiments.acsr_deployable_support_head_gate --out results/reports/acsr_deployable_support_head_gate_local",
+  "null_controls": [
+    {
+      "control": "token_position_support_null",
+      "gap_vs_reference_heldout_ce_delta": 0.2847728729248047,
+      "heldout_delta_vs_base_ce": -0.03207588195800781,
+      "holdout_intervention_minus_router_loss": "1.227036714553833",
+      "holdout_oracle_gap_recovery_fraction": "-485.6624516372558",
+      "interpretation": "token/position-only support-head null when source artifact exists, otherwise upstream ACSR token/position support null",
+      "present": true,
+      "source": "results/audits/token_larger_support_wide_promoted_default_exhaustive_support/token_position_support_head.csv"
+    },
+    {
+      "control": "shuffled_causal_feature_support_head_null",
+      "gap_vs_reference_heldout_ce_delta": "",
+      "heldout_delta_vs_base_ce": "",
+      "holdout_intervention_minus_router_loss": "1.3953816890716553",
+      "holdout_oracle_gap_recovery_fraction": "-552.2935736529206",
+      "interpretation": "required learned support-head null with deterministically shuffled feature rows",
+      "present": true,
+      "source": "results/audits/token_larger_support_wide_promoted_default_exhaustive_support/shuffled_causal_feature_support_head.csv"
+    },
+    {
+      "control": "same_student_fixed_support_forcing",
+      "gap_vs_reference_heldout_ce_delta": "",
+      "heldout_delta_vs_base_ce": "",
+      "holdout_intervention_minus_router_loss": "",
+      "holdout_oracle_gap_recovery_fraction": "",
+      "interpretation": "forces support choices through the same trained student values",
+      "present": true,
+      "source": "results/audits/token_larger_support_wide_promoted_default_exhaustive_support/router_support_intervention.csv"
+    }
+  ],
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "prior_acsr_gate_dir": "results/reports/acsr_support_discovery_gate_seed2",
+  "runtime_seconds": 0.0012,
+  "selected_next_step": "add a shuffled-causal-feature support-head null and rerun the local deployable support-head gate; do not run RunPod yet",
+  "source_audit_dir": "results/audits/token_larger_support_wide_promoted_default_exhaustive_support",
+  "status": "pass",
+  "strategy_review": {
+    "notify_ben": "false",
+    "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
+    "recommendation_accepted": true,
+    "recommended_next_action": "Add the missing shuffled-causal-feature support-head null plus same-student sequence-heldout forced-support evaluation, rerun the deployable support-head gate locally, and keep RunPod deferred.",
+    "status": "read",
+    "strategic_change_level": "minor",
+    "verdict": "FIX"
+  },
+  "support_head_metrics": [
+    {
+      "all_oracle_gap_recovery_fraction": 0.1868929750117869,
+      "component": "learned_contextual_support_head",
+      "holdout_intervention_loss": 2.874512195587158,
+      "holdout_intervention_minus_router_loss": -0.00047850608825683594,
+      "holdout_intervention_oracle_regret": 0.002048015594482422,
+      "holdout_oracle_gap_recovery_fraction": 0.1893932244974993,
+      "holdout_oracle_loss": 2.872464179992676,
+      "holdout_router_loss": 2.874990701675415,
+      "holdout_split": "odd flattened token positions",
+      "present": true,
+      "selector": "mlp_contextual_support_head_ce_minimizer",
+      "train_split": "even flattened token positions",
+      "training_objective": "expected_fixed_batch_support_ce"
+    },
+    {
+      "all_oracle_gap_recovery_fraction": 1.0,
+      "component": "same_student_oracle_support_forcing",
+      "holdout_intervention_loss": 2.872464179992676,
+      "holdout_intervention_minus_router_loss": -0.002526521682739258,
+      "holdout_intervention_oracle_regret": 0.0,
+      "holdout_oracle_gap_recovery_fraction": 1.0,
+      "holdout_oracle_loss": 2.872464179992676,
+      "holdout_router_loss": 2.874990701675415,
+      "holdout_split": "holdout odd positions",
+      "present": true,
+      "selector": "mlp_contextual_hidden_to_oracle_pair",
+      "train_split": "train even positions",
+      "training_objective": ""
+    },
+    {
+      "all_oracle_gap_recovery_fraction": -5.47986798679868,
+      "component": "learned_sequence_support_head",
+      "holdout_intervention_loss": 2.868842363357544,
+      "holdout_intervention_minus_router_loss": 0.016778945922851562,
+      "holdout_intervention_oracle_regret": 0.019300460815429688,
+      "holdout_oracle_gap_recovery_fraction": -6.654311649016641,
+      "holdout_oracle_loss": 2.8495419025421143,
+      "holdout_router_loss": 2.8520634174346924,
+      "holdout_split": "odd full sequences",
+      "present": true,
+      "selector": "mlp_contextual_support_head_ce_minimizer",
+      "train_split": "even full sequences",
+      "training_objective": "expected_fixed_batch_support_ce"
+    }
+  ]
+}

@@ -94,6 +94,24 @@ outputs:
                 "holdout",
                 audit["contextual_router_support_head"],
             )
+            self.assertIn("shuffled_causal_feature_support_head", audit)
+            self.assertIn(
+                "holdout",
+                audit["shuffled_causal_feature_support_head"],
+            )
+            self.assertEqual(
+                audit["shuffled_causal_feature_support_head"]["feature_mode"],
+                "shuffled_contextual",
+            )
+            self.assertIn("token_position_support_head", audit)
+            self.assertIn(
+                "holdout",
+                audit["token_position_support_head"],
+            )
+            self.assertEqual(
+                audit["token_position_support_head"]["feature_mode"],
+                "token_position_only",
+            )
             self.assertIn("contextual_router_support_sequence_intervention", audit)
             self.assertIn(
                 "holdout",
@@ -103,6 +121,16 @@ outputs:
             self.assertIn(
                 "holdout",
                 audit["contextual_router_support_sequence_head"],
+            )
+            self.assertIn("shuffled_causal_feature_support_sequence_head", audit)
+            self.assertIn(
+                "holdout",
+                audit["shuffled_causal_feature_support_sequence_head"],
+            )
+            self.assertIn("token_position_support_sequence_head", audit)
+            self.assertIn(
+                "holdout",
+                audit["token_position_support_sequence_head"],
             )
             self.assertEqual(audit["support_audit"]["top_k"], 2)
 
@@ -144,6 +172,16 @@ outputs:
                 (
                     tmp_path
                     / "audit"
+                    / "shuffled_causal_feature_support_head.csv"
+                ).is_file()
+            )
+            self.assertTrue(
+                (tmp_path / "audit" / "token_position_support_head.csv").is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "audit"
                     / "router_support_sequence_intervention.csv"
                 ).is_file()
             )
@@ -152,6 +190,20 @@ outputs:
                     tmp_path
                     / "audit"
                     / "contextual_router_support_sequence_head.csv"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "audit"
+                    / "shuffled_causal_feature_support_sequence_head.csv"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    tmp_path
+                    / "audit"
+                    / "token_position_support_sequence_head.csv"
                 ).is_file()
             )
             self.assertTrue((tmp_path / "audit" / "notes.md").is_file())
@@ -231,6 +283,22 @@ outputs:
             self.assertEqual(len(support_head_rows), 3)
             self.assertIn("intervention_loss", support_head_rows[0])
             self.assertIn("intervention_minus_router_loss", support_head_rows[0])
+
+            with (
+                tmp_path / "audit" / "shuffled_causal_feature_support_head.csv"
+            ).open(newline="", encoding="utf-8") as handle:
+                shuffled_head_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(shuffled_head_rows), 3)
+            self.assertIn("intervention_loss", shuffled_head_rows[0])
+            self.assertEqual(shuffled_head_rows[2]["split"], "holdout_odd_positions")
+
+            with (tmp_path / "audit" / "token_position_support_head.csv").open(
+                newline="",
+                encoding="utf-8",
+            ) as handle:
+                token_position_head_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(token_position_head_rows), 3)
+            self.assertIn("oracle_gap_recovery_fraction", token_position_head_rows[0])
 
             with (
                 tmp_path / "audit" / "contextual_router_support_sequence_head.csv"

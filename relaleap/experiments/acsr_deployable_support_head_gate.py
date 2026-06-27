@@ -150,22 +150,48 @@ def _head_row(name: str, packet: dict[str, Any]) -> dict[str, Any]:
 def _null_rows(source_audit_dir: Path, prior_gate: dict[str, Any]) -> list[dict[str, Any]]:
     prior_nulls = _as_list(prior_gate.get("null_controls"))
     token_position = _prior_null(prior_nulls, "token_position_support_null")
+    shuffled_feature = _holdout_csv_row(
+        source_audit_dir / "shuffled_causal_feature_support_head.csv"
+    )
+    source_token_position = _holdout_csv_row(
+        source_audit_dir / "token_position_support_head.csv"
+    )
     return [
         {
             "control": "token_position_support_null",
-            "present": bool(token_position),
-            "source": "prior_acsr_support_discovery_gate",
+            "present": bool(token_position) or bool(source_token_position),
+            "source": (
+                str(source_audit_dir / "token_position_support_head.csv")
+                if source_token_position
+                else "prior_acsr_support_discovery_gate"
+            ),
             "heldout_delta_vs_base_ce": token_position.get("heldout_delta_vs_base_ce", ""),
             "gap_vs_reference_heldout_ce_delta": token_position.get("gap_vs_reference_heldout_ce_delta", ""),
-            "interpretation": "upstream ACSR token/position support null",
+            "holdout_intervention_minus_router_loss": source_token_position.get(
+                "intervention_minus_router_loss",
+                "",
+            ),
+            "holdout_oracle_gap_recovery_fraction": source_token_position.get(
+                "oracle_gap_recovery_fraction",
+                "",
+            ),
+            "interpretation": "token/position-only support-head null when source artifact exists, otherwise upstream ACSR token/position support null",
         },
         {
             "control": "shuffled_causal_feature_support_head_null",
-            "present": (source_audit_dir / "shuffled_causal_feature_support_head.csv").is_file(),
+            "present": bool(shuffled_feature),
             "source": str(source_audit_dir / "shuffled_causal_feature_support_head.csv"),
             "heldout_delta_vs_base_ce": "",
             "gap_vs_reference_heldout_ce_delta": "",
-            "interpretation": "required learned support-head null; absent in current source artifacts",
+            "holdout_intervention_minus_router_loss": shuffled_feature.get(
+                "intervention_minus_router_loss",
+                "",
+            ),
+            "holdout_oracle_gap_recovery_fraction": shuffled_feature.get(
+                "oracle_gap_recovery_fraction",
+                "",
+            ),
+            "interpretation": "required learned support-head null with deterministically shuffled feature rows",
         },
         {
             "control": "same_student_fixed_support_forcing",
@@ -173,6 +199,8 @@ def _null_rows(source_audit_dir: Path, prior_gate: dict[str, Any]) -> list[dict[
             "source": str(source_audit_dir / "router_support_intervention.csv"),
             "heldout_delta_vs_base_ce": "",
             "gap_vs_reference_heldout_ce_delta": "",
+            "holdout_intervention_minus_router_loss": "",
+            "holdout_oracle_gap_recovery_fraction": "",
             "interpretation": "forces support choices through the same trained student values",
         },
     ]
@@ -355,6 +383,16 @@ def _prior_null(rows: list[Any], control: str) -> dict[str, Any]:
     for row in rows:
         if isinstance(row, dict) and row.get("control") == control:
             return row
+    return {}
+
+
+def _holdout_csv_row(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            if str(row.get("split", "")).startswith("holdout"):
+                return dict(row)
     return {}
 
 

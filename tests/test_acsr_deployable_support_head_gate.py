@@ -42,7 +42,10 @@ class ACSRDeployableSupportHeadGateTest(unittest.TestCase):
             self.assertIn("do not run RunPod", summary["selected_next_step"])
             self.assertIn("Ben should be notified", summary["direction_shift"])
             blocker_names = {row["criterion"] for row in summary["claim_blockers"]}
-            self.assertIn("shuffled_feature_support_head_null_present", blocker_names)
+            self.assertNotIn(
+                "shuffled_feature_support_head_null_present",
+                blocker_names,
+            )
             self.assertIn("oracle_support_headroom_positive", blocker_names)
             self.assertIn("learned_head_recovers_oracle_gap", blocker_names)
             self.assertFalse(summary["failures"])
@@ -54,6 +57,15 @@ class ACSRDeployableSupportHeadGateTest(unittest.TestCase):
             learned = next(row for row in rows if row["component"] == "learned_contextual_support_head")
             self.assertEqual(learned["present"], "True")
             self.assertEqual(learned["holdout_intervention_minus_router_loss"], "-0.0004782676696777344")
+
+            with (root / "out" / "null_controls.csv").open("r", encoding="utf-8", newline="") as handle:
+                null_rows = list(csv.DictReader(handle))
+            shuffled = next(row for row in null_rows if row["control"] == "shuffled_causal_feature_support_head_null")
+            self.assertEqual(shuffled["present"], "True")
+            self.assertEqual(shuffled["holdout_intervention_minus_router_loss"], "0.004")
+            token_position = next(row for row in null_rows if row["control"] == "token_position_support_null")
+            self.assertEqual(token_position["present"], "True")
+            self.assertEqual(token_position["holdout_oracle_gap_recovery_fraction"], "0.125")
 
     def test_fails_closed_when_prior_gate_does_not_retire_identity(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -131,6 +143,20 @@ def _write_source_audit(path: Path) -> None:
     (path / "router_support_intervention.csv").write_text(
         "split,positions,router_loss,oracle_loss,intervention_loss\n"
         "holdout_odd_positions,126,2.874990463256836,2.8724637031555176,2.8724637031555176\n",
+        encoding="utf-8",
+    )
+    (path / "shuffled_causal_feature_support_head.csv").write_text(
+        "split,positions,router_loss,oracle_loss,intervention_loss,intervention_minus_router_loss,oracle_gap_recovery_fraction\n"
+        "all,252,2.875,2.872,2.879,0.004,-1.3333333333333333\n"
+        "train_even_positions,126,2.875,2.872,2.879,0.004,-1.3333333333333333\n"
+        "holdout_odd_positions,126,2.875,2.872,2.879,0.004,-1.3333333333333333\n",
+        encoding="utf-8",
+    )
+    (path / "token_position_support_head.csv").write_text(
+        "split,positions,router_loss,oracle_loss,intervention_loss,intervention_minus_router_loss,oracle_gap_recovery_fraction\n"
+        "all,252,2.875,2.872,2.8745,-0.0005,0.16666666666666666\n"
+        "train_even_positions,126,2.875,2.872,2.8745,-0.0005,0.16666666666666666\n"
+        "holdout_odd_positions,126,2.875,2.872,2.874625,-0.000375,0.125\n",
         encoding="utf-8",
     )
 
