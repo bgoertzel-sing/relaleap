@@ -8,6 +8,7 @@ from pathlib import Path
 from relaleap.experiments.acsr_common_causal_residual_benchmark import (
     REQUIRED_ARTIFACTS,
     _benchmark_gate_rows,
+    _norm_sweep_rows,
     _summary,
     run_acsr_common_causal_residual_benchmark,
 )
@@ -104,6 +105,32 @@ class ACSRCommonCausalResidualBenchmarkTest(unittest.TestCase):
         )
         self.assertIn("repair local compute-matched", summary["selected_next_step"])
         self.assertNotIn("RunPod repeat", summary["selected_next_step"])
+
+    def test_dense_bottleneck_ladder_brackets_sparse_active_compute(self) -> None:
+        arm_rows = [
+            _arm("base_no_residual", 0.0, 0.0, active_params=0),
+            _arm("sparse_contextual_topk2", -0.12, 0.4, active_params=192),
+            _arm("sparse_rank_matched_topk1", -0.04, 0.3, active_params=96),
+            _arm("rank_flop_matched_causal_dense", -0.08, 0.4, active_params=9288),
+            _arm("dense_bottleneck_causal_rank0", 0.0, 0.0, active_params=0),
+            _arm("dense_bottleneck_causal_rank1", -0.03, 0.2, active_params=384),
+            _arm("rank_flop_matched_token_position_dense", 0.01, 0.25, active_params=9306),
+            _arm("sparse_frequency_matched_random", -0.01, 0.4, active_params=192, heldout_ce=4.2),
+            _arm("sparse_shuffled_support_marginals", -0.02, 0.4, active_params=192),
+            _arm("sparse_token_position_null", 0.03, 0.4, active_params=192),
+            _arm("sparse_oracle_support", -0.2, 0.4, active_params=192, heldout_ce=3.9),
+        ]
+
+        gate_rows = _benchmark_gate_rows(arm_rows, [{"fingerprint": str(i)} for i in range(5)])
+        compute_gate = next(row for row in gate_rows if row["criterion"] == "active_compute_matched_or_bracketed")
+        norm_rows = _norm_sweep_rows(arm_rows)
+        rank1_norm = next(row for row in norm_rows if row["arm"] == "dense_bottleneck_causal_rank1")
+
+        self.assertTrue(compute_gate["passed"])
+        self.assertTrue(compute_gate["actual"]["bracketed_by_dense_ladder"])
+        self.assertEqual(compute_gate["actual"]["matched_dense_count"], 1)
+        self.assertAlmostEqual(rank1_norm["active_ratio_vs_sparse_topk2"], 2.0)
+        self.assertIn("active_compute_pareto_front", rank1_norm)
 
 
 def _arm(

@@ -279,6 +279,7 @@ def _run_benchmark(
         mask,
     )
     target_l2 = max(0.05, float(contextual2["heldout_residual_update_l2"]))
+    sparse_active_params = int(contextual2["active_params_proxy"])
     dense_causal, dense_causal_losses, dense_causal_l2 = _train_dense_arm(
         torch,
         F,
@@ -290,6 +291,21 @@ def _run_benchmark(
         causal_inputs,
         label="rank_flop_matched_causal_dense",
         target_parameter_count=sparse_value_params,
+        steps=dense_steps,
+        base_losses=base_losses,
+        target_update_l2=target_l2,
+        heldout_mask=mask,
+    )
+    dense_ladder = _train_dense_ladder(
+        torch,
+        F,
+        nn,
+        base,
+        hidden,
+        targets,
+        vocab_size,
+        causal_inputs,
+        sparse_active_params=sparse_active_params,
         steps=dense_steps,
         base_losses=base_losses,
         target_update_l2=target_l2,
@@ -329,22 +345,36 @@ def _run_benchmark(
         _eval_sparse_arm(torch, F, base, topk2, hidden, targets, vocab_size, "sparse_token_position_null", token_position_support, topk2_scores, base_losses, base_loss, heldout_base, mask),
         _eval_sparse_arm(torch, F, base, topk2, hidden, targets, vocab_size, "sparse_oracle_support", oracle_support, topk2_scores, base_losses, base_loss, heldout_base, mask),
     ]
-    arm_rows = [_base_arm(base_loss, heldout_base)] + sparse_arms + [dense_causal, dense_position]
+    dense_ladder_rows = [row for row, _, _ in dense_ladder]
+    arm_rows = [_base_arm(base_loss, heldout_base)] + sparse_arms + [dense_causal] + dense_ladder_rows + [dense_position]
+    dense_loss_by_arm = {
+        "rank_flop_matched_causal_dense": dense_causal_losses,
+        "rank_flop_matched_token_position_dense": dense_position_losses,
+    }
+    dense_l2_by_arm = {
+        "rank_flop_matched_causal_dense": dense_causal_l2,
+        "rank_flop_matched_token_position_dense": dense_position_l2,
+    }
+    for row, losses, l2 in dense_ladder:
+        dense_loss_by_arm[str(row["arm"])] = losses
+        dense_l2_by_arm[str(row["arm"])] = l2
     per_token_rows = _per_token_rows(
         torch,
         base_losses,
-        {
+        dict(
+            {
             "sparse_contextual_topk2": contextual2["per_token_losses"],
             "sparse_rank_matched_topk1": contextual1["per_token_losses"],
-            "rank_flop_matched_causal_dense": dense_causal_losses,
-            "rank_flop_matched_token_position_dense": dense_position_losses,
-        },
-        {
+            },
+            **dense_loss_by_arm,
+        ),
+        dict(
+            {
             "sparse_contextual_topk2": contextual2["residual_update_l2_per_token"],
             "sparse_rank_matched_topk1": contextual1["residual_update_l2_per_token"],
-            "rank_flop_matched_causal_dense": dense_causal_l2,
-            "rank_flop_matched_token_position_dense": dense_position_l2,
-        },
+            },
+            **dense_l2_by_arm,
+        ),
         mask,
     )
     norm_rows = _norm_sweep_rows(arm_rows)
@@ -357,6 +387,58 @@ def _run_benchmark(
         random_support=frequency_support,
     )
     return arm_rows, per_token_rows, norm_rows, fingerprint_rows
+
+
+def _train_dense_ladder(
+    torch: Any,
+    F: Any,
+    nn: Any,
+    base: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    features: Any,
+    *,
+    sparse_active_params: int,
+    steps: int,
+    base_losses: Any,
+    target_update_l2: float,
+    heldout_mask: Any,
+) -> list[tuple[dict[str, Any], Any, Any]]:
+    """Train a small causal-dense bottleneck ladder around sparse active compute."""
+
+    input_dim = int(features.shape[-1])
+    hidden_dim = int(hidden.shape[-1])
+    rank1_params = input_dim + hidden_dim
+    max_rank = max(1, int(sparse_active_params * 2) // max(1, rank1_params))
+    candidate_ranks = [0, 1, max_rank]
+    ranks: list[int] = []
+    for rank in candidate_ranks:
+        if rank not in ranks:
+            ranks.append(rank)
+    rows: list[tuple[dict[str, Any], Any, Any]] = []
+    for rank in ranks:
+        label = f"dense_bottleneck_causal_rank{rank}"
+        rows.append(
+            _train_dense_arm(
+                torch,
+                F,
+                nn,
+                base,
+                hidden,
+                targets,
+                vocab_size,
+                features,
+                label=label,
+                target_parameter_count=sparse_active_params,
+                steps=steps,
+                base_losses=base_losses,
+                target_update_l2=target_update_l2,
+                heldout_mask=heldout_mask,
+                rank_override=rank,
+            )
+        )
+    return rows
 
 
 def _train_residual(
@@ -466,9 +548,48 @@ def _train_dense_arm(
     base_losses: Any,
     target_update_l2: float,
     heldout_mask: Any,
+    rank_override: int | None = None,
 ) -> tuple[dict[str, Any], Any, Any]:
     split = max(1, int(features.shape[1]) // 2)
-    rank = max(1, target_parameter_count // max(1, int(features.shape[-1]) + int(hidden.shape[-1])))
+    rank = (
+        max(0, int(rank_override))
+        if rank_override is not None
+        else max(1, target_parameter_count // max(1, int(features.shape[-1]) + int(hidden.shape[-1])))
+    )
+    if rank == 0:
+        with torch.no_grad():
+            update = torch.zeros_like(hidden)
+            logits = base.decode(hidden + update)
+            losses = _per_token_ce(F, logits, targets, vocab_size)
+            l2 = update[:, :-1, :].reshape(-1, update.shape[-1]).norm(dim=-1)
+            heldout_loss = float(losses[heldout_mask].mean().item())
+            base_loss = float(base_losses.mean().item())
+            heldout_base = float(base_losses[heldout_mask].mean().item())
+        return (
+            {
+                "arm": label,
+                "family": "dense",
+                "top_k": "",
+                "rank": rank,
+                "target_active_params_proxy": target_parameter_count,
+                "posthoc_residual_norm_scale": 0.0,
+                "raw_heldout_residual_update_l2": 0.0,
+                "all_ce_loss": float(losses.mean().item()),
+                "heldout_ce_loss": heldout_loss,
+                "delta_vs_base_ce": float(losses.mean().item()) - base_loss,
+                "heldout_delta_vs_base_ce": heldout_loss - heldout_base,
+                "residual_update_l2_mean": float(l2.mean().item()),
+                "heldout_residual_update_l2": float(l2[heldout_mask].mean().item()),
+                "active_params_proxy": 0,
+                "stored_params_proxy": 0,
+                "flops_proxy": 0,
+                "support_entropy": "",
+                "used_columns": "",
+                "unique_support_sets": "",
+            },
+            losses.detach(),
+            l2.detach(),
+        )
     adapter = _LowRankCausalDenseAdapter(nn, int(features.shape[-1]), int(hidden.shape[-1]), rank)
     optimizer = torch.optim.AdamW(adapter.parameters(), lr=3e-3)
     for _ in range(max(1, steps)):
@@ -500,6 +621,7 @@ def _train_dense_arm(
             "family": "dense",
             "top_k": "",
             "rank": rank,
+            "target_active_params_proxy": target_parameter_count,
             "posthoc_residual_norm_scale": scale,
             "raw_heldout_residual_update_l2": heldout_raw_l2,
             "all_ce_loss": float(losses.mean().item()),
@@ -619,20 +741,64 @@ def _per_token_rows(
 
 def _norm_sweep_rows(arm_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = []
+    sparse_active = _float_or_none(
+        next(
+            (
+                row.get("active_params_proxy")
+                for row in arm_rows
+                if row.get("arm") == "sparse_contextual_topk2"
+            ),
+            None,
+        )
+    )
     for row in arm_rows:
         if row.get("arm") == "base_no_residual":
             continue
         ce_delta = _float_or_none(row.get("heldout_delta_vs_base_ce"))
         l2 = _float_or_none(row.get("heldout_residual_update_l2"))
+        active = _float_or_none(row.get("active_params_proxy"))
+        flops = _float_or_none(row.get("flops_proxy"))
         rows.append(
             {
                 "arm": row["arm"],
+                "family": row.get("family", ""),
+                "rank": row.get("rank", ""),
                 "heldout_delta_vs_base_ce": ce_delta,
                 "heldout_residual_update_l2": l2,
                 "ce_gain_per_l2": "" if l2 is None or abs(l2) < 1e-12 or ce_delta is None else ce_delta / l2,
+                "active_params_proxy": active,
+                "flops_proxy": flops,
+                "active_ratio_vs_sparse_topk2": (
+                    ""
+                    if active is None or sparse_active is None or sparse_active <= 0
+                    else active / sparse_active
+                ),
+                "heldout_ce_delta_per_active_param": (
+                    ""
+                    if active is None or active <= 0 or ce_delta is None
+                    else ce_delta / active
+                ),
                 "norm_bucket": _norm_bucket(l2),
             }
         )
+    for row in rows:
+        row_delta = _float_or_none(row.get("heldout_delta_vs_base_ce"))
+        row_active = _float_or_none(row.get("active_params_proxy"))
+        if row_delta is None or row_active is None:
+            row["active_compute_pareto_front"] = False
+            continue
+        dominated = False
+        for other in rows:
+            other_delta = _float_or_none(other.get("heldout_delta_vs_base_ce"))
+            other_active = _float_or_none(other.get("active_params_proxy"))
+            if other_delta is None or other_active is None or other is row:
+                continue
+            if other_delta <= row_delta and other_active <= row_active and (
+                other_delta < row_delta or other_active < row_active
+            ):
+                dominated = True
+                break
+        row["active_compute_pareto_front"] = not dominated
     return rows
 
 
@@ -805,6 +971,7 @@ def _summary(
 ) -> dict[str, Any]:
     failures = [row for row in gate_rows if not row["passed"]]
     serial_arm_rows = [_serializable_row(row) for row in arm_rows]
+    outcome_flags = _benchmark_outcome_flags(arm_rows)
     return {
         "status": status,
         "decision": decision,
@@ -818,18 +985,71 @@ def _summary(
         "norm_sweep_row_count": len(norm_rows),
         "intervention_fingerprint_count": len(fingerprint_rows),
         "arm_metrics": serial_arm_rows,
+        "benchmark_interpretation": outcome_flags,
         "gate_criteria": gate_rows,
         "failures": failures,
-        "selected_next_step": (
-            "escalate the common benchmark to a seed-2 or RunPod repeat only if sparse beats dense"
-            if status == "pass"
-            else "repair local compute-matched dense bottleneck ladder and sparse teacher-distilled rescue controls"
-        ),
+        "selected_next_step": _selected_next_step(status, failures),
         "runtime_seconds": round(time.time() - start, 4),
         "platform": platform.platform(),
         "git_commit": _git_commit(),
         "artifacts": {name.replace(".", "_"): str(out_dir / name) for name in REQUIRED_ARTIFACTS},
     }
+
+
+def _benchmark_outcome_flags(arm_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    arms = {str(row.get("arm")): row for row in arm_rows}
+    sparse = arms.get("sparse_contextual_topk2", {})
+    sparse_delta = _float_or_none(sparse.get("heldout_delta_vs_base_ce"))
+    sparse_active = _float_or_none(sparse.get("active_params_proxy"))
+    dense = arms.get("rank_flop_matched_causal_dense", {})
+    dense_delta = _float_or_none(dense.get("heldout_delta_vs_base_ce"))
+    dense_l2 = _float_or_none(dense.get("heldout_residual_update_l2"))
+    sparse_l2 = _float_or_none(sparse.get("heldout_residual_update_l2"))
+    compute_matched_deltas = []
+    if sparse_active is not None and sparse_active > 0:
+        for row in arm_rows:
+            if str(row.get("family")) != "dense":
+                continue
+            active = _float_or_none(row.get("active_params_proxy"))
+            delta = _float_or_none(row.get("heldout_delta_vs_base_ce"))
+            if active is None or delta is None:
+                continue
+            if sparse_active / 2.0 <= active <= sparse_active * 2.0:
+                compute_matched_deltas.append({"arm": row.get("arm"), "active_params_proxy": active, "heldout_delta_vs_base_ce": delta})
+    best_compute = min(
+        compute_matched_deltas,
+        key=lambda row: float(row["heldout_delta_vs_base_ce"]),
+        default=None,
+    )
+    return {
+        "dense_wins_l2_matched": (
+            sparse_delta is not None
+            and dense_delta is not None
+            and sparse_l2 is not None
+            and dense_l2 is not None
+            and dense_l2 <= max(0.25, sparse_l2 * 2.0)
+            and dense_delta < sparse_delta
+        ),
+        "dense_wins_compute_matched": (
+            sparse_delta is not None
+            and best_compute is not None
+            and _float_or_none(best_compute.get("heldout_delta_vs_base_ce")) is not None
+            and float(best_compute["heldout_delta_vs_base_ce"]) < sparse_delta
+        ),
+        "best_compute_matched_dense": best_compute or {},
+        "compute_matched_dense_count": len(compute_matched_deltas),
+    }
+
+
+def _selected_next_step(status: str, failures: list[dict[str, Any]]) -> str:
+    if status == "pass":
+        return "escalate the common benchmark to a seed-2 or RunPod repeat only if sparse beats dense"
+    failed = {str(row.get("criterion")) for row in failures}
+    if "active_compute_matched_or_bracketed" in failed:
+        return "repair local compute-matched dense bottleneck ladder and sparse teacher-distilled rescue controls"
+    if "sparse_beats_causal_dense" in failed:
+        return "add sparse teacher-distilled norm-normalized rescue controls before any RunPod repeat"
+    return "inspect failed common-benchmark gate criteria and repair the lowest-level local artifact issue"
 
 
 def _write_artifacts(
