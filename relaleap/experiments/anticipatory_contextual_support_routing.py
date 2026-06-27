@@ -1223,7 +1223,7 @@ def _dual_student_cross_forcing_rows(
             vocab_size,
             target_scores["full_context_contextual_topk2_teacher"],
         )
-        own_loss = _loss_with_support_tensor(
+        own_metrics = _support_eval_metrics(
             torch,
             F,
             base,
@@ -1234,7 +1234,9 @@ def _dual_student_cross_forcing_rows(
             support=own_support,
             target_scores=own_scores,
         )
-        token_position_loss = _loss_with_source_support(
+        token_position_scores = target_scores["token_position_only_predicted_features"]
+        token_position_support = token_position_scores.topk(top_k, dim=-1).indices
+        token_position_metrics = _support_eval_metrics(
             torch,
             F,
             base,
@@ -1242,9 +1244,8 @@ def _dual_student_cross_forcing_rows(
             hidden,
             targets,
             vocab_size,
-            source_scores=target_scores["token_position_only_predicted_features"],
-            target_scores=target_scores["token_position_only_predicted_features"],
-            top_k=top_k,
+            support=token_position_support,
+            target_scores=token_position_scores,
         )
         for support_source, variant in source_specs:
             support_variant = (
@@ -1256,7 +1257,7 @@ def _dual_student_cross_forcing_rows(
             )
             source_scores = target_scores[support_variant]
             support = source_scores.topk(top_k, dim=-1).indices
-            ce_loss = _loss_with_support_tensor(
+            metrics = _support_eval_metrics(
                 torch,
                 F,
                 base,
@@ -1272,10 +1273,10 @@ def _dual_student_cross_forcing_rows(
                     support_source=support_source,
                     support_variant=support_variant,
                     value_student=value_student,
-                    ce_loss=ce_loss,
+                    metrics=metrics,
                     oracle_loss=oracle_loss,
-                    own_loss=own_loss,
-                    token_position_loss=token_position_loss,
+                    own_metrics=own_metrics,
+                    token_position_metrics=token_position_metrics,
                     own_support=own_support,
                     support=support,
                     source_scores=source_scores,
@@ -1288,7 +1289,7 @@ def _dual_student_cross_forcing_rows(
             num_columns=target_residual.num_columns,
             seed=seed,
         )
-        random_loss = _loss_with_support_tensor(
+        random_metrics = _support_eval_metrics(
             torch,
             F,
             base,
@@ -1304,17 +1305,17 @@ def _dual_student_cross_forcing_rows(
                 support_source="random_frequency_matched_null",
                 support_variant="random_frequency_matched_topk",
                 value_student=value_student,
-                ce_loss=random_loss,
+                metrics=random_metrics,
                 oracle_loss=oracle_loss,
-                own_loss=own_loss,
-                token_position_loss=token_position_loss,
+                own_metrics=own_metrics,
+                token_position_metrics=token_position_metrics,
                 own_support=own_support,
                 support=random_support,
                 source_scores=None,
                 top_k=top_k,
             )
         )
-        oracle_diagnostic_loss = _loss_with_support_tensor(
+        oracle_diagnostic_metrics = _support_eval_metrics(
             torch,
             F,
             base,
@@ -1330,10 +1331,10 @@ def _dual_student_cross_forcing_rows(
                 support_source="oracle_diagnostic",
                 support_variant="oracle_best_per_token_topk",
                 value_student=value_student,
-                ce_loss=oracle_diagnostic_loss,
+                metrics=oracle_diagnostic_metrics,
                 oracle_loss=oracle_loss,
-                own_loss=own_loss,
-                token_position_loss=token_position_loss,
+                own_metrics=own_metrics,
+                token_position_metrics=token_position_metrics,
                 own_support=own_support,
                 support=oracle_support,
                 source_scores=None,
@@ -1348,15 +1349,18 @@ def _dual_student_row(
     support_source: str,
     support_variant: str,
     value_student: str,
-    ce_loss: float,
+    metrics: dict[str, Any],
     oracle_loss: float,
-    own_loss: float,
-    token_position_loss: float,
+    own_metrics: dict[str, Any],
+    token_position_metrics: dict[str, Any],
     own_support: Any,
     support: Any,
     source_scores: Any | None,
     top_k: int,
 ) -> dict[str, Any]:
+    ce_loss = metrics["ce_loss"]
+    token_delta = metrics["per_token_losses"] - token_position_metrics["per_token_losses"]
+    own_delta = metrics["per_token_losses"] - own_metrics["per_token_losses"]
     return {
         "forcing_type": "dual_student_cross_forcing",
         "status": "available",
@@ -1368,12 +1372,36 @@ def _dual_student_row(
         "ce_loss": ce_loss,
         "oracle_loss": oracle_loss,
         "oracle_regret": ce_loss - oracle_loss,
-        "loss_delta_vs_own_support": ce_loss - own_loss,
-        "loss_delta_vs_token_position_null": ce_loss - token_position_loss,
+        "loss_delta_vs_own_support": ce_loss - own_metrics["ce_loss"],
+        "loss_delta_vs_token_position_null": ce_loss - token_position_metrics["ce_loss"],
         "support_jaccard_with_own": _support_jaccard(own_support, support),
         "topk_margin_bin": _topk_margin_bin(_mean_topk_margin(source_scores, top_k))
         if source_scores is not None
         else "not_score_based",
+        "residual_update_l2_mean": metrics["residual_update_l2_mean"],
+        "residual_update_l2_delta_vs_own": metrics["residual_update_l2_mean"]
+        - own_metrics["residual_update_l2_mean"],
+        "residual_update_l2_delta_vs_token_position_null": metrics["residual_update_l2_mean"]
+        - token_position_metrics["residual_update_l2_mean"],
+        "loss_delta_vs_own_per_residual_l2": _safe_ratio(
+            ce_loss - own_metrics["ce_loss"],
+            metrics["residual_update_l2_mean"] - own_metrics["residual_update_l2_mean"],
+        ),
+        "loss_delta_vs_token_position_null_per_residual_l2": _safe_ratio(
+            ce_loss - token_position_metrics["ce_loss"],
+            metrics["residual_update_l2_mean"]
+            - token_position_metrics["residual_update_l2_mean"],
+        ),
+        "per_token_delta_vs_own_mean": float(own_delta.mean().item()),
+        "per_token_delta_vs_own_median": float(own_delta.median().item()),
+        "per_token_delta_vs_own_improved_fraction": float(
+            (own_delta < 0.0).to(dtype=own_delta.dtype).mean().item()
+        ),
+        "per_token_delta_vs_token_position_null_mean": float(token_delta.mean().item()),
+        "per_token_delta_vs_token_position_null_median": float(token_delta.median().item()),
+        "per_token_delta_vs_token_position_null_improved_fraction": float(
+            (token_delta < 0.0).to(dtype=token_delta.dtype).mean().item()
+        ),
     }
 
 
@@ -1393,6 +1421,45 @@ def _loss_with_support_tensor(
     logits = _decode_for_support(torch, base, residual, hidden, support, top_values)
     loss = F.cross_entropy(logits[:, :-1, :].reshape(-1, vocab_size), targets[:, :-1].reshape(-1))
     return float(loss.item())
+
+
+def _support_eval_metrics(
+    torch: Any,
+    F: Any,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    *,
+    support: Any,
+    target_scores: Any,
+) -> dict[str, Any]:
+    top_values = target_scores.gather(dim=-1, index=support)
+    column_weights = torch.softmax(top_values, dim=-1)
+    atom_weights = torch.softmax(residual.atom_logits, dim=-1)
+    column_values = torch.einsum("ca,cah->ch", atom_weights, residual.atom_values)
+    selected_values = column_values[support]
+    residual_update = torch.einsum("bsk,bskh->bsh", column_weights, selected_values)
+    logits = base.decode(hidden + residual_update)
+    per_token = F.cross_entropy(
+        logits[:, :-1, :].reshape(-1, vocab_size),
+        targets[:, :-1].reshape(-1),
+        reduction="none",
+    )
+    return {
+        "ce_loss": float(per_token.mean().item()),
+        "per_token_losses": per_token.detach(),
+        "residual_update_l2_mean": float(
+            residual_update[:, :-1, :].norm(dim=-1).mean().item()
+        ),
+    }
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float | str:
+    if abs(denominator) <= 1e-12:
+        return ""
+    return numerator / denominator
 
 
 def _oracle_loss_and_support(

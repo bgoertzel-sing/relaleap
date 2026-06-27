@@ -69,7 +69,13 @@ def run_acsr_dual_student_cross_forcing_synthesis(
         and row["partner_beats_random_frequency_null"]
         for row in transfer_rows
     )
-    residual_norm_available = False
+    residual_norm_available = bool(transfer_rows) and all(
+        row.get("partner_residual_update_l2_mean") is not None
+        and row.get("partner_delta_vs_token_position_null_per_residual_l2") is not None
+        and row.get("partner_per_token_delta_vs_token_position_null_improved_fraction")
+        is not None
+        for row in transfer_rows
+    )
     claim_status = (
         "cross_value_support_transfer_suggestive_not_established"
         if status == "pass" and all_partner_beats_required_nulls
@@ -85,7 +91,11 @@ def run_acsr_dual_student_cross_forcing_synthesis(
             else "acsr_dual_student_cross_forcing_synthesis_failed_closed"
         ),
         "claim_status": claim_status,
-        "selected_next_step": _selected_next_step(status, all_partner_beats_required_nulls),
+        "selected_next_step": _selected_next_step(
+            status,
+            all_partner_beats_required_nulls,
+            residual_norm_available,
+        ),
         "source_dirs": [str(path) for path in source_dirs],
         "strategy_review": review,
         "direction_shift": _direction_shift(review),
@@ -103,6 +113,16 @@ def run_acsr_dual_student_cross_forcing_synthesis(
             ),
             "mean_partner_oracle_headroom_recovered_fraction": _mean_key(
                 transfer_rows, "partner_oracle_headroom_recovered_fraction"
+            ),
+            "mean_partner_residual_update_l2": _mean_key(
+                transfer_rows, "partner_residual_update_l2_mean"
+            ),
+            "mean_partner_delta_vs_token_position_null_per_residual_l2": _mean_key(
+                transfer_rows, "partner_delta_vs_token_position_null_per_residual_l2"
+            ),
+            "mean_partner_per_token_improved_fraction_vs_token_position_null": _mean_key(
+                transfer_rows,
+                "partner_per_token_delta_vs_token_position_null_improved_fraction",
             ),
             "all_partner_beats_required_nulls": all_partner_beats_required_nulls,
             "residual_norm_control_available": residual_norm_available,
@@ -232,6 +252,39 @@ def _support_synthesis_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any
                     partner.get("support_jaccard_with_own")
                 ),
                 "partner_topk_margin_bin": partner.get("topk_margin_bin", ""),
+                "partner_residual_update_l2_mean": _number(
+                    partner.get("residual_update_l2_mean")
+                ),
+                "partner_residual_update_l2_delta_vs_own": _number(
+                    partner.get("residual_update_l2_delta_vs_own")
+                ),
+                "partner_residual_update_l2_delta_vs_token_position_null": _number(
+                    partner.get("residual_update_l2_delta_vs_token_position_null")
+                ),
+                "partner_delta_vs_own_per_residual_l2": _number(
+                    partner.get("loss_delta_vs_own_per_residual_l2")
+                ),
+                "partner_delta_vs_token_position_null_per_residual_l2": _number(
+                    partner.get("loss_delta_vs_token_position_null_per_residual_l2")
+                ),
+                "partner_per_token_delta_vs_own_mean": _number(
+                    partner.get("per_token_delta_vs_own_mean")
+                ),
+                "partner_per_token_delta_vs_own_median": _number(
+                    partner.get("per_token_delta_vs_own_median")
+                ),
+                "partner_per_token_delta_vs_own_improved_fraction": _number(
+                    partner.get("per_token_delta_vs_own_improved_fraction")
+                ),
+                "partner_per_token_delta_vs_token_position_null_mean": _number(
+                    partner.get("per_token_delta_vs_token_position_null_mean")
+                ),
+                "partner_per_token_delta_vs_token_position_null_median": _number(
+                    partner.get("per_token_delta_vs_token_position_null_median")
+                ),
+                "partner_per_token_delta_vs_token_position_null_improved_fraction": _number(
+                    partner.get("per_token_delta_vs_token_position_null_improved_fraction")
+                ),
                 "partner_oracle_headroom_recovered_fraction": _headroom_fraction(
                     partner_ce, token_ce, oracle_ce
                 ),
@@ -299,6 +352,22 @@ def _gate_rows(
             f"available={len(available)}",
             "shuffled or random/frequency-matched null comparisons are missing",
         ),
+        _criterion(
+            "residual_norm_and_per_token_metrics_present",
+            all(
+                row.get("partner_residual_update_l2_mean") is not None
+                and row.get("partner_delta_vs_token_position_null_per_residual_l2")
+                is not None
+                and row.get(
+                    "partner_per_token_delta_vs_token_position_null_improved_fraction"
+                )
+                is not None
+                for row in available
+            ),
+            "partner rows include residual-norm-normalized and paired per-token metrics",
+            f"available={len(available)}",
+            "residual-norm or paired per-token cross-forcing metrics are missing",
+        ),
     ]
 
 
@@ -318,9 +387,18 @@ def _criterion(
     }
 
 
-def _selected_next_step(status: str, all_partner_beats_required_nulls: bool) -> str:
+def _selected_next_step(
+    status: str,
+    all_partner_beats_required_nulls: bool,
+    residual_norm_available: bool,
+) -> str:
     if status != "pass":
         return "repair missing dual-student source rows before interpreting support transfer"
+    if all_partner_beats_required_nulls and residual_norm_available:
+        return (
+            "stratify cross-value support transfer by high-regret/disagreement tokens "
+            "and support-margin bins before any default-router mechanism claim"
+        )
     if all_partner_beats_required_nulls:
         return (
             "add residual-norm-normalized and per-token paired cross-forcing metrics "
@@ -428,13 +506,15 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Claim status: `{summary['claim_status']}`",
         f"- Mean partner delta vs token-position null: `{metrics['mean_partner_delta_vs_token_position_null']}`",
         f"- Mean partner oracle-headroom fraction: `{metrics['mean_partner_oracle_headroom_recovered_fraction']}`",
+        f"- Mean partner residual-update L2: `{metrics['mean_partner_residual_update_l2']}`",
+        f"- Mean partner per-token improved fraction vs token-position null: `{metrics['mean_partner_per_token_improved_fraction_vs_token_position_null']}`",
         "",
         summary["direction_shift"],
         "",
         "Partner support is interpreted only inside the same value path and against "
         "the token-position, shuffled, random/frequency, oracle, teacher, and own "
-        "support rows. Residual-norm-normalized evidence is still required before "
-        "a value-invariant causal support-router mechanism claim.",
+        "support rows. Residual-norm-normalized and paired per-token fields are now "
+        "required by this synthesis before cross-value transfer can pass.",
     ]
     if summary["failures"]:
         lines.extend(["", "## Fail-Closed Reasons"])

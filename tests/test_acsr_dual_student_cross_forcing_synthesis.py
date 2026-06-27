@@ -47,7 +47,7 @@ class ACSRDualStudentCrossForcingSynthesisTest(unittest.TestCase):
             )
             self.assertEqual(
                 summary["claim_status"],
-                "cross_value_support_transfer_suggestive_not_established",
+                "cross_value_support_transfer_supported_not_promoted",
             )
             self.assertTrue(
                 summary["aggregate_metrics"]["all_partner_beats_required_nulls"]
@@ -67,6 +67,11 @@ class ACSRDualStudentCrossForcingSynthesisTest(unittest.TestCase):
                 rows = list(csv.DictReader(handle))
             self.assertEqual(len(rows), 4)
             self.assertIn("partner_oracle_headroom_recovered_fraction", rows[0])
+            self.assertIn("partner_residual_update_l2_mean", rows[0])
+            self.assertIn(
+                "partner_per_token_delta_vs_token_position_null_improved_fraction",
+                rows[0],
+            )
             self.assertTrue(
                 all(row["partner_beats_random_frequency_null"] == "True" for row in rows)
             )
@@ -253,7 +258,40 @@ def _row(
         "loss_delta_vs_token_position_null": ce_loss - token_ce,
         "support_jaccard_with_own": 1.0 if support_source == "own" else 0.25,
         "topk_margin_bin": "high_margin",
+        "residual_update_l2_mean": _residual_norm(support_source),
+        "residual_update_l2_delta_vs_own": _residual_norm(support_source)
+        - _residual_norm("own"),
+        "residual_update_l2_delta_vs_token_position_null": _residual_norm(support_source)
+        - _residual_norm("token_position_null"),
+        "loss_delta_vs_own_per_residual_l2": (ce_loss - own_ce)
+        / (_residual_norm(support_source) - _residual_norm("own") or 1.0),
+        "loss_delta_vs_token_position_null_per_residual_l2": (ce_loss - token_ce)
+        / (
+            _residual_norm(support_source)
+            - _residual_norm("token_position_null")
+            or 1.0
+        ),
+        "per_token_delta_vs_own_mean": ce_loss - own_ce,
+        "per_token_delta_vs_own_median": ce_loss - own_ce,
+        "per_token_delta_vs_own_improved_fraction": 1.0 if ce_loss < own_ce else 0.0,
+        "per_token_delta_vs_token_position_null_mean": ce_loss - token_ce,
+        "per_token_delta_vs_token_position_null_median": ce_loss - token_ce,
+        "per_token_delta_vs_token_position_null_improved_fraction": 1.0
+        if ce_loss < token_ce
+        else 0.0,
     }
+
+
+def _residual_norm(support_source: str) -> float:
+    return {
+        "own": 0.50,
+        "partner": 0.62,
+        "token_position_null": 0.40,
+        "position_stratified_shuffled_null": 0.70,
+        "random_frequency_matched_null": 0.80,
+        "oracle_diagnostic": 0.60,
+        "full_context_teacher_diagnostic": 0.61,
+    }[support_source]
 
 
 def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:

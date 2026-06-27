@@ -75,6 +75,12 @@ class AnticipatoryContextualSupportRoutingSmokeTest(unittest.TestCase):
             self.assertIn("oracle_diagnostic", dual_student)
             self.assertIn("full_context_teacher_diagnostic", dual_student)
             self.assertIn("loss_delta_vs_token_position_null", dual_student)
+            self.assertIn("residual_update_l2_mean", dual_student)
+            self.assertIn("loss_delta_vs_token_position_null_per_residual_l2", dual_student)
+            self.assertIn(
+                "per_token_delta_vs_token_position_null_improved_fraction",
+                dual_student,
+            )
             support_agreement = (out_dir / "support_agreement.csv").read_text(
                 encoding="utf-8"
             )
