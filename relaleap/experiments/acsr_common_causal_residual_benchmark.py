@@ -709,17 +709,68 @@ def _benchmark_gate_rows(
     token_dense_delta = _float_or_none(token_dense.get("heldout_delta_vs_base_ce"))
     sparse_l2 = _float_or_none(sparse.get("heldout_residual_update_l2"))
     dense_l2 = _float_or_none(dense.get("heldout_residual_update_l2"))
+    active_compute = _active_compute_match_details(arm_rows, sparse_arm="sparse_contextual_topk2")
     random_damage = _maybe_subtract(random.get("heldout_ce_loss"), sparse.get("heldout_ce_loss"))
     oracle_regret = _maybe_subtract(sparse.get("heldout_ce_loss"), oracle.get("heldout_ce_loss"))
     return [
         _criterion("common_baselines_present", required.issubset(arms), "all required sparse/dense/null/oracle arms exist", sorted(arms), "missing one or more required common-baseline arms"),
         _criterion("dense_norm_matched", sparse_l2 is not None and dense_l2 is not None and dense_l2 <= max(0.25, sparse_l2 * 2.0), "causal dense held-out residual L2 is within 2x sparse top-k2 L2 with 0.25 floor", {"sparse_l2": sparse_l2, "dense_l2": dense_l2}, "causal dense control used too much residual norm"),
+        _criterion("active_compute_matched_or_bracketed", bool(active_compute["matched_or_bracketed"]), "causal dense active params/FLOPs must be matched to or bracket sparse top-k2 before dense-vs-sparse claims", active_compute, "dense control is not active-param/FLOP matched or bracketed"),
         _criterion("causal_dense_beats_token_position_null", dense_delta is not None and token_dense_delta is not None and dense_delta < token_dense_delta, "causal dense should beat token-position dense null", {"causal_dense_delta": dense_delta, "token_position_dense_delta": token_dense_delta}, "causal dense did not beat token-position dense null"),
         _criterion("sparse_beats_causal_dense", sparse_delta is not None and dense_delta is not None and sparse_delta < dense_delta, "sparse top-k2 held-out CE delta must beat rank/FLOP-matched causal dense", {"sparse_delta": sparse_delta, "dense_delta": dense_delta}, "sparse top-k2 did not beat causal dense"),
         _criterion("support_identity_matters", isinstance(random_damage, float) and random_damage > 0.0, "frequency-matched random support should hurt held-out CE versus selected sparse support", random_damage, "selected support was not better than frequency-matched random support"),
         _criterion("oracle_regret_nonnegative", isinstance(oracle_regret, float) and oracle_regret >= -1e-8, "exhaustive oracle support should not be worse than selected support", oracle_regret, "oracle support sanity check failed"),
         _criterion("intervention_fingerprints_present", len(fingerprint_rows) >= 5, "fingerprint rows include oracle/random/support-overlap observables", len(fingerprint_rows), "missing intervention fingerprint rows"),
     ]
+
+
+def _active_compute_match_details(
+    arm_rows: list[dict[str, Any]],
+    *,
+    sparse_arm: str,
+    match_ratio: float = 2.0,
+) -> dict[str, Any]:
+    arms = {str(row.get("arm")): row for row in arm_rows}
+    sparse_active = _float_or_none(arms.get(sparse_arm, {}).get("active_params_proxy"))
+    dense_rows = [
+        row
+        for row in arm_rows
+        if (
+            str(row.get("family")) == "dense"
+            or "dense" in str(row.get("arm"))
+        )
+        and _float_or_none(row.get("active_params_proxy")) is not None
+    ]
+    dense_active_values = [
+        int(active)
+        for row in dense_rows
+        for active in [_float_or_none(row.get("active_params_proxy"))]
+        if active is not None
+    ]
+    if sparse_active is None or sparse_active <= 0 or not dense_active_values:
+        return {
+            "sparse_arm": sparse_arm,
+            "sparse_active_params_proxy": sparse_active,
+            "dense_active_params_proxy": dense_active_values,
+            "matched_or_bracketed": False,
+            "reason": "missing sparse or dense active-param proxy",
+        }
+    lower = sparse_active / match_ratio
+    upper = sparse_active * match_ratio
+    matched = [value for value in dense_active_values if lower <= value <= upper]
+    below = [value for value in dense_active_values if value <= sparse_active]
+    above = [value for value in dense_active_values if value >= sparse_active]
+    ratios = [value / sparse_active for value in dense_active_values]
+    return {
+        "sparse_arm": sparse_arm,
+        "sparse_active_params_proxy": int(sparse_active),
+        "dense_active_params_proxy": dense_active_values,
+        "dense_to_sparse_active_ratios": ratios,
+        "match_ratio": match_ratio,
+        "matched_dense_count": len(matched),
+        "bracketed_by_dense_ladder": bool(below and above),
+        "matched_or_bracketed": bool(matched or (below and above)),
+    }
 
 
 def _preflight_rows(
@@ -772,7 +823,7 @@ def _summary(
         "selected_next_step": (
             "escalate the common benchmark to a seed-2 or RunPod repeat only if sparse beats dense"
             if status == "pass"
-            else "defer ACSR promotion and improve sparse mechanism controls or pivot to dense-teacher distillation"
+            else "repair local compute-matched dense bottleneck ladder and sparse teacher-distilled rescue controls"
         ),
         "runtime_seconds": round(time.time() - start, 4),
         "platform": platform.platform(),

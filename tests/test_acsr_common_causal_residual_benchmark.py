@@ -8,6 +8,7 @@ from pathlib import Path
 from relaleap.experiments.acsr_common_causal_residual_benchmark import (
     REQUIRED_ARTIFACTS,
     _benchmark_gate_rows,
+    _summary,
     run_acsr_common_causal_residual_benchmark,
 )
 
@@ -65,13 +66,64 @@ class ACSRCommonCausalResidualBenchmarkTest(unittest.TestCase):
             any(row["criterion"] == "sparse_beats_causal_dense" and not row["passed"] for row in gate_rows)
         )
 
+    def test_seed2_compute_mismatch_selects_local_repair_not_runpod(self) -> None:
+        arm_rows = [
+            _arm("base_no_residual", 0.0, 0.0, active_params=0),
+            _arm("sparse_contextual_topk2", -0.3168487548828125, 1.0178145170211792, active_params=192),
+            _arm("sparse_rank_matched_topk1", -0.2, 0.8, active_params=96),
+            _arm("rank_flop_matched_causal_dense", -0.4195396900177002, 1.0178145170211792, active_params=9288),
+            _arm("rank_flop_matched_token_position_dense", 0.029190540313720703, 1.0178143978118896, active_params=9306),
+            _arm("sparse_frequency_matched_random", 0.0, 1.0, active_params=192, heldout_ce=4.2),
+            _arm("sparse_shuffled_support_marginals", -0.01, 1.0, active_params=192),
+            _arm("sparse_token_position_null", 0.02, 1.0, active_params=192),
+            _arm("sparse_oracle_support", -0.3192157745361328, 1.0178145170211792, active_params=192, heldout_ce=3.9),
+        ]
+        gate_rows = _benchmark_gate_rows(arm_rows, [{"fingerprint": str(i)} for i in range(5)])
+        compute_gate = next(row for row in gate_rows if row["criterion"] == "active_compute_matched_or_bracketed")
 
-def _arm(name: str, delta: float, l2: float, *, heldout_ce: float = 4.0) -> dict[str, object]:
+        self.assertFalse(compute_gate["passed"])
+        self.assertEqual(compute_gate["actual"]["sparse_active_params_proxy"], 192)
+        self.assertEqual(compute_gate["actual"]["dense_active_params_proxy"], [9288, 9306])
+        self.assertGreater(compute_gate["actual"]["dense_to_sparse_active_ratios"][0], 48.0)
+
+        summary = _summary(
+            status="fail",
+            decision="acsr_common_causal_residual_benchmark_failed_gate",
+            claim_status="sparse_support_specific_effect_not_separated_from_common_dense_controls",
+            start=0.0,
+            source_probe_dir=Path("source"),
+            config_path=Path("config.yaml"),
+            train_steps=12,
+            dense_steps=80,
+            arm_rows=arm_rows,
+            per_token_rows=[],
+            norm_rows=[],
+            fingerprint_rows=[],
+            gate_rows=gate_rows,
+            out_dir=Path("out"),
+        )
+        self.assertIn("repair local compute-matched", summary["selected_next_step"])
+        self.assertNotIn("RunPod repeat", summary["selected_next_step"])
+
+
+def _arm(
+    name: str,
+    delta: float,
+    l2: float,
+    *,
+    heldout_ce: float = 4.0,
+    active_params: int | None = None,
+) -> dict[str, object]:
+    if active_params is None:
+        active_params = 192 if "dense" not in name else 200
     return {
         "arm": name,
+        "family": "dense" if "dense" in name else ("base" if name == "base_no_residual" else "sparse"),
         "heldout_delta_vs_base_ce": delta,
         "heldout_residual_update_l2": l2,
         "heldout_ce_loss": heldout_ce,
+        "active_params_proxy": active_params,
+        "flops_proxy": active_params,
     }
 
 
