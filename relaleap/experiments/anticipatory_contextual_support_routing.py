@@ -24,6 +24,7 @@ REQUIRED_ARTIFACTS = [
     "predictor_metrics.csv",
     "router_metrics.csv",
     "same_student_metrics.csv",
+    "dual_student_cross_forcing.csv",
     "support_agreement.csv",
     "feature_perturbation.csv",
     "sequence_heldout_metrics.csv",
@@ -69,6 +70,7 @@ def run_anticipatory_contextual_support_routing(
             predictor_rows=[],
             router_rows=[],
             same_student_rows=[],
+            dual_student_rows=[],
             support_agreement_rows=[],
             perturbation_rows=[],
             sequence_rows=[],
@@ -365,23 +367,24 @@ def run_anticipatory_contextual_support_routing(
             parameter_matched_causal_score_mlp,
             chunks,
             predicted,
+            token_position_predicted,
+            shuffled_predicted,
             targets_future,
             causal_inputs,
         )
-        same_student_rows.extend(
-            _dual_student_cross_forcing_rows(
-                torch,
-                F,
-                base,
-                residual,
-                independent_residual,
-                hidden,
-                targets,
-                vocab_size,
-                score_rows,
-                independent_score_rows,
-                top_k=top_k,
-            )
+        dual_student_rows = _dual_student_cross_forcing_rows(
+            torch,
+            F,
+            base,
+            residual,
+            independent_residual,
+            hidden,
+            targets,
+            vocab_size,
+            score_rows,
+            independent_score_rows,
+            seed=seed + 211,
+            top_k=top_k,
         )
         support_agreement_rows = _support_agreement_rows(
             torch,
@@ -551,7 +554,14 @@ def run_anticipatory_contextual_support_routing(
             "dual_student_cross_forcing_available": any(
                 row.get("forcing_type") == "dual_student_cross_forcing"
                 and row.get("status") == "available"
-                for row in same_student_rows
+                for row in dual_student_rows
+            ),
+            "dual_student_cross_forcing_sources": sorted(
+                {
+                    str(row.get("support_source"))
+                    for row in dual_student_rows
+                    if row.get("status") == "available"
+                }
             ),
             "acsr_beats_shuffled_ce": _metric_lt(
                 router_by_name,
@@ -585,6 +595,7 @@ def run_anticipatory_contextual_support_routing(
         predictor_rows=predictor_rows,
         router_rows=router_rows,
         same_student_rows=same_student_rows,
+        dual_student_rows=dual_student_rows,
         support_agreement_rows=support_agreement_rows,
         perturbation_rows=perturbation_rows,
         sequence_rows=sequence_rows,
@@ -1102,11 +1113,20 @@ def _independent_score_rows(
     parameter_matched_causal_score_mlp: Any,
     chunks: dict[str, Any],
     predicted: Any,
+    token_position_predicted: Any,
+    shuffled_predicted: Any,
     targets_future: Any,
     causal_inputs: Any,
 ) -> dict[str, Any]:
     zero_predicted = torch.zeros_like(targets_future)
+    mean_predicted = targets_future.mean(dim=(0, 1), keepdim=True).expand_as(
+        targets_future
+    )
     return {
+        "full_context_contextual_topk2_teacher": _score_from_features(
+            residual,
+            _feature_tensor(torch, chunks, targets_future),
+        ),
         "causal_feature_safe_contextual_topk2": _score_from_features(
             residual,
             _feature_tensor(torch, chunks, zero_predicted),
@@ -1114,6 +1134,22 @@ def _independent_score_rows(
         "acsr_mlp_predicted_future": _score_from_features(
             residual,
             _feature_tensor(torch, chunks, predicted),
+        ),
+        "shuffled_predicted_features": _score_from_features(
+            residual,
+            _feature_tensor(torch, chunks, shuffled_predicted),
+        ),
+        "token_position_only_predicted_features": _score_from_features(
+            residual,
+            _feature_tensor(torch, chunks, token_position_predicted),
+        ),
+        "mean_predicted_features": _score_from_features(
+            residual,
+            _feature_tensor(torch, chunks, mean_predicted),
+        ),
+        "zero_predicted_features": _score_from_features(
+            residual,
+            _feature_tensor(torch, chunks, zero_predicted),
         ),
         "parameter_matched_causal_mlp_control": (
             parameter_matched_causal_score_mlp(causal_inputs)
@@ -1134,51 +1170,323 @@ def _dual_student_cross_forcing_rows(
     scores_a: dict[str, Any],
     scores_b: dict[str, Any],
     *,
+    seed: int,
     top_k: int,
 ) -> list[dict[str, Any]]:
-    rows = []
-    primary = "acsr_mlp_predicted_future"
-    control = "parameter_matched_causal_mlp_control"
-    for target_student, target_residual, target_scores in [
-        ("student_a_values", student_a, scores_a),
-        ("student_b_values", student_b, scores_b),
-    ]:
-        acsr_loss = _loss_with_source_support(
-            torch,
-            F,
-            base,
-            target_residual,
-            hidden,
-            targets,
-            vocab_size,
-            source_scores=scores_a[primary],
-            target_scores=target_scores[primary],
-            top_k=top_k,
-        )
-        control_loss = _loss_with_source_support(
-            torch,
-            F,
-            base,
-            target_residual,
-            hidden,
-            targets,
-            vocab_size,
-            source_scores=scores_a[control],
-            target_scores=target_scores[control],
-            top_k=top_k,
-        )
-        rows.append(
+    if top_k != 2:
+        return [
             {
                 "forcing_type": "dual_student_cross_forcing",
-                "status": "available",
-                "comparison": f"{primary}_support_vs_{control}",
-                "target_student": target_student,
-                "acsr_forced_ce_loss": acsr_loss,
-                "control_forced_ce_loss": control_loss,
-                "acsr_minus_control_ce_loss": acsr_loss - control_loss,
+                "status": "missing",
+                "reason": "dual-student cross-forcing currently requires top_k=2",
             }
+        ]
+
+    students = {
+        "acsr_student": {
+            "residual": student_a,
+            "scores": scores_a,
+            "own_support_variant": "acsr_mlp_predicted_future",
+            "partner_support_variant": "parameter_matched_causal_mlp_control",
+        },
+        "parameter_matched_direct_causal_mlp_student": {
+            "residual": student_b,
+            "scores": scores_b,
+            "own_support_variant": "parameter_matched_causal_mlp_control",
+            "partner_support_variant": "acsr_mlp_predicted_future",
+        },
+    }
+    source_specs = [
+        ("own", "own"),
+        ("partner", "partner"),
+        ("token_position_null", "token_position_only_predicted_features"),
+        ("position_stratified_shuffled_null", "shuffled_predicted_features"),
+        ("mean_null", "mean_predicted_features"),
+        ("zero_null", "zero_predicted_features"),
+        ("full_context_teacher_diagnostic", "full_context_contextual_topk2_teacher"),
+    ]
+    rows = []
+    for value_student, spec in students.items():
+        target_residual = spec["residual"]
+        target_scores = spec["scores"]
+        own_variant = spec["own_support_variant"]
+        partner_variant = spec["partner_support_variant"]
+        own_scores = target_scores[own_variant]
+        own_support = own_scores.topk(top_k, dim=-1).indices
+        oracle_loss, oracle_support = _oracle_loss_and_support(
+            torch,
+            F,
+            base,
+            target_residual,
+            hidden,
+            targets,
+            vocab_size,
+            target_scores["full_context_contextual_topk2_teacher"],
+        )
+        own_loss = _loss_with_support_tensor(
+            torch,
+            F,
+            base,
+            target_residual,
+            hidden,
+            targets,
+            vocab_size,
+            support=own_support,
+            target_scores=own_scores,
+        )
+        token_position_loss = _loss_with_source_support(
+            torch,
+            F,
+            base,
+            target_residual,
+            hidden,
+            targets,
+            vocab_size,
+            source_scores=target_scores["token_position_only_predicted_features"],
+            target_scores=target_scores["token_position_only_predicted_features"],
+            top_k=top_k,
+        )
+        for support_source, variant in source_specs:
+            support_variant = (
+                own_variant
+                if variant == "own"
+                else partner_variant
+                if variant == "partner"
+                else variant
+            )
+            source_scores = target_scores[support_variant]
+            support = source_scores.topk(top_k, dim=-1).indices
+            ce_loss = _loss_with_support_tensor(
+                torch,
+                F,
+                base,
+                target_residual,
+                hidden,
+                targets,
+                vocab_size,
+                support=support,
+                target_scores=target_scores[support_variant],
+            )
+            rows.append(
+                _dual_student_row(
+                    support_source=support_source,
+                    support_variant=support_variant,
+                    value_student=value_student,
+                    ce_loss=ce_loss,
+                    oracle_loss=oracle_loss,
+                    own_loss=own_loss,
+                    token_position_loss=token_position_loss,
+                    own_support=own_support,
+                    support=support,
+                    source_scores=source_scores,
+                    top_k=top_k,
+                )
+            )
+        random_support = _frequency_matched_random_support(
+            torch,
+            own_support,
+            num_columns=target_residual.num_columns,
+            seed=seed,
+        )
+        random_loss = _loss_with_support_tensor(
+            torch,
+            F,
+            base,
+            target_residual,
+            hidden,
+            targets,
+            vocab_size,
+            support=random_support,
+            target_scores=own_scores,
+        )
+        rows.append(
+            _dual_student_row(
+                support_source="random_frequency_matched_null",
+                support_variant="random_frequency_matched_topk",
+                value_student=value_student,
+                ce_loss=random_loss,
+                oracle_loss=oracle_loss,
+                own_loss=own_loss,
+                token_position_loss=token_position_loss,
+                own_support=own_support,
+                support=random_support,
+                source_scores=None,
+                top_k=top_k,
+            )
+        )
+        oracle_diagnostic_loss = _loss_with_support_tensor(
+            torch,
+            F,
+            base,
+            target_residual,
+            hidden,
+            targets,
+            vocab_size,
+            support=oracle_support,
+            target_scores=target_scores["full_context_contextual_topk2_teacher"],
+        )
+        rows.append(
+            _dual_student_row(
+                support_source="oracle_diagnostic",
+                support_variant="oracle_best_per_token_topk",
+                value_student=value_student,
+                ce_loss=oracle_diagnostic_loss,
+                oracle_loss=oracle_loss,
+                own_loss=own_loss,
+                token_position_loss=token_position_loss,
+                own_support=own_support,
+                support=oracle_support,
+                source_scores=None,
+                top_k=top_k,
+            )
         )
     return rows
+
+
+def _dual_student_row(
+    *,
+    support_source: str,
+    support_variant: str,
+    value_student: str,
+    ce_loss: float,
+    oracle_loss: float,
+    own_loss: float,
+    token_position_loss: float,
+    own_support: Any,
+    support: Any,
+    source_scores: Any | None,
+    top_k: int,
+) -> dict[str, Any]:
+    return {
+        "forcing_type": "dual_student_cross_forcing",
+        "status": "available",
+        "eval_split": "source_batch_all_but_last_token",
+        "value_student": value_student,
+        "support_source": support_source,
+        "support_variant": support_variant,
+        "top_k": int(top_k),
+        "ce_loss": ce_loss,
+        "oracle_loss": oracle_loss,
+        "oracle_regret": ce_loss - oracle_loss,
+        "loss_delta_vs_own_support": ce_loss - own_loss,
+        "loss_delta_vs_token_position_null": ce_loss - token_position_loss,
+        "support_jaccard_with_own": _support_jaccard(own_support, support),
+        "topk_margin_bin": _topk_margin_bin(_mean_topk_margin(source_scores, top_k))
+        if source_scores is not None
+        else "not_score_based",
+    }
+
+
+def _loss_with_support_tensor(
+    torch: Any,
+    F: Any,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    *,
+    support: Any,
+    target_scores: Any,
+) -> float:
+    top_values = target_scores.gather(dim=-1, index=support)
+    logits = _decode_for_support(torch, base, residual, hidden, support, top_values)
+    loss = F.cross_entropy(logits[:, :-1, :].reshape(-1, vocab_size), targets[:, :-1].reshape(-1))
+    return float(loss.item())
+
+
+def _oracle_loss_and_support(
+    torch: Any,
+    F: Any,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    reference_scores: Any,
+) -> tuple[float, Any]:
+    pair_supports = []
+    pair_losses = []
+    for left in range(residual.num_columns):
+        for right in range(left + 1, residual.num_columns):
+            support = torch.empty(
+                hidden.shape[0],
+                hidden.shape[1],
+                2,
+                dtype=torch.long,
+                device=hidden.device,
+            )
+            support[..., 0] = left
+            support[..., 1] = right
+            top_values = reference_scores.gather(dim=-1, index=support)
+            logits = _decode_for_support(torch, base, residual, hidden, support, top_values)
+            per_token = F.cross_entropy(
+                logits[:, :-1, :].reshape(-1, vocab_size),
+                targets[:, :-1].reshape(-1),
+                reduction="none",
+            )
+            pair_supports.append(support[:, :-1, :].reshape(-1, 2))
+            pair_losses.append(per_token)
+    stacked_losses = torch.stack(pair_losses, dim=0)
+    best_pair_index = stacked_losses.argmin(dim=0)
+    flat_supports = torch.stack(pair_supports, dim=0)
+    best_flat_support = flat_supports[
+        best_pair_index,
+        torch.arange(best_pair_index.numel(), device=best_pair_index.device),
+    ]
+    best_support = torch.empty(
+        hidden.shape[0],
+        hidden.shape[1],
+        2,
+        dtype=torch.long,
+        device=hidden.device,
+    )
+    best_support[:, :-1, :] = best_flat_support.view(hidden.shape[0], hidden.shape[1] - 1, 2)
+    best_support[:, -1:, :] = best_support[:, -2:-1, :]
+    return float(stacked_losses.min(dim=0).values.mean().item()), best_support
+
+
+def _frequency_matched_random_support(
+    torch: Any,
+    support: Any,
+    *,
+    num_columns: int,
+    seed: int,
+) -> Any:
+    flat = support.reshape(-1)
+    counts = torch.bincount(flat, minlength=num_columns).to(dtype=torch.float32)
+    probabilities = counts / counts.sum().clamp_min(1.0)
+    generator = torch.Generator(device=support.device)
+    generator.manual_seed(seed)
+    sampled = torch.multinomial(
+        probabilities,
+        num_samples=support.numel(),
+        replacement=True,
+        generator=generator,
+    ).to(device=support.device)
+    return sampled.view_as(support)
+
+
+def _support_jaccard(left: Any, right: Any) -> float:
+    left_sorted = left.sort(dim=-1).values
+    right_sorted = right.sort(dim=-1).values
+    intersection = (left_sorted == right_sorted).to(dtype=left_sorted.dtype).sum(dim=-1)
+    union = left.shape[-1] + right.shape[-1] - intersection
+    intersection = intersection.to(dtype=right.float().dtype)
+    union = union.clamp_min(1).to(dtype=right.float().dtype)
+    return float(
+        (intersection / union).mean().item()
+    )
+
+
+def _topk_margin_bin(margin: float | str) -> str:
+    if not isinstance(margin, (int, float)):
+        return "unknown_margin"
+    if margin < 0.01:
+        return "low_margin"
+    if margin < 0.1:
+        return "medium_margin"
+    return "high_margin"
 
 
 def _loss_with_source_support(
@@ -2153,6 +2461,7 @@ def _write_artifacts(
     predictor_rows: list[dict[str, Any]],
     router_rows: list[dict[str, Any]],
     same_student_rows: list[dict[str, Any]],
+    dual_student_rows: list[dict[str, Any]],
     support_agreement_rows: list[dict[str, Any]],
     perturbation_rows: list[dict[str, Any]],
     sequence_rows: list[dict[str, Any]],
@@ -2169,6 +2478,7 @@ def _write_artifacts(
     _write_csv(out_dir / "predictor_metrics.csv", predictor_rows)
     _write_csv(out_dir / "router_metrics.csv", router_rows)
     _write_csv(out_dir / "same_student_metrics.csv", same_student_rows)
+    _write_csv(out_dir / "dual_student_cross_forcing.csv", dual_student_rows)
     _write_csv(out_dir / "support_agreement.csv", support_agreement_rows)
     _write_csv(out_dir / "feature_perturbation.csv", perturbation_rows)
     _write_csv(out_dir / "sequence_heldout_metrics.csv", sequence_rows)

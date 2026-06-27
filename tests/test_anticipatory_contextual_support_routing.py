@@ -54,7 +54,6 @@ class AnticipatoryContextualSupportRoutingSmokeTest(unittest.TestCase):
             same_student = (out_dir / "same_student_metrics.csv").read_text(
                 encoding="utf-8"
             )
-            self.assertIn("dual_student_cross_forcing", same_student)
             self.assertIn(
                 "acsr_mlp_predicted_future_support_vs_token_position_only_predicted_features",
                 same_student,
@@ -63,6 +62,19 @@ class AnticipatoryContextualSupportRoutingSmokeTest(unittest.TestCase):
                 "acsr_gru_predicted_future_support_vs_token_position_only_predicted_features",
                 same_student,
             )
+            dual_student = (out_dir / "dual_student_cross_forcing.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("dual_student_cross_forcing", dual_student)
+            self.assertIn("acsr_student", dual_student)
+            self.assertIn("parameter_matched_direct_causal_mlp_student", dual_student)
+            self.assertIn("partner", dual_student)
+            self.assertIn("token_position_null", dual_student)
+            self.assertIn("position_stratified_shuffled_null", dual_student)
+            self.assertIn("random_frequency_matched_null", dual_student)
+            self.assertIn("oracle_diagnostic", dual_student)
+            self.assertIn("full_context_teacher_diagnostic", dual_student)
+            self.assertIn("loss_delta_vs_token_position_null", dual_student)
             support_agreement = (out_dir / "support_agreement.csv").read_text(
                 encoding="utf-8"
             )

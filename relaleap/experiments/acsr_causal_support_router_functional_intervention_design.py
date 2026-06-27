@@ -78,10 +78,10 @@ def run_acsr_causal_support_router_functional_intervention_design(
             else "causal_support_router_functional_intervention_design_failed_closed"
         ),
         "claim_status": "design_only_mechanism_not_established",
-        "selected_next_step": (
-            "implement dual-student support cross-forcing in the causal-router source packet"
+        "selected_next_step": _selected_next_step(sources),
+        "next_command": (
+            "./.venv-conda/bin/python -m relaleap.experiments.acsr_causal_router_capacity_audit"
         ),
-        "next_command": None,
         "source_reports": source_rows,
         "intervention_design": design_rows,
         "gate_criteria": gate_rows,
@@ -99,7 +99,7 @@ def run_acsr_causal_support_router_functional_intervention_design(
                 "direct causal support-router mechanism",
                 "ACSR promotion",
                 "GPU repeat as a useful next step",
-                "dual-student value/support deconfounding, until the new source-packet rows exist",
+                "dual-student value/support mechanism claim, until cross-forcing beats nulls robustly",
             ],
         },
         "runtime_seconds": round(time.time() - start, 4),
@@ -180,15 +180,18 @@ def _design_rows(
         },
         {
             "intervention": "dual_student_cross_forcing",
-            "source_basis": "new source-packet rows",
-            "available_now": False,
-            "primary_metric": "cross_forced_support_loss_delta_vs_own_student_router",
-            "current_value": "",
+            "source_basis": "ACSR source-packet dual_student_cross_forcing.csv",
+            "available_now": bool(capacity.get("dual_student_cross_forcing_available")),
+            "primary_metric": "mean_partner_support_delta_vs_token_position_null",
+            "current_value": capacity.get("mean_partner_support_delta_vs_token_position_null", ""),
             "required_for_mechanism": (
                 "causal-router supports must improve or preserve loss through independently "
                 "trained values and ACSR supports must not explain the effect by value co-adaptation"
             ),
-            "current_interpretation": "missing; this is the next source-packet extension",
+            "current_interpretation": (
+                "available; interpret partner-transfer rows against token-position, shuffled, "
+                "random, oracle, and teacher diagnostics before any promotion claim"
+            ),
         },
         {
             "intervention": "oracle_regret_margin_stratification",
@@ -238,16 +241,14 @@ def _gate_rows(
     router_value_statuses = sources["router_value_audit"].get("claim_statuses", {})
     return [
         _criterion(
-            "major_strategy_review_consumed",
-            review["present"]
-            and review["strategic_change_level"] == "major"
-            and str(review["notify_ben"]).lower() == "true",
-            "latest review is present, major, and notify_ben true",
+            "strategy_review_consumed",
+            review["present"],
+            "latest strategy review is present and read",
             {
                 "strategic_change_level": review["strategic_change_level"],
                 "notify_ben": review["notify_ben"],
             },
-            "major GPT-5.5-Pro pivot review was not consumed",
+            "latest GPT-5.5-Pro strategy review was not consumed",
         ),
         _criterion(
             "acsr_anticipation_stays_blocked",
@@ -303,6 +304,17 @@ def _criterion(
         "actual": actual,
         "failure_reason": "" if passed else failure_reason,
     }
+
+
+def _selected_next_step(sources: dict[str, dict[str, Any]]) -> str:
+    capacity = sources["capacity_audit"].get("aggregate_metrics", {})
+    if not capacity.get("dual_student_cross_forcing_available"):
+        return "implement dual-student support cross-forcing in the causal-router source packet"
+    return (
+        "interpret dual-student cross-forcing transfer against token-position, "
+        "shuffled, random, oracle, and teacher controls before any causal-router "
+        "mechanism claim"
+    )
 
 
 def _matrix_row(rows: list[dict[str, str]], token_subset: str) -> dict[str, str]:

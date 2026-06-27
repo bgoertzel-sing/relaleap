@@ -133,7 +133,7 @@ class ACSRCausalSupportRouterFunctionalInterventionDesignTest(unittest.TestCase)
             self.assertEqual(summary["status"], "fail")
             self.assertTrue(
                 any(
-                    row["criterion"] == "major_strategy_review_consumed"
+                    row["criterion"] == "strategy_review_consumed"
                     for row in summary["failures"]
                 )
             )

@@ -54,8 +54,12 @@ class ACSRCausalRouterCapacityAuditTest(unittest.TestCase):
             self.assertTrue(
                 summary["aggregate_metrics"]["paired_sequence_bootstrap_available"]
             )
-            self.assertFalse(
+            self.assertTrue(
                 summary["aggregate_metrics"]["dual_student_cross_forcing_available"]
+            )
+            self.assertEqual(
+                summary["aggregate_metrics"]["dual_student_cross_forcing_row_count"],
+                2,
             )
             self.assertTrue(summary["aggregate_metrics"]["support_agreement_available"])
             self.assertTrue(
@@ -71,12 +75,6 @@ class ACSRCausalRouterCapacityAuditTest(unittest.TestCase):
                 any(
                     failure["reason"]
                     == "acsr_not_strictly_better_than_parameter_matched_causal_mlp"
-                    for failure in summary["failures"]
-                )
-            )
-            self.assertTrue(
-                any(
-                    failure["gate"] == "dual_student_cross_forcing"
                     for failure in summary["failures"]
                 )
             )
@@ -101,6 +99,11 @@ class ACSRCausalRouterCapacityAuditTest(unittest.TestCase):
             )
             self.assertIn("dual_student_cross_forcing", missing)
             self.assertIn("per_sequence_bootstrap", missing)
+            dual_student = (out_dir / "dual_student_cross_forcing.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("partner", dual_student)
+            self.assertIn("loss_delta_vs_token_position_null", dual_student)
             support = (out_dir / "support_agreement.csv").read_text(encoding="utf-8")
             self.assertIn(
                 "acsr_mlp_predicted_future_support_vs_parameter_matched_causal_mlp_control",
@@ -173,6 +176,19 @@ def _write_source_packet(path: Path) -> None:
                 "control_forced_ce_loss": 2.79,
                 "acsr_minus_control_ce_loss": 0.01,
             }
+        ],
+    )
+    _write_csv(
+        path / "dual_student_cross_forcing.csv",
+        [
+            _dual_student_row("acsr_student", "own", 2.80, 0.00, -0.03),
+            _dual_student_row(
+                "parameter_matched_direct_causal_mlp_student",
+                "partner",
+                2.82,
+                0.02,
+                -0.01,
+            ),
         ],
     )
     _write_csv(
@@ -271,6 +287,31 @@ def _per_sequence_row(
         "acsr_minus_parameter_matched_oracle_regret": acsr_regret - control_regret,
         "acsr_strictly_better": acsr_ce_loss < parameter_matched_ce_loss
         and acsr_regret < control_regret,
+    }
+
+
+def _dual_student_row(
+    value_student: str,
+    support_source: str,
+    ce_loss: float,
+    delta_vs_own: float,
+    delta_vs_token_position: float,
+) -> dict[str, object]:
+    return {
+        "forcing_type": "dual_student_cross_forcing",
+        "status": "available",
+        "eval_split": "source_batch_all_but_last_token",
+        "value_student": value_student,
+        "support_source": support_source,
+        "support_variant": "unit_support",
+        "top_k": 2,
+        "ce_loss": ce_loss,
+        "oracle_loss": 2.5,
+        "oracle_regret": ce_loss - 2.5,
+        "loss_delta_vs_own_support": delta_vs_own,
+        "loss_delta_vs_token_position_null": delta_vs_token_position,
+        "support_jaccard_with_own": 0.5,
+        "topk_margin_bin": "medium_margin",
     }
 
 

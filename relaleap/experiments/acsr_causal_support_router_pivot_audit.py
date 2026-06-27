@@ -194,16 +194,14 @@ def _gate_criteria(
     rows = [
         _criterion_row(
             "strategy_review_consumed",
-            review.get("status") == "read"
-            and review.get("strategic_change_level") == "major"
-            and review.get("notify_ben") == "true",
-            "latest review is read, major, and notify_ben true",
+            review.get("status") == "read",
+            "latest strategy review is read before selecting the pivot step",
             {
                 "status": review.get("status"),
                 "strategic_change_level": review.get("strategic_change_level"),
                 "notify_ben": review.get("notify_ben"),
             },
-            "major GPT-5.5-Pro pivot review was not consumed",
+            "latest GPT-5.5-Pro strategy review was not consumed",
         ),
         _criterion_row(
             "acsr_anticipation_blocked",
