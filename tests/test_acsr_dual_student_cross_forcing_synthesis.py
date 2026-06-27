@@ -75,6 +75,18 @@ class ACSRDualStudentCrossForcingSynthesisTest(unittest.TestCase):
             self.assertTrue(
                 all(row["partner_beats_random_frequency_null"] == "True" for row in rows)
             )
+            with (root / "report" / "stratified_transfer_synthesis.csv").open(
+                "r", encoding="utf-8", newline=""
+            ) as handle:
+                stratum_rows = list(csv.DictReader(handle))
+            self.assertTrue(stratum_rows)
+            self.assertIn("partner_delta_vs_token_position_null", stratum_rows[0])
+            self.assertLess(
+                summary["aggregate_metrics"][
+                    "mean_high_regret_partner_delta_vs_token_position_null"
+                ],
+                0.0,
+            )
 
     def test_fails_closed_when_required_null_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -146,6 +158,16 @@ def _write_source(
         )
     )
     rows.extend(
+        _stratum_rows(
+            "acsr_student",
+            partner_variant="parameter_matched_causal_mlp_control",
+            partner_ce=acsr_partner_ce,
+            own_ce=2.81,
+            token_ce=3.00,
+            oracle_ce=2.75,
+        )
+    )
+    rows.extend(
         _value_rows(
             "parameter_matched_direct_causal_mlp_student",
             own_variant="parameter_matched_causal_mlp_control",
@@ -157,6 +179,16 @@ def _write_source(
             random_ce=3.80,
             oracle_ce=2.68,
             teacher_ce=2.69,
+        )
+    )
+    rows.extend(
+        _stratum_rows(
+            "parameter_matched_direct_causal_mlp_student",
+            partner_variant="acsr_mlp_predicted_future",
+            partner_ce=direct_partner_ce,
+            own_ce=2.73,
+            token_ce=2.95,
+            oracle_ce=2.68,
         )
     )
     _write_csv(path / "dual_student_cross_forcing.csv", rows)
@@ -251,6 +283,10 @@ def _row(
         "support_source": support_source,
         "support_variant": support_variant,
         "top_k": 2,
+        "analysis_scope": "all_tokens",
+        "stratum_type": "all_tokens",
+        "stratum_value": "all",
+        "stratum_token_count": 64,
         "ce_loss": ce_loss,
         "oracle_loss": oracle_ce,
         "oracle_regret": ce_loss - oracle_ce,
@@ -292,6 +328,90 @@ def _residual_norm(support_source: str) -> float:
         "oracle_diagnostic": 0.60,
         "full_context_teacher_diagnostic": 0.61,
     }[support_source]
+
+
+def _stratum_rows(
+    value_student: str,
+    *,
+    partner_variant: str,
+    partner_ce: float,
+    own_ce: float,
+    token_ce: float,
+    oracle_ce: float,
+) -> list[dict[str, object]]:
+    return [
+        _stratum_row(
+            value_student,
+            partner_variant,
+            "oracle_regret",
+            "top_quartile_token_position_null_regret",
+            partner_ce,
+            own_ce,
+            token_ce,
+            oracle_ce,
+        ),
+        _stratum_row(
+            value_student,
+            partner_variant,
+            "support_disagreement",
+            "partner_vs_own",
+            partner_ce + 0.01,
+            own_ce,
+            token_ce,
+            oracle_ce,
+        ),
+        _stratum_row(
+            value_student,
+            partner_variant,
+            "support_disagreement",
+            "partner_vs_token_position_null",
+            partner_ce + 0.02,
+            own_ce,
+            token_ce,
+            oracle_ce,
+        ),
+        _stratum_row(
+            value_student,
+            partner_variant,
+            "partner_support_margin_bin",
+            "high_margin",
+            partner_ce + 0.03,
+            own_ce,
+            token_ce,
+            oracle_ce,
+        ),
+    ]
+
+
+def _stratum_row(
+    value_student: str,
+    partner_variant: str,
+    stratum_type: str,
+    stratum_value: str,
+    ce_loss: float,
+    own_ce: float,
+    token_ce: float,
+    oracle_ce: float,
+) -> dict[str, object]:
+    row = _row(
+        value_student,
+        "partner",
+        partner_variant,
+        ce_loss,
+        own_ce,
+        token_ce,
+        oracle_ce,
+    )
+    row.update(
+        {
+            "forcing_type": "dual_student_cross_forcing_stratum",
+            "analysis_scope": "stratified_tokens",
+            "stratum_type": stratum_type,
+            "stratum_value": stratum_value,
+            "stratum_token_count": 16,
+        }
+    )
+    return row
 
 
 def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:

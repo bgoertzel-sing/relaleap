@@ -1341,6 +1341,35 @@ def _dual_student_cross_forcing_rows(
                 top_k=top_k,
             )
         )
+        partner_scores = target_scores[partner_variant]
+        partner_support = partner_scores.topk(top_k, dim=-1).indices
+        partner_metrics = _support_eval_metrics(
+            torch,
+            F,
+            base,
+            target_residual,
+            hidden,
+            targets,
+            vocab_size,
+            support=partner_support,
+            target_scores=partner_scores,
+        )
+        rows.extend(
+            _dual_student_stratified_rows(
+                torch,
+                value_student=value_student,
+                support_variant=partner_variant,
+                metrics=partner_metrics,
+                oracle_metrics=oracle_diagnostic_metrics,
+                own_metrics=own_metrics,
+                token_position_metrics=token_position_metrics,
+                own_support=own_support,
+                support=partner_support,
+                token_position_support=token_position_support,
+                source_scores=partner_scores,
+                top_k=top_k,
+            )
+        )
     return rows
 
 
@@ -1369,6 +1398,10 @@ def _dual_student_row(
         "support_source": support_source,
         "support_variant": support_variant,
         "top_k": int(top_k),
+        "analysis_scope": "all_tokens",
+        "stratum_type": "all_tokens",
+        "stratum_value": "all",
+        "stratum_token_count": int(metrics["per_token_losses"].numel()),
         "ce_loss": ce_loss,
         "oracle_loss": oracle_loss,
         "oracle_regret": ce_loss - oracle_loss,
@@ -1391,6 +1424,142 @@ def _dual_student_row(
             ce_loss - token_position_metrics["ce_loss"],
             metrics["residual_update_l2_mean"]
             - token_position_metrics["residual_update_l2_mean"],
+        ),
+        "per_token_delta_vs_own_mean": float(own_delta.mean().item()),
+        "per_token_delta_vs_own_median": float(own_delta.median().item()),
+        "per_token_delta_vs_own_improved_fraction": float(
+            (own_delta < 0.0).to(dtype=own_delta.dtype).mean().item()
+        ),
+        "per_token_delta_vs_token_position_null_mean": float(token_delta.mean().item()),
+        "per_token_delta_vs_token_position_null_median": float(token_delta.median().item()),
+        "per_token_delta_vs_token_position_null_improved_fraction": float(
+            (token_delta < 0.0).to(dtype=token_delta.dtype).mean().item()
+        ),
+    }
+
+
+def _dual_student_stratified_rows(
+    torch: Any,
+    *,
+    value_student: str,
+    support_variant: str,
+    metrics: dict[str, Any],
+    oracle_metrics: dict[str, Any],
+    own_metrics: dict[str, Any],
+    token_position_metrics: dict[str, Any],
+    own_support: Any,
+    support: Any,
+    token_position_support: Any,
+    source_scores: Any,
+    top_k: int,
+) -> list[dict[str, Any]]:
+    token_losses = token_position_metrics["per_token_losses"]
+    oracle_losses = oracle_metrics["per_token_losses"]
+    token_regret = token_losses - oracle_losses
+    high_regret_threshold = torch.quantile(token_regret, 0.75)
+    high_regret = token_regret >= high_regret_threshold
+    own_disagreement = _support_disagreement_mask(torch, support, own_support)
+    token_disagreement = _support_disagreement_mask(torch, support, token_position_support)
+    margin = _topk_margin_tensor(source_scores, top_k)[:, :-1].reshape(-1)
+    strata = [
+        (
+            "oracle_regret",
+            "top_quartile_token_position_null_regret",
+            high_regret,
+        ),
+        ("support_disagreement", "partner_vs_own", own_disagreement),
+        (
+            "support_disagreement",
+            "partner_vs_token_position_null",
+            token_disagreement,
+        ),
+        ("partner_support_margin_bin", "low_margin", margin < 0.01),
+        (
+            "partner_support_margin_bin",
+            "medium_margin",
+            (margin >= 0.01) & (margin < 0.1),
+        ),
+        ("partner_support_margin_bin", "high_margin", margin >= 0.1),
+    ]
+    rows = []
+    for stratum_type, stratum_value, mask in strata:
+        if not bool(mask.any().item()):
+            continue
+        rows.append(
+            _dual_student_stratum_row(
+                value_student=value_student,
+                support_variant=support_variant,
+                stratum_type=stratum_type,
+                stratum_value=stratum_value,
+                mask=mask,
+                metrics=metrics,
+                oracle_metrics=oracle_metrics,
+                own_metrics=own_metrics,
+                token_position_metrics=token_position_metrics,
+                own_support=own_support,
+                support=support,
+                top_k=top_k,
+            )
+        )
+    return rows
+
+
+def _dual_student_stratum_row(
+    *,
+    value_student: str,
+    support_variant: str,
+    stratum_type: str,
+    stratum_value: str,
+    mask: Any,
+    metrics: dict[str, Any],
+    oracle_metrics: dict[str, Any],
+    own_metrics: dict[str, Any],
+    token_position_metrics: dict[str, Any],
+    own_support: Any,
+    support: Any,
+    top_k: int,
+) -> dict[str, Any]:
+    ce_loss = float(metrics["per_token_losses"][mask].mean().item())
+    own_loss = float(own_metrics["per_token_losses"][mask].mean().item())
+    token_loss = float(token_position_metrics["per_token_losses"][mask].mean().item())
+    oracle_loss = float(oracle_metrics["per_token_losses"][mask].mean().item())
+    token_delta = metrics["per_token_losses"][mask] - token_position_metrics[
+        "per_token_losses"
+    ][mask]
+    own_delta = metrics["per_token_losses"][mask] - own_metrics["per_token_losses"][mask]
+    residual_l2 = float(metrics["residual_update_l2_per_token"][mask].mean().item())
+    own_l2 = float(own_metrics["residual_update_l2_per_token"][mask].mean().item())
+    token_l2 = float(
+        token_position_metrics["residual_update_l2_per_token"][mask].mean().item()
+    )
+    return {
+        "forcing_type": "dual_student_cross_forcing_stratum",
+        "status": "available",
+        "eval_split": "source_batch_all_but_last_token",
+        "value_student": value_student,
+        "support_source": "partner",
+        "support_variant": support_variant,
+        "top_k": int(top_k),
+        "analysis_scope": "stratified_tokens",
+        "stratum_type": stratum_type,
+        "stratum_value": stratum_value,
+        "stratum_token_count": int(mask.sum().item()),
+        "ce_loss": ce_loss,
+        "oracle_loss": oracle_loss,
+        "oracle_regret": ce_loss - oracle_loss,
+        "loss_delta_vs_own_support": ce_loss - own_loss,
+        "loss_delta_vs_token_position_null": ce_loss - token_loss,
+        "support_jaccard_with_own": _support_jaccard_masked(own_support, support, mask),
+        "topk_margin_bin": stratum_value
+        if stratum_type == "partner_support_margin_bin"
+        else "stratum_mixed_margin",
+        "residual_update_l2_mean": residual_l2,
+        "residual_update_l2_delta_vs_own": residual_l2 - own_l2,
+        "residual_update_l2_delta_vs_token_position_null": residual_l2 - token_l2,
+        "loss_delta_vs_own_per_residual_l2": _safe_ratio(ce_loss - own_loss, residual_l2 - own_l2),
+        "loss_delta_vs_token_position_null_per_residual_l2": _safe_ratio(
+            ce_loss - token_loss,
+            residual_l2 - token_l2,
         ),
         "per_token_delta_vs_own_mean": float(own_delta.mean().item()),
         "per_token_delta_vs_own_median": float(own_delta.median().item()),
@@ -1450,6 +1619,10 @@ def _support_eval_metrics(
     return {
         "ce_loss": float(per_token.mean().item()),
         "per_token_losses": per_token.detach(),
+        "residual_update_l2_per_token": residual_update[:, :-1, :]
+        .norm(dim=-1)
+        .reshape(-1)
+        .detach(),
         "residual_update_l2_mean": float(
             residual_update[:, :-1, :].norm(dim=-1).mean().item()
         ),
@@ -1544,6 +1717,20 @@ def _support_jaccard(left: Any, right: Any) -> float:
     return float(
         (intersection / union).mean().item()
     )
+
+
+def _support_jaccard_masked(left: Any, right: Any, mask: Any) -> float:
+    left_flat = left[:, :-1, :].reshape(-1, left.shape[-1])
+    right_flat = right[:, :-1, :].reshape(-1, right.shape[-1])
+    if not bool(mask.any().item()):
+        return 0.0
+    return _support_jaccard(left_flat[mask], right_flat[mask])
+
+
+def _support_disagreement_mask(torch: Any, left: Any, right: Any) -> Any:
+    left_flat = left[:, :-1, :].reshape(-1, left.shape[-1]).sort(dim=-1).values
+    right_flat = right[:, :-1, :].reshape(-1, right.shape[-1]).sort(dim=-1).values
+    return ~(left_flat == right_flat).all(dim=-1)
 
 
 def _topk_margin_bin(margin: float | str) -> str:

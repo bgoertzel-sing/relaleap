@@ -37,6 +37,7 @@ REQUIRED_ARTIFACTS = (
     "summary.json",
     "source_packets.csv",
     "value_student_support_synthesis.csv",
+    "stratified_transfer_synthesis.csv",
     "gate_criteria.csv",
     "notes.md",
 )
@@ -54,8 +55,9 @@ def run_acsr_dual_student_cross_forcing_synthesis(
     packets = [_load_packet(index + 1, path) for index, path in enumerate(source_dirs)]
     source_rows = [_source_packet_row(packet) for packet in packets]
     support_rows = _support_synthesis_rows(packets)
+    stratified_rows = _stratified_synthesis_rows(packets)
     review = _strategy_review(strategy_review)
-    gate_rows = _gate_rows(source_rows, support_rows, review)
+    gate_rows = _gate_rows(source_rows, support_rows, stratified_rows, review)
     failures = [
         {"gate": row["criterion"], "reason": row["failure_reason"]}
         for row in gate_rows
@@ -76,6 +78,9 @@ def run_acsr_dual_student_cross_forcing_synthesis(
         is not None
         for row in transfer_rows
     )
+    available_stratified_rows = [
+        row for row in stratified_rows if row.get("status") == "available"
+    ]
     claim_status = (
         "cross_value_support_transfer_suggestive_not_established"
         if status == "pass" and all_partner_beats_required_nulls
@@ -95,12 +100,14 @@ def run_acsr_dual_student_cross_forcing_synthesis(
             status,
             all_partner_beats_required_nulls,
             residual_norm_available,
+            bool(available_stratified_rows),
         ),
         "source_dirs": [str(path) for path in source_dirs],
         "strategy_review": review,
         "direction_shift": _direction_shift(review),
         "source_packets": source_rows,
         "value_student_support_synthesis": support_rows,
+        "stratified_transfer_synthesis": stratified_rows,
         "gate_criteria": gate_rows,
         "failures": failures,
         "aggregate_metrics": {
@@ -124,18 +131,38 @@ def run_acsr_dual_student_cross_forcing_synthesis(
                 transfer_rows,
                 "partner_per_token_delta_vs_token_position_null_improved_fraction",
             ),
+            "available_stratified_transfer_count": len(available_stratified_rows),
+            "mean_high_regret_partner_delta_vs_token_position_null": _mean_filtered_key(
+                available_stratified_rows,
+                "partner_delta_vs_token_position_null",
+                stratum_type="oracle_regret",
+                stratum_value="top_quartile_token_position_null_regret",
+            ),
+            "mean_disagreement_partner_delta_vs_token_position_null": _mean_filtered_key(
+                available_stratified_rows,
+                "partner_delta_vs_token_position_null",
+                stratum_type="support_disagreement",
+            ),
+            "mean_low_margin_partner_delta_vs_token_position_null": _mean_filtered_key(
+                available_stratified_rows,
+                "partner_delta_vs_token_position_null",
+                stratum_type="partner_support_margin_bin",
+                stratum_value="low_margin",
+            ),
             "all_partner_beats_required_nulls": all_partner_beats_required_nulls,
             "residual_norm_control_available": residual_norm_available,
+            "stratified_transfer_available": bool(available_stratified_rows),
         },
         "claim_boundaries": {
             "supported": [
                 "dual-student cross-forcing rows are present and interpreted by value path",
                 "partner support can now be compared against token-position, shuffled, random, oracle, teacher, and own-support rows",
+                "partner transfer can now be stratified by high-regret, support-disagreement, and support-margin tokens",
             ],
             "not_supported": [
                 "ACSR-as-anticipation",
                 "default ACSR or direct-router promotion",
-                "residual-norm-normalized value-invariant support transfer",
+                "a default-router mechanism claim without broader held-out and rank/FLOP-matched controls",
             ],
         },
         "runtime_seconds": round(time.time() - start, 4),
@@ -167,8 +194,15 @@ def _load_packet(index: int, source_dir: Path) -> dict[str, Any]:
 
 def _source_packet_row(packet: dict[str, Any]) -> dict[str, Any]:
     rows = packet["_rows"]
-    support_sources = sorted({row.get("support_source", "") for row in rows})
-    value_students = sorted({row.get("value_student", "") for row in rows})
+    all_token_rows = [
+        row for row in rows if row.get("forcing_type", "dual_student_cross_forcing")
+        == "dual_student_cross_forcing"
+    ]
+    stratified_rows = [
+        row for row in rows if row.get("forcing_type") == "dual_student_cross_forcing_stratum"
+    ]
+    support_sources = sorted({row.get("support_source", "") for row in all_token_rows})
+    value_students = sorted({row.get("value_student", "") for row in all_token_rows})
     return {
         "packet": packet["packet"],
         "seed": packet["seed"],
@@ -176,7 +210,8 @@ def _source_packet_row(packet: dict[str, Any]) -> dict[str, Any]:
         "summary_present": packet["summary_present"],
         "summary_status": packet["summary_status"],
         "dual_student_present": packet["dual_student_present"],
-        "dual_student_row_count": packet["dual_student_row_count"],
+        "dual_student_row_count": len(all_token_rows),
+        "stratified_row_count": len(stratified_rows),
         "value_students": ";".join(value_students),
         "support_sources": ";".join(support_sources),
     }
@@ -186,7 +221,12 @@ def _support_synthesis_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any
     rows: list[dict[str, Any]] = []
     for packet in packets:
         available_rows = [
-            row for row in packet["_rows"] if row.get("status", "available") == "available"
+            row
+            for row in packet["_rows"]
+            if row.get("status", "available") == "available"
+            and row.get("forcing_type", "dual_student_cross_forcing")
+            == "dual_student_cross_forcing"
+            and row.get("analysis_scope", "all_tokens") == "all_tokens"
         ]
         for value_student in REQUIRED_VALUE_STUDENTS:
             value_rows = [row for row in available_rows if row.get("value_student") == value_student]
@@ -305,13 +345,94 @@ def _support_synthesis_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any
     return rows
 
 
+def _stratified_synthesis_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for packet in packets:
+        stratum_rows = [
+            row
+            for row in packet["_rows"]
+            if row.get("status", "available") == "available"
+            and row.get("forcing_type") == "dual_student_cross_forcing_stratum"
+            and row.get("support_source") == "partner"
+        ]
+        for row in stratum_rows:
+            partner_ce = _number(row.get("ce_loss"))
+            oracle_ce = _number(row.get("oracle_loss"))
+            token_ce = _stratum_token_null_ce(row)
+            rows.append(
+                {
+                    "packet": packet["packet"],
+                    "seed": packet["seed"],
+                    "source_dir": packet["source_dir"],
+                    "value_student": row.get("value_student", ""),
+                    "eval_split": row.get("eval_split", ""),
+                    "status": "available",
+                    "stratum_type": row.get("stratum_type", ""),
+                    "stratum_value": row.get("stratum_value", ""),
+                    "stratum_token_count": _number(row.get("stratum_token_count")),
+                    "partner_support_variant": row.get("support_variant", ""),
+                    "partner_ce_loss": partner_ce,
+                    "partner_oracle_loss": oracle_ce,
+                    "partner_oracle_regret": _number(row.get("oracle_regret")),
+                    "partner_delta_vs_own_support": _number(
+                        row.get("loss_delta_vs_own_support")
+                    ),
+                    "partner_delta_vs_token_position_null": _number(
+                        row.get("loss_delta_vs_token_position_null")
+                    ),
+                    "partner_residual_update_l2_mean": _number(
+                        row.get("residual_update_l2_mean")
+                    ),
+                    "partner_delta_vs_token_position_null_per_residual_l2": _number(
+                        row.get("loss_delta_vs_token_position_null_per_residual_l2")
+                    ),
+                    "partner_per_token_delta_vs_token_position_null_improved_fraction": _number(
+                        row.get("per_token_delta_vs_token_position_null_improved_fraction")
+                    ),
+                    "partner_oracle_headroom_recovered_fraction": _headroom_fraction(
+                        partner_ce,
+                        token_ce,
+                        oracle_ce,
+                    ),
+                }
+            )
+    return rows
+
+
 def _gate_rows(
     source_rows: list[dict[str, Any]],
     support_rows: list[dict[str, Any]],
+    stratified_rows: list[dict[str, Any]],
     review: dict[str, Any],
 ) -> list[dict[str, Any]]:
     available = [row for row in support_rows if row.get("status") == "available"]
     expected_count = len(source_rows) * len(REQUIRED_VALUE_STUDENTS)
+    available_strata = [
+        row for row in stratified_rows if row.get("status") == "available"
+    ]
+    required_strata = {
+        ("oracle_regret", "top_quartile_token_position_null_regret"),
+        ("support_disagreement", "partner_vs_own"),
+        ("support_disagreement", "partner_vs_token_position_null"),
+        ("partner_support_margin_bin", "high_margin"),
+    }
+    expected_strata = {
+        (source_row["packet"], value_student, stratum_type, stratum_value)
+        for source_row in source_rows
+        for value_student in REQUIRED_VALUE_STUDENTS
+        for stratum_type, stratum_value in required_strata
+    }
+    observed_strata = {
+        (
+            row.get("packet"),
+            row.get("value_student"),
+            row.get("stratum_type"),
+            row.get("stratum_value"),
+        )
+        for row in available_strata
+        if (row.get("stratum_type"), row.get("stratum_value")) in required_strata
+    }
+    missing_strata = sorted(expected_strata - observed_strata)
     return [
         _criterion(
             "strategy_review_consumed",
@@ -368,6 +489,13 @@ def _gate_rows(
             f"available={len(available)}",
             "residual-norm or paired per-token cross-forcing metrics are missing",
         ),
+        _criterion(
+            "stratified_transfer_rows_present",
+            bool(available_strata) and not missing_strata,
+            "partner transfer is stratified by high-regret, support-disagreement, and support-margin bins",
+            f"available={len(available_strata)} missing={missing_strata}",
+            "high-regret/disagreement/support-margin stratified partner rows are missing",
+        ),
     ]
 
 
@@ -391,9 +519,15 @@ def _selected_next_step(
     status: str,
     all_partner_beats_required_nulls: bool,
     residual_norm_available: bool,
+    stratified_transfer_available: bool,
 ) -> str:
     if status != "pass":
         return "repair missing dual-student source rows before interpreting support transfer"
+    if all_partner_beats_required_nulls and residual_norm_available and stratified_transfer_available:
+        return (
+            "design a bounded support-margin-aware cross-value transfer objective or "
+            "retire default-router mechanism claims before any GPU repeat"
+        )
     if all_partner_beats_required_nulls and residual_norm_available:
         return (
             "stratify cross-value support transfer by high-regret/disagreement tokens "
@@ -478,6 +612,10 @@ def _write_artifacts(out_dir: Path, summary: dict[str, Any]) -> None:
         out_dir / "value_student_support_synthesis.csv",
         summary["value_student_support_synthesis"],
     )
+    _write_csv(
+        out_dir / "stratified_transfer_synthesis.csv",
+        summary["stratified_transfer_synthesis"],
+    )
     _write_csv(out_dir / "gate_criteria.csv", summary["gate_criteria"])
     _write_notes(out_dir / "notes.md", summary)
 
@@ -550,6 +688,14 @@ def _number(value: Any) -> float | None:
         return None
 
 
+def _stratum_token_null_ce(row: dict[str, Any]) -> float | None:
+    partner_ce = _number(row.get("ce_loss"))
+    delta = _number(row.get("loss_delta_vs_token_position_null"))
+    if partner_ce is None or delta is None:
+        return None
+    return partner_ce - delta
+
+
 def _lt(left: Any, right: Any) -> bool:
     return isinstance(left, (int, float)) and isinstance(right, (int, float)) and left < right
 
@@ -561,6 +707,22 @@ def _le(left: Any, right: Any) -> bool:
 def _mean_key(rows: list[dict[str, Any]], key: str) -> float | None:
     values = [row[key] for row in rows if isinstance(row.get(key), (int, float))]
     return float(mean(values)) if values else None
+
+
+def _mean_filtered_key(
+    rows: list[dict[str, Any]],
+    key: str,
+    *,
+    stratum_type: str,
+    stratum_value: str | None = None,
+) -> float | None:
+    filtered = [
+        row
+        for row in rows
+        if row.get("stratum_type") == stratum_type
+        and (stratum_value is None or row.get("stratum_value") == stratum_value)
+    ]
+    return _mean_key(filtered, key)
 
 
 def _git_commit() -> str:

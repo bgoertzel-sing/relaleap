@@ -81,6 +81,10 @@ class AnticipatoryContextualSupportRoutingSmokeTest(unittest.TestCase):
                 "per_token_delta_vs_token_position_null_improved_fraction",
                 dual_student,
             )
+            self.assertIn("dual_student_cross_forcing_stratum", dual_student)
+            self.assertIn("top_quartile_token_position_null_regret", dual_student)
+            self.assertIn("partner_vs_token_position_null", dual_student)
+            self.assertIn("partner_support_margin_bin", dual_student)
             support_agreement = (out_dir / "support_agreement.csv").read_text(
                 encoding="utf-8"
             )
