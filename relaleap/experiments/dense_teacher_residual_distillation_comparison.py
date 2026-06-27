@@ -68,8 +68,8 @@ def run_dense_teacher_residual_distillation_comparison(
     prior_distillation_closeout_path: Path = DEFAULT_PRIOR_DISTILLATION_CLOSEOUT,
     strategy_review_path: Path = DEFAULT_STRATEGY_REVIEW,
     max_steps: int | None = None,
-    teacher_steps: int = 35,
-    student_steps: int = 45,
+    teacher_steps: int = 80,
+    student_steps: int = 240,
     predictor_steps: int = 50,
 ) -> dict[str, Any]:
     """Run a bounded local dense-teacher distillation comparison."""
@@ -95,6 +95,8 @@ def run_dense_teacher_residual_distillation_comparison(
 
     seed = int(run_cfg.get("seed", 1))
     train_steps = int(max_steps if max_steps is not None else run_cfg.get("max_steps", 50))
+    teacher_step_budget = max(1, int(teacher_steps))
+    student_step_budget = max(1, int(student_steps))
     dataset = str(data_cfg.get("dataset", "tiny_shakespeare_word"))
     seq_len = int(data_cfg.get("seq_len", 64))
     hidden_dim = int(base_cfg.get("hidden_dim", 96))
@@ -133,7 +135,7 @@ def run_dense_teacher_residual_distillation_comparison(
         hidden,
         targets,
         vocab_size,
-        steps=max(1, min(teacher_steps, train_steps)),
+        steps=teacher_step_budget,
     )
     teacher.eval()
     with torch.no_grad():
@@ -217,7 +219,7 @@ def run_dense_teacher_residual_distillation_comparison(
             vocab_size,
             variant_kind=str(spec["kind"]),
             features=spec["features"],
-            steps=max(1, min(student_steps, train_steps)),
+            steps=student_step_budget,
         )
         row, support = _student_metric_row(
             torch,
@@ -278,8 +280,9 @@ def run_dense_teacher_residual_distillation_comparison(
         "hidden_dim": hidden_dim,
         "num_columns": num_columns,
         "top_k": top_k,
-        "teacher_steps": max(1, min(teacher_steps, train_steps)),
-        "student_steps": max(1, min(student_steps, train_steps)),
+        "config_train_steps": train_steps,
+        "teacher_steps": teacher_step_budget,
+        "student_steps": student_step_budget,
         "predictor_steps": max(1, predictor_steps),
         "base_ce_loss": base_ce,
         "dense_teacher_ce_loss": teacher_ce,
@@ -713,8 +716,8 @@ def main() -> None:
     )
     parser.add_argument("--strategy-review", type=Path, default=DEFAULT_STRATEGY_REVIEW)
     parser.add_argument("--max-steps", type=int, default=None)
-    parser.add_argument("--teacher-steps", type=int, default=35)
-    parser.add_argument("--student-steps", type=int, default=45)
+    parser.add_argument("--teacher-steps", type=int, default=80)
+    parser.add_argument("--student-steps", type=int, default=240)
     parser.add_argument("--predictor-steps", type=int, default=50)
     args = parser.parse_args()
     summary = run_dense_teacher_residual_distillation_comparison(

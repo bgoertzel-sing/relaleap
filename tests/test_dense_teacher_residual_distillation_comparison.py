@@ -78,6 +78,9 @@ class DenseTeacherResidualDistillationComparisonTest(unittest.TestCase):
             )
 
             self.assertIn(summary["status"], {"pass", "fail"})
+            self.assertEqual(summary["config_train_steps"], 2)
+            self.assertEqual(summary["teacher_steps"], 1)
+            self.assertEqual(summary["student_steps"], 1)
             self.assertEqual(summary["claim_statuses"]["promoted_default_router"], "no_default_change")
             self.assertTrue((root / "out" / "summary.json").is_file())
             self.assertTrue((root / "out" / "variant_metrics.csv").is_file())
