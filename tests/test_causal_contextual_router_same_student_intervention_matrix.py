@@ -8,6 +8,7 @@ from pathlib import Path
 
 from relaleap.experiments.causal_contextual_router_same_student_intervention_matrix import (
     INCOMPLETE_MATRIX,
+    TOKEN_POSITION_NULL_SUPPORTED,
     run_causal_contextual_router_same_student_intervention_matrix,
 )
 
@@ -44,6 +45,34 @@ class CausalContextualRouterSameStudentInterventionMatrixTest(unittest.TestCase)
             self.assertTrue((root / "report" / "gate_criteria.csv").is_file())
             self.assertTrue((root / "report" / "notes.md").is_file())
 
+    def test_refreshed_matrix_uses_token_position_same_student_arm(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dirs = []
+            for seed in [1, 2, 3]:
+                path = root / f"seed{seed}"
+                _write_artifact(path, seed=seed, include_token_position_null=True)
+                dirs.append(path)
+
+            summary = run_causal_contextual_router_same_student_intervention_matrix(
+                local_audit_dirs=dirs,
+                out_dir=root / "report",
+            )
+
+            self.assertEqual(summary["status"], "pass")
+            self.assertEqual(summary["claim_status"], TOKEN_POSITION_NULL_SUPPORTED)
+            self.assertEqual(
+                summary["selected_next_step"],
+                "run_conditional_token_position_vs_context_ablation",
+            )
+            self.assertTrue(
+                summary["key_metrics"]["token_position_null_same_student_arm_available"]
+            )
+            self.assertGreater(
+                summary["key_metrics"]["teacher_minus_token_position_null_gain_all_tokens"],
+                0.0,
+            )
+
     def test_fails_closed_without_per_token_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -63,7 +92,12 @@ class CausalContextualRouterSameStudentInterventionMatrixTest(unittest.TestCase)
             self.assertTrue(summary["failures"])
 
 
-def _write_artifact(path: Path, *, seed: int) -> None:
+def _write_artifact(
+    path: Path,
+    *,
+    seed: int,
+    include_token_position_null: bool = False,
+) -> None:
     path.mkdir(parents=True)
     summary = {
         "status": "pass",
@@ -81,11 +115,18 @@ def _write_artifact(path: Path, *, seed: int) -> None:
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    _write_per_token_rows(path / "per_token_supports.csv")
+    _write_per_token_rows(
+        path / "per_token_supports.csv",
+        include_token_position_null=include_token_position_null,
+    )
     _write_null_rows(path / "null_control_metrics.csv")
 
 
-def _write_per_token_rows(path: Path) -> None:
+def _write_per_token_rows(
+    path: Path,
+    *,
+    include_token_position_null: bool = False,
+) -> None:
     fieldnames = [
         "fold",
         "flat_position",
@@ -101,28 +142,41 @@ def _write_per_token_rows(path: Path) -> None:
         "uniform_random_support_loss",
         "teacher_student_exact_pair_match",
     ]
+    if include_token_position_null:
+        fieldnames.extend(
+            [
+                "token_position_null_support",
+                "token_position_null_support_forced_into_student_loss",
+            ]
+        )
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         for fold in range(4):
             for position in range(5):
-                writer.writerow(
-                    {
-                        "fold": fold,
-                        "flat_position": position,
-                        "target_token": position,
-                        "teacher_support": "1,2",
-                        "student_support": "1,2" if position % 2 else "3,4",
-                        "oracle_support": "1,2",
-                        "student_router_support_loss": 2.0,
-                        "teacher_support_forced_into_student_loss": 1.8,
-                        "oracle_best_support_for_student_loss": 1.7,
-                        "linear_support_forced_into_student_loss": 2.5,
-                        "marginal_shuffled_student_support_loss": 2.6,
-                        "uniform_random_support_loss": 2.7,
-                        "teacher_student_exact_pair_match": position % 2 != 0,
-                    }
-                )
+                row = {
+                    "fold": fold,
+                    "flat_position": position,
+                    "target_token": position,
+                    "teacher_support": "1,2",
+                    "student_support": "1,2" if position % 2 else "3,4",
+                    "oracle_support": "1,2",
+                    "student_router_support_loss": 2.0,
+                    "teacher_support_forced_into_student_loss": 1.8,
+                    "oracle_best_support_for_student_loss": 1.7,
+                    "linear_support_forced_into_student_loss": 2.5,
+                    "marginal_shuffled_student_support_loss": 2.6,
+                    "uniform_random_support_loss": 2.7,
+                    "teacher_student_exact_pair_match": position % 2 != 0,
+                }
+                if include_token_position_null:
+                    row.update(
+                        {
+                            "token_position_null_support": "3,4",
+                            "token_position_null_support_forced_into_student_loss": 1.95,
+                        }
+                    )
+                writer.writerow(row)
 
 
 def _write_null_rows(path: Path) -> None:

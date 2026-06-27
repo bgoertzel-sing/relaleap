@@ -109,8 +109,14 @@ outputs:
             )
             self.assertIn("teacher_support", token_row)
             self.assertIn("student_router_support_loss", token_row)
+            self.assertIn("token_position_null_support", token_row)
+            self.assertIn("token_position_null_support_forced_into_student_loss", token_row)
             self.assertGreater(len(saved["audit"]["agreement_rows"]), 0)
             self.assertGreater(len(saved["audit"]["null_control_rows"]), 0)
+            self.assertIn(
+                "teacher_student_disagreement_tokens::token_position_null_support_forced_into_student",
+                saved["audit"]["intervention_aggregates"],
+            )
 
     def test_requires_causal_contextual_topk2(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

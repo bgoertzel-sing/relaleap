@@ -20,15 +20,30 @@ DEFAULT_OUT_DIR = Path(
 AVAILABLE_INTERVENTIONS = {
     "student_router_support": "student_router_support_loss",
     "teacher_support_forced_into_student": "teacher_support_forced_into_student_loss",
+    "token_position_null_support_forced_into_student": (
+        "token_position_null_support_forced_into_student_loss"
+    ),
     "oracle_best_support_for_student": "oracle_best_support_for_student_loss",
     "linear_support_forced_into_student": "linear_support_forced_into_student_loss",
     "marginal_shuffled_student_support": "marginal_shuffled_student_support_loss",
     "uniform_random_support": "uniform_random_support_loss",
 }
 REQUIRED_MISSING_INTERVENTION = "token_position_null_support_forced_into_student"
+BASE_INTERVENTIONS = {
+    intervention
+    for intervention in AVAILABLE_INTERVENTIONS
+    if intervention != REQUIRED_MISSING_INTERVENTION
+}
 
 INCOMPLETE_MATRIX = "same_student_token_position_null_extension_required"
 INSUFFICIENT = "insufficient_same_student_intervention_evidence"
+TOKEN_POSITION_NULL_BLOCKED = (
+    "distilled_causal_router_functional_mechanism_not_established_under_same_student_"
+    "token_position_null"
+)
+TOKEN_POSITION_NULL_SUPPORTED = (
+    "same_student_token_position_null_functional_discriminator_supported_not_promoted"
+)
 
 
 def run_causal_contextual_router_same_student_intervention_matrix(
@@ -78,11 +93,28 @@ def run_causal_contextual_router_same_student_intervention_matrix(
         claim_status = INSUFFICIENT
         selected_next_step = "repair_same_student_intervention_sources"
     else:
-        decision = "same_student_matrix_requires_token_position_null_artifact_extension"
-        claim_status = INCOMPLETE_MATRIX
-        selected_next_step = (
-            "extend_distillation_agreement_audit_with_token_position_null_forced_support"
+        token_position_arm_available = bool(
+            key_metrics.get("token_position_null_same_student_arm_available")
         )
+        teacher_minus_null_gain = key_metrics.get(
+            "teacher_minus_token_position_null_gain_all_tokens"
+        )
+        if not token_position_arm_available:
+            decision = "same_student_matrix_requires_token_position_null_artifact_extension"
+            claim_status = INCOMPLETE_MATRIX
+            selected_next_step = (
+                "extend_distillation_agreement_audit_with_token_position_null_forced_support"
+            )
+        elif teacher_helps_all_tokens and (
+            teacher_minus_null_gain is not None and teacher_minus_null_gain > 0.0
+        ):
+            decision = "same_student_token_position_null_discriminator_passes_locally"
+            claim_status = TOKEN_POSITION_NULL_SUPPORTED
+            selected_next_step = "run_conditional_token_position_vs_context_ablation"
+        else:
+            decision = "same_student_token_position_null_discriminator_blocks_claim"
+            claim_status = TOKEN_POSITION_NULL_BLOCKED
+            selected_next_step = "keep_causal_router_distillation_promotion_frozen"
 
     summary = {
         "status": status,
@@ -189,7 +221,8 @@ def _token_row(seed: int, row: dict[str, str]) -> dict[str, Any]:
         "student_oracle_gap": student_loss - oracle_loss,
     }
     for intervention, column in AVAILABLE_INTERVENTIONS.items():
-        output[intervention] = _float(row.get(column))
+        if column in row:
+            output[intervention] = _float(row.get(column))
     return output
 
 
@@ -202,6 +235,8 @@ def _matrix_rows(
     for row in rows:
         for subset in _subsets(row):
             for intervention in AVAILABLE_INTERVENTIONS:
+                if intervention not in row:
+                    continue
                 expanded.append(
                     {
                         **{key: row[key] for key in ("seed", "fold")},
@@ -285,10 +320,38 @@ def _key_metrics(
         ("teacher_student_disagreement_tokens", "teacher_support_forced_into_student"),
         {},
     )
+    token_position_all = by_key.get(
+        ("all_tokens", "token_position_null_support_forced_into_student"),
+        {},
+    )
+    token_position_disagree = by_key.get(
+        (
+            "teacher_student_disagreement_tokens",
+            "token_position_null_support_forced_into_student",
+        ),
+        {},
+    )
+    teacher_all_gain = teacher_all.get("gain_vs_student_router")
+    token_position_all_gain = token_position_all.get("gain_vs_student_router")
+    teacher_disagree_gain = teacher_disagree.get("gain_vs_student_router")
+    token_position_disagree_gain = token_position_disagree.get("gain_vs_student_router")
     return {
-        "teacher_forced_gain_all_tokens": teacher_all.get("gain_vs_student_router"),
-        "teacher_forced_gain_disagreement_tokens": teacher_disagree.get(
-            "gain_vs_student_router"
+        "teacher_forced_gain_all_tokens": teacher_all_gain,
+        "teacher_forced_gain_disagreement_tokens": teacher_disagree_gain,
+        "token_position_null_forced_gain_all_tokens": token_position_all_gain,
+        "token_position_null_forced_gain_disagreement_tokens": (
+            token_position_disagree_gain
+        ),
+        "teacher_minus_token_position_null_gain_all_tokens": (
+            teacher_all_gain - token_position_all_gain
+            if teacher_all_gain is not None and token_position_all_gain is not None
+            else None
+        ),
+        "teacher_minus_token_position_null_gain_disagreement_tokens": (
+            teacher_disagree_gain - token_position_disagree_gain
+            if teacher_disagree_gain is not None
+            and token_position_disagree_gain is not None
+            else None
         ),
         "oracle_gain_all_tokens": oracle_all.get("gain_vs_student_router"),
         "mean_separate_student_minus_token_position_null_router_loss": _mean(
@@ -299,7 +362,7 @@ def _key_metrics(
             for row in separate_student_null_rows
         ),
         "separate_student_token_position_null_folds": len(separate_student_null_rows),
-        "token_position_null_same_student_arm_available": False,
+        "token_position_null_same_student_arm_available": token_position_all_gain is not None,
     }
 
 
@@ -336,15 +399,15 @@ def _criteria(
         ),
         _criterion(
             "available_same_student_arms_present",
-            set(AVAILABLE_INTERVENTIONS).issubset(present_interventions),
-            sorted(AVAILABLE_INTERVENTIONS),
+            BASE_INTERVENTIONS.issubset(present_interventions),
+            sorted(BASE_INTERVENTIONS),
             sorted(present_interventions),
         ),
         _criterion(
             "token_position_null_same_student_arm_present",
-            False,
+            REQUIRED_MISSING_INTERVENTION in present_interventions,
             REQUIRED_MISSING_INTERVENTION,
-            "not present in current per_token_supports.csv schema",
+            sorted(present_interventions),
         ),
     ]
 
@@ -355,8 +418,9 @@ def _criterion(name: str, passed: bool, threshold: Any, actual: Any) -> dict[str
 
 def _supported_claim(key_metrics: dict[str, Any]) -> str:
     return (
-        "The current artifacts quantify available same-student support interventions, "
-        "but they do not contain the required token/position-null forced-support arm."
+        "The report compares teacher support, token/position-null support, oracle "
+        "support, linear support, shuffled support, and random support as interventions "
+        "through the same trained student when the refreshed artifact schema is present."
     )
 
 
@@ -368,14 +432,25 @@ def _rationale(
     if status == "fail":
         return "Same-student matrix failed because required source artifacts are missing or invalid."
     teacher_gain = key_metrics.get("teacher_forced_gain_all_tokens")
+    null_gain = key_metrics.get("token_position_null_forced_gain_all_tokens")
+    teacher_minus_null = key_metrics.get("teacher_minus_token_position_null_gain_all_tokens")
     null_delta = key_metrics.get("mean_separate_student_minus_token_position_null_router_loss")
+    if not key_metrics.get("token_position_null_same_student_arm_available"):
+        return (
+            "The available same-student arms show teacher-forced support changes all-token "
+            f"loss by {teacher_gain:.6f} versus the learned student router, while the "
+            "token/position-null evidence is still only a separate-student reference "
+            f"(mean student-minus-null router loss {null_delta:.6f}). The next artifact "
+            "extension must force token/position-null supports through the same trained "
+            "student before any mechanism claim can be reconsidered."
+        )
     return (
-        "The available same-student arms show teacher-forced support changes all-token "
-        f"loss by {teacher_gain:.6f} versus the learned student router, while the "
-        "token/position-null evidence is still only a separate-student reference "
-        f"(mean student-minus-null router loss {null_delta:.6f}). The next artifact "
-        "extension must force token/position-null supports through the same trained "
-        "student before any mechanism claim can be reconsidered."
+        "The refreshed same-student matrix forces both teacher support and "
+        "token/position-null support through the same trained student. Teacher-forced "
+        f"all-token gain is {teacher_gain:.6f}, token/position-null-forced gain is "
+        f"{null_gain:.6f}, and teacher-minus-null gain is {teacher_minus_null:.6f}. "
+        "A positive teacher-minus-null gain is now required before reopening any "
+        "functional causal-router distillation mechanism claim."
     )
 
 

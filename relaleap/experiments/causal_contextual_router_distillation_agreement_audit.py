@@ -397,6 +397,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
             }
             null_eval_rows = []
             null_supports = {}
+            token_position_null_support = None
             for null_name in null_names:
                 null_base, null_residual, null_spec = variants[null_name]
                 null_hidden = null_base.encode(holdout_inputs)
@@ -409,6 +410,11 @@ def run_causal_contextual_router_distillation_agreement_audit(
                 null_token_support = null_support[:, :-1, :]
                 null_token_losses = _token_losses(null_logits, holdout_targets).reshape(-1)
                 null_supports[null_name] = null_token_support
+                if (
+                    null_spec.get("null_control")
+                    == "token_position_frequency_matched_teacher"
+                ):
+                    token_position_null_support = null_support
                 null_eval_rows.append(
                     _variant_fold_row(
                         fold_index=fold_index,
@@ -433,6 +439,18 @@ def run_causal_contextual_router_distillation_agreement_audit(
                         num_columns=num_columns,
                     )
                 )
+            if token_position_null_support is None:
+                raise RuntimeError("token/position null support was not evaluated")
+            token_position_null_token_support = token_position_null_support[:, :-1, :]
+            forced_losses["token_position_null_support_forced_into_student"] = (
+                _forced_token_losses(
+                    student_base,
+                    student_residual,
+                    student_hidden,
+                    holdout_targets,
+                    support=token_position_null_support,
+                )
+            )
 
         fold_rows.extend(
             [
@@ -500,6 +518,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
                 student_support=student_token_support,
                 oracle_support=oracle_token_support,
                 linear_support=linear_token_support,
+                token_position_null_support=token_position_null_token_support,
                 losses_by_intervention=forced_losses,
             )
         )
@@ -514,6 +533,13 @@ def run_causal_contextual_router_distillation_agreement_audit(
         )
         support_count_rows.extend(
             _support_count_rows(fold_index, "linear_support", linear_token_support)
+        )
+        support_count_rows.extend(
+            _support_count_rows(
+                fold_index,
+                "token_position_null_support",
+                token_position_null_token_support,
+            )
         )
         for null_name, null_support in null_supports.items():
             support_count_rows.extend(
@@ -949,6 +975,7 @@ def _per_token_rows(
     student_support: Any,
     oracle_support: Any,
     linear_support: Any,
+    token_position_null_support: Any,
     losses_by_intervention: dict[str, Any],
 ) -> list[dict[str, Any]]:
     rows = []
@@ -958,6 +985,7 @@ def _per_token_rows(
         "student_support": student_support,
         "oracle_support": oracle_support,
         "linear_support": linear_support,
+        "token_position_null_support": token_position_null_support,
     }
     support_keys = {
         name: [
