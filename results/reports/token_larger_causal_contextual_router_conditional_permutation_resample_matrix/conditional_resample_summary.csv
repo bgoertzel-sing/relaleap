@@ -1,0 +1,2 @@
+mean_oracle_exact_agreement,mean_student_exact_agreement,mean_teacher_exact_agreement,resamples,scope,std_oracle_exact_agreement,std_student_exact_agreement
+0.03920200892857159,0.08519861937830692,0.08837115575396821,768,all_resamples,0.010122915320894682,0.016509557572469108

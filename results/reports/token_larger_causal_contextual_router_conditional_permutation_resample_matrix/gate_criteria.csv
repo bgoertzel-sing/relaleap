@@ -1,0 +1,6 @@
+actual,criterion,passed,threshold
+"[(1, True), (2, True), (3, True)]",all_local_seed_sources_present,True,"summary, per-token, null-control, and sampling artifacts present"
+756,per_token_rows_present,True,at least one per-token row
+"[(1, True), (2, True), (3, True)]",token_position_null_same_student_arm_present,True,token_position_null_support and forced loss present
+768,conditional_resamples_present,True,at least one conditional resample row
+0.0009184288127081734,functional_reference_present,True,teacher-minus-token-position-null same-student gain is computable

@@ -1,0 +1,244 @@
+{
+  "artifacts": {
+    "conditional_resample_metrics_csv": "results/reports/token_larger_causal_contextual_router_conditional_permutation_resample_matrix/conditional_resample_metrics.csv",
+    "conditional_resample_summary_csv": "results/reports/token_larger_causal_contextual_router_conditional_permutation_resample_matrix/conditional_resample_summary.csv",
+    "functional_same_student_reference_csv": "results/reports/token_larger_causal_contextual_router_conditional_permutation_resample_matrix/functional_same_student_reference.csv",
+    "gate_criteria_csv": "results/reports/token_larger_causal_contextual_router_conditional_permutation_resample_matrix/gate_criteria.csv",
+    "notes_md": "results/reports/token_larger_causal_contextual_router_conditional_permutation_resample_matrix/notes.md",
+    "null_quality_csv": "results/reports/token_larger_causal_contextual_router_conditional_permutation_resample_matrix/null_quality.csv",
+    "observed_assignment_metrics_csv": "results/reports/token_larger_causal_contextual_router_conditional_permutation_resample_matrix/observed_assignment_metrics.csv",
+    "seed_observed_assignment_metrics_csv": "results/reports/token_larger_causal_contextual_router_conditional_permutation_resample_matrix/seed_observed_assignment_metrics.csv",
+    "source_artifacts_csv": "results/reports/token_larger_causal_contextual_router_conditional_permutation_resample_matrix/source_artifacts.csv",
+    "summary_json": "results/reports/token_larger_causal_contextual_router_conditional_permutation_resample_matrix/summary.json"
+  },
+  "claim_boundaries": {
+    "not_supported": [
+      "functional causal-router distillation mechanism",
+      "default causal-router distillation promotion",
+      "RunPod validation of the strengthened-null reversal",
+      "functional conditional-permutation loss superiority from support-label resampling alone"
+    ],
+    "supported": "Teacher support labels show above-null exact agreement with the trained student support under post-hoc conditional resampling within token/position strata; this is support-assignment evidence only."
+  },
+  "claim_status": "teacher_support_assignment_exceeds_conditional_null_but_functional_claim_blocked",
+  "decision": "conditional_permutation_assignment_signal_survives_functional_gate_blocks",
+  "experiment_id": "token_larger_causal_contextual_router_conditional_permutation_resample_matrix",
+  "failures": [],
+  "functional_rows": [
+    {
+      "positions": 756,
+      "teacher_forced_gain": -0.023253488792944206,
+      "teacher_minus_token_position_null_gain": 0.0009184288127081734,
+      "token_position_null_forced_gain": -0.02417191760565238,
+      "token_subset": "all_tokens"
+    },
+    {
+      "positions": 92,
+      "teacher_forced_gain": -0.19108301660288934,
+      "teacher_minus_token_position_null_gain": -0.06177735846975575,
+      "token_position_null_forced_gain": -0.1293056581331336,
+      "token_subset": "teacher_student_disagreement_tokens"
+    }
+  ],
+  "gate_status": {
+    "assignment_gate_passes": true,
+    "criteria": [
+      {
+        "actual": [
+          [
+            1,
+            true
+          ],
+          [
+            2,
+            true
+          ],
+          [
+            3,
+            true
+          ]
+        ],
+        "criterion": "all_local_seed_sources_present",
+        "passed": true,
+        "threshold": "summary, per-token, null-control, and sampling artifacts present"
+      },
+      {
+        "actual": 756,
+        "criterion": "per_token_rows_present",
+        "passed": true,
+        "threshold": "at least one per-token row"
+      },
+      {
+        "actual": [
+          [
+            1,
+            true
+          ],
+          [
+            2,
+            true
+          ],
+          [
+            3,
+            true
+          ]
+        ],
+        "criterion": "token_position_null_same_student_arm_present",
+        "passed": true,
+        "threshold": "token_position_null_support and forced loss present"
+      },
+      {
+        "actual": 768,
+        "criterion": "conditional_resamples_present",
+        "passed": true,
+        "threshold": "at least one conditional resample row"
+      },
+      {
+        "actual": 0.0009184288127081734,
+        "criterion": "functional_reference_present",
+        "passed": true,
+        "threshold": "teacher-minus-token-position-null same-student gain is computable"
+      }
+    ],
+    "functional_gate_passes": false,
+    "passes_artifact_gate": true
+  },
+  "git_commit": "53329de9732dc03a14f353ab149e93db2ba3dd81",
+  "key_metrics": {
+    "null_mean_oracle_exact_agreement": 0.03920200892857159,
+    "null_mean_student_exact_agreement": 0.08519861937830692,
+    "observed_oracle_exact_agreement": 0.05026455026455026,
+    "observed_student_exact_agreement": 0.8783068783068783,
+    "oracle_exact_agreement_effect_vs_null_mean": 0.01106254133597867,
+    "oracle_exact_agreement_empirical_p_upper": 0.15734720416124837,
+    "student_exact_agreement_effect_vs_null_mean": 0.7931082589285714,
+    "student_exact_agreement_empirical_p_upper": 0.0013003901170351106,
+    "teacher_forced_gain_all_tokens": -0.023253488792944206,
+    "teacher_forced_gain_disagreement_tokens": -0.19108301660288934,
+    "teacher_minus_token_position_null_gain_all_tokens": 0.0009184288127081734,
+    "teacher_minus_token_position_null_gain_disagreement_tokens": -0.06177735846975575,
+    "token_position_null_forced_gain_all_tokens": -0.02417191760565238,
+    "token_position_null_forced_gain_disagreement_tokens": -0.1293056581331336
+  },
+  "null_quality_rows": [
+    {
+      "mean_global_fraction": 0.0,
+      "mean_position_only_fraction": 0.0,
+      "mean_target_only_fraction": 0.9444444444444545,
+      "mean_target_position_fraction": 0.055555555555556475,
+      "resamples": 768,
+      "scope": "all_resamples"
+    }
+  ],
+  "observed_assignment_row": {
+    "oracle_exact_agreement": 0.05026455026455026,
+    "positions": 756,
+    "seed": "all",
+    "student_exact_agreement": 0.8783068783068783,
+    "token_position_null_exact_agreement": 0.6984126984126984,
+    "unique_oracle_supports": 72,
+    "unique_student_supports": 241,
+    "unique_teacher_supports": 240
+  },
+  "out_dir": "results/reports/token_larger_causal_contextual_router_conditional_permutation_resample_matrix",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "random_seed": 4309,
+  "rationale": "The conditional-permutation matrix estimates support-label assignment ranks from existing per-token artifacts. It does not create new forced-loss evaluations for each sampled support assignment, so the functional mechanism claim remains governed by the same-student teacher-vs-token-position-null gain (0.0009184288127081734).",
+  "resample_summary_rows": [
+    {
+      "mean_oracle_exact_agreement": 0.03920200892857159,
+      "mean_student_exact_agreement": 0.08519861937830692,
+      "mean_teacher_exact_agreement": 0.08837115575396821,
+      "resamples": 768,
+      "scope": "all_resamples",
+      "std_oracle_exact_agreement": 0.010122915320894682,
+      "std_student_exact_agreement": 0.016509557572469108
+    }
+  ],
+  "resamples_per_seed": 256,
+  "runtime_seconds": 0.499,
+  "seed_observed_assignment_rows": [
+    {
+      "oracle_exact_agreement": 0.06349206349206349,
+      "positions": 252,
+      "seed": 1,
+      "student_exact_agreement": 0.8849206349206349,
+      "token_position_null_exact_agreement": 0.6865079365079365,
+      "unique_oracle_supports": 45,
+      "unique_student_supports": 147,
+      "unique_teacher_supports": 140
+    },
+    {
+      "oracle_exact_agreement": 0.04365079365079365,
+      "positions": 252,
+      "seed": 2,
+      "student_exact_agreement": 0.8849206349206349,
+      "token_position_null_exact_agreement": 0.6984126984126984,
+      "unique_oracle_supports": 39,
+      "unique_student_supports": 149,
+      "unique_teacher_supports": 151
+    },
+    {
+      "oracle_exact_agreement": 0.04365079365079365,
+      "positions": 252,
+      "seed": 3,
+      "student_exact_agreement": 0.8650793650793651,
+      "token_position_null_exact_agreement": 0.7103174603174603,
+      "unique_oracle_supports": 47,
+      "unique_student_supports": 140,
+      "unique_teacher_supports": 142
+    }
+  ],
+  "selected_next_step": "keep_causal_router_distillation_promotion_frozen",
+  "source_rows": [
+    {
+      "claim_status": "distilled_causal_router_support_mechanism_and_null_controls_supported_not_promoted",
+      "dataset": "tiny_shakespeare_word",
+      "decision": "teacher_student_support_agreement_intervention_supported",
+      "expected_files_present": true,
+      "fold_count": 4,
+      "git_commit": "189adf8",
+      "has_token_position_null_same_student_arm": true,
+      "path": "results/audits/token_larger_causal_contextual_router_distillation_agreement",
+      "positions": 252,
+      "present": true,
+      "seed": 1,
+      "status": "pass",
+      "support_router": "contextual_mlp_causal",
+      "top_k": 2
+    },
+    {
+      "claim_status": "distilled_causal_router_mechanism_not_established",
+      "dataset": "tiny_shakespeare_word",
+      "decision": "teacher_student_support_agreement_intervention_blocks_promotion",
+      "expected_files_present": true,
+      "fold_count": 4,
+      "git_commit": "189adf8",
+      "has_token_position_null_same_student_arm": true,
+      "path": "results/audits/token_larger_causal_contextual_router_distillation_agreement_seed2",
+      "positions": 252,
+      "present": true,
+      "seed": 2,
+      "status": "pass",
+      "support_router": "contextual_mlp_causal",
+      "top_k": 2
+    },
+    {
+      "claim_status": "distilled_causal_router_mechanism_not_established",
+      "dataset": "tiny_shakespeare_word",
+      "decision": "teacher_student_support_agreement_intervention_blocks_promotion",
+      "expected_files_present": true,
+      "fold_count": 4,
+      "git_commit": "189adf8",
+      "has_token_position_null_same_student_arm": true,
+      "path": "results/audits/token_larger_causal_contextual_router_distillation_agreement_seed3",
+      "positions": 252,
+      "present": true,
+      "seed": 3,
+      "status": "pass",
+      "support_router": "contextual_mlp_causal",
+      "top_k": 2
+    }
+  ],
+  "status": "pass"
+}
