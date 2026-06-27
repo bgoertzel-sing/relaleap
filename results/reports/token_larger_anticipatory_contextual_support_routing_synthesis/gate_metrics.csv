@@ -1,0 +1,3 @@
+packet,all_required_files_present,future_perturbation_rows_pass,future_perturbation_invariance,acsr_beats_shuffled_ce,acsr_beats_token_position_ce,acsr_does_not_worsen_causal_regret
+seed1,True,True,True,True,True,True
+seed2,True,True,True,True,True,True
