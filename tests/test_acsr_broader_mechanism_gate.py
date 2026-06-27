@@ -33,6 +33,7 @@ class ACSRBroaderMechanismGateTest(unittest.TestCase):
             self.assertTrue(summary["gates"]["source_artifacts_present"])
             self.assertTrue(summary["gates"]["sequence_heldout_available"])
             self.assertFalse(summary["gates"]["dual_student_cross_forcing_available"])
+            self.assertTrue(summary["gates"]["support_agreement_available"])
             self.assertTrue(summary["gates"]["leaky_positive_control_available"])
             self.assertTrue(
                 summary["gates"]["parameter_matched_causal_control_available"]
@@ -63,6 +64,13 @@ class ACSRBroaderMechanismGateTest(unittest.TestCase):
                 encoding="utf-8"
             )
             self.assertIn("dual_student_cross_forcing", cross_forcing)
+            support_agreement = (out_dir / "support_agreement.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(
+                "acsr_mlp_predicted_future_support_vs_parameter_matched_causal_mlp_control",
+                support_agreement,
+            )
             perturbation = (out_dir / "perturbation_metrics.csv").read_text(
                 encoding="utf-8"
             )
@@ -157,6 +165,19 @@ def _write_source_packet(path: Path) -> None:
                 "max_router_score_delta": 0.1,
                 "support_unchanged": False,
                 "passed": True,
+            }
+        ],
+    )
+    _write_csv(
+        path / "support_agreement.csv",
+        [
+            {
+                "comparison": "acsr_mlp_predicted_future_support_vs_parameter_matched_causal_mlp_control",
+                "status": "available",
+                "top_k": 2,
+                "slot_match_fraction": 0.75,
+                "set_match_fraction": 0.8,
+                "changed_support_fraction": 0.2,
             }
         ],
     )

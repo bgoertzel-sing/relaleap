@@ -53,6 +53,7 @@ class AnticipatoryContextualSupportRoutingSmokeTest(unittest.TestCase):
             same_student = (out_dir / "same_student_metrics.csv").read_text(
                 encoding="utf-8"
             )
+            self.assertIn("dual_student_cross_forcing", same_student)
             self.assertIn(
                 "acsr_mlp_predicted_future_support_vs_token_position_only_predicted_features",
                 same_student,
@@ -60,6 +61,13 @@ class AnticipatoryContextualSupportRoutingSmokeTest(unittest.TestCase):
             self.assertIn(
                 "acsr_gru_predicted_future_support_vs_token_position_only_predicted_features",
                 same_student,
+            )
+            support_agreement = (out_dir / "support_agreement.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(
+                "acsr_mlp_predicted_future_support_vs_parameter_matched_causal_mlp_control",
+                support_agreement,
             )
             perturbation = (out_dir / "feature_perturbation.csv").read_text(
                 encoding="utf-8"

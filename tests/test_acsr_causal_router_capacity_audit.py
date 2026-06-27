@@ -53,6 +53,7 @@ class ACSRCausalRouterCapacityAuditTest(unittest.TestCase):
             self.assertFalse(
                 summary["aggregate_metrics"]["dual_student_cross_forcing_available"]
             )
+            self.assertTrue(summary["aggregate_metrics"]["support_agreement_available"])
             self.assertTrue(
                 any(
                     failure["reason"]
@@ -61,7 +62,10 @@ class ACSRCausalRouterCapacityAuditTest(unittest.TestCase):
                 )
             )
             self.assertTrue(
-                any(failure["gate"] == "support_agreement" for failure in summary["failures"])
+                any(
+                    failure["gate"] == "dual_student_cross_forcing"
+                    for failure in summary["failures"]
+                )
             )
             for artifact in REQUIRED_ARTIFACTS:
                 self.assertTrue((out_dir / artifact).is_file(), artifact)
@@ -75,7 +79,11 @@ class ACSRCausalRouterCapacityAuditTest(unittest.TestCase):
                 encoding="utf-8"
             )
             self.assertIn("dual_student_cross_forcing", missing)
-            self.assertIn("support_agreement", missing)
+            support = (out_dir / "support_agreement.csv").read_text(encoding="utf-8")
+            self.assertIn(
+                "acsr_mlp_predicted_future_support_vs_parameter_matched_causal_mlp_control",
+                support,
+            )
 
     def test_missing_packet_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -129,6 +137,18 @@ def _write_source_packet(path: Path) -> None:
                 "acsr_forced_ce_loss": 2.80,
                 "control_forced_ce_loss": 2.79,
                 "acsr_minus_control_ce_loss": 0.01,
+            }
+        ],
+    )
+    _write_csv(
+        path / "support_agreement.csv",
+        [
+            {
+                "comparison": "acsr_mlp_predicted_future_support_vs_parameter_matched_causal_mlp_control",
+                "status": "available",
+                "slot_match_fraction": 0.75,
+                "set_match_fraction": 0.8,
+                "changed_support_fraction": 0.2,
             }
         ],
     )

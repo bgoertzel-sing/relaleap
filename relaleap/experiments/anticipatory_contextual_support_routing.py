@@ -24,6 +24,7 @@ REQUIRED_ARTIFACTS = [
     "predictor_metrics.csv",
     "router_metrics.csv",
     "same_student_metrics.csv",
+    "support_agreement.csv",
     "feature_perturbation.csv",
     "sequence_heldout_metrics.csv",
     "margin_fragility.csv",
@@ -67,6 +68,7 @@ def run_anticipatory_contextual_support_routing(
             predictor_rows=[],
             router_rows=[],
             same_student_rows=[],
+            support_agreement_rows=[],
             perturbation_rows=[],
             sequence_rows=[],
             margin_rows=[],
@@ -337,6 +339,53 @@ def run_anticipatory_contextual_support_routing(
             score_rows,
             top_k=top_k,
         )
+        independent_residual = _train_independent_residual(
+            torch,
+            F,
+            ResidualColumns,
+            base,
+            inputs,
+            targets,
+            vocab_size,
+            hidden_dim=hidden_dim,
+            num_columns=num_columns,
+            atoms_per_column=atoms_per_column,
+            top_k=top_k,
+            contextual_router_hidden_dim=contextual_router_hidden_dim,
+            learning_rate=learning_rate,
+            train_steps=train_steps,
+            residual_objective=residual_objective,
+            seed=seed + 1009,
+        )
+        independent_score_rows = _independent_score_rows(
+            torch,
+            independent_residual,
+            parameter_matched_causal_score_mlp,
+            chunks,
+            predicted,
+            targets_future,
+            causal_inputs,
+        )
+        same_student_rows.extend(
+            _dual_student_cross_forcing_rows(
+                torch,
+                F,
+                base,
+                residual,
+                independent_residual,
+                hidden,
+                targets,
+                vocab_size,
+                score_rows,
+                independent_score_rows,
+                top_k=top_k,
+            )
+        )
+        support_agreement_rows = _support_agreement_rows(
+            torch,
+            score_rows,
+            top_k=top_k,
+        )
         perturbation_rows = _future_perturbation_rows(
             torch,
             residual,
@@ -483,6 +532,12 @@ def run_anticipatory_contextual_support_routing(
                 and row.get("status") == "available"
                 for row in parameter_rows
             ),
+            "support_agreement_available": bool(support_agreement_rows),
+            "dual_student_cross_forcing_available": any(
+                row.get("forcing_type") == "dual_student_cross_forcing"
+                and row.get("status") == "available"
+                for row in same_student_rows
+            ),
             "acsr_beats_shuffled_ce": _metric_lt(
                 router_by_name,
                 "acsr_mlp_predicted_future",
@@ -515,6 +570,7 @@ def run_anticipatory_contextual_support_routing(
         predictor_rows=predictor_rows,
         router_rows=router_rows,
         same_student_rows=same_student_rows,
+        support_agreement_rows=support_agreement_rows,
         perturbation_rows=perturbation_rows,
         sequence_rows=sequence_rows,
         margin_rows=margin_rows,
@@ -963,12 +1019,204 @@ def _same_student_rows(
             )
             rows.append(
                 {
+                    "forcing_type": "same_student",
+                    "status": "available",
                     "comparison": f"{baseline_name}_support_vs_{control}",
                     "acsr_forced_ce_loss": baseline,
                     "control_forced_ce_loss": control_loss,
                     "acsr_minus_control_ce_loss": baseline - control_loss,
                 }
             )
+    return rows
+
+
+def _train_independent_residual(
+    torch: Any,
+    F: Any,
+    ResidualColumns: Any,
+    base: Any,
+    inputs: Any,
+    targets: Any,
+    vocab_size: int,
+    *,
+    hidden_dim: int,
+    num_columns: int,
+    atoms_per_column: int,
+    top_k: int,
+    contextual_router_hidden_dim: int,
+    learning_rate: float,
+    train_steps: int,
+    residual_objective: str,
+    seed: int,
+) -> Any:
+    rng_state = torch.random.get_rng_state()
+    torch.manual_seed(seed)
+    try:
+        residual = ResidualColumns(
+            hidden_dim=hidden_dim,
+            num_columns=num_columns,
+            atoms_per_column=atoms_per_column,
+            top_k=top_k,
+            support_router="contextual_mlp",
+            contextual_router_hidden_dim=contextual_router_hidden_dim,
+        )
+    finally:
+        torch.random.set_rng_state(rng_state)
+    residual.train()
+    optimizer = torch.optim.AdamW(residual.parameters(), lr=learning_rate)
+    with torch.enable_grad():
+        for _ in range(train_steps):
+            optimizer.zero_grad(set_to_none=True)
+            logits = base(inputs, residual_adapter=residual)
+            loss = F.cross_entropy(
+                logits[:, :-1, :].reshape(-1, vocab_size),
+                targets[:, :-1].reshape(-1),
+            )
+            if residual_objective != "supervised_ce":
+                loss = loss + 0.0 * logits.mean()
+            loss.backward()
+            optimizer.step()
+    residual.eval()
+    return residual
+
+
+def _independent_score_rows(
+    torch: Any,
+    residual: Any,
+    parameter_matched_causal_score_mlp: Any,
+    chunks: dict[str, Any],
+    predicted: Any,
+    targets_future: Any,
+    causal_inputs: Any,
+) -> dict[str, Any]:
+    zero_predicted = torch.zeros_like(targets_future)
+    return {
+        "causal_feature_safe_contextual_topk2": _score_from_features(
+            residual,
+            _feature_tensor(torch, chunks, zero_predicted),
+        ),
+        "acsr_mlp_predicted_future": _score_from_features(
+            residual,
+            _feature_tensor(torch, chunks, predicted),
+        ),
+        "parameter_matched_causal_mlp_control": (
+            parameter_matched_causal_score_mlp(causal_inputs)
+            + residual.score_tie_breaker.to(device=causal_inputs.device, dtype=causal_inputs.dtype)
+        ),
+    }
+
+
+def _dual_student_cross_forcing_rows(
+    torch: Any,
+    F: Any,
+    base: Any,
+    student_a: Any,
+    student_b: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    scores_a: dict[str, Any],
+    scores_b: dict[str, Any],
+    *,
+    top_k: int,
+) -> list[dict[str, Any]]:
+    rows = []
+    primary = "acsr_mlp_predicted_future"
+    control = "parameter_matched_causal_mlp_control"
+    for target_student, target_residual, target_scores in [
+        ("student_a_values", student_a, scores_a),
+        ("student_b_values", student_b, scores_b),
+    ]:
+        acsr_loss = _loss_with_source_support(
+            torch,
+            F,
+            base,
+            target_residual,
+            hidden,
+            targets,
+            vocab_size,
+            source_scores=scores_a[primary],
+            target_scores=target_scores[primary],
+            top_k=top_k,
+        )
+        control_loss = _loss_with_source_support(
+            torch,
+            F,
+            base,
+            target_residual,
+            hidden,
+            targets,
+            vocab_size,
+            source_scores=scores_a[control],
+            target_scores=target_scores[control],
+            top_k=top_k,
+        )
+        rows.append(
+            {
+                "forcing_type": "dual_student_cross_forcing",
+                "status": "available",
+                "comparison": f"{primary}_support_vs_{control}",
+                "target_student": target_student,
+                "acsr_forced_ce_loss": acsr_loss,
+                "control_forced_ce_loss": control_loss,
+                "acsr_minus_control_ce_loss": acsr_loss - control_loss,
+            }
+        )
+    return rows
+
+
+def _loss_with_source_support(
+    torch: Any,
+    F: Any,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    *,
+    source_scores: Any,
+    target_scores: Any,
+    top_k: int,
+) -> float:
+    support = source_scores.topk(top_k, dim=-1).indices
+    top_values = target_scores.gather(dim=-1, index=support)
+    logits = _decode_for_support(torch, base, residual, hidden, support, top_values)
+    loss = F.cross_entropy(logits[:, :-1, :].reshape(-1, vocab_size), targets[:, :-1].reshape(-1))
+    return float(loss.item())
+
+
+def _support_agreement_rows(
+    torch: Any,
+    score_rows: dict[str, Any],
+    *,
+    top_k: int,
+) -> list[dict[str, Any]]:
+    primary = "acsr_mlp_predicted_future"
+    primary_support = score_rows[primary].topk(top_k, dim=-1).indices
+    rows = []
+    for control in [
+        "parameter_matched_causal_mlp_control",
+        "shuffled_predicted_features",
+        "token_position_only_predicted_features",
+        "mean_predicted_features",
+        "zero_predicted_features",
+    ]:
+        control_support = score_rows[control].topk(top_k, dim=-1).indices
+        slot_match = (primary_support == control_support).to(dtype=score_rows[primary].dtype)
+        set_match = (
+            primary_support.sort(dim=-1).values == control_support.sort(dim=-1).values
+        ).all(dim=-1)
+        set_match_float = set_match.to(dtype=score_rows[primary].dtype).mean()
+        rows.append(
+            {
+                "comparison": f"{primary}_support_vs_{control}",
+                "status": "available",
+                "top_k": int(top_k),
+                "slot_match_fraction": float(slot_match.mean().item()),
+                "set_match_fraction": float(set_match_float.item()),
+                "changed_support_fraction": float(1.0 - set_match_float.item()),
+            }
+        )
     return rows
 
 
@@ -1730,6 +1978,7 @@ def _write_artifacts(
     predictor_rows: list[dict[str, Any]],
     router_rows: list[dict[str, Any]],
     same_student_rows: list[dict[str, Any]],
+    support_agreement_rows: list[dict[str, Any]],
     perturbation_rows: list[dict[str, Any]],
     sequence_rows: list[dict[str, Any]],
     margin_rows: list[dict[str, Any]],
@@ -1744,6 +1993,7 @@ def _write_artifacts(
     _write_csv(out_dir / "predictor_metrics.csv", predictor_rows)
     _write_csv(out_dir / "router_metrics.csv", router_rows)
     _write_csv(out_dir / "same_student_metrics.csv", same_student_rows)
+    _write_csv(out_dir / "support_agreement.csv", support_agreement_rows)
     _write_csv(out_dir / "feature_perturbation.csv", perturbation_rows)
     _write_csv(out_dir / "sequence_heldout_metrics.csv", sequence_rows)
     _write_csv(out_dir / "margin_fragility.csv", margin_rows)

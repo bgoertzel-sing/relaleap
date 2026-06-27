@@ -26,6 +26,7 @@ REQUIRED_FILES = (
     "summary.json",
     "router_metrics.csv",
     "same_student_metrics.csv",
+    "support_agreement.csv",
     "sequence_heldout_metrics.csv",
     "margin_fragility.csv",
     "parameter_counts.csv",
@@ -36,6 +37,7 @@ REQUIRED_ARTIFACTS = (
     "paired_capacity_deltas.csv",
     "parameter_match.csv",
     "same_student_capacity.csv",
+    "support_agreement.csv",
     "margin_fragility_capacity.csv",
     "missing_mechanism_evidence.csv",
     "notes.md",
@@ -56,8 +58,14 @@ def run_acsr_causal_router_capacity_audit(
     paired_rows = _paired_capacity_deltas(packets)
     parameter_rows = _parameter_rows(packets)
     same_student_rows = _same_student_rows(packets)
+    support_agreement_rows = _support_agreement_rows(packets)
     margin_rows = _margin_rows(packets)
-    missing_rows = _missing_mechanism_rows(packets, gate_dir)
+    missing_rows = _missing_mechanism_rows(
+        packets,
+        gate_dir,
+        same_student_rows=same_student_rows,
+        support_agreement_rows=support_agreement_rows,
+    )
     review = _strategy_review_notes(strategy_review)
 
     failures = _failures(packets, paired_rows, parameter_rows, missing_rows)
@@ -127,6 +135,7 @@ def run_acsr_causal_router_capacity_audit(
         paired_rows=paired_rows,
         parameter_rows=parameter_rows,
         same_student_rows=same_student_rows,
+        support_agreement_rows=support_agreement_rows,
         margin_rows=margin_rows,
         missing_rows=missing_rows,
     )
@@ -146,6 +155,7 @@ def _load_packet(index: int, source_dir: Path) -> dict[str, Any]:
         "_summary": {},
         "_router_rows": [],
         "_same_student_rows": [],
+        "_support_agreement_rows": [],
         "_sequence_rows": [],
         "_margin_rows": [],
         "_parameter_rows": [],
@@ -160,6 +170,7 @@ def _load_packet(index: int, source_dir: Path) -> dict[str, Any]:
             "_summary": summary,
             "_router_rows": _read_csv(source_dir / "router_metrics.csv"),
             "_same_student_rows": _read_csv(source_dir / "same_student_metrics.csv"),
+            "_support_agreement_rows": _read_csv(source_dir / "support_agreement.csv"),
             "_sequence_rows": _read_csv(source_dir / "sequence_heldout_metrics.csv"),
             "_margin_rows": _read_csv(source_dir / "margin_fragility.csv"),
             "_parameter_rows": _read_csv(source_dir / "parameter_counts.csv"),
@@ -269,12 +280,39 @@ def _same_student_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "packet": packet["packet"],
                     "source_dir": packet["source_dir"],
                     "seed": _seed_label(packet),
+                    "forcing_type": row.get("forcing_type", "same_student"),
+                    "status": row.get("status", "available"),
+                    "target_student": row.get("target_student", ""),
                     "comparison": row.get("comparison"),
                     "acsr_forced_ce_loss": _number(row.get("acsr_forced_ce_loss")),
                     "control_forced_ce_loss": _number(row.get("control_forced_ce_loss")),
                     "acsr_minus_control_ce_loss": _number(
                         row.get("acsr_minus_control_ce_loss")
                     ),
+                }
+            )
+    return rows
+
+
+def _support_agreement_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = []
+    suffix = f"{PRIMARY_VARIANT}_support_vs_{CONTROL_VARIANT}"
+    for packet in packets:
+        if not packet["required_files_present"]:
+            continue
+        for row in packet["_support_agreement_rows"]:
+            if row.get("comparison") != suffix:
+                continue
+            rows.append(
+                {
+                    "packet": packet["packet"],
+                    "source_dir": packet["source_dir"],
+                    "seed": _seed_label(packet),
+                    "comparison": row.get("comparison"),
+                    "status": row.get("status", "available"),
+                    "slot_match_fraction": _number(row.get("slot_match_fraction")),
+                    "set_match_fraction": _number(row.get("set_match_fraction")),
+                    "changed_support_fraction": _number(row.get("changed_support_fraction")),
                 }
             )
     return rows
@@ -311,27 +349,38 @@ def _margin_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _missing_mechanism_rows(
     packets: list[dict[str, Any]],
     gate_dir: Path,
+    *,
+    same_student_rows: list[dict[str, Any]],
+    support_agreement_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     gate_summary = _read_json_object(gate_dir / "summary.json")
     gate_status = gate_summary.get("gates", {})
+    dual_available = bool(gate_status.get("dual_student_cross_forcing_available")) or any(
+        row.get("forcing_type") == "dual_student_cross_forcing"
+        and row.get("status") == "available"
+        for row in same_student_rows
+    )
+    support_agreement_available = bool(support_agreement_rows)
     rows = [
         {
             "evidence": "dual_student_cross_forcing",
-            "status": "available"
-            if gate_status.get("dual_student_cross_forcing_available")
-            else "missing",
+            "status": "available" if dual_available else "missing",
             "reason": (
-                "broader gate reports dual-student cross-forcing available"
-                if gate_status.get("dual_student_cross_forcing_available")
+                "dual-student cross-forcing rows are available"
+                if dual_available
                 else "existing packets do not store independent student values/support tensors"
             ),
         },
         {
             "evidence": "support_agreement",
-            "status": "missing",
+            "status": "available" if support_agreement_available else "missing",
             "reason": (
-                "source packets expose support counts and unique support sets, "
-                "but not per-token ACSR/control support indices needed for agreement"
+                "source packets expose ACSR/control support agreement rows"
+                if support_agreement_available
+                else (
+                    "source packets expose support counts and unique support sets, "
+                    "but not per-token ACSR/control support indices needed for agreement"
+                )
             ),
         },
         {
@@ -417,6 +466,7 @@ def _write_artifacts(
     paired_rows: list[dict[str, Any]],
     parameter_rows: list[dict[str, Any]],
     same_student_rows: list[dict[str, Any]],
+    support_agreement_rows: list[dict[str, Any]],
     margin_rows: list[dict[str, Any]],
     missing_rows: list[dict[str, Any]],
 ) -> None:
@@ -429,6 +479,7 @@ def _write_artifacts(
     _write_csv(out_dir / "paired_capacity_deltas.csv", paired_rows)
     _write_csv(out_dir / "parameter_match.csv", parameter_rows)
     _write_csv(out_dir / "same_student_capacity.csv", same_student_rows)
+    _write_csv(out_dir / "support_agreement.csv", support_agreement_rows)
     _write_csv(out_dir / "margin_fragility_capacity.csv", margin_rows)
     _write_csv(out_dir / "missing_mechanism_evidence.csv", missing_rows)
     _write_notes(out_dir / "notes.md", summary)

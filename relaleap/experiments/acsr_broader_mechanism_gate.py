@@ -22,6 +22,7 @@ REQUIRED_ARTIFACTS = [
     "summary.json",
     "variant_metrics.csv",
     "same_student_cross_forcing.csv",
+    "support_agreement.csv",
     "perturbation_metrics.csv",
     "margin_fragility.csv",
     "parameter_counts.csv",
@@ -32,6 +33,7 @@ REQUIRED_SOURCE_ARTIFACTS = [
     "summary.json",
     "router_metrics.csv",
     "same_student_metrics.csv",
+    "support_agreement.csv",
     "feature_perturbation.csv",
     "sequence_heldout_metrics.csv",
     "margin_fragility.csv",
@@ -66,6 +68,7 @@ def run_acsr_broader_mechanism_gate(
 
     variant_rows = _variant_rows(packets)
     same_student_rows = _same_student_rows(packets)
+    support_agreement_rows = _support_agreement_rows(packets)
     perturbation_rows = _perturbation_rows(packets)
     margin_rows = _margin_rows(packets)
     parameter_rows = _parameter_rows(packets)
@@ -130,7 +133,12 @@ def run_acsr_broader_mechanism_gate(
             ],
             "same_student_available": bool(same_student_rows),
             "sequence_heldout_available": any(packet["sequence_rows"] for packet in packets),
-            "dual_student_cross_forcing_available": False,
+            "dual_student_cross_forcing_available": any(
+                row.get("forcing_type") == "dual_student_cross_forcing"
+                and row.get("status") == "available"
+                for row in same_student_rows
+            ),
+            "support_agreement_available": bool(support_agreement_rows),
             "leaky_positive_control_available": any(
                 row.get("control_type") == "leaky_future_positive"
                 and str(row.get("passed", "")).lower() == "true"
@@ -163,6 +171,7 @@ def run_acsr_broader_mechanism_gate(
         summary,
         variant_rows=variant_rows,
         same_student_rows=same_student_rows,
+        support_agreement_rows=support_agreement_rows,
         perturbation_rows=perturbation_rows,
         margin_rows=margin_rows,
         parameter_rows=parameter_rows,
@@ -178,6 +187,7 @@ def _load_packet(source_dir: Path) -> dict[str, Any]:
         "summary": {},
         "router_rows": [],
         "same_student_rows": [],
+        "support_agreement_rows": [],
         "perturbation_rows": [],
         "sequence_rows": [],
         "margin_rows": [],
@@ -193,6 +203,7 @@ def _load_packet(source_dir: Path) -> dict[str, Any]:
     packet["summary"] = json.loads((source_dir / "summary.json").read_text(encoding="utf-8"))
     packet["router_rows"] = _read_csv(source_dir / "router_metrics.csv")
     packet["same_student_rows"] = _read_csv(source_dir / "same_student_metrics.csv")
+    packet["support_agreement_rows"] = _read_csv(source_dir / "support_agreement.csv")
     packet["perturbation_rows"] = _read_csv(source_dir / "feature_perturbation.csv")
     packet["sequence_rows"] = _read_csv(source_dir / "sequence_heldout_metrics.csv")
     packet["margin_rows"] = _read_csv(source_dir / "margin_fragility.csv")
@@ -323,11 +334,13 @@ def _same_student_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not packet["loaded"]:
             continue
         for row in packet["same_student_rows"]:
+            forcing_type = row.get("forcing_type") or "same_student"
+            status = row.get("status") or "available"
             rows.append(
                 {
                     "source_dir": packet["source_dir"],
                     "seed": _seed_label(packet["summary"]),
-                    "forcing_type": "same_student",
+                    "forcing_type": forcing_type,
                     "comparison": row.get("comparison", ""),
                     "acsr_forced_ce_loss": _float_or_blank(
                         row.get("acsr_forced_ce_loss")
@@ -338,19 +351,42 @@ def _same_student_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "acsr_minus_control_ce_loss": _float_or_blank(
                         row.get("acsr_minus_control_ce_loss")
                     ),
-                    "status": "available",
+                    "target_student": row.get("target_student", ""),
+                    "status": status,
                 }
             )
-        rows.append(
-            {
+        if not any(
+            row.get("forcing_type") == "dual_student_cross_forcing"
+            and row.get("status") == "available"
+            for row in rows
+            if row.get("source_dir") == packet["source_dir"]
+        ):
+            rows.append(
+                {
+                    "source_dir": packet["source_dir"],
+                    "seed": _seed_label(packet["summary"]),
+                    "forcing_type": "dual_student_cross_forcing",
+                    "comparison": "acsr_support_cross_forced_through_independent_student",
+                    "status": "not_available_in_source_artifact",
+                    "reason": "existing ACSR packets do not store independent student values/support tensors",
+                }
+            )
+    return rows
+
+
+def _support_agreement_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = []
+    for packet in packets:
+        if not packet["loaded"]:
+            continue
+        for row in packet["support_agreement_rows"]:
+            enriched = {
                 "source_dir": packet["source_dir"],
                 "seed": _seed_label(packet["summary"]),
-                "forcing_type": "dual_student_cross_forcing",
-                "comparison": "acsr_support_cross_forced_through_independent_student",
-                "status": "not_available_in_source_artifact",
-                "reason": "existing ACSR packets do not store independent student values/support tensors",
+                "status": row.get("status", "available"),
             }
-        )
+            enriched.update(row)
+            rows.append(enriched)
     return rows
 
 
@@ -643,6 +679,7 @@ def _write_artifacts(
     *,
     variant_rows: list[dict[str, Any]],
     same_student_rows: list[dict[str, Any]],
+    support_agreement_rows: list[dict[str, Any]],
     perturbation_rows: list[dict[str, Any]],
     margin_rows: list[dict[str, Any]],
     parameter_rows: list[dict[str, Any]],
@@ -654,6 +691,7 @@ def _write_artifacts(
     )
     _write_csv(out_dir / "variant_metrics.csv", variant_rows)
     _write_csv(out_dir / "same_student_cross_forcing.csv", same_student_rows)
+    _write_csv(out_dir / "support_agreement.csv", support_agreement_rows)
     _write_csv(out_dir / "perturbation_metrics.csv", perturbation_rows)
     _write_csv(out_dir / "margin_fragility.csv", margin_rows)
     _write_csv(out_dir / "parameter_counts.csv", parameter_rows)
