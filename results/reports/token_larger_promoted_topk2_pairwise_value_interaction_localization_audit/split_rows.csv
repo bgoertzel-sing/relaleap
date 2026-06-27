@@ -1,0 +1,3 @@
+split,row_count,support_count,top_support,top3_supports,top3_pair_abs_synergy_share
+even_position,1024,8,"2,9","2,9;2,10;2,22",0.40264625970284246
+odd_position,992,8,"2,9","2,9;2,5;2,15",0.4206175161040251
