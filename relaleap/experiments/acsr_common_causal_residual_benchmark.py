@@ -570,6 +570,28 @@ def _run_benchmark(
     for row, losses, l2 in dense_ladder:
         dense_loss_by_arm[str(row["arm"])] = losses
         dense_l2_by_arm[str(row["arm"])] = l2
+    sparse_logits_by_arm = {
+        "sparse_contextual_topk2": contextual2["candidate_logits_tensor"],
+        "sparse_rank_matched_topk1": contextual1["candidate_logits_tensor"],
+        "sparse_teacher_distilled_norm_topk2": teacher_distilled["candidate_logits_tensor"],
+        "sparse_teacher_distilled_target_norm_topk2": teacher_distilled_target_norm["candidate_logits_tensor"],
+        "sparse_teacher_distilled_oracle_support_topk2": teacher_distilled_oracle["candidate_logits_tensor"],
+        "sparse_teacher_distilled_soft_temperature_topk2": teacher_distilled_soft["candidate_logits_tensor"],
+        "sparse_teacher_distilled_token_position_null": teacher_distilled_token_position["candidate_logits_tensor"],
+        "sparse_teacher_distilled_shuffled_teacher_null": shuffled_teacher_distilled["candidate_logits_tensor"],
+        "sparse_frequency_matched_random_topk1": frequency_matched_random_topk1["candidate_logits_tensor"],
+    }
+    sparse_update_by_arm = {
+        "sparse_contextual_topk2": contextual2["residual_update_tensor"],
+        "sparse_rank_matched_topk1": contextual1["residual_update_tensor"],
+        "sparse_teacher_distilled_norm_topk2": teacher_distilled["residual_update_tensor"],
+        "sparse_teacher_distilled_target_norm_topk2": teacher_distilled_target_norm["residual_update_tensor"],
+        "sparse_teacher_distilled_oracle_support_topk2": teacher_distilled_oracle["residual_update_tensor"],
+        "sparse_teacher_distilled_soft_temperature_topk2": teacher_distilled_soft["residual_update_tensor"],
+        "sparse_teacher_distilled_token_position_null": teacher_distilled_token_position["residual_update_tensor"],
+        "sparse_teacher_distilled_shuffled_teacher_null": shuffled_teacher_distilled["residual_update_tensor"],
+        "sparse_frequency_matched_random_topk1": frequency_matched_random_topk1["residual_update_tensor"],
+    }
     per_token_rows = _per_token_rows(
         torch,
         base_losses,
@@ -602,6 +624,9 @@ def _run_benchmark(
             **dense_l2_by_arm,
         ),
         mask,
+        base_logits=base_logits,
+        logits_by_arm=sparse_logits_by_arm,
+        update_by_arm=sparse_update_by_arm,
     )
     norm_rows = _norm_sweep_rows(arm_rows)
     fingerprint_rows = _fingerprint_rows(
@@ -754,6 +779,8 @@ def _eval_sparse_arm(
         "unique_support_sets": len({tuple(int(v) for v in row) for row in support.reshape(-1, support.shape[-1]).detach().cpu().tolist()}),
         "per_token_losses": losses.detach(),
         "residual_update_l2_per_token": l2.detach(),
+        "candidate_logits_tensor": metrics["logits"].detach(),
+        "residual_update_tensor": metrics["residual_update"].detach(),
     }
     return row
 
@@ -961,6 +988,8 @@ def _train_sparse_teacher_distilled_soft_arm(
         ),
         "per_token_losses": losses.detach(),
         "residual_update_l2_per_token": l2.detach(),
+        "candidate_logits_tensor": logits.detach(),
+        "residual_update_tensor": residual_update.detach(),
     }
 
 
@@ -1200,23 +1229,54 @@ def _per_token_rows(
     loss_by_arm: dict[str, Any],
     l2_by_arm: dict[str, Any],
     heldout_mask: Any,
+    *,
+    base_logits: Any | None = None,
+    logits_by_arm: dict[str, Any] | None = None,
+    update_by_arm: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     seq_len_minus_one = max(1, int(heldout_mask.numel() // 4))
+    logits_by_arm = logits_by_arm or {}
+    update_by_arm = update_by_arm or {}
+    flat_base_logits = None
+    base_argmax = None
+    if base_logits is not None:
+        flat_base_logits = base_logits[:, :-1, :].reshape(base_losses.numel(), -1)
+        base_argmax = flat_base_logits.argmax(dim=-1)
     for arm, losses in loss_by_arm.items():
+        flat_candidate_logits = None
+        flat_residual_update = None
+        candidate_argmax = None
+        logit_mse = None
+        if arm in logits_by_arm and flat_base_logits is not None:
+            flat_candidate_logits = logits_by_arm[arm][:, :-1, :].reshape(base_losses.numel(), -1)
+            candidate_argmax = flat_candidate_logits.argmax(dim=-1)
+            logit_mse = ((flat_candidate_logits - flat_base_logits) ** 2).mean(dim=-1)
+        if arm in update_by_arm:
+            flat_residual_update = update_by_arm[arm][:, :-1, :].reshape(base_losses.numel(), -1)
         for idx, loss in enumerate(losses.detach().cpu().tolist()):
-            rows.append(
-                {
-                    "arm": arm,
-                    "token_index": idx,
-                    "position_index": idx % seq_len_minus_one,
-                    "split": "heldout" if bool(heldout_mask[idx].item()) else "train",
-                    "base_ce_loss": float(base_losses[idx].item()),
-                    "ce_loss": float(loss),
-                    "delta_vs_base_ce": float(loss - base_losses[idx].item()),
-                    "residual_update_l2": float(l2_by_arm[arm][idx].item()),
-                }
-            )
+            row = {
+                "arm": arm,
+                "token_index": idx,
+                "position_index": idx % seq_len_minus_one,
+                "split": "heldout" if bool(heldout_mask[idx].item()) else "train",
+                "base_ce_loss": float(base_losses[idx].item()),
+                "ce_loss": float(loss),
+                "delta_vs_base_ce": float(loss - base_losses[idx].item()),
+                "residual_update_l2": float(l2_by_arm[arm][idx].item()),
+            }
+            if flat_candidate_logits is not None and flat_base_logits is not None and logit_mse is not None:
+                row.update(
+                    {
+                        "logit_mse_vs_base": float(logit_mse[idx].item()),
+                        "prediction_changed_vs_base": bool(base_argmax[idx].item() != candidate_argmax[idx].item()),
+                        "base_logits": _json_tensor_row(flat_base_logits[idx]),
+                        "candidate_logits": _json_tensor_row(flat_candidate_logits[idx]),
+                    }
+                )
+            if flat_residual_update is not None:
+                row["residual_update_vector"] = _json_tensor_row(flat_residual_update[idx])
+            rows.append(row)
     return rows
 
 
@@ -1775,7 +1835,12 @@ def _serializable_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value
         for key, value in row.items()
-        if key not in {"per_token_losses", "residual_update_l2_per_token", "residual_update_tensor"}
+        if key not in {
+            "per_token_losses",
+            "residual_update_l2_per_token",
+            "residual_update_tensor",
+            "candidate_logits_tensor",
+        }
     }
 
 
@@ -1799,6 +1864,10 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _json_tensor_row(row: Any) -> str:
+    return json.dumps([float(value) for value in row.detach().cpu().tolist()], separators=(",", ":"))
 
 
 def _maybe_subtract(left: Any, right: Any) -> float | str:

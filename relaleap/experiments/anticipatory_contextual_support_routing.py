@@ -1619,6 +1619,8 @@ def _support_eval_metrics(
     return {
         "ce_loss": float(per_token.mean().item()),
         "per_token_losses": per_token.detach(),
+        "logits": logits.detach(),
+        "residual_update": residual_update.detach(),
         "residual_update_l2_per_token": residual_update[:, :-1, :]
         .norm(dim=-1)
         .reshape(-1)
