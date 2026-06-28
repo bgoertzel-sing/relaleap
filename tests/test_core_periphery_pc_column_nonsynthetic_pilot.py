@@ -80,7 +80,7 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
             self.assertTrue(set(REQUIRED_VARIANTS).issubset(variants))
             self.assertEqual(
                 summary["primary_result"]["primary_variant"],
-                "repaired_shared_core_residual_periphery",
+                "contrastive_residual_periphery",
             )
             self.assertGreaterEqual(
                 len(summary["intervention_fingerprints"]),
@@ -101,9 +101,11 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
             self.assertIn("matched_dense_retention", gate_names)
             self.assertIn("matched_mlp_retention", gate_names)
             self.assertIn("ce_guardrail_not_worse_than_null", gate_names)
-            self.assertIn("periphery_heldout_utility_nonnegative", gate_names)
+            self.assertIn("periphery_effective_residual_nonzero", gate_names)
+            self.assertIn("periphery_heldout_utility_positive", gate_names)
             self.assertIn("core_periphery_update_norm_ratio", summary["primary_result"])
             self.assertIn("periphery_first_prune_delta_heldout", summary["primary_result"])
+            self.assertIn("periphery_train_utility_delta", summary["primary_result"])
             for artifact in REQUIRED_ARTIFACTS:
                 self.assertTrue((root / "out" / artifact).is_file(), artifact)
             with (root / "out" / "variant_metrics.csv").open(newline="", encoding="utf-8") as handle:
@@ -112,32 +114,37 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
             self.assertTrue(all("anchor_kl_drift" in row for row in rows))
             self.assertTrue(all("finite_update_commutator" in row for row in rows))
             self.assertTrue(all("core_first_prune_delta_heldout" in row for row in rows))
+            self.assertTrue(all("periphery_train_utility_delta" in row for row in rows))
             with (root / "out" / "failed_gate_forensics.csv").open(newline="", encoding="utf-8") as handle:
                 forensic_rows = list(csv.DictReader(handle))
             self.assertTrue(
-                any(row["variant"] == "repaired_shared_core_residual_periphery" for row in forensic_rows)
+                any(row["variant"] == "contrastive_residual_periphery" for row in forensic_rows)
             )
             self.assertTrue(all("anchor_kl_minus_mlp" in row for row in forensic_rows))
 
-    def test_repaired_arm_uses_shared_core_and_complementary_periphery_subspace(self) -> None:
+    def test_repaired_arms_use_shared_core_and_complementary_periphery_subspace(self) -> None:
         import torch
         import torch.nn as nn
 
-        model = _make_model(
-            torch,
-            nn,
-            hidden_dim=8,
-            num_columns=4,
-            top_k=2,
-            spec=_VariantSpec(
-                "repaired_shared_core_residual_periphery",
-                "candidate",
-                training_mode="shared_core_residual_periphery",
-            ),
-        )
+        for name, training_mode in (
+            ("repaired_shared_core_residual_periphery", "shared_core_residual_periphery"),
+            ("contrastive_residual_periphery", "contrastive_residual_periphery"),
+        ):
+            model = _make_model(
+                torch,
+                nn,
+                hidden_dim=8,
+                num_columns=4,
+                top_k=2,
+                spec=_VariantSpec(
+                    name,
+                    "candidate",
+                    training_mode=training_mode,
+                ),
+            )
 
-        self.assertEqual(model.core_mask.tolist(), [1.0] * 8)
-        self.assertEqual(model.periphery_mask.tolist(), [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0])
+            self.assertEqual(model.core_mask.tolist(), [1.0] * 8)
+            self.assertEqual(model.periphery_mask.tolist(), [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0])
 
 
 def _write_config(path: Path) -> Path:
