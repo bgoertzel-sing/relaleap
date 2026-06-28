@@ -354,6 +354,7 @@ def _extract_observables(
                 base_losses=base_losses,
                 losses=losses,
                 l2=l2,
+                residual_update=update,
                 heldout_mask=mask,
                 seq_len_minus_one=int(hidden.shape[1] - 1),
             )
@@ -363,7 +364,7 @@ def _extract_observables(
             parameter_matched_causal_score_mlp(causal_inputs)
             + residual.score_tie_breaker.to(device=causal_inputs.device, dtype=causal_inputs.dtype)
         )
-        control_logits, control_l2 = _logits_and_l2_for_scores(
+        control_logits, control_l2, control_update = _logits_and_l2_for_scores(
             torch,
             base,
             residual,
@@ -398,6 +399,7 @@ def _extract_observables(
             base_losses=base_losses,
             losses=control_losses,
             l2=control_l2,
+            residual_update=control_update,
             heldout_mask=mask,
             seq_len_minus_one=int(hidden.shape[1] - 1),
         )
@@ -554,14 +556,18 @@ def _logits_and_l2_for_scores(
     scores: Any,
     *,
     top_k: int,
-) -> tuple[Any, Any]:
+) -> tuple[Any, Any, Any]:
     top_values, support = scores.topk(top_k, dim=-1)
     column_weights = torch.softmax(top_values, dim=-1)
     atom_weights = torch.softmax(residual.atom_logits, dim=-1)
     column_values = torch.einsum("ca,cah->ch", atom_weights, residual.atom_values)
     selected_values = column_values[support]
     residual_update = torch.einsum("bsk,bskh->bsh", column_weights, selected_values)
-    return _decode_for_support(torch, base, residual, hidden, support, top_values), residual_update[:, :-1, :].norm(dim=-1)
+    return (
+        _decode_for_support(torch, base, residual, hidden, support, top_values),
+        residual_update[:, :-1, :].norm(dim=-1),
+        residual_update,
+    )
 
 
 def _per_token_observable_rows(
@@ -575,11 +581,13 @@ def _per_token_observable_rows(
     base_losses: Any,
     losses: Any,
     l2: Any,
+    residual_update: Any,
     heldout_mask: Any,
     seq_len_minus_one: int,
 ) -> list[dict[str, Any]]:
     flat_base_logits = base_logits[:, :-1, :].reshape(base_losses.numel(), -1)
     flat_dense_logits = dense_logits[:, :-1, :].reshape(base_losses.numel(), -1)
+    flat_residual_update = residual_update[:, :-1, :].reshape(base_losses.numel(), -1)
     base_argmax = flat_base_logits.argmax(dim=-1)
     dense_argmax = flat_dense_logits.argmax(dim=-1)
     logit_mse = ((flat_dense_logits - flat_base_logits) ** 2).mean(dim=-1)
@@ -602,9 +610,16 @@ def _per_token_observable_rows(
                 "residual_update_l2": float(flat_l2[idx].item()),
                 "logit_mse_vs_base": float(logit_mse[idx].item()),
                 "prediction_changed_vs_base": bool(base_argmax[idx].item() != dense_argmax[idx].item()),
+                "residual_update_vector": _json_tensor_row(flat_residual_update[idx]),
+                "base_logits": _json_tensor_row(flat_base_logits[idx]),
+                "candidate_logits": _json_tensor_row(flat_dense_logits[idx]),
             }
         )
     return rows
+
+
+def _json_tensor_row(row: Any) -> str:
+    return json.dumps([float(value) for value in row.detach().cpu().tolist()], separators=(",", ":"))
 
 
 def _observable_gate_rows(
@@ -625,6 +640,12 @@ def _observable_gate_rows(
     }
     control = next((row for row in control_rows if row.get("arm") == "parameter_matched_causal_mlp_control"), {})
     missing_control = sorted(field for field in required_fields if control.get(field, "") == "")
+    raw_fields = {"residual_update_vector", "base_logits", "candidate_logits"}
+    per_token_raw_missing = sorted(
+        field
+        for field in raw_fields
+        if any(row.get(field, "") == "" for row in per_token_rows)
+    )
     return [
         _criterion(
             "rank16_24_observable_rows_present",
@@ -646,6 +667,13 @@ def _observable_gate_rows(
             "per-token observable rows were written",
             len(per_token_rows),
             "missing per-token observable rows",
+        ),
+        _criterion(
+            "per_token_raw_intervention_fields_present",
+            bool(per_token_rows) and not per_token_raw_missing,
+            "per-token rows include raw residual update vectors and base/candidate logits",
+            per_token_raw_missing,
+            "raw per-token residual/logit fields are missing",
         ),
         _criterion(
             "parameter_matched_control_observable_row_present",
