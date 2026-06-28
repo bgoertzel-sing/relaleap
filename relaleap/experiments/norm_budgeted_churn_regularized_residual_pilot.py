@@ -19,6 +19,7 @@ REQUIRED_ARTIFACTS = (
     "summary.json",
     "arm_metrics.csv",
     "per_token_metrics.csv",
+    "residual_scale_diagnostics.csv",
     "gate_criteria.csv",
     "notes.md",
 )
@@ -39,11 +40,12 @@ def run_norm_budgeted_churn_regularized_residual_pilot(
     preflight = _preflight_rows(design_dir, design, residual_budget, train_steps)
     arm_rows: list[dict[str, Any]] = []
     per_token_rows: list[dict[str, Any]] = []
+    residual_scale_rows: list[dict[str, Any]] = []
     runtime_error = ""
 
     if all(row["passed"] for row in preflight):
         try:
-            arm_rows, per_token_rows = _run_pilot(
+            arm_rows, per_token_rows, residual_scale_rows = _run_pilot(
                 residual_budget=float(residual_budget),
                 train_steps=train_steps,
                 seed=seed,
@@ -51,7 +53,7 @@ def run_norm_budgeted_churn_regularized_residual_pilot(
         except Exception as exc:  # pragma: no cover - environment dependent
             runtime_error = f"{type(exc).__name__}: {exc}"
 
-    gate_rows = preflight + _pilot_gate_rows(arm_rows, per_token_rows, runtime_error)
+    gate_rows = preflight + _pilot_gate_rows(arm_rows, per_token_rows, residual_scale_rows, runtime_error)
     failures = [row for row in gate_rows if not row["passed"]]
     advancing = [row for row in arm_rows if row.get("scientific_gate") == "advances"]
     status = "pass" if not failures else "fail"
@@ -63,7 +65,7 @@ def run_norm_budgeted_churn_regularized_residual_pilot(
     selected_next_step = (
         "inspect per-token strata before deciding whether a RunPod repeat is scientifically justified"
         if advancing
-        else "keep work local and add anchor-KL/off-target strata before any RunPod validation"
+        else "keep work local and test a norm-target curriculum only if residual-scale diagnostics show CE gains remain blocked by KL or flip churn"
     )
     summary = {
         "status": status,
@@ -82,6 +84,7 @@ def run_norm_budgeted_churn_regularized_residual_pilot(
         "residual_l2_budget": residual_budget if residual_budget is not None else "",
         "arm_count": len(arm_rows),
         "per_token_row_count": len(per_token_rows),
+        "residual_scale_diagnostic_row_count": len(residual_scale_rows),
         "advancement_row_count": len(advancing),
         "scientific_gate": "weak_pass_needs_review" if advancing and status == "pass" else "blocked",
         "gate_criteria": gate_rows,
@@ -93,11 +96,16 @@ def run_norm_budgeted_churn_regularized_residual_pilot(
         "git_commit": _git_commit(),
         "artifacts": {name.replace(".", "_"): str(out_dir / name) for name in REQUIRED_ARTIFACTS},
     }
-    _write_artifacts(out_dir, summary, arm_rows, per_token_rows, gate_rows)
+    _write_artifacts(out_dir, summary, arm_rows, per_token_rows, residual_scale_rows, gate_rows)
     return summary
 
 
-def _run_pilot(*, residual_budget: float, train_steps: int, seed: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _run_pilot(
+    *,
+    residual_budget: float,
+    train_steps: int,
+    seed: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
@@ -134,9 +142,26 @@ def _run_pilot(*, residual_budget: float, train_steps: int, seed: int) -> tuple[
     ]
     arm_rows: list[dict[str, Any]] = []
     per_token_rows: list[dict[str, Any]] = []
+    residual_scale_rows: list[dict[str, Any]] = []
     dense24: dict[str, Any] | None = None
     for arm, family, module in modules:
         _train_module(torch, F, base, module, hidden, targets, vocab_size, residual_budget, train_steps)
+        residual_scale_rows.extend(
+            _residual_scale_diagnostic_rows(
+                F,
+                base,
+                module,
+                hidden,
+                targets,
+                vocab_size,
+                base_logits,
+                base_losses,
+                heldout_mask,
+                arm,
+                family,
+                residual_budget,
+            )
+        )
         arm_row, token_rows = _evaluate_module(
             F, base, module, hidden, targets, vocab_size, base_logits, base_losses, heldout_mask, arm, family, residual_budget, train_steps
         )
@@ -154,7 +179,8 @@ def _run_pilot(*, residual_budget: float, train_steps: int, seed: int) -> tuple[
     if dense24:
         for row in arm_rows:
             _add_gate(row, dense24, residual_budget)
-    return arm_rows, per_token_rows
+    _add_residual_scale_deltas(residual_scale_rows)
+    return arm_rows, per_token_rows, residual_scale_rows
 
 
 def _train_module(torch: Any, F: Any, base: Any, module: Any, hidden: Any, targets: Any, vocab_size: int, budget: float, steps: int) -> None:
@@ -229,6 +255,100 @@ def _evaluate_module(
         "posthoc_residual_norm_scale": scale,
     }
     return row, _token_rows(arm, family, flat_losses, flat_base_losses, l2, logit_mse, anchor_kl, flips, heldout_mask)
+
+
+def _residual_scale_diagnostic_rows(
+    F: Any,
+    base: Any,
+    module: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    base_logits: Any,
+    base_losses: Any,
+    heldout_mask: Any,
+    arm: str,
+    family: str,
+    budget: float,
+) -> list[dict[str, Any]]:
+    with __import__("torch").no_grad():
+        raw_update = _module_update(module, hidden)
+        raw_l2 = raw_update[:, :-1, :].reshape(-1, raw_update.shape[-1]).norm(dim=-1)
+        heldout_raw_l2 = float(raw_l2[heldout_mask].mean().item())
+
+    rows: list[dict[str, Any]] = []
+    for budget_fraction in (0.25, 0.5, 0.75, 1.0):
+        target_l2 = budget * budget_fraction
+        scale = target_l2 / heldout_raw_l2 if heldout_raw_l2 > 1e-12 else 0.0
+        rows.append(
+            _scaled_residual_row(
+                F,
+                base,
+                raw_update * scale,
+                hidden,
+                targets,
+                vocab_size,
+                base_logits,
+                base_losses,
+                heldout_mask,
+                arm,
+                family,
+                budget_fraction,
+                heldout_raw_l2,
+                target_l2,
+                scale,
+            )
+        )
+    return rows
+
+
+def _scaled_residual_row(
+    F: Any,
+    base: Any,
+    update: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    base_logits: Any,
+    base_losses: Any,
+    heldout_mask: Any,
+    arm: str,
+    family: str,
+    budget_fraction: float,
+    heldout_raw_l2: float,
+    target_l2: float,
+    scale: float,
+) -> dict[str, Any]:
+    with __import__("torch").no_grad():
+        logits = base.decode(hidden + update)
+        losses = _per_token_ce(F, logits, targets, vocab_size).reshape(-1)
+        base_flat = base_losses.reshape(-1)
+        l2 = update[:, :-1, :].reshape(-1, update.shape[-1]).norm(dim=-1)
+        flat_logits = logits[:, :-1, :].reshape(-1, logits.shape[-1])
+        flat_base = base_logits[:, :-1, :].reshape(-1, base_logits.shape[-1])
+        logit_mse = ((flat_logits - flat_base) ** 2).mean(dim=-1)
+        anchor_kl = _per_token_anchor_kl(F, flat_logits, flat_base)
+        flips = flat_logits.argmax(dim=-1) != flat_base.argmax(dim=-1)
+    anchor_mask = ~heldout_mask
+    heldout_ce = float(losses[heldout_mask].mean().item())
+    return {
+        "arm": arm,
+        "family": family,
+        "target_budget_fraction": budget_fraction,
+        "target_residual_l2": target_l2,
+        "raw_heldout_residual_l2": heldout_raw_l2,
+        "applied_scale": scale,
+        "heldout_ce_loss": heldout_ce,
+        "heldout_delta_vs_base_ce": heldout_ce - float(base_flat[heldout_mask].mean().item()),
+        "heldout_residual_update_l2": float(l2[heldout_mask].mean().item()),
+        "heldout_logit_mse_vs_base": float(logit_mse[heldout_mask].mean().item()),
+        "heldout_anchor_kl_vs_base": float(anchor_kl[heldout_mask].mean().item()),
+        "heldout_prediction_flip_rate": float(flips[heldout_mask].float().mean().item()),
+        "off_target_anchor_ce_loss": float(losses[anchor_mask].mean().item()),
+        "off_target_anchor_delta_vs_base_ce": float((losses[anchor_mask] - base_flat[anchor_mask]).mean().item()),
+        "off_target_anchor_kl_vs_base": float(anchor_kl[anchor_mask].mean().item()),
+        "off_target_prediction_flip_rate": float(flips[anchor_mask].float().mean().item()),
+    }
 
 
 def _evaluate_random_null(
@@ -363,6 +483,39 @@ def _add_gate(row: dict[str, Any], dense24: dict[str, Any], budget: float) -> No
     )
 
 
+def _add_residual_scale_deltas(rows: list[dict[str, Any]]) -> None:
+    dense_by_fraction = {
+        _float(row.get("target_budget_fraction")): row
+        for row in rows
+        if row.get("arm") == "dense_rank24_norm_budgeted"
+    }
+    for row in rows:
+        dense = dense_by_fraction.get(_float(row.get("target_budget_fraction")))
+        if not dense:
+            row["ce_delta_vs_scaled_dense24"] = ""
+            row["anchor_kl_delta_vs_scaled_dense24"] = ""
+            row["flip_delta_vs_scaled_dense24"] = ""
+            row["scaled_direction_signal"] = "missing_scaled_dense24_comparator"
+            continue
+        ce_delta = _float(row.get("heldout_ce_loss")) - _float(dense.get("heldout_ce_loss"))
+        anchor_delta = _float(row.get("heldout_anchor_kl_vs_base")) - _float(dense.get("heldout_anchor_kl_vs_base"))
+        flip_delta = _float(row.get("heldout_prediction_flip_rate")) - _float(dense.get("heldout_prediction_flip_rate"))
+        row["ce_delta_vs_scaled_dense24"] = ce_delta
+        row["anchor_kl_delta_vs_scaled_dense24"] = anchor_delta
+        row["flip_delta_vs_scaled_dense24"] = flip_delta
+        row["scaled_direction_signal"] = (
+            "beats_scaled_dense24_same_norm"
+            if row.get("arm") != "dense_rank24_norm_budgeted"
+            and ce_delta is not None
+            and ce_delta < 0.0
+            and anchor_delta is not None
+            and anchor_delta <= 0.0
+            and flip_delta is not None
+            and flip_delta <= 0.0
+            else "blocked_or_control"
+        )
+
+
 def _preflight_rows(design_dir: Path, design: dict[str, Any], residual_budget: float | None, train_steps: int) -> list[dict[str, Any]]:
     return [
         _criterion("design_passed", design.get("status") == "pass", "pilot design report passes", design.get("status", "missing"), "design report is missing or failed"),
@@ -373,9 +526,15 @@ def _preflight_rows(design_dir: Path, design: dict[str, Any], residual_budget: f
     ]
 
 
-def _pilot_gate_rows(arm_rows: list[dict[str, Any]], per_token_rows: list[dict[str, Any]], runtime_error: str) -> list[dict[str, Any]]:
+def _pilot_gate_rows(
+    arm_rows: list[dict[str, Any]],
+    per_token_rows: list[dict[str, Any]],
+    residual_scale_rows: list[dict[str, Any]],
+    runtime_error: str,
+) -> list[dict[str, Any]]:
     arms = {row.get("arm") for row in arm_rows}
     token_fields = set(per_token_rows[0]) if per_token_rows else set()
+    scale_fields = set(residual_scale_rows[0]) if residual_scale_rows else set()
     strata = {row.get("intervention_stratum") for row in per_token_rows}
     required = {
         "dense_rank24_norm_budgeted",
@@ -396,6 +555,19 @@ def _pilot_gate_rows(arm_rows: list[dict[str, Any]], per_token_rows: list[dict[s
             "per-token anchor KL and target/off-target strata exist",
             sorted(token_fields),
             "per-token anchor-KL/off-target diagnostic fields missing",
+        ),
+        _criterion(
+            "residual_scale_diagnostics_present",
+            {
+                "target_budget_fraction",
+                "heldout_ce_loss",
+                "heldout_residual_update_l2",
+                "ce_delta_vs_scaled_dense24",
+                "scaled_direction_signal",
+            }.issubset(scale_fields),
+            "residual direction scaled CE/KL/churn diagnostics exist",
+            sorted(scale_fields),
+            "residual-scale diagnostic fields missing",
         ),
     ]
 
@@ -449,11 +621,19 @@ def _criterion(criterion: str, passed: bool, threshold: Any, actual: Any, failur
     }
 
 
-def _write_artifacts(out_dir: Path, summary: dict[str, Any], arm_rows: list[dict[str, Any]], per_token_rows: list[dict[str, Any]], gate_rows: list[dict[str, Any]]) -> None:
+def _write_artifacts(
+    out_dir: Path,
+    summary: dict[str, Any],
+    arm_rows: list[dict[str, Any]],
+    per_token_rows: list[dict[str, Any]],
+    residual_scale_rows: list[dict[str, Any]],
+    gate_rows: list[dict[str, Any]],
+) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     _write_csv(out_dir / "arm_metrics.csv", arm_rows)
     _write_csv(out_dir / "per_token_metrics.csv", per_token_rows)
+    _write_csv(out_dir / "residual_scale_diagnostics.csv", residual_scale_rows)
     _write_csv(out_dir / "gate_criteria.csv", gate_rows)
     lines = [
         "# Norm-Budgeted Churn-Regularized Residual Pilot",
@@ -465,11 +645,12 @@ def _write_artifacts(out_dir: Path, summary: dict[str, Any], arm_rows: list[dict
         f"- Requires GPU now: `{summary['requires_gpu_now']}`",
         f"- Residual L2 budget: `{summary['residual_l2_budget']}`",
         f"- Arms: `{summary['arm_count']}`",
+        f"- Residual scale diagnostic rows: `{summary['residual_scale_diagnostic_row_count']}`",
         f"- Advancement rows: `{summary['advancement_row_count']}`",
         f"- Scientific gate: `{summary['scientific_gate']}`",
         f"- Next step: {summary['selected_next_step']}",
         "",
-        "This is a bounded local CPU pilot. It trains small dense, sparse, and MLP residual arms under the dense-rank24 residual-L2 budget and reports CE, logit-MSE, anchor-KL, off-target anchor strata, and prediction-flip churn against the dense rank24 comparator. It does not promote any mechanism.",
+        "This is a bounded local CPU pilot. It trains small dense, sparse, and MLP residual arms under the dense-rank24 residual-L2 budget and reports CE, logit-MSE, anchor-KL, off-target anchor strata, and prediction-flip churn against the dense rank24 comparator. The residual-scale diagnostic rescales each learned trainable residual direction to fixed fractions of the dense24 budget to diagnose residual-budget underuse. It does not promote any mechanism.",
     ]
     if summary["failures"]:
         lines.extend(["", "## Failures"])

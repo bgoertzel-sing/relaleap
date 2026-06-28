@@ -53,6 +53,7 @@ class NormBudgetedChurnRegularizedResidualPilotTest(unittest.TestCase):
             self.assertFalse(summary["requires_gpu_now"])
             self.assertEqual(summary["arm_count"], 6)
             self.assertGreater(summary["per_token_row_count"], 0)
+            self.assertGreater(summary["residual_scale_diagnostic_row_count"], 0)
             with (root / "out" / "arm_metrics.csv").open(newline="", encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
             arms = {row["arm"] for row in rows}
@@ -71,6 +72,17 @@ class NormBudgetedChurnRegularizedResidualPilotTest(unittest.TestCase):
             self.assertIn("is_off_target_anchor", token_fields)
             self.assertIn("off_target_anchor", {row["intervention_stratum"] for row in token_rows})
             self.assertIn("target_heldout", {row["intervention_stratum"] for row in token_rows})
+            with (root / "out" / "residual_scale_diagnostics.csv").open(newline="", encoding="utf-8") as handle:
+                scale_rows = list(csv.DictReader(handle))
+            self.assertGreater(len(scale_rows), 0)
+            scale_fields = set(scale_rows[0])
+            self.assertIn("target_budget_fraction", scale_fields)
+            self.assertIn("ce_delta_vs_scaled_dense24", scale_fields)
+            self.assertIn("scaled_direction_signal", scale_fields)
+            self.assertEqual(
+                {"0.25", "0.5", "0.75", "1.0"},
+                {row["target_budget_fraction"] for row in scale_rows if row["arm"] == "dense_rank24_norm_budgeted"},
+            )
 
 
 def _write_design(path: Path) -> None:
