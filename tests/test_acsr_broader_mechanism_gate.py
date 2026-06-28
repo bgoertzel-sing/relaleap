@@ -26,6 +26,9 @@ class ACSRBroaderMechanismGateTest(unittest.TestCase):
             )
 
             self.assertEqual(summary["status"], "fail")
+            self.assertEqual(summary["scientific_gate"], "blocked")
+            self.assertFalse(summary["requires_gpu_now"])
+            self.assertFalse(summary["promotion_allowed"])
             self.assertEqual(
                 summary["decision"], "acsr_broader_mechanism_gate_failed_closed"
             )
@@ -117,6 +120,7 @@ class ACSRBroaderMechanismGateTest(unittest.TestCase):
             )
 
             self.assertEqual(summary["status"], "fail")
+            self.assertEqual(summary["scientific_gate"], "blocked")
             self.assertFalse(summary["gates"]["source_artifacts_present"])
             self.assertTrue((out_dir / "summary.json").is_file())
             self.assertTrue(

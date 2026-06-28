@@ -18,6 +18,7 @@ DEFAULT_SOURCE_DIRS = [
     Path("results/audits/token_larger_anticipatory_contextual_support_routing_seed2"),
 ]
 DEFAULT_OUT_DIR = Path("results/audits/acsr_broader_mechanism_gate_local")
+DEFAULT_STRATEGY_REVIEW = Path("../outputs/strategy-reviews/relaleap/latest-review.md")
 FLOAT_GUARDRAIL_TOLERANCE = 1e-6
 REQUIRED_ARTIFACTS = [
     "summary.json",
@@ -128,8 +129,12 @@ def run_acsr_broader_mechanism_gate(
 
     accepted_review_notes = _strategy_review_notes(strategy_review)
     status = "pass" if not failures else "fail"
+    scientific_gate = "advance" if status == "pass" else "blocked"
     summary = {
         "status": status,
+        "scientific_gate": scientific_gate,
+        "requires_gpu_now": scientific_gate == "advance",
+        "promotion_allowed": scientific_gate == "advance",
         "decision": (
             "acsr_broader_mechanism_gate_passed"
             if status == "pass"
@@ -925,6 +930,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "# ACSR Broader Mechanism Gate",
         "",
         f"- Status: `{summary['status']}`",
+        f"- Scientific gate: `{summary['scientific_gate']}`",
         f"- Decision: `{summary['decision']}`",
         f"- Claim status: `{summary['claim_status']}`",
         f"- Loaded packets: `{summary['loaded_packet_count']}/{summary['source_packet_count']}`",
@@ -1078,7 +1084,7 @@ def _parse_args() -> argparse.Namespace:
         dest="source_dirs",
         help="Existing ACSR artifact directory. May be supplied multiple times.",
     )
-    parser.add_argument("--strategy-review", type=Path, default=None)
+    parser.add_argument("--strategy-review", type=Path, default=DEFAULT_STRATEGY_REVIEW)
     return parser.parse_args()
 
 
