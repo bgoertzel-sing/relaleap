@@ -1,0 +1,165 @@
+{
+  "artifacts": {
+    "gate_criteria_csv": "results/reports/residual_interference_mitigation_probe/gate_criteria.csv",
+    "mitigation_metrics_csv": "results/reports/residual_interference_mitigation_probe/mitigation_metrics.csv",
+    "notes_md": "results/reports/residual_interference_mitigation_probe/notes.md",
+    "summary_json": "results/reports/residual_interference_mitigation_probe/summary.json"
+  },
+  "backend_policy": "local CPU post-hoc mitigation decision; no RunPod/Colab spend",
+  "claim_status": "support_width_mitigation_partial_candidate_not_promoted",
+  "decision": "residual_interference_mitigation_probe_recorded",
+  "gate_criteria": [
+    {
+      "criterion": "source_summary_exists",
+      "failure_reason": "",
+      "observed": "results/reports/mechanism_factorized_continual_learning_probe/summary.json",
+      "passed": true,
+      "requirement": "mechanism-factorized CL summary exists",
+      "severity": "hard"
+    },
+    {
+      "criterion": "source_probe_passed",
+      "failure_reason": "",
+      "observed": "pass",
+      "passed": true,
+      "requirement": "source mechanism-factorized probe passed hard artifact gates",
+      "severity": "hard"
+    },
+    {
+      "criterion": "required_dense_sparse_null_arms_present",
+      "failure_reason": "",
+      "observed": "present",
+      "passed": true,
+      "requirement": "dense, top-k1, top-k2, and random-support controls present",
+      "severity": "hard"
+    },
+    {
+      "criterion": "topk2_improves_sparse_target_adaptation_vs_topk1",
+      "failure_reason": "",
+      "observed": -0.0756457805633545,
+      "passed": true,
+      "requirement": "support-width mitigation improves sparse target CE adaptation versus top-k1",
+      "severity": "claim"
+    },
+    {
+      "criterion": "topk2_preserves_dense_off_target_ce_advantage",
+      "failure_reason": "",
+      "observed": -0.09026687145233155,
+      "passed": true,
+      "requirement": "top-k2 off-target CE drift remains no worse than dense",
+      "severity": "claim"
+    },
+    {
+      "criterion": "topk2_preserves_dense_off_target_kl_advantage",
+      "failure_reason": "",
+      "observed": -1.473929725587368,
+      "passed": true,
+      "requirement": "top-k2 off-target KL remains no worse than dense",
+      "severity": "claim"
+    },
+    {
+      "criterion": "topk2_preserves_forgetting_advantage_vs_topk1",
+      "failure_reason": "",
+      "observed": -0.0068094730377197266,
+      "passed": true,
+      "requirement": "top-k2 final forgetting remains no worse than top-k1",
+      "severity": "claim"
+    },
+    {
+      "criterion": "topk2_beats_random_support_null_on_target_and_forgetting",
+      "failure_reason": "",
+      "observed": {
+        "final_forgetting_delta": -0.009774506092071533,
+        "target_ce_delta_delta": -0.08091492652893068
+      },
+      "passed": true,
+      "requirement": "top-k2 improves target adaptation and forgetting versus random support null",
+      "severity": "claim"
+    },
+    {
+      "criterion": "topk2_target_adaptation_still_not_dense_matched",
+      "failure_reason": "",
+      "observed": 0.4001842975616455,
+      "passed": true,
+      "requirement": "record whether support-width mitigation still trails dense target adaptation",
+      "severity": "interpretation"
+    }
+  ],
+  "git_commit": "aa4478d21a4a66eab3f0c3ef776091ad0879c656",
+  "mitigation_metrics": [
+    {
+      "comparison": "topk2_minus_topk1",
+      "final_forgetting_delta": -0.0068094730377197266,
+      "left_arm": "contextual_topk2",
+      "left_final_forgetting": 0.002593994140625,
+      "left_off_target_ce_drift": -0.002600288391113281,
+      "left_off_target_kl": 0.07346160560846329,
+      "left_target_ce_delta": -0.18290061950683595,
+      "off_target_ce_drift_delta": 0.005469926198323568,
+      "off_target_kl_delta": 0.03666411973536015,
+      "right_arm": "contextual_topk1",
+      "right_final_forgetting": 0.009403467178344727,
+      "right_off_target_ce_drift": -0.00807021458943685,
+      "right_off_target_kl": 0.03679748587310314,
+      "right_target_ce_delta": -0.10725483894348145,
+      "target_ce_delta_delta": -0.0756457805633545
+    },
+    {
+      "comparison": "topk2_minus_dense",
+      "final_forgetting_delta": -0.21913444995880127,
+      "left_arm": "contextual_topk2",
+      "left_final_forgetting": 0.002593994140625,
+      "left_off_target_ce_drift": -0.002600288391113281,
+      "left_off_target_kl": 0.07346160560846329,
+      "left_target_ce_delta": -0.18290061950683595,
+      "off_target_ce_drift_delta": -0.09026687145233155,
+      "off_target_kl_delta": -1.473929725587368,
+      "right_arm": "dense_active_rank",
+      "right_final_forgetting": 0.22172844409942627,
+      "right_off_target_ce_drift": 0.08766658306121826,
+      "right_off_target_kl": 1.5473913311958314,
+      "right_target_ce_delta": -0.5830849170684814,
+      "target_ce_delta_delta": 0.4001842975616455
+    },
+    {
+      "comparison": "topk2_minus_random_support_null",
+      "final_forgetting_delta": -0.009774506092071533,
+      "left_arm": "contextual_topk2",
+      "left_final_forgetting": 0.002593994140625,
+      "left_off_target_ce_drift": -0.002600288391113281,
+      "left_off_target_kl": 0.07346160560846329,
+      "left_target_ce_delta": -0.18290061950683595,
+      "off_target_ce_drift_delta": -0.0017477194468180338,
+      "off_target_kl_delta": 0.017917639762163165,
+      "right_arm": "random_frequency_matched_topk2",
+      "right_final_forgetting": 0.012368500232696533,
+      "right_off_target_ce_drift": -0.0008525689442952474,
+      "right_off_target_kl": 0.05554396584630013,
+      "right_target_ce_delta": -0.10198569297790527,
+      "target_ce_delta_delta": -0.08091492652893068
+    }
+  ],
+  "mitigation_under_test": "contextual_topk2_support_width_expansion",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "primary_result": {
+    "interpretation": "Negative deltas favor contextual top-k2. This is a local support-width mitigation screen, not promotion evidence without repeats.",
+    "topk2_minus_dense_off_target_ce_drift": -0.09026687145233155,
+    "topk2_minus_dense_off_target_kl": -1.473929725587368,
+    "topk2_minus_random_support_null_target_ce_delta": -0.08091492652893068,
+    "topk2_minus_topk1_off_target_ce_drift": 0.005469926198323568,
+    "topk2_minus_topk1_target_ce_delta": -0.0756457805633545
+  },
+  "required_source_arms": [
+    "dense_active_rank",
+    "contextual_topk1",
+    "contextual_topk2",
+    "random_frequency_matched_topk2"
+  ],
+  "requires_gpu_now": false,
+  "runtime_seconds": 0.0003,
+  "selected_next_step": "design one sparse target-adaptation rescue that closes the remaining dense gap without losing top-k2 off-target advantages",
+  "source_claim_status": "mechanism_factorized_sparse_retention_not_established",
+  "source_decision": "mechanism_factorized_continual_learning_probe_recorded",
+  "source_summary_path": "results/reports/mechanism_factorized_continual_learning_probe/summary.json",
+  "status": "pass"
+}

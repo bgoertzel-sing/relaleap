@@ -1,0 +1,10 @@
+criterion,passed,severity,requirement,observed,failure_reason
+source_summary_exists,True,hard,mechanism-factorized CL summary exists,results/reports/mechanism_factorized_continual_learning_probe/summary.json,
+source_probe_passed,True,hard,source mechanism-factorized probe passed hard artifact gates,pass,
+required_dense_sparse_null_arms_present,True,hard,"dense, top-k1, top-k2, and random-support controls present",present,
+topk2_improves_sparse_target_adaptation_vs_topk1,True,claim,support-width mitigation improves sparse target CE adaptation versus top-k1,-0.0756457805633545,
+topk2_preserves_dense_off_target_ce_advantage,True,claim,top-k2 off-target CE drift remains no worse than dense,-0.09026687145233155,
+topk2_preserves_dense_off_target_kl_advantage,True,claim,top-k2 off-target KL remains no worse than dense,-1.473929725587368,
+topk2_preserves_forgetting_advantage_vs_topk1,True,claim,top-k2 final forgetting remains no worse than top-k1,-0.0068094730377197266,
+topk2_beats_random_support_null_on_target_and_forgetting,True,claim,top-k2 improves target adaptation and forgetting versus random support null,"{'target_ce_delta_delta': -0.08091492652893068, 'final_forgetting_delta': -0.009774506092071533}",
+topk2_target_adaptation_still_not_dense_matched,True,interpretation,record whether support-width mitigation still trails dense target adaptation,0.4001842975616455,
