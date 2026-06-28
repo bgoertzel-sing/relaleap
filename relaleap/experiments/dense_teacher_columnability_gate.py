@@ -195,12 +195,13 @@ def _observed_arm_packets(dense_primary: dict[str, Any], distillation: dict[str,
         if arm:
             packets[arm] = dict(row)
     for row in _list(distillation.get("variant_rows")):
+        arm = str(row.get("arm", ""))
         variant = str(row.get("variant", ""))
         mapped = {
             "promoted_contextual_router_support": "promoted_contextual_topk2_ce_mse_distill",
             "token_position_only_predicted_support": "token_position_only_router_topk2",
             "shuffled_predicted_support": "shuffled_feature_router_topk2",
-        }.get(variant, variant)
+        }.get(variant, arm or variant)
         if mapped:
             packets.setdefault(mapped, {}).update(row)
     return packets

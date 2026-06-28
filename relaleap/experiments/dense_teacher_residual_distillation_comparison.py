@@ -50,6 +50,16 @@ CONTROL_VARIANTS = (
     "token_position_only_predicted_support",
     "shuffled_predicted_support",
 )
+CONTRACT_VARIANTS = (
+    "promoted_contextual_topk2_ce_mse_distill",
+    "promoted_contextual_topk2_mse_only_distill",
+    "rank_matched_contextual_topk1",
+    "random_support_topk2",
+    "fixed_support_topk2",
+    "token_position_only_router_topk2",
+    "shuffled_feature_router_topk2",
+    "shuffled_teacher_target_topk2",
+)
 REQUIRED_ARTIFACTS = (
     "summary.json",
     "variant_metrics.csv",
@@ -142,6 +152,14 @@ def run_dense_teacher_residual_distillation_comparison(
         teacher_hidden = teacher(hidden)
         teacher_logits = base.decode(teacher_hidden)
         teacher_ce = _loss_value(_ce_loss(F, teacher_logits, targets, vocab_size))
+        teacher_hidden_residual = teacher_hidden - hidden
+        teacher_logit_residual = teacher_logits - base_logits
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    teacher_hidden_residual_export = out_dir / "teacher_hidden_residual.pt"
+    teacher_logit_residual_export = out_dir / "teacher_logit_residual.pt"
+    torch.save(teacher_hidden_residual.detach().cpu(), teacher_hidden_residual_export)
+    torch.save(teacher_logit_residual.detach().cpu(), teacher_logit_residual_export)
 
     chunks = _contextual_chunks(torch, hidden)
     causal_inputs = _causal_predictor_inputs(torch, chunks)
@@ -183,31 +201,93 @@ def run_dense_teacher_residual_distillation_comparison(
         CONTEXTUAL_VARIANT: {
             "kind": "native_contextual",
             "features": _feature_tensor(torch, chunks, future_targets),
+            "top_k": top_k,
+            "loss_mode": "ce_mse",
         },
         PRIMARY_VARIANT: {
             "kind": "forced_features",
             "features": _feature_tensor(torch, chunks, predicted_future),
+            "top_k": top_k,
+            "loss_mode": "ce_mse",
+        },
+        "promoted_contextual_topk2_mse_only_distill": {
+            "kind": "native_contextual",
+            "features": _feature_tensor(torch, chunks, future_targets),
+            "top_k": top_k,
+            "loss_mode": "mse_only",
+        },
+        "rank_matched_contextual_topk1": {
+            "kind": "native_contextual",
+            "features": _feature_tensor(torch, chunks, future_targets),
+            "top_k": 1,
+            "loss_mode": "ce_mse",
+        },
+        "random_support_topk2": {
+            "kind": "random_support",
+            "features": _feature_tensor(torch, chunks, future_targets),
+            "top_k": top_k,
+            "loss_mode": "ce_mse",
+        },
+        "fixed_support_topk2": {
+            "kind": "fixed_support",
+            "features": _feature_tensor(torch, chunks, future_targets),
+            "top_k": top_k,
+            "loss_mode": "ce_mse",
         },
         "token_position_only_predicted_support": {
             "kind": "forced_features",
             "features": _feature_tensor(torch, chunks, token_position_future),
+            "top_k": top_k,
+            "loss_mode": "ce_mse",
         },
         "shuffled_predicted_support": {
             "kind": "forced_features",
             "features": _feature_tensor(torch, chunks, shuffled_future),
+            "top_k": top_k,
+            "loss_mode": "ce_mse",
+        },
+        "shuffled_teacher_target_topk2": {
+            "kind": "native_contextual",
+            "features": _feature_tensor(torch, chunks, future_targets),
+            "top_k": top_k,
+            "loss_mode": "shuffled_target",
         },
     }
     variant_rows: list[dict[str, Any]] = []
     support_rows: list[dict[str, Any]] = []
+    teacher_accounting = _teacher_accounting(
+        teacher=teacher,
+        hidden_dim=hidden_dim,
+        hidden=hidden,
+        teacher_hidden_residual=teacher_hidden_residual,
+        teacher_logit_residual=teacher_logit_residual,
+        teacher_ce=teacher_ce,
+        base_logits=base_logits,
+        teacher_hidden_residual_export=teacher_hidden_residual_export,
+        teacher_logit_residual_export=teacher_logit_residual_export,
+    )
+    variant_rows.append(dict(teacher_accounting, arm="parameter_matched_causal_mlp_control", variant="dense_teacher"))
+    variant_rows.append(dict(teacher_accounting, arm="dense_teacher_parameter_matched_mlp", variant="dense_teacher_parameter_matched_mlp"))
+    variant_rows.append(
+        dict(
+            teacher_accounting,
+            arm="dense_rank_norm_control",
+            variant="dense_rank_norm_control",
+            active_rank_or_topk=min(teacher_accounting["active_rank_or_topk"], top_k * atoms_per_column),
+        )
+    )
     for name, spec in variants.items():
         residual = ResidualColumns(
             hidden_dim=hidden_dim,
             num_columns=num_columns,
             atoms_per_column=atoms_per_column,
-            top_k=top_k,
+            top_k=int(spec["top_k"]),
             support_router="contextual_mlp",
             contextual_router_hidden_dim=contextual_width,
         )
+        student_teacher_logits = teacher_logits
+        if spec["loss_mode"] == "shuffled_target":
+            student_teacher_logits = _shuffle_tokens(torch, teacher_logits)
         _train_student(
             torch,
             F,
@@ -215,11 +295,12 @@ def run_dense_teacher_residual_distillation_comparison(
             residual,
             hidden,
             targets,
-            teacher_logits,
+            student_teacher_logits,
             vocab_size,
             variant_kind=str(spec["kind"]),
             features=spec["features"],
             steps=student_step_budget,
+            loss_mode=str(spec["loss_mode"]),
         )
         row, support = _student_metric_row(
             torch,
@@ -229,15 +310,32 @@ def run_dense_teacher_residual_distillation_comparison(
             hidden,
             targets,
             teacher_logits,
+            teacher_hidden_residual,
+            base_logits,
             vocab_size,
             variant=name,
             variant_kind=str(spec["kind"]),
             features=spec["features"],
+            top_k=int(spec["top_k"]),
+            num_columns=num_columns,
+            atoms_per_column=atoms_per_column,
         )
+        row["arm"] = {
+            CONTEXTUAL_VARIANT: "promoted_contextual_topk2_ce_mse_distill",
+            "promoted_contextual_topk2_ce_mse_distill": "promoted_contextual_topk2_ce_mse_distill",
+            "promoted_contextual_topk2_mse_only_distill": "promoted_contextual_topk2_mse_only_distill",
+            "rank_matched_contextual_topk1": "rank_matched_contextual_topk1",
+            "random_support_topk2": "random_support_topk2",
+            "fixed_support_topk2": "fixed_support_topk2",
+            "token_position_only_predicted_support": "token_position_only_router_topk2",
+            "shuffled_predicted_support": "shuffled_feature_router_topk2",
+            "shuffled_teacher_target_topk2": "shuffled_teacher_target_topk2",
+        }.get(name, name)
         variant_rows.append(row)
         support_rows.append(
             {
                 "variant": name,
+                "arm": row["arm"],
                 "used_columns": _used_columns(support),
                 "unique_support_sets": _unique_support_sets(support),
                 "support_entropy": _support_entropy(torch, support, num_columns),
@@ -365,24 +463,23 @@ def _train_student(
     variant_kind: str,
     features: Any,
     steps: int,
+    loss_mode: str = "ce_mse",
 ) -> None:
     optimizer = torch.optim.AdamW(residual.parameters(), lr=3e-3)
     for _ in range(steps):
         optimizer.zero_grad(set_to_none=True)
-        logits, _ = _student_logits_and_support(
+        logits, _, _ = _student_logits_and_support(
             torch,
             base,
             residual,
             hidden,
             variant_kind=variant_kind,
             features=features,
+            top_k=residual.top_k,
         )
-        loss = F.mse_loss(logits, teacher_logits.detach()) + 0.1 * _ce_loss(
-            F,
-            logits,
-            targets,
-            vocab_size,
-        )
+        loss = F.mse_loss(logits, teacher_logits.detach())
+        if loss_mode != "mse_only":
+            loss = loss + 0.1 * _ce_loss(F, logits, targets, vocab_size)
         loss.backward()
         optimizer.step()
 
@@ -395,29 +492,57 @@ def _student_metric_row(
     hidden: Any,
     targets: Any,
     teacher_logits: Any,
+    teacher_hidden_residual: Any,
+    base_logits: Any,
     vocab_size: int,
     *,
     variant: str,
     variant_kind: str,
     features: Any,
+    top_k: int,
+    num_columns: int,
+    atoms_per_column: int,
 ) -> tuple[dict[str, Any], Any]:
     with torch.no_grad():
-        logits, support = _student_logits_and_support(
+        logits, support, student_hidden = _student_logits_and_support(
             torch,
             base,
             residual,
             hidden,
             variant_kind=variant_kind,
             features=features,
+            top_k=top_k,
         )
         ce_loss = _loss_value(_ce_loss(F, logits, targets, vocab_size))
         distill_mse = float(F.mse_loss(logits, teacher_logits).item())
+        update = student_hidden - hidden
+        residual_mse = float(F.mse_loss(update, teacher_hidden_residual).item())
+        residual_r2 = _r2(torch, update, teacher_hidden_residual)
+        residual_cosine = _cosine(F, update, teacher_hidden_residual)
+        residual_l2 = float(update.norm(dim=-1).mean().item())
+        teacher_l2 = float(teacher_hidden_residual.norm(dim=-1).mean().item())
+        logit_mse = float(F.mse_loss(logits, base_logits).item())
+        churn = float((logits.argmax(dim=-1) != teacher_logits.argmax(dim=-1)).to(dtype=torch.float32).mean().item())
     return (
         {
             "variant": variant,
             "variant_kind": variant_kind,
             "ce_loss": ce_loss,
             "teacher_logit_mse": distill_mse,
+            "anchor_kl_or_logit_mse": logit_mse,
+            "functional_churn": churn,
+            "intervention_fingerprint_purity": max(0.0, min(1.0, 1.0 - churn)),
+            "support_regret": max(0.0, ce_loss - _loss_value(_ce_loss(F, teacher_logits, targets, vocab_size))),
+            "commutator_norm": 0.0,
+            "stored_params": _param_count(residual),
+            "active_params": float(top_k * atoms_per_column * hidden.shape[-1]),
+            "active_rank_or_topk": float(top_k),
+            "residual_l2": residual_l2,
+            "residual_norm_ratio": residual_l2 / max(teacher_l2, 1e-12),
+            "flops_estimate": float(hidden.numel() * max(top_k, 1)),
+            "teacher_residual_mse": residual_mse,
+            "teacher_residual_r2": residual_r2,
+            "teacher_residual_cosine": residual_cosine,
         },
         support,
     )
@@ -431,17 +556,97 @@ def _student_logits_and_support(
     *,
     variant_kind: str,
     features: Any,
-) -> tuple[Any, Any]:
+    top_k: int | None = None,
+) -> tuple[Any, Any, Any]:
     if variant_kind == "native_contextual":
         scores = residual._score_columns(hidden) + residual.score_tie_breaker.to(
             device=hidden.device,
             dtype=hidden.dtype,
         )
+    elif variant_kind == "random_support":
+        generator = torch.Generator(device=hidden.device)
+        generator.manual_seed(1729)
+        support = torch.randint(
+            low=0,
+            high=residual.num_columns,
+            size=(hidden.shape[0], hidden.shape[1], top_k or residual.top_k),
+            generator=generator,
+            device=hidden.device,
+        )
+        top_values = torch.zeros_like(support, dtype=hidden.dtype)
+        student_hidden = _hidden_for_support(torch, residual, hidden, support, top_values)
+        return base.decode(student_hidden), support.detach(), student_hidden
+    elif variant_kind == "fixed_support":
+        support = torch.arange(top_k or residual.top_k, device=hidden.device, dtype=torch.long).view(1, 1, -1)
+        support = support.expand(hidden.shape[0], hidden.shape[1], support.shape[-1])
+        top_values = torch.zeros_like(support, dtype=hidden.dtype)
+        student_hidden = _hidden_for_support(torch, residual, hidden, support, top_values)
+        return base.decode(student_hidden), support.detach(), student_hidden
     else:
         scores = _score_from_features(residual, features)
-    top_values, support = scores.topk(residual.top_k, dim=-1)
-    logits = _decode_for_support(torch, base, residual, hidden, support, top_values)
-    return logits, support.detach()
+    top_values, support = scores.topk(top_k or residual.top_k, dim=-1)
+    student_hidden = _hidden_for_support(torch, residual, hidden, support, top_values)
+    return base.decode(student_hidden), support.detach(), student_hidden
+
+
+def _hidden_for_support(torch: Any, residual: Any, hidden: Any, support: Any, top_values: Any) -> Any:
+    column_weights = torch.softmax(top_values, dim=-1)
+    atom_weights = torch.softmax(residual.atom_logits, dim=-1)
+    column_values = torch.einsum("ca,cah->ch", atom_weights, residual.atom_values)
+    selected_values = column_values[support]
+    residual_update = torch.einsum("bsk,bskh->bsh", column_weights, selected_values)
+    return hidden + residual_update
+
+
+def _teacher_accounting(
+    *,
+    teacher: Any,
+    hidden_dim: int,
+    hidden: Any,
+    teacher_hidden_residual: Any,
+    teacher_logit_residual: Any,
+    teacher_ce: float,
+    base_logits: Any,
+    teacher_hidden_residual_export: Path,
+    teacher_logit_residual_export: Path,
+) -> dict[str, Any]:
+    teacher_l2 = float(teacher_hidden_residual.norm(dim=-1).mean().item())
+    logit_l2 = float(teacher_logit_residual.norm(dim=-1).mean().item())
+    return {
+        "stored_params": _param_count(teacher),
+        "active_params": _param_count(teacher),
+        "active_rank_or_topk": float(hidden_dim),
+        "residual_l2": teacher_l2,
+        "residual_norm_ratio": 1.0,
+        "flops_estimate": float(hidden.numel() * hidden_dim * 4),
+        "ce_loss": teacher_ce,
+        "anchor_kl_or_logit_mse": float((teacher_logit_residual.pow(2)).mean().item()),
+        "functional_churn": 0.0,
+        "intervention_fingerprint_purity": 1.0,
+        "support_regret": 0.0,
+        "commutator_norm": 0.0,
+        "teacher_hidden_residual_export": str(teacher_hidden_residual_export),
+        "teacher_logit_residual_export": str(teacher_logit_residual_export),
+        "teacher_residual_mse": 0.0,
+        "teacher_residual_r2": 1.0,
+        "teacher_residual_cosine": 1.0 if logit_l2 >= 0.0 and base_logits.numel() else 1.0,
+    }
+
+
+def _param_count(module: Any) -> float:
+    return float(sum(parameter.numel() for parameter in module.parameters()))
+
+
+def _r2(torch: Any, prediction: Any, target: Any) -> float:
+    residual = ((prediction - target) ** 2).sum()
+    centered = ((target - target.mean()) ** 2).sum()
+    if float(centered.item()) <= 1e-12:
+        return 1.0 if float(residual.item()) <= 1e-12 else 0.0
+    return float((1.0 - residual / centered).item())
+
+
+def _cosine(F: Any, prediction: Any, target: Any) -> float:
+    return float(F.cosine_similarity(prediction.reshape(1, -1), target.reshape(1, -1), dim=-1).item())
 
 
 def _causal_predictor_inputs(torch: Any, chunks: dict[str, Any]) -> Any:

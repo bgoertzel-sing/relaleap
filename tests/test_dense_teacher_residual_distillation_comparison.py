@@ -88,9 +88,36 @@ class DenseTeacherResidualDistillationComparisonTest(unittest.TestCase):
             self.assertTrue((root / "out" / "gate_criteria.csv").is_file())
             self.assertTrue((root / "out" / "notes.md").is_file())
             variants = {row["variant"] for row in summary["variant_rows"]}
+            arms = {row.get("arm") for row in summary["variant_rows"]}
             self.assertIn(PRIMARY_VARIANT, variants)
             self.assertIn("token_position_only_predicted_support", variants)
             self.assertIn("shuffled_predicted_support", variants)
+            self.assertIn("parameter_matched_causal_mlp_control", arms)
+            self.assertIn("promoted_contextual_topk2_ce_mse_distill", arms)
+            self.assertIn("promoted_contextual_topk2_mse_only_distill", arms)
+            self.assertIn("rank_matched_contextual_topk1", arms)
+            self.assertIn("random_support_topk2", arms)
+            self.assertIn("fixed_support_topk2", arms)
+            self.assertIn("shuffled_teacher_target_topk2", arms)
+            teacher = next(
+                row
+                for row in summary["variant_rows"]
+                if row.get("arm") == "parameter_matched_causal_mlp_control"
+            )
+            self.assertTrue(Path(teacher["teacher_hidden_residual_export"]).is_file())
+            self.assertTrue(Path(teacher["teacher_logit_residual_export"]).is_file())
+            for field in (
+                "stored_params",
+                "active_params",
+                "active_rank_or_topk",
+                "residual_l2",
+                "residual_norm_ratio",
+                "flops_estimate",
+                "teacher_residual_mse",
+                "teacher_residual_r2",
+                "teacher_residual_cosine",
+            ):
+                self.assertIn(field, teacher)
             criteria = {row["criterion"] for row in summary["gate_status"]["criteria"]}
             self.assertIn("source_gates_present_and_passing", criteria)
             self.assertIn("acsr_beats_token_position_and_shuffled_distillation_nulls", criteria)
