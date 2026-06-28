@@ -54,6 +54,7 @@ class NormBudgetedChurnRegularizedResidualPilotTest(unittest.TestCase):
             self.assertEqual(summary["arm_count"], 6)
             self.assertGreater(summary["per_token_row_count"], 0)
             self.assertGreater(summary["residual_scale_diagnostic_row_count"], 0)
+            self.assertEqual(summary["norm_target_curriculum_arm_count"], 2)
             with (root / "out" / "arm_metrics.csv").open(newline="", encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
             arms = {row["arm"] for row in rows}
@@ -63,6 +64,20 @@ class NormBudgetedChurnRegularizedResidualPilotTest(unittest.TestCase):
             self.assertTrue(all("scientific_gate" in row for row in rows))
             self.assertTrue(all("heldout_anchor_kl_vs_base" in row for row in rows))
             self.assertTrue(all("off_target_anchor_kl_vs_base" in row for row in rows))
+            self.assertTrue(all("norm_target_curriculum" in row for row in rows))
+            self.assertTrue(all("norm_target_hit_rate" in row for row in rows))
+            self.assertTrue(all("curriculum_stage_count" in row for row in rows))
+            self.assertTrue(all("realized_residual_l2_trajectory" in row for row in rows))
+            curriculum_rows = {row["arm"]: row for row in rows if row["norm_target_curriculum"] == "True"}
+            self.assertEqual(
+                {"dense_rank24_norm_budgeted", "sparse_contextual_topk2_norm_budgeted"},
+                set(curriculum_rows),
+            )
+            for row in curriculum_rows.values():
+                self.assertGreaterEqual(float(row["norm_target_hit_rate"]), 0.0)
+                self.assertLessEqual(float(row["norm_target_hit_rate"]), 1.0)
+                self.assertEqual(row["curriculum_stage_count"], "4")
+                self.assertTrue(row["realized_residual_l2_trajectory"])
             with (root / "out" / "per_token_metrics.csv").open(newline="", encoding="utf-8") as handle:
                 token_rows = list(csv.DictReader(handle))
             self.assertGreater(len(token_rows), 0)

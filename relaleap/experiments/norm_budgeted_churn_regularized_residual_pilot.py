@@ -65,7 +65,7 @@ def run_norm_budgeted_churn_regularized_residual_pilot(
     selected_next_step = (
         "inspect per-token strata before deciding whether a RunPod repeat is scientifically justified"
         if advancing
-        else "keep work local and test a norm-target curriculum only if residual-scale diagnostics show CE gains remain blocked by KL or flip churn"
+        else "keep work local and test an explicit trainable residual scale/gate so sparse evaluation can occupy the curriculum target-norm operating point"
     )
     summary = {
         "status": status,
@@ -85,6 +85,7 @@ def run_norm_budgeted_churn_regularized_residual_pilot(
         "arm_count": len(arm_rows),
         "per_token_row_count": len(per_token_rows),
         "residual_scale_diagnostic_row_count": len(residual_scale_rows),
+        "norm_target_curriculum_arm_count": sum(1 for row in arm_rows if row.get("norm_target_curriculum") is True),
         "advancement_row_count": len(advancing),
         "scientific_gate": "weak_pass_needs_review" if advancing and status == "pass" else "blocked",
         "gate_criteria": gate_rows,
@@ -125,27 +126,40 @@ def _run_pilot(
         base_losses = _per_token_ce(F, base_logits, targets, vocab_size)
     heldout_mask = _heldout_mask(base_losses.shape)
 
-    modules: list[tuple[str, str, nn.Module]] = [
-        ("dense_rank24_norm_budgeted", "dense_control", _DenseResidual(nn, 32, rank=8)),
-        ("dense_rank16_norm_budgeted", "dense_control", _DenseResidual(nn, 32, rank=4)),
+    modules: list[tuple[str, str, bool, nn.Module]] = [
+        ("dense_rank24_norm_budgeted", "dense_control", True, _DenseResidual(nn, 32, rank=8)),
+        ("dense_rank16_norm_budgeted", "dense_control", False, _DenseResidual(nn, 32, rank=4)),
         (
             "sparse_contextual_topk2_norm_budgeted",
             "sparse_acsr",
+            True,
             ResidualColumns(32, num_columns=12, atoms_per_column=4, top_k=2, support_router="contextual_mlp"),
         ),
         (
             "sparse_rank_matched_topk1_norm_budgeted",
             "sparse_acsr",
+            False,
             ResidualColumns(32, num_columns=12, atoms_per_column=4, top_k=1, support_router="contextual_mlp"),
         ),
-        ("bottleneck_gated_mlp_norm_budgeted", "mlp_control", _GatedMLPResidual(nn, 32, bottleneck=16)),
+        ("bottleneck_gated_mlp_norm_budgeted", "mlp_control", False, _GatedMLPResidual(nn, 32, bottleneck=16)),
     ]
     arm_rows: list[dict[str, Any]] = []
     per_token_rows: list[dict[str, Any]] = []
     residual_scale_rows: list[dict[str, Any]] = []
     dense24: dict[str, Any] | None = None
-    for arm, family, module in modules:
-        _train_module(torch, F, base, module, hidden, targets, vocab_size, residual_budget, train_steps)
+    for arm, family, norm_target_curriculum, module in modules:
+        train_stats = _train_module(
+            torch,
+            F,
+            base,
+            module,
+            hidden,
+            targets,
+            vocab_size,
+            residual_budget,
+            train_steps,
+            norm_target_curriculum=norm_target_curriculum,
+        )
         residual_scale_rows.extend(
             _residual_scale_diagnostic_rows(
                 F,
@@ -165,6 +179,7 @@ def _run_pilot(
         arm_row, token_rows = _evaluate_module(
             F, base, module, hidden, targets, vocab_size, base_logits, base_losses, heldout_mask, arm, family, residual_budget, train_steps
         )
+        arm_row.update(train_stats)
         if arm == "dense_rank24_norm_budgeted":
             dense24 = arm_row
         arm_rows.append(arm_row)
@@ -183,24 +198,66 @@ def _run_pilot(
     return arm_rows, per_token_rows, residual_scale_rows
 
 
-def _train_module(torch: Any, F: Any, base: Any, module: Any, hidden: Any, targets: Any, vocab_size: int, budget: float, steps: int) -> None:
+def _train_module(
+    torch: Any,
+    F: Any,
+    base: Any,
+    module: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    budget: float,
+    steps: int,
+    *,
+    norm_target_curriculum: bool,
+) -> dict[str, Any]:
     module.train()
     optimizer = torch.optim.AdamW(module.parameters(), lr=3e-3)
     base_logits = base.decode(hidden).detach()
     budget_floor = 0.5 * budget
-    for _ in range(max(1, steps)):
+    stage_count = 4 if norm_target_curriculum else 0
+    target_schedule = [budget * fraction for fraction in (0.25, 0.5, 0.75, 1.0)]
+    hit_count = 0
+    realized_l2s: list[float] = []
+    target_l2s: list[float] = []
+    for step in range(max(1, steps)):
         optimizer.zero_grad(set_to_none=True)
-        update = _module_update(module, hidden)
+        raw_update = _module_update(module, hidden)
+        target_l2 = target_schedule[min(stage_count - 1, step * stage_count // max(1, steps))] if norm_target_curriculum else budget_floor
+        update = _norm_targeted_update(raw_update, target_l2) if norm_target_curriculum else raw_update
         logits = base.decode(hidden + update)
         ce = F.cross_entropy(logits[:, :-1, :].reshape(-1, vocab_size), targets[:, :-1].reshape(-1))
         update_l2 = update[:, :-1, :].reshape(-1, update.shape[-1]).norm(dim=-1).mean()
         logit_mse = F.mse_loss(logits[:, :-1, :], base_logits[:, :-1, :])
+        target_error = (update_l2 - target_l2).pow(2)
         budget_overuse = torch.relu(update_l2 - budget).pow(2)
         budget_underuse = torch.relu(budget_floor - update_l2).pow(2)
-        loss = ce + 0.75 * budget_overuse + 2.0 * budget_underuse + 0.05 * logit_mse
+        if norm_target_curriculum:
+            loss = ce + 1.25 * target_error + 0.10 * logit_mse
+        else:
+            loss = ce + 0.75 * budget_overuse + 2.0 * budget_underuse + 0.05 * logit_mse
         loss.backward()
         optimizer.step()
+        realized = float(update_l2.detach().item())
+        target = float(target_l2)
+        realized_l2s.append(realized)
+        target_l2s.append(target)
+        if target > 0.0 and abs(realized - target) <= 0.15 * target:
+            hit_count += 1
     module.eval()
+    return {
+        "norm_target_curriculum": norm_target_curriculum,
+        "curriculum_stage_count": stage_count,
+        "norm_target_hit_rate": hit_count / max(1, len(realized_l2s)) if norm_target_curriculum else "",
+        "realized_residual_l2_trajectory": ";".join(f"{value:.6f}" for value in realized_l2s) if norm_target_curriculum else "",
+        "target_residual_l2_trajectory": ";".join(f"{value:.6f}" for value in target_l2s) if norm_target_curriculum else "",
+    }
+
+
+def _norm_targeted_update(update: Any, target_l2: float) -> Any:
+    token_l2 = update[:, :-1, :].reshape(-1, update.shape[-1]).norm(dim=-1).mean()
+    scale = target_l2 / token_l2.clamp_min(1e-12).detach()
+    return update * scale
 
 
 def _evaluate_module(
@@ -535,7 +592,9 @@ def _pilot_gate_rows(
     arms = {row.get("arm") for row in arm_rows}
     token_fields = set(per_token_rows[0]) if per_token_rows else set()
     scale_fields = set(residual_scale_rows[0]) if residual_scale_rows else set()
+    arm_fields = set(arm_rows[0]) if arm_rows else set()
     strata = {row.get("intervention_stratum") for row in per_token_rows}
+    curriculum_rows = [row for row in arm_rows if row.get("norm_target_curriculum") is True]
     required = {
         "dense_rank24_norm_budgeted",
         "dense_rank16_norm_budgeted",
@@ -568,6 +627,22 @@ def _pilot_gate_rows(
             "residual direction scaled CE/KL/churn diagnostics exist",
             sorted(scale_fields),
             "residual-scale diagnostic fields missing",
+        ),
+        _criterion(
+            "norm_target_curriculum_schema_present",
+            {
+                "norm_target_curriculum",
+                "norm_target_hit_rate",
+                "curriculum_stage_count",
+                "realized_residual_l2_trajectory",
+                "target_residual_l2_trajectory",
+            }.issubset(arm_fields)
+            and {"dense_rank24_norm_budgeted", "sparse_contextual_topk2_norm_budgeted"}.issubset(
+                {row.get("arm") for row in curriculum_rows}
+            ),
+            "dense24 and sparse top-k2 curriculum arms emit target-norm schema",
+            sorted(arm_fields),
+            "norm-target curriculum schema fields or required arms missing",
         ),
     ]
 
