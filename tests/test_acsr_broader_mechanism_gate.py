@@ -32,11 +32,23 @@ class ACSRBroaderMechanismGateTest(unittest.TestCase):
             self.assertEqual(summary["loaded_packet_count"], 1)
             self.assertTrue(summary["gates"]["source_artifacts_present"])
             self.assertTrue(summary["gates"]["sequence_heldout_available"])
-            self.assertFalse(summary["gates"]["dual_student_cross_forcing_available"])
+            self.assertTrue(summary["gates"]["dual_student_cross_forcing_available"])
             self.assertTrue(summary["gates"]["support_agreement_available"])
+            self.assertTrue(summary["gates"]["retention_churn_available"])
+            self.assertTrue(summary["gates"]["intervention_fingerprint_available"])
             self.assertTrue(summary["gates"]["leaky_positive_control_available"])
             self.assertTrue(
                 summary["gates"]["parameter_matched_causal_control_available"]
+            )
+            self.assertTrue(
+                summary["gates"][
+                    "acsr_no_worse_retention_churn_than_contextual"
+                ]
+            )
+            self.assertTrue(
+                summary["gates"][
+                    "acsr_no_worse_intervention_residual_l2_than_parameter_matched"
+                ]
             )
             self.assertIn(
                 "acsr_beats_nulls_on_available_packets", summary["aggregate_metrics"]
@@ -75,6 +87,14 @@ class ACSRBroaderMechanismGateTest(unittest.TestCase):
                 encoding="utf-8"
             )
             self.assertIn("leaky_future_positive", perturbation)
+            intervention = (out_dir / "intervention_fingerprint.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("dual_student_cross_forcing", intervention)
+            retention = (out_dir / "retention_churn_metrics.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("anchor_support_churn_after_transfer", retention)
             margin = (out_dir / "margin_fragility.csv").read_text(encoding="utf-8")
             self.assertIn("feature_noise_flip_rate", margin)
             parameter_counts = (out_dir / "parameter_counts.csv").read_text(
@@ -141,6 +161,37 @@ def _write_source_packet(path: Path) -> None:
                 "control_forced_ce_loss": 3.5,
                 "acsr_minus_control_ce_loss": -1.0,
             }
+        ],
+    )
+    _write_csv(
+        path / "dual_student_cross_forcing.csv",
+        [
+            {
+                "forcing_type": "dual_student_cross_forcing",
+                "status": "available",
+                "eval_split": "source_batch_all_but_last_token",
+                "value_student": "acsr_student",
+                "support_source": "own",
+                "support_variant": "acsr_mlp_predicted_future",
+                "analysis_scope": "all_tokens",
+                "stratum_type": "all_tokens",
+                "stratum_value": "all",
+                "residual_update_l2_mean": 4.0,
+                "per_token_delta_vs_own_improved_fraction": 0.0,
+            },
+            {
+                "forcing_type": "dual_student_cross_forcing",
+                "status": "available",
+                "eval_split": "source_batch_all_but_last_token",
+                "value_student": "acsr_student",
+                "support_source": "partner",
+                "support_variant": "parameter_matched_causal_mlp_control",
+                "analysis_scope": "all_tokens",
+                "stratum_type": "all_tokens",
+                "stratum_value": "all",
+                "residual_update_l2_mean": 4.1,
+                "per_token_delta_vs_own_improved_fraction": 0.1,
+            },
         ],
     )
     _write_csv(
@@ -246,8 +297,16 @@ def _write_source_packet(path: Path) -> None:
         [
             {
                 "phase": "second_context_transfer",
+                "variant": "causal_feature_safe_contextual_topk2",
+                "anchor_support_churn_after_transfer": 0.2,
+                "anchor_logit_mse_after_transfer": 0.02,
+            },
+            {
+                "phase": "second_context_transfer",
                 "variant": "acsr_mlp_predicted_future",
                 "anchor_ce_drift": 0.01,
+                "anchor_support_churn_after_transfer": 0.1,
+                "anchor_logit_mse_after_transfer": 0.01,
             }
         ],
     )

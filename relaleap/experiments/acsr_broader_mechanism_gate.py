@@ -18,12 +18,15 @@ DEFAULT_SOURCE_DIRS = [
     Path("results/audits/token_larger_anticipatory_contextual_support_routing_seed2"),
 ]
 DEFAULT_OUT_DIR = Path("results/audits/acsr_broader_mechanism_gate_local")
+FLOAT_GUARDRAIL_TOLERANCE = 1e-6
 REQUIRED_ARTIFACTS = [
     "summary.json",
     "variant_metrics.csv",
     "same_student_cross_forcing.csv",
+    "intervention_fingerprint.csv",
     "support_agreement.csv",
     "perturbation_metrics.csv",
+    "retention_churn_metrics.csv",
     "margin_fragility.csv",
     "parameter_counts.csv",
     "notes.md",
@@ -33,6 +36,7 @@ REQUIRED_SOURCE_ARTIFACTS = [
     "summary.json",
     "router_metrics.csv",
     "same_student_metrics.csv",
+    "dual_student_cross_forcing.csv",
     "support_agreement.csv",
     "feature_perturbation.csv",
     "sequence_heldout_metrics.csv",
@@ -68,16 +72,26 @@ def run_acsr_broader_mechanism_gate(
 
     variant_rows = _variant_rows(packets)
     same_student_rows = _same_student_rows(packets)
+    intervention_rows = _intervention_fingerprint_rows(packets)
     support_agreement_rows = _support_agreement_rows(packets)
     perturbation_rows = _perturbation_rows(packets)
+    retention_rows = _retention_rows(packets)
     margin_rows = _margin_rows(packets)
     parameter_rows = _parameter_rows(packets)
 
-    aggregate = _aggregate_metrics(variant_rows, same_student_rows, perturbation_rows)
+    aggregate = _aggregate_metrics(
+        variant_rows,
+        same_student_rows,
+        perturbation_rows,
+        retention_rows,
+        intervention_rows,
+    )
     missing_controls = _missing_required_controls(
         variant_rows,
         same_student_rows,
         perturbation_rows,
+        retention_rows,
+        intervention_rows,
         margin_rows,
         parameter_rows,
     )
@@ -92,6 +106,23 @@ def run_acsr_broader_mechanism_gate(
             {
                 "gate": "acsr_anticipation_specific_claim",
                 "reason": "acsr_not_better_than_parameter_matched_causal_control",
+            }
+        )
+    if retention_rows and not aggregate["acsr_no_worse_retention_churn_than_contextual"]:
+        failures.append(
+            {
+                "gate": "retention_churn_guardrail",
+                "reason": "acsr_has_higher_retention_churn_or_logit_drift_than_contextual",
+            }
+        )
+    if (
+        intervention_rows
+        and not aggregate["acsr_no_worse_intervention_residual_l2_than_parameter_matched"]
+    ):
+        failures.append(
+            {
+                "gate": "intervention_residual_l2_guardrail",
+                "reason": "acsr_intervention_residual_l2_exceeds_parameter_matched_control",
             }
         )
 
@@ -136,14 +167,22 @@ def run_acsr_broader_mechanism_gate(
             "dual_student_cross_forcing_available": any(
                 row.get("forcing_type") == "dual_student_cross_forcing"
                 and row.get("status") == "available"
-                for row in same_student_rows
+                for row in intervention_rows
             ),
             "support_agreement_available": bool(support_agreement_rows),
+            "retention_churn_available": bool(retention_rows),
+            "intervention_fingerprint_available": bool(intervention_rows),
             "leaky_positive_control_available": any(
                 row.get("control_type") == "leaky_future_positive"
                 and str(row.get("passed", "")).lower() == "true"
                 for row in perturbation_rows
             ),
+            "acsr_no_worse_retention_churn_than_contextual": aggregate[
+                "acsr_no_worse_retention_churn_than_contextual"
+            ],
+            "acsr_no_worse_intervention_residual_l2_than_parameter_matched": aggregate[
+                "acsr_no_worse_intervention_residual_l2_than_parameter_matched"
+            ],
             "parameter_matched_causal_control_available": any(
                 row.get("component") == "parameter_matched_causal_mlp_control"
                 and row.get("status") == "available"
@@ -171,8 +210,10 @@ def run_acsr_broader_mechanism_gate(
         summary,
         variant_rows=variant_rows,
         same_student_rows=same_student_rows,
+        intervention_rows=intervention_rows,
         support_agreement_rows=support_agreement_rows,
         perturbation_rows=perturbation_rows,
+        retention_rows=retention_rows,
         margin_rows=margin_rows,
         parameter_rows=parameter_rows,
     )
@@ -187,6 +228,7 @@ def _load_packet(source_dir: Path) -> dict[str, Any]:
         "summary": {},
         "router_rows": [],
         "same_student_rows": [],
+        "dual_student_rows": [],
         "support_agreement_rows": [],
         "perturbation_rows": [],
         "sequence_rows": [],
@@ -203,6 +245,7 @@ def _load_packet(source_dir: Path) -> dict[str, Any]:
     packet["summary"] = json.loads((source_dir / "summary.json").read_text(encoding="utf-8"))
     packet["router_rows"] = _read_csv(source_dir / "router_metrics.csv")
     packet["same_student_rows"] = _read_csv(source_dir / "same_student_metrics.csv")
+    packet["dual_student_rows"] = _read_csv(source_dir / "dual_student_cross_forcing.csv")
     packet["support_agreement_rows"] = _read_csv(source_dir / "support_agreement.csv")
     packet["perturbation_rows"] = _read_csv(source_dir / "feature_perturbation.csv")
     packet["sequence_rows"] = _read_csv(source_dir / "sequence_heldout_metrics.csv")
@@ -390,6 +433,22 @@ def _support_agreement_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any
     return rows
 
 
+def _intervention_fingerprint_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = []
+    for packet in packets:
+        if not packet["loaded"]:
+            continue
+        for row in packet["dual_student_rows"]:
+            enriched = {
+                "source_dir": packet["source_dir"],
+                "seed": _seed_label(packet["summary"]),
+                "status": row.get("status", "available"),
+            }
+            enriched.update(row)
+            rows.append(enriched)
+    return rows
+
+
 def _perturbation_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = []
     for packet in packets:
@@ -417,6 +476,22 @@ def _perturbation_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "reason": "existing perturbation artifact lacks intentionally leaky positive control",
                 }
             )
+    return rows
+
+
+def _retention_rows(packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = []
+    for packet in packets:
+        if not packet["loaded"]:
+            continue
+        for row in packet["retention_rows"]:
+            enriched = {
+                "source_dir": packet["source_dir"],
+                "seed": _seed_label(packet["summary"]),
+                "status": "available",
+            }
+            enriched.update(row)
+            rows.append(enriched)
     return rows
 
 
@@ -499,6 +574,8 @@ def _aggregate_metrics(
     variant_rows: list[dict[str, Any]],
     same_student_rows: list[dict[str, Any]],
     perturbation_rows: list[dict[str, Any]],
+    retention_rows: list[dict[str, Any]],
+    intervention_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     acsr_rows = [row for row in variant_rows if row["variant"] == "acsr_mlp_predicted_future"]
     null_names = {
@@ -530,6 +607,18 @@ def _aggregate_metrics(
         for row in perturbation_rows
         if row.get("control_type") == "future_perturbation_negative"
     )
+    retention_deltas = _paired_acsr_contextual_retention_deltas(retention_rows)
+    residual_l2_deltas = _paired_acsr_parameter_residual_l2_deltas(intervention_rows)
+    acsr_no_worse_retention = bool(retention_deltas) and all(
+        delta["acsr_minus_contextual_anchor_support_churn"] <= 0.0
+        and delta["acsr_minus_contextual_anchor_logit_mse"] <= 0.0
+        for delta in retention_deltas
+    )
+    acsr_no_worse_residual_l2 = bool(residual_l2_deltas) and all(
+        delta["acsr_minus_parameter_matched_residual_update_l2_mean"]
+        <= FLOAT_GUARDRAIL_TOLERANCE
+        for delta in residual_l2_deltas
+    )
     return {
         "mean_acsr_ce_loss": _mean_or_none(acsr_ce),
         "mean_null_ce_loss": _mean_or_none(null_ce),
@@ -543,6 +632,12 @@ def _aggregate_metrics(
         "parameter_matched_causal_control_available": bool(parameter_matched_deltas),
         "acsr_beats_parameter_matched_causal_control": acsr_beats_parameter_matched,
         "acsr_parameter_matched_paired_deltas": parameter_matched_deltas,
+        "acsr_no_worse_retention_churn_than_contextual": acsr_no_worse_retention,
+        "acsr_contextual_retention_deltas": retention_deltas,
+        "acsr_no_worse_intervention_residual_l2_than_parameter_matched": (
+            acsr_no_worse_residual_l2
+        ),
+        "acsr_parameter_matched_residual_l2_deltas": residual_l2_deltas,
     }
 
 
@@ -601,10 +696,118 @@ def _paired_acsr_parameter_matched_deltas(
     return rows
 
 
+def _paired_acsr_contextual_retention_deltas(
+    retention_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows = []
+    grouped: dict[tuple[Any, ...], dict[str, dict[str, Any]]] = {}
+    for row in retention_rows:
+        variant = row.get("variant")
+        if variant not in {
+            "acsr_mlp_predicted_future",
+            "causal_feature_safe_contextual_topk2",
+        }:
+            continue
+        key = (row.get("source_dir"), row.get("seed"), row.get("phase"))
+        grouped.setdefault(key, {})[variant] = row
+    for key, group in grouped.items():
+        acsr = group.get("acsr_mlp_predicted_future")
+        contextual = group.get("causal_feature_safe_contextual_topk2")
+        if not acsr or not contextual:
+            continue
+        acsr_churn = _float_or_none(acsr.get("anchor_support_churn_after_transfer"))
+        contextual_churn = _float_or_none(
+            contextual.get("anchor_support_churn_after_transfer")
+        )
+        acsr_logit = _float_or_none(acsr.get("anchor_logit_mse_after_transfer"))
+        contextual_logit = _float_or_none(
+            contextual.get("anchor_logit_mse_after_transfer")
+        )
+        if (
+            acsr_churn is None
+            or contextual_churn is None
+            or acsr_logit is None
+            or contextual_logit is None
+        ):
+            continue
+        rows.append(
+            {
+                "source_dir": key[0],
+                "seed": key[1],
+                "phase": key[2],
+                "acsr_anchor_support_churn": acsr_churn,
+                "contextual_anchor_support_churn": contextual_churn,
+                "acsr_minus_contextual_anchor_support_churn": (
+                    acsr_churn - contextual_churn
+                ),
+                "acsr_anchor_logit_mse": acsr_logit,
+                "contextual_anchor_logit_mse": contextual_logit,
+                "acsr_minus_contextual_anchor_logit_mse": acsr_logit - contextual_logit,
+            }
+        )
+    return rows
+
+
+def _paired_acsr_parameter_residual_l2_deltas(
+    intervention_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows = []
+    grouped: dict[tuple[Any, ...], dict[str, dict[str, Any]]] = {}
+    for row in intervention_rows:
+        if row.get("forcing_type") != "dual_student_cross_forcing":
+            continue
+        if row.get("value_student") != "acsr_student":
+            continue
+        if row.get("analysis_scope") != "all_tokens":
+            continue
+        if row.get("stratum_type") != "all_tokens":
+            continue
+        support_source = row.get("support_source")
+        if support_source not in {"own", "partner"}:
+            continue
+        if (
+            support_source == "partner"
+            and row.get("support_variant") != "parameter_matched_causal_mlp_control"
+        ):
+            continue
+        key = (
+            row.get("source_dir"),
+            row.get("seed"),
+            row.get("eval_split"),
+            row.get("value_student"),
+        )
+        grouped.setdefault(key, {})[support_source] = row
+    for key, group in grouped.items():
+        own = group.get("own")
+        partner = group.get("partner")
+        if not own or not partner:
+            continue
+        acsr_l2 = _float_or_none(own.get("residual_update_l2_mean"))
+        parameter_l2 = _float_or_none(partner.get("residual_update_l2_mean"))
+        if acsr_l2 is None or parameter_l2 is None:
+            continue
+        rows.append(
+            {
+                "source_dir": key[0],
+                "seed": key[1],
+                "eval_split": key[2],
+                "value_student": key[3],
+                "acsr_residual_update_l2_mean": acsr_l2,
+                "parameter_matched_residual_update_l2_mean": parameter_l2,
+                "acsr_minus_parameter_matched_residual_update_l2_mean": (
+                    acsr_l2 - parameter_l2
+                ),
+            }
+        )
+    return rows
+
+
 def _missing_required_controls(
     variant_rows: list[dict[str, Any]],
     same_student_rows: list[dict[str, Any]],
     perturbation_rows: list[dict[str, Any]],
+    retention_rows: list[dict[str, Any]],
+    intervention_rows: list[dict[str, Any]],
     margin_rows: list[dict[str, Any]],
     parameter_rows: list[dict[str, Any]],
 ) -> list[str]:
@@ -618,7 +821,7 @@ def _missing_required_controls(
     if not any(
         row.get("forcing_type") == "dual_student_cross_forcing"
         and row.get("status") == "available"
-        for row in same_student_rows
+        for row in intervention_rows
     ):
         reasons.append("dual-student cross-forcing rows missing")
     if not any(
@@ -638,6 +841,21 @@ def _missing_required_controls(
         reasons.append("parameter-matched causal MLP control is missing")
     if not any(row.get("split") == "sequence_suffix_holdout" for row in variant_rows):
         reasons.append("sequence-heldout split is missing from source artifacts")
+    if not any(
+        row.get("variant") == "acsr_mlp_predicted_future"
+        and row.get("anchor_support_churn_after_transfer") not in ("", None)
+        and row.get("anchor_logit_mse_after_transfer") not in ("", None)
+        for row in retention_rows
+    ):
+        reasons.append("retention churn and functional-logit drift rows missing")
+    if not any(
+        row.get("forcing_type") == "dual_student_cross_forcing"
+        and row.get("status") == "available"
+        and row.get("residual_update_l2_mean") not in ("", None)
+        and row.get("per_token_delta_vs_own_improved_fraction") not in ("", None)
+        for row in intervention_rows
+    ):
+        reasons.append("intervention fingerprint residual-L2/per-token rows missing")
     return reasons
 
 
@@ -679,8 +897,10 @@ def _write_artifacts(
     *,
     variant_rows: list[dict[str, Any]],
     same_student_rows: list[dict[str, Any]],
+    intervention_rows: list[dict[str, Any]],
     support_agreement_rows: list[dict[str, Any]],
     perturbation_rows: list[dict[str, Any]],
+    retention_rows: list[dict[str, Any]],
     margin_rows: list[dict[str, Any]],
     parameter_rows: list[dict[str, Any]],
 ) -> None:
@@ -691,8 +911,10 @@ def _write_artifacts(
     )
     _write_csv(out_dir / "variant_metrics.csv", variant_rows)
     _write_csv(out_dir / "same_student_cross_forcing.csv", same_student_rows)
+    _write_csv(out_dir / "intervention_fingerprint.csv", intervention_rows)
     _write_csv(out_dir / "support_agreement.csv", support_agreement_rows)
     _write_csv(out_dir / "perturbation_metrics.csv", perturbation_rows)
+    _write_csv(out_dir / "retention_churn_metrics.csv", retention_rows)
     _write_csv(out_dir / "margin_fragility.csv", margin_rows)
     _write_csv(out_dir / "parameter_counts.csv", parameter_rows)
     _write_notes(out_dir / "notes.md", summary)
