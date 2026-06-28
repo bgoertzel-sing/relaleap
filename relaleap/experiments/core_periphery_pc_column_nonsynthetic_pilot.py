@@ -657,6 +657,7 @@ def _pilot_gates(
         _criterion("matched_mlp_retention", _float(primary.get("anchor_kl_drift")) <= _float(mlp.get("anchor_kl_drift")) + 1e-8, "claim", "active candidate anchor KL no worse than MLP", {"candidate_variant": ACTIVE_CANDIDATE, "candidate": primary.get("anchor_kl_drift"), "mlp": mlp.get("anchor_kl_drift")}, "MLP control remains active"),
         _criterion("core_periphery_update_separation", _float(primary.get("plasticity_ratio")) > 1.5, "claim", "periphery update norm exceeds protected core update norm", primary.get("plasticity_ratio"), "split may be accounting-only"),
         _criterion("periphery_first_pruning_signal", _float(primary.get("periphery_first_minus_core_first_prune_delta")) > 0.0, "claim", "core pruning is more damaging than periphery pruning on anchors", primary.get("periphery_first_minus_core_first_prune_delta"), "protected core not causally distinguished"),
+        _criterion("periphery_heldout_utility_nonnegative", _float(primary.get("periphery_first_prune_delta_heldout")) >= 0.0, "claim", "periphery ablation does not improve heldout CE", primary.get("periphery_first_prune_delta_heldout"), "periphery appears suppressive rather than context-useful"),
     ]
 
 
@@ -672,6 +673,7 @@ def _primary_result(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "core_minus_mlp_anchor_kl_drift": _float(primary.get("anchor_kl_drift")) - _float(mlp.get("anchor_kl_drift")),
         "core_periphery_update_norm_ratio": primary.get("plasticity_ratio"),
         "periphery_first_minus_core_first_prune_delta": primary.get("periphery_first_minus_core_first_prune_delta"),
+        "periphery_first_prune_delta_heldout": primary.get("periphery_first_prune_delta_heldout"),
     }
 
 

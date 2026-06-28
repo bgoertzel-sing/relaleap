@@ -99,7 +99,9 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
             self.assertIn("matched_dense_retention", gate_names)
             self.assertIn("matched_mlp_retention", gate_names)
             self.assertIn("ce_guardrail_not_worse_than_null", gate_names)
+            self.assertIn("periphery_heldout_utility_nonnegative", gate_names)
             self.assertIn("core_periphery_update_norm_ratio", summary["primary_result"])
+            self.assertIn("periphery_first_prune_delta_heldout", summary["primary_result"])
             for artifact in REQUIRED_ARTIFACTS:
                 self.assertTrue((root / "out" / artifact).is_file(), artifact)
             with (root / "out" / "variant_metrics.csv").open(newline="", encoding="utf-8") as handle:
