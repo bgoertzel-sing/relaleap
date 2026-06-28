@@ -61,6 +61,7 @@ def run_norm_budgeted_churn_strata_synthesis(
         and any(row["scientific_signal"] == "weak_local_signal_needs_repeat" for row in arm_signal_rows)
     )
     interference_signal = status == "pass" and _has_nontrivial_ce_interference_signal(arm_signal_rows)
+    explicit_churn_anchor_objective = status == "pass" and _has_explicit_churn_anchor_objective(arm_rows)
     decision = (
         "norm_budgeted_churn_strata_synthesis_completed"
         if status == "pass"
@@ -69,6 +70,8 @@ def run_norm_budgeted_churn_strata_synthesis(
     selected_next_step = (
         "prepare a bounded RunPod repeat only after confirming the weak local matched-strata signal is not a budget artifact"
         if warrants_runpod
+        else "stop this local sparse norm-target branch and pivot to a task-free continual-learning or finite-update commutator assay"
+        if interference_signal and explicit_churn_anchor_objective
         else "keep work local and add an explicit churn/anchor penalty to the scale-gated sparse norm objective before any RunPod repeat"
         if interference_signal
         else "keep work local and diagnose sparse/MLP budget underuse with stronger norm-use mechanics before any RunPod repeat"
@@ -84,6 +87,7 @@ def run_norm_budgeted_churn_strata_synthesis(
         "promotion_allowed": False,
         "requires_gpu_now": False,
         "runpod_repeat_warranted": warrants_runpod,
+        "explicit_churn_anchor_objective_present": explicit_churn_anchor_objective,
         "pilot_dir": str(pilot_dir),
         "out_dir": str(out_dir),
         "source_status": source_rows,
@@ -92,7 +96,7 @@ def run_norm_budgeted_churn_strata_synthesis(
         "gate_criteria": gate_rows,
         "failures": failures,
         "selected_next_step": selected_next_step,
-        "interpretation": _interpretation(status, warrants_runpod, arm_signal_rows),
+        "interpretation": _interpretation(status, warrants_runpod, arm_signal_rows, explicit_churn_anchor_objective),
         "runtime_seconds": round(time.time() - start, 4),
         "platform": platform.platform(),
         "git_commit": _git_commit(),
@@ -281,7 +285,12 @@ def _gate_rows(source_rows: list[dict[str, Any]], arm_signal_rows: list[dict[str
     ]
 
 
-def _interpretation(status: str, warrants_runpod: bool, arm_signal_rows: list[dict[str, Any]]) -> str:
+def _interpretation(
+    status: str,
+    warrants_runpod: bool,
+    arm_signal_rows: list[dict[str, Any]],
+    explicit_churn_anchor_objective: bool,
+) -> str:
     if status != "pass":
         return "The synthesis failed closed because required pilot artifacts were not available."
     if warrants_runpod:
@@ -290,6 +299,13 @@ def _interpretation(status: str, warrants_runpod: bool, arm_signal_rows: list[di
             "but promotion is still disallowed. Review the strata before any GPU repeat."
         )
     if _has_nontrivial_ce_interference_signal(arm_signal_rows):
+        if explicit_churn_anchor_objective:
+            return (
+                "The explicit anchor-KL/flip-margin objective did not remove the sparse top-k2 interference: "
+                "the challenger still reaches a nontrivial dense24 residual-L2 budget and improves CE, but "
+                "anchor KL or prediction-flip churn remains worse. Treat this sparse norm-target branch as "
+                "locally stopped rather than GPU-repeatable."
+            )
         return (
             "A sparse/MLP challenger now reaches a nontrivial dense24 residual-L2 budget and improves CE, "
             "but the improvement comes with worse anchor KL or prediction-flip churn. Treat this as "
@@ -328,6 +344,24 @@ def _has_nontrivial_ce_interference_signal(arm_signal_rows: list[dict[str, Any]]
                 (anchor_delta is not None and anchor_delta > 0.0)
                 or (flip_delta is not None and flip_delta > 0.0)
             )
+        ):
+            return True
+    return False
+
+
+def _has_explicit_churn_anchor_objective(arm_rows: list[dict[str, str]]) -> bool:
+    for row in arm_rows:
+        if row.get("arm") != "sparse_contextual_topk2_norm_budgeted":
+            continue
+        anchor_weight = _float(row.get("churn_anchor_kl_weight"))
+        flip_weight = _float(row.get("churn_flip_margin_weight"))
+        if (
+            anchor_weight is not None
+            and anchor_weight > 0.0
+            and flip_weight is not None
+            and flip_weight > 0.0
+            and row.get("train_off_target_anchor_kl_trajectory")
+            and row.get("train_flip_margin_penalty_trajectory")
         ):
             return True
     return False

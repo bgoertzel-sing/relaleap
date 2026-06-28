@@ -75,14 +75,46 @@ class NormBudgetedChurnStrataSynthesisTest(unittest.TestCase):
             )
             self.assertEqual(sparse["scientific_signal"], "weak_local_signal_needs_repeat")
 
+    def test_explicit_churn_objective_interference_stops_local_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            pilot = root / "pilot"
+            _write_pilot(pilot, sparse_l2=0.9, sparse_anchor_delta=0.01, sparse_flip_delta=0.02, explicit_churn=True)
 
-def _write_pilot(path: Path, *, sparse_l2: float) -> None:
+            summary = run_norm_budgeted_churn_strata_synthesis(
+                pilot_dir=pilot,
+                out_dir=root / "out",
+            )
+
+            self.assertEqual(summary["status"], "pass")
+            self.assertFalse(summary["runpod_repeat_warranted"])
+            self.assertTrue(summary["explicit_churn_anchor_objective_present"])
+            self.assertIn("pivot to a task-free continual-learning", summary["selected_next_step"])
+            self.assertIn("did not remove the sparse top-k2 interference", summary["interpretation"])
+
+
+def _write_pilot(
+    path: Path,
+    *,
+    sparse_l2: float,
+    sparse_anchor_delta: float = -0.01,
+    sparse_flip_delta: float = -0.05,
+    explicit_churn: bool = False,
+) -> None:
     path.mkdir(parents=True)
     (path / "summary.json").write_text(json.dumps({"status": "pass"}) + "\n", encoding="utf-8")
+    explicit_header = (
+        ",churn_anchor_kl_weight,churn_flip_margin_weight,train_off_target_anchor_kl_trajectory,train_flip_margin_penalty_trajectory"
+        if explicit_churn
+        else ""
+    )
+    dense_explicit = ",1.5,0.75,0.001;0.002,0.001;0.002" if explicit_churn else ""
+    sparse_explicit = ",1.5,0.75,0.003;0.004,0.003;0.004" if explicit_churn else ""
     (path / "arm_metrics.csv").write_text(
-        "arm,family,heldout_ce_loss,heldout_residual_update_l2,ce_delta_vs_dense24,anchor_kl_delta_vs_dense24,flip_delta_vs_dense24\n"
-        "dense_rank24_norm_budgeted,dense_control,3.6,1.0,0.0,0.0,0.0\n"
-        f"sparse_contextual_topk2_norm_budgeted,sparse_acsr,3.5,{sparse_l2},-0.1,-0.01,-0.05\n",
+        "arm,family,heldout_ce_loss,heldout_residual_update_l2,ce_delta_vs_dense24,anchor_kl_delta_vs_dense24,flip_delta_vs_dense24"
+        f"{explicit_header}\n"
+        f"dense_rank24_norm_budgeted,dense_control,3.6,1.0,0.0,0.0,0.0{dense_explicit}\n"
+        f"sparse_contextual_topk2_norm_budgeted,sparse_acsr,3.5,{sparse_l2},-0.1,{sparse_anchor_delta},{sparse_flip_delta}{sparse_explicit}\n",
         encoding="utf-8",
     )
     rows = [

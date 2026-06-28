@@ -222,9 +222,14 @@ def _train_module(
     budget_floor = 0.5 * budget
     stage_count = 4 if norm_target_curriculum else 0
     target_schedule = [budget * fraction for fraction in (0.25, 0.5, 0.75, 1.0)]
+    anchor_mask = _heldout_mask((targets[:, :-1].numel(),))
+    anchor_mask = ~anchor_mask
+    churn_weights = _churn_regularization_weights(norm_target_curriculum)
     hit_count = 0
     realized_l2s: list[float] = []
     target_l2s: list[float] = []
+    anchor_kl_values: list[float] = []
+    flip_margin_values: list[float] = []
     for step in range(max(1, steps)):
         optimizer.zero_grad(set_to_none=True)
         raw_update = _module_update(module, hidden)
@@ -237,19 +242,38 @@ def _train_module(
         ce = F.cross_entropy(logits[:, :-1, :].reshape(-1, vocab_size), targets[:, :-1].reshape(-1))
         update_l2 = update[:, :-1, :].reshape(-1, update.shape[-1]).norm(dim=-1).mean()
         logit_mse = F.mse_loss(logits[:, :-1, :], base_logits[:, :-1, :])
+        flat_logits = logits[:, :-1, :].reshape(-1, logits.shape[-1])
+        flat_base = base_logits[:, :-1, :].reshape(-1, base_logits.shape[-1])
+        anchor_kl_penalty = _per_token_anchor_kl(F, flat_logits, flat_base)[anchor_mask].mean()
+        flip_margin_penalty = _base_prediction_flip_margin_penalty(torch, flat_logits, flat_base, anchor_mask)
         target_error = (update_l2 - target_l2).pow(2)
         budget_overuse = torch.relu(update_l2 - budget).pow(2)
         budget_underuse = torch.relu(budget_floor - update_l2).pow(2)
         if norm_target_curriculum:
-            loss = ce + 1.25 * target_error + 0.10 * logit_mse
+            loss = (
+                ce
+                + 1.25 * target_error
+                + churn_weights["logit_mse"] * logit_mse
+                + churn_weights["anchor_kl"] * anchor_kl_penalty
+                + churn_weights["flip_margin"] * flip_margin_penalty
+            )
         else:
-            loss = ce + 0.75 * budget_overuse + 2.0 * budget_underuse + 0.05 * logit_mse
+            loss = (
+                ce
+                + 0.75 * budget_overuse
+                + 2.0 * budget_underuse
+                + churn_weights["logit_mse"] * logit_mse
+                + churn_weights["anchor_kl"] * anchor_kl_penalty
+                + churn_weights["flip_margin"] * flip_margin_penalty
+            )
         loss.backward()
         optimizer.step()
         realized = float(update_l2.detach().item())
         target = float(target_l2)
         realized_l2s.append(realized)
         target_l2s.append(target)
+        anchor_kl_values.append(float(anchor_kl_penalty.detach().item()))
+        flip_margin_values.append(float(flip_margin_penalty.detach().item()))
         if target > 0.0 and abs(realized - target) <= 0.15 * target:
             hit_count += 1
     module.eval()
@@ -260,10 +284,35 @@ def _train_module(
         "norm_target_hit_rate": hit_count / max(1, len(realized_l2s)) if norm_target_curriculum else "",
         "realized_residual_l2_trajectory": ";".join(f"{value:.6f}" for value in realized_l2s) if norm_target_curriculum else "",
         "target_residual_l2_trajectory": ";".join(f"{value:.6f}" for value in target_l2s) if norm_target_curriculum else "",
+        "churn_anchor_kl_weight": churn_weights["anchor_kl"],
+        "churn_flip_margin_weight": churn_weights["flip_margin"],
+        "churn_logit_mse_weight": churn_weights["logit_mse"],
+        "train_off_target_anchor_kl_trajectory": ";".join(f"{value:.6f}" for value in anchor_kl_values),
+        "train_flip_margin_penalty_trajectory": ";".join(f"{value:.6f}" for value in flip_margin_values),
+        "final_train_off_target_anchor_kl_penalty": anchor_kl_values[-1] if anchor_kl_values else "",
+        "final_train_flip_margin_penalty": flip_margin_values[-1] if flip_margin_values else "",
         "scale_gate_trainable": learned_scale is not None,
         "learned_residual_scale": learned_scale if learned_scale is not None else "",
         "evaluation_operating_point": "learned_scale_gate" if learned_scale is not None else "raw_or_budget_clipped_residual",
     }
+
+
+def _churn_regularization_weights(norm_target_curriculum: bool) -> dict[str, float]:
+    if norm_target_curriculum:
+        return {"logit_mse": 0.10, "anchor_kl": 1.50, "flip_margin": 0.75}
+    return {"logit_mse": 0.05, "anchor_kl": 0.50, "flip_margin": 0.25}
+
+
+def _base_prediction_flip_margin_penalty(torch: Any, logits: Any, base_logits: Any, anchor_mask: Any) -> Any:
+    base_top = base_logits.argmax(dim=-1, keepdim=True)
+    base_top_logit = logits.gather(dim=-1, index=base_top).squeeze(-1)
+    nonbase_logits = logits.masked_fill(
+        torch.zeros_like(logits, dtype=torch.bool).scatter_(1, base_top, True),
+        -torch.inf,
+    )
+    closest_nonbase = nonbase_logits.max(dim=-1).values
+    violations = torch.relu(closest_nonbase - base_top_logit + 0.05).pow(2)
+    return violations[anchor_mask].mean()
 
 
 def _norm_targeted_update(update: Any, target_l2: float) -> Any:
@@ -648,6 +697,13 @@ def _pilot_gate_rows(
                 "curriculum_stage_count",
                 "realized_residual_l2_trajectory",
                 "target_residual_l2_trajectory",
+                "churn_anchor_kl_weight",
+                "churn_flip_margin_weight",
+                "churn_logit_mse_weight",
+                "train_off_target_anchor_kl_trajectory",
+                "train_flip_margin_penalty_trajectory",
+                "final_train_off_target_anchor_kl_penalty",
+                "final_train_flip_margin_penalty",
                 "scale_gate_trainable",
                 "learned_residual_scale",
                 "evaluation_operating_point",
@@ -677,6 +733,31 @@ def _pilot_gate_rows(
                 for row in arm_rows
             ],
             "sparse contextual top-k2 learned scale gate missing",
+        ),
+        _criterion(
+            "explicit_churn_anchor_objective_present",
+            any(
+                row.get("arm") == "sparse_contextual_topk2_norm_budgeted"
+                and _float(row.get("churn_anchor_kl_weight")) is not None
+                and (_float(row.get("churn_anchor_kl_weight")) or 0.0) > 0.0
+                and _float(row.get("churn_flip_margin_weight")) is not None
+                and (_float(row.get("churn_flip_margin_weight")) or 0.0) > 0.0
+                and row.get("train_off_target_anchor_kl_trajectory")
+                and row.get("train_flip_margin_penalty_trajectory")
+                for row in arm_rows
+            ),
+            "sparse contextual top-k2 trains with explicit anchor-KL and flip-margin churn penalties",
+            [
+                {
+                    "arm": row.get("arm"),
+                    "churn_anchor_kl_weight": row.get("churn_anchor_kl_weight"),
+                    "churn_flip_margin_weight": row.get("churn_flip_margin_weight"),
+                    "has_anchor_kl_trajectory": bool(row.get("train_off_target_anchor_kl_trajectory")),
+                    "has_flip_margin_trajectory": bool(row.get("train_flip_margin_penalty_trajectory")),
+                }
+                for row in arm_rows
+            ],
+            "explicit sparse churn/anchor training objective fields missing",
         ),
     ]
 
