@@ -37,6 +37,7 @@ REQUIRED_ARTIFACTS = (
 )
 
 REQUIRED_VARIANTS = (
+    "retention_constrained_gated_periphery",
     "causal_gated_context_contrastive_periphery",
     "permuted_periphery_target_null",
     "contrastive_residual_periphery",
@@ -55,12 +56,16 @@ REQUIRED_VARIANTS = (
     "shuffled_core_periphery_assignment",
 )
 
-ACTIVE_CANDIDATE = "causal_gated_context_contrastive_periphery"
+ACTIVE_CANDIDATE = "retention_constrained_gated_periphery"
+DIRECT_CE_CANDIDATE = "causal_gated_context_contrastive_periphery"
 CONTRASTIVE_CANDIDATE = "contrastive_residual_periphery"
 REPAIRED_CANDIDATE = "repaired_shared_core_residual_periphery"
 LEGACY_CANDIDATE = "core_periphery_pc_contextual_router"
 ANCHOR_RETENTION_KL_BUDGET = 5e-5
 ANCHOR_RETENTION_PENALTY_WEIGHT = 250.0
+RETENTION_CONSTRAINED_KL_BUDGET = 1e-5
+RETENTION_CONSTRAINED_PENALTY_WEIGHT = 700.0
+RETENTION_CONSTRAINED_PERIPHERY_NORM_WEIGHT = 0.08
 
 
 @dataclass(frozen=True)
@@ -292,8 +297,15 @@ def _run_torch_pilot(
 def _variant_specs() -> list[_VariantSpec]:
     return [
         _VariantSpec(
-            "causal_gated_context_contrastive_periphery",
+            "retention_constrained_gated_periphery",
             "candidate",
+            training_mode="retention_constrained_gated_periphery",
+            core_lr_scale=0.0,
+            periphery_lr_scale=0.22,
+        ),
+        _VariantSpec(
+            "causal_gated_context_contrastive_periphery",
+            "direct_ce_candidate",
             training_mode="causal_gated_context_contrastive_periphery",
             core_lr_scale=0.18,
             periphery_lr_scale=0.55,
@@ -364,6 +376,7 @@ def _SplitResidual(torch: Any, nn: Any, hidden_dim: int, num_columns: int, top_k
             self.utility_gate = nn.Linear(hidden_dim + 3, 1, bias=True)
             self.dummy = nn.Parameter(torch.zeros(()))
             if self.spec.training_mode in {
+                "retention_constrained_gated_periphery",
                 "shared_core_residual_periphery",
                 "contrastive_residual_periphery",
                 "causal_gated_context_contrastive_periphery",
@@ -406,6 +419,7 @@ def _SplitResidual(torch: Any, nn: Any, hidden_dim: int, num_columns: int, top_k
 
         def periphery_delta(self, hidden: Any, *, hard_gate: bool = True, shuffled: bool | None = None) -> Any:
             if self.spec.training_mode in {
+                "retention_constrained_gated_periphery",
                 "causal_gated_context_contrastive_periphery",
                 "permuted_gated_context_contrastive_periphery",
             }:
@@ -429,6 +443,7 @@ def _SplitResidual(torch: Any, nn: Any, hidden_dim: int, num_columns: int, top_k
             if not self.spec.use_periphery:
                 return 0.0
             if self.spec.training_mode not in {
+                "retention_constrained_gated_periphery",
                 "causal_gated_context_contrastive_periphery",
                 "permuted_gated_context_contrastive_periphery",
             }:
@@ -458,6 +473,7 @@ def _SplitResidual(torch: Any, nn: Any, hidden_dim: int, num_columns: int, top_k
             if not self.spec.use_periphery:
                 return []
             if self.spec.training_mode in {
+                "retention_constrained_gated_periphery",
                 "causal_gated_context_contrastive_periphery",
                 "permuted_gated_context_contrastive_periphery",
             }:
@@ -479,6 +495,7 @@ def _SplitResidual(torch: Any, nn: Any, hidden_dim: int, num_columns: int, top_k
             periphery_delta = (self.periphery.detach() - self.initial_periphery).norm()
             router_delta = (self.router.weight.detach() - self.initial_router).norm()
             if self.spec.training_mode in {
+                "retention_constrained_gated_periphery",
                 "causal_gated_context_contrastive_periphery",
                 "permuted_gated_context_contrastive_periphery",
             }:
@@ -566,6 +583,7 @@ def _train_variant_model(
     vocab_size: int | None = None,
 ) -> None:
     if spec.kind != "split" or spec.training_mode not in {
+        "retention_constrained_gated_periphery",
         "shared_core_residual_periphery",
         "contrastive_residual_periphery",
         "causal_gated_context_contrastive_periphery",
@@ -577,7 +595,7 @@ def _train_variant_model(
     import torch
 
     core_params = list(model.core_parameters())
-    if core_params:
+    if core_params and spec.training_mode != "retention_constrained_gated_periphery":
         core_optimizer = torch.optim.AdamW(core_params, lr=0.025 * spec.core_lr_scale)
         for _ in range(steps):
             core_optimizer.zero_grad(set_to_none=True)
@@ -597,6 +615,7 @@ def _train_variant_model(
                 core_only = hidden + model.core.view(1, 1, -1) * model.core_mask
                 residual_target = target - core_only
                 if spec.training_mode in {
+                    "retention_constrained_gated_periphery",
                     "contrastive_residual_periphery",
                     "causal_gated_context_contrastive_periphery",
                     "permuted_gated_context_contrastive_periphery",
@@ -608,6 +627,7 @@ def _train_variant_model(
                     if spec.training_mode == "permuted_gated_context_contrastive_periphery":
                         residual_target = residual_target.roll(shifts=1, dims=1)
             if spec.training_mode in {
+                "retention_constrained_gated_periphery",
                 "causal_gated_context_contrastive_periphery",
                 "permuted_gated_context_contrastive_periphery",
             }:
@@ -615,7 +635,11 @@ def _train_variant_model(
             else:
                 periphery_delta = model.periphery_delta(hidden, hard_gate=True, shuffled=False)
             if (
-                spec.training_mode == "causal_gated_context_contrastive_periphery"
+                spec.training_mode
+                in {
+                    "causal_gated_context_contrastive_periphery",
+                    "retention_constrained_gated_periphery",
+                }
                 and base is not None
                 and targets is not None
                 and vocab_size is not None
@@ -624,20 +648,33 @@ def _train_variant_model(
                 ce_losses = _per_token_ce(F, base.decode(soft_full), targets, vocab_size)
                 loss = ce_losses[mask].mean()
                 loss = loss + 0.05 * F.mse_loss(periphery_delta[mask], residual_target[mask])
+                budget = (
+                    RETENTION_CONSTRAINED_KL_BUDGET
+                    if spec.training_mode == "retention_constrained_gated_periphery"
+                    else ANCHOR_RETENTION_KL_BUDGET
+                )
+                penalty_weight = (
+                    RETENTION_CONSTRAINED_PENALTY_WEIGHT
+                    if spec.training_mode == "retention_constrained_gated_periphery"
+                    else ANCHOR_RETENTION_PENALTY_WEIGHT
+                )
                 retention_penalty, _ = _anchor_retention_budget_penalty(
                     F,
                     base.decode(hidden).detach(),
                     base.decode(soft_full),
                     mask,
-                    budget=ANCHOR_RETENTION_KL_BUDGET,
+                    budget=budget,
                 )
-                loss = loss + ANCHOR_RETENTION_PENALTY_WEIGHT * retention_penalty
+                loss = loss + penalty_weight * retention_penalty
+                if spec.training_mode == "retention_constrained_gated_periphery":
+                    loss = loss + RETENTION_CONSTRAINED_PERIPHERY_NORM_WEIGHT * periphery_delta[mask].pow(2).mean()
             else:
                 loss = F.mse_loss(periphery_delta[mask], residual_target[mask])
             loss = loss + 0.002 * (model.periphery * model.periphery_mask).pow(2).mean()
             loss.backward()
             periphery_optimizer.step()
         if spec.training_mode in {
+            "retention_constrained_gated_periphery",
             "causal_gated_context_contrastive_periphery",
             "permuted_gated_context_contrastive_periphery",
         }:
@@ -649,7 +686,11 @@ def _train_variant_model(
                 core_only = hidden + model.core.view(1, 1, -1) * model.core_mask
                 ungated = core_only + model.periphery_delta(hidden, hard_gate=False, shuffled=False)
                 if (
-                    spec.training_mode == "causal_gated_context_contrastive_periphery"
+                    spec.training_mode
+                    in {
+                        "causal_gated_context_contrastive_periphery",
+                        "retention_constrained_gated_periphery",
+                    }
                     and base is not None
                     and targets is not None
                     and vocab_size is not None
@@ -819,6 +860,8 @@ def _anchor_retention_budget_penalty(
 
 
 def _periphery_training_objective(spec: _VariantSpec) -> str:
+    if spec.training_mode == "retention_constrained_gated_periphery":
+        return "direct_train_only_ce_utility_with_frozen_core_strict_anchor_kl_and_periphery_norm_budget"
     if spec.training_mode == "causal_gated_context_contrastive_periphery":
         return "direct_train_only_ce_utility_with_centered_residual_regularizer_and_anchor_kl_budget"
     if spec.training_mode == "permuted_gated_context_contrastive_periphery":
@@ -974,6 +1017,7 @@ def _failed_gate_forensics(
 ) -> list[dict[str, Any]]:
     interesting_variants = [
         ACTIVE_CANDIDATE,
+        DIRECT_CE_CANDIDATE,
         "permuted_periphery_target_null",
         CONTRASTIVE_CANDIDATE,
         REPAIRED_CANDIDATE,
@@ -1054,7 +1098,7 @@ def _criterion(criterion: str, passed: bool, severity: str, expected: Any, actua
 
 def _safe_divide(numerator: float, denominator: float) -> float:
     if abs(denominator) <= 1e-12:
-        return float("inf") if numerator > 0.0 else 0.0
+        return 1e12 if numerator > 0.0 else 0.0
     return numerator / denominator
 
 

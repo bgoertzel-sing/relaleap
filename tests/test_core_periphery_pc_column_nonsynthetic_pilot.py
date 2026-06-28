@@ -80,7 +80,7 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
             self.assertTrue(set(REQUIRED_VARIANTS).issubset(variants))
             self.assertEqual(
                 summary["primary_result"]["primary_variant"],
-                "causal_gated_context_contrastive_periphery",
+                "retention_constrained_gated_periphery",
             )
             self.assertGreaterEqual(
                 len(summary["intervention_fingerprints"]),
@@ -115,6 +115,10 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
                 for row in summary["variant_metrics"]
             }
             self.assertEqual(
+                objectives["retention_constrained_gated_periphery"],
+                "direct_train_only_ce_utility_with_frozen_core_strict_anchor_kl_and_periphery_norm_budget",
+            )
+            self.assertEqual(
                 objectives["causal_gated_context_contrastive_periphery"],
                 "direct_train_only_ce_utility_with_centered_residual_regularizer_and_anchor_kl_budget",
             )
@@ -146,6 +150,7 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
         import torch.nn as nn
 
         for name, training_mode in (
+            ("retention_constrained_gated_periphery", "retention_constrained_gated_periphery"),
             ("repaired_shared_core_residual_periphery", "shared_core_residual_periphery"),
             ("contrastive_residual_periphery", "contrastive_residual_periphery"),
             ("causal_gated_context_contrastive_periphery", "causal_gated_context_contrastive_periphery"),
