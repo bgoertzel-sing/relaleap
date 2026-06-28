@@ -267,6 +267,12 @@ def _SplitResidual(nn: Any, hidden_dim: int, spec: _VariantSpec) -> Any:
             self.spec = spec
             self.core = nn.Parameter(torch.zeros(2, hidden_dim))
             self.periphery = nn.Parameter(torch.zeros(2, hidden_dim))
+            core_mask = torch.zeros(hidden_dim)
+            core_mask[2:5] = 1.0
+            periphery_mask = torch.zeros(hidden_dim)
+            periphery_mask[5:8] = 1.0
+            self.register_buffer("core_mask", core_mask)
+            self.register_buffer("periphery_mask", periphery_mask)
             self.dummy = nn.Parameter(torch.zeros(()))
             self.initial_core = self.core.detach().clone()
             self.initial_periphery = self.periphery.detach().clone()
@@ -282,8 +288,10 @@ def _SplitResidual(nn: Any, hidden_dim: int, spec: _VariantSpec) -> Any:
 
         def forward(self, hidden: Any, ablate: str | None = None) -> Any:
             route = self._route(hidden)
-            core = self.core[route]
-            periphery = self.periphery[1 - route] if self.spec.shuffled_eval else self.periphery[route]
+            shared_core = self.core[0].expand_as(hidden)
+            core = shared_core * self.core_mask
+            periphery_values = self.periphery[1 - route] if self.spec.shuffled_eval else self.periphery[route]
+            periphery = periphery_values * self.periphery_mask
             residual = torch.zeros_like(hidden) + self.dummy * 0.0
             if self.spec.use_core and ablate != "core":
                 residual = residual + core

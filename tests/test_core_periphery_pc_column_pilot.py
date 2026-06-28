@@ -33,7 +33,7 @@ class CorePeripheryPCColumnPilotTest(unittest.TestCase):
                 contract_path=contract,
                 out_dir=root / "pilot",
                 seed=3,
-                steps_per_task=4,
+                steps_per_task=24,
             )
 
             self.assertEqual(summary["status"], "pass")
@@ -51,6 +51,15 @@ class CorePeripheryPCColumnPilotTest(unittest.TestCase):
             self.assertTrue(
                 any(row["criterion"] == "required_controls_present" for row in summary["gate_criteria"])
             )
+            claim_gates = {
+                row["criterion"]: row["passed"]
+                for row in summary["gate_criteria"]
+                if row["severity"] == "claim"
+            }
+            self.assertTrue(claim_gates["core_periphery_update_separation"])
+            self.assertTrue(claim_gates["matched_dense_retention"])
+            self.assertTrue(claim_gates["matched_mlp_retention"])
+            self.assertTrue(claim_gates["periphery_first_pruning_signal"])
             self.assertIn("core_periphery_update_norm_ratio", summary["primary_result"])
             for artifact in REQUIRED_ARTIFACTS:
                 self.assertTrue((root / "pilot" / artifact).is_file(), artifact)
