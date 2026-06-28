@@ -300,7 +300,8 @@ def _SplitResidual(torch: Any, nn: Any, hidden_dim: int, num_columns: int, top_k
             self.dummy = nn.Parameter(torch.zeros(()))
             if self.spec.training_mode == "shared_core_residual_periphery":
                 core_mask = torch.ones(hidden_dim)
-                periphery_mask = torch.ones(hidden_dim)
+                periphery_mask = torch.zeros(hidden_dim)
+                periphery_mask[max(1, hidden_dim // 2) :] = 1.0
             else:
                 core_mask = torch.zeros(hidden_dim)
                 core_mask[: max(1, hidden_dim // 2)] = 1.0
@@ -459,8 +460,12 @@ def _train_variant_model(
         periphery_optimizer = torch.optim.AdamW(periphery_params, lr=0.025 * spec.periphery_lr_scale)
         for _ in range(steps):
             periphery_optimizer.zero_grad(set_to_none=True)
-            predicted = model(hidden)
-            loss = F.mse_loss(predicted[mask], target[mask])
+            with torch.no_grad():
+                core_only = hidden + model.core.view(1, 1, -1) * model.core_mask
+                residual_target = target - core_only
+            periphery_indices = model._indices(hidden)
+            periphery_delta = model.periphery[periphery_indices] * model.periphery_mask
+            loss = F.mse_loss(periphery_delta[mask], residual_target[mask])
             loss = loss + 0.002 * (model.periphery * model.periphery_mask).pow(2).mean()
             loss.backward()
             periphery_optimizer.step()

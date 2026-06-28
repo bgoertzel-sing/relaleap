@@ -9,6 +9,8 @@ from pathlib import Path
 from relaleap.experiments.core_periphery_pc_column_nonsynthetic_pilot import (
     REQUIRED_ARTIFACTS,
     REQUIRED_VARIANTS,
+    _VariantSpec,
+    _make_model,
     run_core_periphery_pc_column_nonsynthetic_pilot,
 )
 
@@ -116,6 +118,26 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
                 any(row["variant"] == "repaired_shared_core_residual_periphery" for row in forensic_rows)
             )
             self.assertTrue(all("anchor_kl_minus_mlp" in row for row in forensic_rows))
+
+    def test_repaired_arm_uses_shared_core_and_complementary_periphery_subspace(self) -> None:
+        import torch
+        import torch.nn as nn
+
+        model = _make_model(
+            torch,
+            nn,
+            hidden_dim=8,
+            num_columns=4,
+            top_k=2,
+            spec=_VariantSpec(
+                "repaired_shared_core_residual_periphery",
+                "candidate",
+                training_mode="shared_core_residual_periphery",
+            ),
+        )
+
+        self.assertEqual(model.core_mask.tolist(), [1.0] * 8)
+        self.assertEqual(model.periphery_mask.tolist(), [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0])
 
 
 def _write_config(path: Path) -> Path:
