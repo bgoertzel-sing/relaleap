@@ -22,6 +22,15 @@ functional churn, causal intervention fingerprints, task-free continual
 learning, finite-update commutators, and dense-teacher residual distillation.
 See `docs/research_pivot_2026_06_23.md`.
 
+As of 2026-06-28, Ben's HIBACAML-style core/periphery predictive-coding column
+direction is active as a sparse-column design target. ACSR remains useful for
+anticipatory routing among columns, but the next columnar hypothesis should
+also innovate inside each column: protect task-generic lower-plasticity core
+units, make peripheral units more context-specific and pruneable, and evaluate
+retention, commutators, causal intervention fingerprints, periphery-first
+pruning, and CE guardrails against dense/rank/norm and MLP controls. See
+`docs/core_periphery_pc_columns_for_acsr.md`.
+
 ## Initial Mission
 
 Validate a minimal experimental harness on char-level Tiny Shakespeare before moving to larger GPU experiments.
