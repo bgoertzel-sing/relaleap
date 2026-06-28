@@ -71,10 +71,10 @@ class ACSRSparseDenseMechanismGateTest(unittest.TestCase):
             self.assertEqual(summary["decision"], "acsr_sparse_dense_mechanism_gate_blocked")
             self.assertEqual(
                 summary["claim_status"],
-                "sparse_mechanism_claim_blocked_by_dense_observable_gap",
+                "sparse_mechanism_claim_blocked_by_observable_gap",
             )
             self.assertFalse(summary["promotion_allowed"])
-            self.assertIn("dense-control extractor", summary["selected_next_step"])
+            self.assertIn("repair missing local control observables", summary["selected_next_step"])
             self.assertTrue(
                 any(
                     row["criterion"] == "dense_mechanism_observables_present"
@@ -135,7 +135,21 @@ class ACSRSparseDenseMechanismGateTest(unittest.TestCase):
             )
             self.assertTrue(
                 any(
+                    row["criterion"] == "parameter_matched_control_mechanism_observables_present"
+                    and row["passed"]
+                    for row in summary["gate_criteria"]
+                )
+            )
+            self.assertTrue(
+                any(
                     row["arm"] == "dense_rank16_best_norm"
+                    and row["mechanism_fields_present"]
+                    for row in summary["mechanism_metrics"]
+                )
+            )
+            self.assertTrue(
+                any(
+                    row["arm"] == "parameter_matched_causal_mlp_control"
                     and row["mechanism_fields_present"]
                     for row in summary["mechanism_metrics"]
                 )
@@ -251,6 +265,20 @@ def _write_dense_observables(path: Path) -> None:
         [
             _dense_observable_row(16, 0.02, 0.1, 0.01, 0.6),
             _dense_observable_row(24, 0.03, 0.2, 0.02, 0.5),
+        ],
+    )
+    _write_csv(
+        path / "control_mechanism_observables.csv",
+        [
+            {
+                "arm": "parameter_matched_causal_mlp_control",
+                "rank": "",
+                "anchor_kl_or_logit_mse": 0.04,
+                "functional_churn": 0.3,
+                "retention_or_forgetting": 0.03,
+                "intervention_fingerprint_purity": 0.4,
+                "residual_l2": 1.2,
+            }
         ],
     )
 

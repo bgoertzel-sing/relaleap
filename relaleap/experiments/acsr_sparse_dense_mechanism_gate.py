@@ -86,6 +86,7 @@ def run_acsr_sparse_dense_mechanism_gate(
     dense_matrix_rows = _read_csv(dense_matrix_dir / "matrix_metrics.csv")
     dense_rank_rows = _read_csv(dense_matrix_dir / "rank_summary.csv")
     dense_observable_rows = _read_csv(dense_observables_dir / "dense_mechanism_observables.csv")
+    control_observable_rows = _read_csv(dense_observables_dir / "control_mechanism_observables.csv")
     dense_synthesis = _read_json(dense_synthesis_path)
     strategy = _strategy_review(strategy_review_path)
 
@@ -106,6 +107,7 @@ def run_acsr_sparse_dense_mechanism_gate(
         dense_matrix_rows=dense_matrix_rows,
         dense_rank_rows=dense_rank_rows,
         dense_observable_rows=dense_observable_rows,
+        control_observable_rows=control_observable_rows,
     )
     gate_rows = source_rows + _comparison_gate_rows(metrics, router_rows, dense_rank_rows, strategy)
     hard_source_failures = [row for row in source_rows if not row["passed"]]
@@ -120,11 +122,18 @@ def run_acsr_sparse_dense_mechanism_gate(
         status = "pass"
         if blocking_failures:
             decision = "acsr_sparse_dense_mechanism_gate_blocked"
-            claim_status = "sparse_mechanism_claim_blocked_by_dense_observable_gap"
-            selected_next_step = (
-                "add the smallest local dense-control extractor for anchor KL/logit MSE, "
-                "functional churn, retention, and intervention fingerprints at rank 16/24"
-            )
+            if _has_missing_observable_failure(blocking_failures):
+                claim_status = "sparse_mechanism_claim_blocked_by_observable_gap"
+                selected_next_step = (
+                    "repair missing local control observables for anchor KL/logit MSE, "
+                    "functional churn, retention, and intervention fingerprints"
+                )
+            else:
+                claim_status = "sparse_mechanism_claim_blocked_by_matched_controls"
+                selected_next_step = (
+                    "run one local mechanism-stratified sparse-vs-control follow-up or demote "
+                    "ACSR sparse columns to diagnostics if matched controls continue to win"
+                )
         else:
             decision = "acsr_sparse_dense_mechanism_gate_passed"
             claim_status = "sparse_mechanism_separates_from_dense_rank16_24_controls"
@@ -220,6 +229,7 @@ def _mechanism_rows(
     dense_matrix_rows: list[dict[str, str]],
     dense_rank_rows: list[dict[str, str]],
     dense_observable_rows: list[dict[str, str]],
+    control_observable_rows: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     sparse_variants = set(REQUIRED_SPARSE_ARMS) | set(REQUIRED_NULL_ARMS) | {
@@ -229,20 +239,31 @@ def _mechanism_rows(
         variant = router_row.get("variant", "")
         if variant not in sparse_variants:
             continue
+        control_observables = _control_observable_row(control_observable_rows, variant)
         rows.append(
             _arm_row(
                 arm=variant,
                 family=_family(variant),
                 ce_loss=_float_or_blank(router_row.get("ce_loss")),
                 oracle_regret=_float_or_blank(router_row.get("oracle_regret")),
-                residual_l2="",
+                residual_l2=_float_or_blank(control_observables.get("residual_l2")) if variant == "parameter_matched_causal_mlp_control" else "",
                 active_rank_or_topk=_int_or_blank(router_row.get("top_k")),
                 active_params=_active_params(variant, parameter_rows),
-                anchor_kl_or_logit_mse=_retention_value(retention_rows, variant, "anchor_logit_mse_after_transfer"),
-                functional_churn=_retention_value(retention_rows, variant, "anchor_support_churn_after_transfer"),
-                retention_or_forgetting=_retention_value(retention_rows, variant, "anchor_ce_drift"),
-                intervention_fingerprint_purity=_intervention_proxy(
-                    variant, same_student_rows, perturbation_rows
+                anchor_kl_or_logit_mse=_coalesce_float(
+                    _retention_value(retention_rows, variant, "anchor_logit_mse_after_transfer"),
+                    control_observables.get("anchor_kl_or_logit_mse"),
+                ),
+                functional_churn=_coalesce_float(
+                    _retention_value(retention_rows, variant, "anchor_support_churn_after_transfer"),
+                    control_observables.get("functional_churn"),
+                ),
+                retention_or_forgetting=_coalesce_float(
+                    _retention_value(retention_rows, variant, "anchor_ce_drift"),
+                    control_observables.get("retention_or_forgetting"),
+                ),
+                intervention_fingerprint_purity=_coalesce_float(
+                    _intervention_proxy(variant, same_student_rows, perturbation_rows),
+                    control_observables.get("intervention_fingerprint_purity"),
                 ),
             )
         )
@@ -328,6 +349,10 @@ def _comparison_gate_rows(
     sparse_present = all(arm in arms for arm in REQUIRED_SPARSE_ARMS)
     null_present = all(arm in arms for arm in REQUIRED_NULL_ARMS)
     dense_present = all(f"dense_rank{rank}_best_norm" in arms for rank in REQUIRED_DENSE_RANKS)
+    control_present = "parameter_matched_causal_mlp_control" in arms
+    control_mechanism_ready = control_present and arms["parameter_matched_causal_mlp_control"][
+        "mechanism_fields_present"
+    ]
     dense_mechanism_ready = dense_present and all(
         arms[f"dense_rank{rank}_best_norm"]["mechanism_fields_present"]
         for rank in REQUIRED_DENSE_RANKS
@@ -342,6 +367,7 @@ def _comparison_gate_rows(
     ]
     null_ce_failures = _null_failures(router_rows)
     mechanism_separation = _sparse_dense_mechanism_separation(arms)
+    control_separation = _sparse_control_mechanism_separation(arms)
     return [
         _criterion(
             "strategy_review_consumed",
@@ -398,6 +424,13 @@ def _comparison_gate_rows(
             "dense controls lack required non-CE mechanism observables",
         ),
         _criterion(
+            "parameter_matched_control_mechanism_observables_present",
+            control_mechanism_ready,
+            "parameter-matched causal MLP row includes anchor KL/logit MSE, churn, retention, and fingerprint fields",
+            arms.get("parameter_matched_causal_mlp_control", {}).get("missing_mechanism_fields"),
+            "parameter-matched causal MLP lacks required non-CE mechanism observables",
+        ),
+        _criterion(
             "sparse_mechanism_observables_present",
             sparse_mechanism_ready,
             "ACSR sparse row includes anchor/churn/retention/fingerprint fields",
@@ -431,6 +464,13 @@ def _comparison_gate_rows(
             mechanism_separation,
             "sparse-vs-dense mechanism separation is not established",
         ),
+        _criterion(
+            "sparse_beats_parameter_matched_control_on_required_mechanism_fields",
+            bool(control_separation["passed"]),
+            "ACSR must beat the parameter-matched causal MLP control on matched non-CE mechanism fields",
+            control_separation,
+            "sparse-vs-parameter-matched causal MLP mechanism separation is not established",
+        ),
     ]
 
 
@@ -457,6 +497,19 @@ def _dense_observable_row(rows: list[dict[str, str]], rank: int) -> dict[str, st
         ),
         {},
     )
+
+
+def _control_observable_row(rows: list[dict[str, str]], arm: str) -> dict[str, str]:
+    return next((row for row in rows if row.get("arm") == arm), {})
+
+
+def _has_missing_observable_failure(rows: list[dict[str, Any]]) -> bool:
+    missing_criteria = {
+        "dense_mechanism_observables_present",
+        "parameter_matched_control_mechanism_observables_present",
+        "sparse_mechanism_observables_present",
+    }
+    return any(row.get("criterion") in missing_criteria for row in rows)
 
 
 def _sparse_dense_mechanism_separation(arms: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -495,6 +548,39 @@ def _sparse_dense_mechanism_separation(arms: dict[str, dict[str, Any]]) -> dict[
     comparisons["intervention_fingerprint_purity"] = {
         "sparse": sparse_purity,
         "best_dense_rank16_24": dense_purity,
+        "sparse_better": purity_passed,
+        "direction": "higher_is_better",
+    }
+    return {"passed": passed and purity_passed, "comparisons": comparisons}
+
+
+def _sparse_control_mechanism_separation(arms: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    sparse = arms.get("acsr_mlp_predicted_future", {})
+    control = arms.get("parameter_matched_causal_mlp_control", {})
+    if not sparse or not control:
+        return {"passed": False, "reason": "missing sparse or parameter-matched control arm"}
+    if not sparse.get("mechanism_fields_present") or not control.get("mechanism_fields_present"):
+        return {"passed": False, "reason": "missing sparse or control mechanism fields"}
+    lower_better = ("anchor_kl_or_logit_mse", "functional_churn", "retention_or_forgetting")
+    comparisons: dict[str, Any] = {}
+    passed = True
+    for field in lower_better:
+        sparse_value = _float(sparse.get(field))
+        control_value = _float(control.get(field))
+        field_passed = sparse_value is not None and control_value is not None and sparse_value < control_value
+        comparisons[field] = {
+            "sparse": sparse_value,
+            "parameter_matched_causal_mlp": control_value,
+            "sparse_better": field_passed,
+            "direction": "lower_is_better",
+        }
+        passed = passed and field_passed
+    sparse_purity = _float(sparse.get("intervention_fingerprint_purity"))
+    control_purity = _float(control.get("intervention_fingerprint_purity"))
+    purity_passed = sparse_purity is not None and control_purity is not None and sparse_purity > control_purity
+    comparisons["intervention_fingerprint_purity"] = {
+        "sparse": sparse_purity,
+        "parameter_matched_causal_mlp": control_purity,
         "sparse_better": purity_passed,
         "direction": "higher_is_better",
     }
