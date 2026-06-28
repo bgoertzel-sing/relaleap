@@ -60,6 +60,7 @@ def run_norm_budgeted_churn_strata_synthesis(
         status == "pass"
         and any(row["scientific_signal"] == "weak_local_signal_needs_repeat" for row in arm_signal_rows)
     )
+    interference_signal = status == "pass" and _has_nontrivial_ce_interference_signal(arm_signal_rows)
     decision = (
         "norm_budgeted_churn_strata_synthesis_completed"
         if status == "pass"
@@ -68,6 +69,8 @@ def run_norm_budgeted_churn_strata_synthesis(
     selected_next_step = (
         "prepare a bounded RunPod repeat only after confirming the weak local matched-strata signal is not a budget artifact"
         if warrants_runpod
+        else "keep work local and add an explicit churn/anchor penalty to the scale-gated sparse norm objective before any RunPod repeat"
+        if interference_signal
         else "keep work local and diagnose sparse/MLP budget underuse with stronger norm-use mechanics before any RunPod repeat"
     )
     summary = {
@@ -286,6 +289,12 @@ def _interpretation(status: str, warrants_runpod: bool, arm_signal_rows: list[di
             "A challenger has a weak local matched-strata signal at nontrivial residual budget, "
             "but promotion is still disallowed. Review the strata before any GPU repeat."
         )
+    if _has_nontrivial_ce_interference_signal(arm_signal_rows):
+        return (
+            "A sparse/MLP challenger now reaches a nontrivial dense24 residual-L2 budget and improves CE, "
+            "but the improvement comes with worse anchor KL or prediction-flip churn. Treat this as "
+            "target adaptation with interference, not as a reusable low-churn correction."
+        )
     low_budget = [
         row["arm"]
         for row in arm_signal_rows
@@ -301,6 +310,27 @@ def _interpretation(status: str, warrants_runpod: bool, arm_signal_rows: list[di
             "sparse/MLP arms still underuse the dense24 budget before any GPU repeat."
         )
     return "No sparse/MLP challenger shows a matched-strata signal strong enough to justify GPU repetition."
+
+
+def _has_nontrivial_ce_interference_signal(arm_signal_rows: list[dict[str, Any]]) -> bool:
+    for row in arm_signal_rows:
+        if row["family"] not in {"sparse_acsr", "mlp_control"}:
+            continue
+        budget_fraction = row.get("budget_fraction_vs_dense24") or 0.0
+        ce_delta = row.get("ce_delta_vs_dense24")
+        anchor_delta = row.get("anchor_kl_delta_vs_dense24")
+        flip_delta = row.get("flip_delta_vs_dense24")
+        if (
+            budget_fraction >= 0.5
+            and ce_delta is not None
+            and ce_delta < 0.0
+            and (
+                (anchor_delta is not None and anchor_delta > 0.0)
+                or (flip_delta is not None and flip_delta > 0.0)
+            )
+        ):
+            return True
+    return False
 
 
 def _blocker(

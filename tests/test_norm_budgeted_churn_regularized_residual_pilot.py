@@ -68,6 +68,9 @@ class NormBudgetedChurnRegularizedResidualPilotTest(unittest.TestCase):
             self.assertTrue(all("norm_target_hit_rate" in row for row in rows))
             self.assertTrue(all("curriculum_stage_count" in row for row in rows))
             self.assertTrue(all("realized_residual_l2_trajectory" in row for row in rows))
+            self.assertTrue(all("scale_gate_trainable" in row for row in rows))
+            self.assertTrue(all("learned_residual_scale" in row for row in rows))
+            self.assertTrue(all("evaluation_operating_point" in row for row in rows))
             curriculum_rows = {row["arm"]: row for row in rows if row["norm_target_curriculum"] == "True"}
             self.assertEqual(
                 {"dense_rank24_norm_budgeted", "sparse_contextual_topk2_norm_budgeted"},
@@ -78,6 +81,10 @@ class NormBudgetedChurnRegularizedResidualPilotTest(unittest.TestCase):
                 self.assertLessEqual(float(row["norm_target_hit_rate"]), 1.0)
                 self.assertEqual(row["curriculum_stage_count"], "4")
                 self.assertTrue(row["realized_residual_l2_trajectory"])
+            sparse = curriculum_rows["sparse_contextual_topk2_norm_budgeted"]
+            self.assertEqual(sparse["scale_gate_trainable"], "True")
+            self.assertEqual(sparse["evaluation_operating_point"], "learned_scale_gate")
+            self.assertGreater(float(sparse["learned_residual_scale"]), 0.0)
             with (root / "out" / "per_token_metrics.csv").open(newline="", encoding="utf-8") as handle:
                 token_rows = list(csv.DictReader(handle))
             self.assertGreater(len(token_rows), 0)

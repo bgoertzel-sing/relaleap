@@ -65,7 +65,7 @@ def run_norm_budgeted_churn_regularized_residual_pilot(
     selected_next_step = (
         "inspect per-token strata before deciding whether a RunPod repeat is scientifically justified"
         if advancing
-        else "keep work local and test an explicit trainable residual scale/gate so sparse evaluation can occupy the curriculum target-norm operating point"
+        else "keep work local and test whether a stronger sparse norm-use objective can improve CE at nontrivial residual L2 without increasing anchor KL or flip churn"
     )
     summary = {
         "status": status,
@@ -133,7 +133,12 @@ def _run_pilot(
             "sparse_contextual_topk2_norm_budgeted",
             "sparse_acsr",
             True,
-            ResidualColumns(32, num_columns=12, atoms_per_column=4, top_k=2, support_router="contextual_mlp"),
+            _NormScaledResidual(
+                torch,
+                nn,
+                ResidualColumns(32, num_columns=12, atoms_per_column=4, top_k=2, support_router="contextual_mlp"),
+                initial_scale=residual_budget,
+            ),
         ),
         (
             "sparse_rank_matched_topk1_norm_budgeted",
@@ -224,7 +229,10 @@ def _train_module(
         optimizer.zero_grad(set_to_none=True)
         raw_update = _module_update(module, hidden)
         target_l2 = target_schedule[min(stage_count - 1, step * stage_count // max(1, steps))] if norm_target_curriculum else budget_floor
-        update = _norm_targeted_update(raw_update, target_l2) if norm_target_curriculum else raw_update
+        if norm_target_curriculum and _learned_residual_scale(module) is None:
+            update = _norm_targeted_update(raw_update, target_l2)
+        else:
+            update = raw_update
         logits = base.decode(hidden + update)
         ce = F.cross_entropy(logits[:, :-1, :].reshape(-1, vocab_size), targets[:, :-1].reshape(-1))
         update_l2 = update[:, :-1, :].reshape(-1, update.shape[-1]).norm(dim=-1).mean()
@@ -245,12 +253,16 @@ def _train_module(
         if target > 0.0 and abs(realized - target) <= 0.15 * target:
             hit_count += 1
     module.eval()
+    learned_scale = _learned_residual_scale(module)
     return {
         "norm_target_curriculum": norm_target_curriculum,
         "curriculum_stage_count": stage_count,
         "norm_target_hit_rate": hit_count / max(1, len(realized_l2s)) if norm_target_curriculum else "",
         "realized_residual_l2_trajectory": ";".join(f"{value:.6f}" for value in realized_l2s) if norm_target_curriculum else "",
         "target_residual_l2_trajectory": ";".join(f"{value:.6f}" for value in target_l2s) if norm_target_curriculum else "",
+        "scale_gate_trainable": learned_scale is not None,
+        "learned_residual_scale": learned_scale if learned_scale is not None else "",
+        "evaluation_operating_point": "learned_scale_gate" if learned_scale is not None else "raw_or_budget_clipped_residual",
     }
 
 
@@ -636,6 +648,9 @@ def _pilot_gate_rows(
                 "curriculum_stage_count",
                 "realized_residual_l2_trajectory",
                 "target_residual_l2_trajectory",
+                "scale_gate_trainable",
+                "learned_residual_scale",
+                "evaluation_operating_point",
             }.issubset(arm_fields)
             and {"dense_rank24_norm_budgeted", "sparse_contextual_topk2_norm_budgeted"}.issubset(
                 {row.get("arm") for row in curriculum_rows}
@@ -643,6 +658,25 @@ def _pilot_gate_rows(
             "dense24 and sparse top-k2 curriculum arms emit target-norm schema",
             sorted(arm_fields),
             "norm-target curriculum schema fields or required arms missing",
+        ),
+        _criterion(
+            "sparse_topk2_learned_scale_gate_present",
+            any(
+                row.get("arm") == "sparse_contextual_topk2_norm_budgeted"
+                and row.get("scale_gate_trainable") is True
+                and row.get("evaluation_operating_point") == "learned_scale_gate"
+                for row in arm_rows
+            ),
+            "sparse contextual top-k2 evaluates through a learned residual scale gate",
+            [
+                {
+                    "arm": row.get("arm"),
+                    "scale_gate_trainable": row.get("scale_gate_trainable"),
+                    "evaluation_operating_point": row.get("evaluation_operating_point"),
+                }
+                for row in arm_rows
+            ],
+            "sparse contextual top-k2 learned scale gate missing",
         ),
     ]
 
@@ -684,6 +718,39 @@ class _GatedMLPResidual(_DenseResidual):
 
     def parameters(self) -> Any:
         return list(self.net.parameters()) + [self.gate]
+
+
+class _NormScaledResidual:
+    def __init__(self, torch: Any, nn: Any, module: Any, initial_scale: float) -> None:
+        self.torch = torch
+        self.module = module
+        self.scale_logit = nn.Parameter(torch.log(torch.exp(torch.tensor(float(initial_scale))) - 1.0))
+
+    def __call__(self, hidden: Any) -> Any:
+        raw = _module_update(self.module, hidden)
+        token_l2 = raw[:, :-1, :].reshape(-1, raw.shape[-1]).norm(dim=-1).mean().clamp_min(1e-12)
+        direction = raw / token_l2
+        return direction * self.torch.nn.functional.softplus(self.scale_logit)
+
+    def train(self) -> None:
+        self.module.train()
+
+    def eval(self) -> None:
+        self.module.eval()
+
+    def parameters(self) -> Any:
+        return list(self.module.parameters()) + [self.scale_logit]
+
+    def learned_scale(self) -> float:
+        with self.torch.no_grad():
+            return float(self.torch.nn.functional.softplus(self.scale_logit).item())
+
+
+def _learned_residual_scale(module: Any) -> float | None:
+    learned = getattr(module, "learned_scale", None)
+    if callable(learned):
+        return float(learned())
+    return None
 
 
 def _criterion(criterion: str, passed: bool, threshold: Any, actual: Any, failure_reason: str) -> dict[str, Any]:
