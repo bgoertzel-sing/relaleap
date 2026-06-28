@@ -76,6 +76,10 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
             )
             variants = {row["variant"] for row in summary["variant_metrics"]}
             self.assertTrue(set(REQUIRED_VARIANTS).issubset(variants))
+            self.assertEqual(
+                summary["primary_result"]["primary_variant"],
+                "repaired_shared_core_residual_periphery",
+            )
             self.assertGreaterEqual(
                 len(summary["intervention_fingerprints"]),
                 len(REQUIRED_VARIANTS) * 2,
@@ -103,6 +107,13 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
             self.assertTrue(all("heldout_ce" in row for row in rows))
             self.assertTrue(all("anchor_kl_drift" in row for row in rows))
             self.assertTrue(all("finite_update_commutator" in row for row in rows))
+            self.assertTrue(all("core_first_prune_delta_heldout" in row for row in rows))
+            with (root / "out" / "failed_gate_forensics.csv").open(newline="", encoding="utf-8") as handle:
+                forensic_rows = list(csv.DictReader(handle))
+            self.assertTrue(
+                any(row["variant"] == "repaired_shared_core_residual_periphery" for row in forensic_rows)
+            )
+            self.assertTrue(all("anchor_kl_minus_mlp" in row for row in forensic_rows))
 
 
 def _write_config(path: Path) -> Path:
