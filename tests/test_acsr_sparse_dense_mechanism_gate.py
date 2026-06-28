@@ -62,6 +62,7 @@ class ACSRSparseDenseMechanismGateTest(unittest.TestCase):
                 acsr_dir=acsr,
                 dense_matrix_dir=dense,
                 dense_synthesis_path=dense_synthesis,
+                dense_observables_dir=root / "missing_observables",
                 strategy_review_path=review,
                 out_dir=root / "out",
             )
@@ -93,6 +94,52 @@ class ACSRSparseDenseMechanismGateTest(unittest.TestCase):
             self.assertIn("dense_rank24_best_norm", metrics_text)
             notes = (root / "out" / "notes.md").read_text(encoding="utf-8")
             self.assertIn("Promotion allowed: `False`", notes)
+
+    def test_dense_observable_packet_satisfies_dense_mechanism_presence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            acsr = root / "acsr"
+            dense = root / "dense"
+            observables = root / "observables"
+            _write_acsr_packet(acsr)
+            _write_dense_matrix(dense)
+            _write_dense_observables(observables)
+            dense_synthesis = root / "dense_synthesis.json"
+            dense_synthesis.write_text(
+                json.dumps(
+                    {
+                        "status": "pass",
+                        "decision": "acsr_sparse_support_claim_blocked_by_dense_rank_norm_controls",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = run_acsr_sparse_dense_mechanism_gate(
+                acsr_dir=acsr,
+                dense_matrix_dir=dense,
+                dense_synthesis_path=dense_synthesis,
+                dense_observables_dir=observables,
+                strategy_review_path=root / "missing_review.md",
+                out_dir=root / "out",
+            )
+
+            self.assertEqual(summary["status"], "pass")
+            self.assertTrue(
+                any(
+                    row["criterion"] == "dense_mechanism_observables_present"
+                    and row["passed"]
+                    for row in summary["gate_criteria"]
+                )
+            )
+            self.assertTrue(
+                any(
+                    row["arm"] == "dense_rank16_best_norm"
+                    and row["mechanism_fields_present"]
+                    for row in summary["mechanism_metrics"]
+                )
+            )
 
 
 def _write_acsr_packet(path: Path) -> None:
@@ -195,6 +242,34 @@ def _write_dense_matrix(path: Path) -> None:
         path / "per_token_metrics.csv",
         [{"arm": "dense_causal_rank16_norm_scale_1.00", "token_index": 0}],
     )
+
+
+def _write_dense_observables(path: Path) -> None:
+    path.mkdir(parents=True)
+    _write_csv(
+        path / "dense_mechanism_observables.csv",
+        [
+            _dense_observable_row(16, 0.02, 0.1, 0.01, 0.6),
+            _dense_observable_row(24, 0.03, 0.2, 0.02, 0.5),
+        ],
+    )
+
+
+def _dense_observable_row(
+    rank: int,
+    anchor_logit_mse: float,
+    functional_churn: float,
+    retention: float,
+    purity: float,
+) -> dict[str, object]:
+    return {
+        "arm": f"dense_rank{rank}_best_norm",
+        "rank": rank,
+        "anchor_kl_or_logit_mse": anchor_logit_mse,
+        "functional_churn": functional_churn,
+        "retention_or_forgetting": retention,
+        "intervention_fingerprint_purity": purity,
+    }
 
 
 def _router_row(variant: str, ce_loss: float, oracle_regret: float) -> dict[str, object]:

@@ -15,6 +15,7 @@ from typing import Any
 DEFAULT_ACSR_DIR = Path("results/audits/token_larger_anticipatory_contextual_support_routing")
 DEFAULT_DENSE_MATRIX_DIR = Path("results/reports/dense_residual_rank_norm_matrix")
 DEFAULT_DENSE_SYNTHESIS = Path("results/reports/acsr_dense_rank_norm_synthesis/summary.json")
+DEFAULT_DENSE_OBSERVABLES_DIR = Path("results/reports/acsr_dense_mechanism_observables")
 DEFAULT_STRATEGY_REVIEW = Path("../outputs/strategy-reviews/relaleap/latest-review.md")
 DEFAULT_OUT_DIR = Path("results/reports/acsr_sparse_dense_mechanism_gate")
 
@@ -68,6 +69,7 @@ def run_acsr_sparse_dense_mechanism_gate(
     acsr_dir: Path = DEFAULT_ACSR_DIR,
     dense_matrix_dir: Path = DEFAULT_DENSE_MATRIX_DIR,
     dense_synthesis_path: Path = DEFAULT_DENSE_SYNTHESIS,
+    dense_observables_dir: Path = DEFAULT_DENSE_OBSERVABLES_DIR,
     strategy_review_path: Path = DEFAULT_STRATEGY_REVIEW,
     out_dir: Path = DEFAULT_OUT_DIR,
 ) -> dict[str, Any]:
@@ -83,6 +85,7 @@ def run_acsr_sparse_dense_mechanism_gate(
     dense_summary = _read_json(dense_matrix_dir / "summary.json")
     dense_matrix_rows = _read_csv(dense_matrix_dir / "matrix_metrics.csv")
     dense_rank_rows = _read_csv(dense_matrix_dir / "rank_summary.csv")
+    dense_observable_rows = _read_csv(dense_observables_dir / "dense_mechanism_observables.csv")
     dense_synthesis = _read_json(dense_synthesis_path)
     strategy = _strategy_review(strategy_review_path)
 
@@ -102,6 +105,7 @@ def run_acsr_sparse_dense_mechanism_gate(
         parameter_rows=parameter_rows,
         dense_matrix_rows=dense_matrix_rows,
         dense_rank_rows=dense_rank_rows,
+        dense_observable_rows=dense_observable_rows,
     )
     gate_rows = source_rows + _comparison_gate_rows(metrics, router_rows, dense_rank_rows, strategy)
     hard_source_failures = [row for row in source_rows if not row["passed"]]
@@ -137,6 +141,7 @@ def run_acsr_sparse_dense_mechanism_gate(
             "acsr": str(acsr_dir),
             "dense_matrix": str(dense_matrix_dir),
             "dense_synthesis": str(dense_synthesis_path),
+            "dense_observables": str(dense_observables_dir),
         },
         "required_mechanism_fields": list(MECHANISM_FIELDS),
         "required_dense_ranks": list(REQUIRED_DENSE_RANKS),
@@ -214,6 +219,7 @@ def _mechanism_rows(
     parameter_rows: list[dict[str, str]],
     dense_matrix_rows: list[dict[str, str]],
     dense_rank_rows: list[dict[str, str]],
+    dense_observable_rows: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     sparse_variants = set(REQUIRED_SPARSE_ARMS) | set(REQUIRED_NULL_ARMS) | {
@@ -242,6 +248,7 @@ def _mechanism_rows(
         )
     for rank in REQUIRED_DENSE_RANKS:
         best = _dense_best_rank_row(dense_rank_rows, dense_matrix_rows, rank)
+        observables = _dense_observable_row(dense_observable_rows, rank)
         rows.append(
             _arm_row(
                 arm=f"dense_rank{rank}_best_norm",
@@ -251,11 +258,19 @@ def _mechanism_rows(
                 residual_l2=_float_or_blank(best.get("heldout_residual_update_l2")),
                 active_rank_or_topk=rank,
                 active_params=_int_or_blank(best.get("active_params_proxy")),
-                anchor_kl_or_logit_mse=_float_or_blank(best.get("anchor_kl_or_logit_mse")),
-                functional_churn=_float_or_blank(best.get("functional_churn")),
-                retention_or_forgetting=_float_or_blank(best.get("retention_or_forgetting")),
+                anchor_kl_or_logit_mse=_coalesce_float(
+                    best.get("anchor_kl_or_logit_mse"), observables.get("anchor_kl_or_logit_mse")
+                ),
+                functional_churn=_coalesce_float(
+                    best.get("functional_churn"), observables.get("functional_churn")
+                ),
+                retention_or_forgetting=_coalesce_float(
+                    best.get("retention_or_forgetting"), observables.get("retention_or_forgetting")
+                ),
                 intervention_fingerprint_purity=_float_or_blank(
                     best.get("intervention_fingerprint_purity")
+                ) if best.get("intervention_fingerprint_purity", "") not in ("", None) else _float_or_blank(
+                    observables.get("intervention_fingerprint_purity")
                 ),
                 delta_vs_sparse=_float_or_blank(best.get("heldout_delta_minus_sparse_topk2")),
             )
@@ -326,6 +341,7 @@ def _comparison_gate_rows(
         and _bool(row.get("beats_sparse_topk2"))
     ]
     null_ce_failures = _null_failures(router_rows)
+    mechanism_separation = _sparse_dense_mechanism_separation(arms)
     return [
         _criterion(
             "strategy_review_consumed",
@@ -410,11 +426,9 @@ def _comparison_gate_rows(
         ),
         _criterion(
             "sparse_beats_dense_on_required_mechanism_fields",
-            False,
+            bool(mechanism_separation["passed"]),
             "ACSR must beat best dense rank16/24 on matched non-CE mechanism fields",
-            "not evaluated because dense rank16/24 mechanism fields are unavailable"
-            if not dense_mechanism_ready
-            else "not evaluated by this artifact-only gate",
+            mechanism_separation,
             "sparse-vs-dense mechanism separation is not established",
         ),
     ]
@@ -431,6 +445,60 @@ def _dense_best_rank_row(
     merged = dict(rank_row)
     merged.update(matrix)
     return merged
+
+
+def _dense_observable_row(rows: list[dict[str, str]], rank: int) -> dict[str, str]:
+    target_arm = f"dense_rank{rank}_best_norm"
+    return next(
+        (
+            row
+            for row in rows
+            if row.get("arm") == target_arm or int(_float(row.get("rank")) or 0) == rank
+        ),
+        {},
+    )
+
+
+def _sparse_dense_mechanism_separation(arms: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    sparse = arms.get("acsr_mlp_predicted_future", {})
+    dense = [
+        arms.get(f"dense_rank{rank}_best_norm", {})
+        for rank in REQUIRED_DENSE_RANKS
+    ]
+    if not sparse or any(not row for row in dense):
+        return {"passed": False, "reason": "missing sparse or dense arms"}
+    if not sparse.get("mechanism_fields_present") or any(not row.get("mechanism_fields_present") for row in dense):
+        return {"passed": False, "reason": "missing sparse or dense mechanism fields"}
+    lower_better = ("anchor_kl_or_logit_mse", "functional_churn", "retention_or_forgetting")
+    comparisons: dict[str, Any] = {}
+    passed = True
+    for field in lower_better:
+        sparse_value = _float(sparse.get(field))
+        dense_best = min(
+            (_float(row.get(field)) for row in dense if _float(row.get(field)) is not None),
+            default=None,
+        )
+        field_passed = sparse_value is not None and dense_best is not None and sparse_value < dense_best
+        comparisons[field] = {
+            "sparse": sparse_value,
+            "best_dense_rank16_24": dense_best,
+            "sparse_better": field_passed,
+            "direction": "lower_is_better",
+        }
+        passed = passed and field_passed
+    sparse_purity = _float(sparse.get("intervention_fingerprint_purity"))
+    dense_purity = max(
+        (_float(row.get("intervention_fingerprint_purity")) for row in dense if _float(row.get("intervention_fingerprint_purity")) is not None),
+        default=None,
+    )
+    purity_passed = sparse_purity is not None and dense_purity is not None and sparse_purity > dense_purity
+    comparisons["intervention_fingerprint_purity"] = {
+        "sparse": sparse_purity,
+        "best_dense_rank16_24": dense_purity,
+        "sparse_better": purity_passed,
+        "direction": "higher_is_better",
+    }
+    return {"passed": passed and purity_passed, "comparisons": comparisons}
 
 
 def _retention_value(rows: list[dict[str, str]], variant: str, field: str) -> Any:
@@ -628,6 +696,14 @@ def _float(value: Any) -> float | None:
 def _float_or_blank(value: Any) -> float | str:
     parsed = _float(value)
     return "" if parsed is None else parsed
+
+
+def _coalesce_float(*values: Any) -> float | str:
+    for value in values:
+        parsed = _float(value)
+        if parsed is not None:
+            return parsed
+    return ""
 
 
 def _int_or_blank(value: Any) -> int | str:
