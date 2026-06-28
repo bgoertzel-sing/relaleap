@@ -59,6 +59,8 @@ ACTIVE_CANDIDATE = "causal_gated_context_contrastive_periphery"
 CONTRASTIVE_CANDIDATE = "contrastive_residual_periphery"
 REPAIRED_CANDIDATE = "repaired_shared_core_residual_periphery"
 LEGACY_CANDIDATE = "core_periphery_pc_contextual_router"
+ANCHOR_RETENTION_KL_BUDGET = 5e-5
+ANCHOR_RETENTION_PENALTY_WEIGHT = 250.0
 
 
 @dataclass(frozen=True)
@@ -622,6 +624,14 @@ def _train_variant_model(
                 ce_losses = _per_token_ce(F, base.decode(soft_full), targets, vocab_size)
                 loss = ce_losses[mask].mean()
                 loss = loss + 0.05 * F.mse_loss(periphery_delta[mask], residual_target[mask])
+                retention_penalty, _ = _anchor_retention_budget_penalty(
+                    F,
+                    base.decode(hidden).detach(),
+                    base.decode(soft_full),
+                    mask,
+                    budget=ANCHOR_RETENTION_KL_BUDGET,
+                )
+                loss = loss + ANCHOR_RETENTION_PENALTY_WEIGHT * retention_penalty
             else:
                 loss = F.mse_loss(periphery_delta[mask], residual_target[mask])
             loss = loss + 0.002 * (model.periphery * model.periphery_mask).pow(2).mean()
@@ -789,9 +799,28 @@ def _per_token_ce(F: Any, logits: Any, targets: Any, vocab_size: int) -> Any:
     return __import__("torch").cat([losses.reshape(logits.shape[0], logits.shape[1] - 1), pad], dim=1)
 
 
+def _anchor_retention_budget_penalty(
+    F: Any,
+    base_logits: Any,
+    candidate_logits: Any,
+    train_mask: Any,
+    *,
+    budget: float,
+) -> tuple[Any, Any]:
+    import torch
+
+    retention_mask = ~train_mask
+    base_logp = F.log_softmax(base_logits, dim=-1)
+    candidate_logp = F.log_softmax(candidate_logits, dim=-1)
+    base_probs = torch.softmax(base_logits, dim=-1)
+    per_token_kl = (base_probs * (base_logp - candidate_logp)).sum(dim=-1)
+    mean_kl = per_token_kl[retention_mask].mean()
+    return torch.relu(mean_kl - budget).pow(2), mean_kl
+
+
 def _periphery_training_objective(spec: _VariantSpec) -> str:
     if spec.training_mode == "causal_gated_context_contrastive_periphery":
-        return "direct_train_only_ce_utility_with_centered_residual_regularizer"
+        return "direct_train_only_ce_utility_with_centered_residual_regularizer_and_anchor_kl_budget"
     if spec.training_mode == "permuted_gated_context_contrastive_periphery":
         return "permuted_centered_hidden_residual_mse_null"
     if spec.training_mode == "contrastive_residual_periphery":

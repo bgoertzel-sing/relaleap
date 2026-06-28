@@ -116,7 +116,7 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
             }
             self.assertEqual(
                 objectives["causal_gated_context_contrastive_periphery"],
-                "direct_train_only_ce_utility_with_centered_residual_regularizer",
+                "direct_train_only_ce_utility_with_centered_residual_regularizer_and_anchor_kl_budget",
             )
             self.assertEqual(
                 objectives["permuted_periphery_target_null"],
