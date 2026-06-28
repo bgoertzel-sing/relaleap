@@ -7,6 +7,6 @@
 - Requires GPU now: `False`
 - Next step: treat ACSR as a diagnostic probe; make the next experiment target dense/MLP residual controls rather than ACSR/default-router promotion
 
-ACSR beats simple nulls but fails parameter-matched and retention-churn guardrails, while dense-teacher, commutator, and CL-repeat evidence do not establish a sparse-specific mechanism
+ACSR beats simple nulls but fails parameter-matched and retention-churn guardrails, while dense-teacher, dense24/rank-norm, MLP, norm-budgeted, commutator, and CL-repeat evidence do not establish a sparse-specific mechanism
 
 This is a local branch selector. It does not promote ACSR or request RunPod/Colab validation.

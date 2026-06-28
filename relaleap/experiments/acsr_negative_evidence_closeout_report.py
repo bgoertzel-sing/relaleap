@@ -16,6 +16,9 @@ DEFAULT_ACSR_GATE = Path("results/audits/acsr_broader_mechanism_gate_local/summa
 DEFAULT_DENSE_TEACHER = Path(
     "results/audits/token_larger_dense_teacher_residual_distillation_comparison/summary.json"
 )
+DEFAULT_DENSE_RANK_NORM = Path("results/reports/acsr_dense_rank_norm_synthesis/summary.json")
+DEFAULT_MLP_CHURN = Path("results/reports/mlp_churn_decision/summary.json")
+DEFAULT_NORM_BUDGETED = Path("results/reports/post_norm_budgeted_branch_selector/summary.json")
 DEFAULT_COMMUTATOR = Path("results/reports/acsr_finite_update_commutator_assay/summary.json")
 DEFAULT_MECHANISM_CL = Path("results/reports/mechanism_factorized_continual_learning_repeat/summary.json")
 DEFAULT_STRATEGY_REVIEW = Path("../outputs/strategy-reviews/relaleap/latest-review.md")
@@ -38,6 +41,9 @@ def run_acsr_negative_evidence_closeout_report(
     *,
     acsr_gate_path: Path = DEFAULT_ACSR_GATE,
     dense_teacher_path: Path = DEFAULT_DENSE_TEACHER,
+    dense_rank_norm_path: Path = DEFAULT_DENSE_RANK_NORM,
+    mlp_churn_path: Path = DEFAULT_MLP_CHURN,
+    norm_budgeted_path: Path = DEFAULT_NORM_BUDGETED,
     commutator_path: Path = DEFAULT_COMMUTATOR,
     mechanism_cl_path: Path = DEFAULT_MECHANISM_CL,
     strategy_review_path: Path = DEFAULT_STRATEGY_REVIEW,
@@ -48,6 +54,9 @@ def run_acsr_negative_evidence_closeout_report(
     start = time.time()
     acsr_gate = _read_json(acsr_gate_path)
     dense_teacher = _read_json(dense_teacher_path)
+    dense_rank_norm = _read_json(dense_rank_norm_path)
+    mlp_churn = _read_json(mlp_churn_path)
+    norm_budgeted = _read_json(norm_budgeted_path)
     commutator = _read_json(commutator_path)
     mechanism_cl = _read_json(mechanism_cl_path)
     strategy = _strategy_review(strategy_review_path)
@@ -55,6 +64,9 @@ def run_acsr_negative_evidence_closeout_report(
     source_rows = [
         _source_row("acsr_broader_mechanism_gate", acsr_gate_path, acsr_gate),
         _source_row("dense_teacher_distillation", dense_teacher_path, dense_teacher),
+        _source_row("dense24_rank_norm_synthesis", dense_rank_norm_path, dense_rank_norm),
+        _source_row("mlp_churn_decision", mlp_churn_path, mlp_churn),
+        _source_row("norm_budgeted_branch_selector", norm_budgeted_path, norm_budgeted),
         _source_row("finite_update_commutator", commutator_path, commutator),
         _source_row("mechanism_factorized_cl_repeat", mechanism_cl_path, mechanism_cl),
         {
@@ -69,7 +81,16 @@ def run_acsr_negative_evidence_closeout_report(
             ),
         },
     ]
-    evidence = _evidence_snapshot(acsr_gate, dense_teacher, commutator, mechanism_cl, strategy)
+    evidence = _evidence_snapshot(
+        acsr_gate,
+        dense_teacher,
+        dense_rank_norm,
+        mlp_churn,
+        norm_budgeted,
+        commutator,
+        mechanism_cl,
+        strategy,
+    )
     evidence_matrix = _evidence_matrix(evidence)
     failures = _source_failures(source_rows)
     candidate_actions = _candidate_actions(evidence, failures)
@@ -119,6 +140,9 @@ def run_acsr_negative_evidence_closeout_report(
 def _evidence_snapshot(
     acsr_gate: dict[str, Any],
     dense_teacher: dict[str, Any],
+    dense_rank_norm: dict[str, Any],
+    mlp_churn: dict[str, Any],
+    norm_budgeted: dict[str, Any],
     commutator: dict[str, Any],
     mechanism_cl: dict[str, Any],
     strategy: dict[str, Any],
@@ -128,6 +152,8 @@ def _evidence_snapshot(
     mechanism_primary = _as_dict(mechanism_cl.get("primary_result"))
     dense_gate = _as_dict(dense_teacher.get("gate_status"))
     dense_criteria = dense_gate.get("criteria") if isinstance(dense_gate.get("criteria"), list) else []
+    dense_rank_norm_metrics = dense_rank_norm.get("comparison_metrics")
+    dense_rank_norm_metrics = dense_rank_norm_metrics if isinstance(dense_rank_norm_metrics, list) else []
     dense_ce_guardrail_passed = not any(
         row.get("criterion") == "acsr_ce_not_worse_than_teacher_by_large_margin"
         and row.get("passed") is False
@@ -150,6 +176,27 @@ def _evidence_snapshot(
         "dense_teacher_ce_loss": _float_or_none(dense_teacher.get("dense_teacher_ce_loss")),
         "acsr_student_ce_loss": _variant_metric(dense_teacher, "acsr_predicted_future_support", "ce_loss"),
         "dense_teacher_ce_guardrail_passed": dense_ce_guardrail_passed,
+        "dense_rank_norm_status": dense_rank_norm.get("status"),
+        "dense_rank_norm_decision": dense_rank_norm.get("decision"),
+        "dense_rank_norm_claim_status": dense_rank_norm.get("claim_status"),
+        "minimal_dense_rank_beating_sparse": _named_metric(
+            dense_rank_norm_metrics,
+            "minimal_dense_rank_beating_sparse",
+        ),
+        "rank24_delta_minus_sparse": _named_metric(
+            dense_rank_norm_metrics,
+            "rank24_delta_minus_sparse",
+        ),
+        "dense24_or_rank_norm_blocks_sparse": dense_rank_norm.get("status") == "fail"
+        or dense_rank_norm.get("claim_status") == "dense_rank16_24_controls_explain_ce_gain_threshold",
+        "mlp_churn_status": mlp_churn.get("status"),
+        "mlp_churn_decision": mlp_churn.get("decision"),
+        "mlp_churn_claim_status": mlp_churn.get("claim_status"),
+        "mlp_selected_next_action": _selected_action(mlp_churn),
+        "norm_budgeted_status": norm_budgeted.get("status"),
+        "norm_budgeted_decision": norm_budgeted.get("decision"),
+        "norm_budgeted_claim_status": norm_budgeted.get("claim_status"),
+        "norm_budgeted_selected_next_action": norm_budgeted.get("selected_next_action"),
         "commutator_status": commutator.get("status"),
         "commutator_decision": commutator.get("decision"),
         "commutator_claim_status": commutator.get("claim_status"),
@@ -184,6 +231,27 @@ def _evidence_matrix(evidence: dict[str, Any]) -> list[dict[str, Any]]:
             "blocks rescue when sparse ACSR cannot approach the dense teacher CE guardrail",
         ),
         _matrix_row(
+            "dense24_rank_norm_synthesis",
+            evidence["dense_rank_norm_status"],
+            evidence["dense_rank_norm_claim_status"],
+            evidence["dense_rank_norm_decision"],
+            "blocks sparse-specific CE claims when dense rank16/24 controls explain or beat the sparse gain",
+        ),
+        _matrix_row(
+            "mlp_churn_decision",
+            evidence["mlp_churn_status"],
+            evidence["mlp_churn_claim_status"],
+            evidence["mlp_churn_decision"],
+            "keeps raw MLP/dense controls active while requiring matched CE/L2/churn before mechanism claims",
+        ),
+        _matrix_row(
+            "norm_budgeted_branch_selector",
+            evidence["norm_budgeted_status"],
+            evidence["norm_budgeted_claim_status"],
+            evidence["norm_budgeted_decision"],
+            "records that sparse norm-target, retention, and finite-update branches are locally blocked",
+        ),
+        _matrix_row(
             "finite_update_commutator",
             evidence["commutator_status"],
             evidence["commutator_claim_status"],
@@ -216,6 +284,7 @@ def _candidate_actions(
         and evidence["acsr_beats_nulls"]
         and evidence["acsr_beats_parameter_matched"]
         and evidence["acsr_retention_churn_guardrail"]
+        and not evidence["dense24_or_rank_norm_blocks_sparse"]
         and (
             evidence["dense_teacher_status"] == "pass"
             or evidence["commutator_status"] == "pass"
@@ -244,7 +313,7 @@ def _candidate_actions(
         _candidate(
             DEMOTE_ACSR_ACTION,
             "selected",
-            "ACSR beats simple nulls but fails parameter-matched and retention-churn guardrails, while dense-teacher, commutator, and CL-repeat evidence do not establish a sparse-specific mechanism",
+            "ACSR beats simple nulls but fails parameter-matched and retention-churn guardrails, while dense-teacher, dense24/rank-norm, MLP, norm-budgeted, commutator, and CL-repeat evidence do not establish a sparse-specific mechanism",
             "treat ACSR as a diagnostic probe; make the next experiment target dense/MLP residual controls rather than ACSR/default-router promotion",
             "acsr_promotion_path_demoted_to_diagnostic_no_default_change",
         ),
@@ -426,6 +495,22 @@ def _variant_metric(payload: dict[str, Any], variant: str, metric: str) -> float
     return None
 
 
+def _named_metric(rows: list[Any], metric: str) -> float | None:
+    for row in rows:
+        if isinstance(row, dict) and row.get("metric") == metric:
+            return _float_or_none(row.get("value"))
+    return None
+
+
+def _selected_action(payload: dict[str, Any]) -> str | None:
+    for row in payload.get("candidate_actions", []):
+        if isinstance(row, dict) and row.get("disposition") == "selected":
+            action = row.get("candidate_action")
+            return str(action) if action is not None else None
+    selected = payload.get("selected_next_action")
+    return str(selected) if selected is not None else None
+
+
 def _float_or_none(value: Any) -> float | None:
     try:
         if value == "":
@@ -446,6 +531,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--acsr-gate", type=Path, default=DEFAULT_ACSR_GATE)
     parser.add_argument("--dense-teacher", type=Path, default=DEFAULT_DENSE_TEACHER)
+    parser.add_argument("--dense-rank-norm", type=Path, default=DEFAULT_DENSE_RANK_NORM)
+    parser.add_argument("--mlp-churn", type=Path, default=DEFAULT_MLP_CHURN)
+    parser.add_argument("--norm-budgeted", type=Path, default=DEFAULT_NORM_BUDGETED)
     parser.add_argument("--commutator", type=Path, default=DEFAULT_COMMUTATOR)
     parser.add_argument("--mechanism-cl", type=Path, default=DEFAULT_MECHANISM_CL)
     parser.add_argument("--strategy-review", type=Path, default=DEFAULT_STRATEGY_REVIEW)
@@ -454,6 +542,9 @@ def main() -> None:
     summary = run_acsr_negative_evidence_closeout_report(
         acsr_gate_path=args.acsr_gate,
         dense_teacher_path=args.dense_teacher,
+        dense_rank_norm_path=args.dense_rank_norm,
+        mlp_churn_path=args.mlp_churn,
+        norm_budgeted_path=args.norm_budgeted,
         commutator_path=args.commutator,
         mechanism_cl_path=args.mechanism_cl,
         strategy_review_path=args.strategy_review,

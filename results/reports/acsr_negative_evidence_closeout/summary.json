@@ -13,7 +13,7 @@
       "claim_status": "acsr_promotion_path_demoted_to_diagnostic_no_default_change",
       "disposition": "selected",
       "next_step": "treat ACSR as a diagnostic probe; make the next experiment target dense/MLP residual controls rather than ACSR/default-router promotion",
-      "reason": "ACSR beats simple nulls but fails parameter-matched and retention-churn guardrails, while dense-teacher, commutator, and CL-repeat evidence do not establish a sparse-specific mechanism"
+      "reason": "ACSR beats simple nulls but fails parameter-matched and retention-churn guardrails, while dense-teacher, dense24/rank-norm, MLP, norm-budgeted, commutator, and CL-repeat evidence do not establish a sparse-specific mechanism"
     },
     {
       "candidate_action": "design_prefix_only_norm_normalized_acsr_rescue",
@@ -44,7 +44,11 @@
     "commutator_decision": "acsr_finite_update_commutator_assay_tiny_commutator",
     "commutator_material": false,
     "commutator_status": "fail",
+    "dense24_or_rank_norm_blocks_sparse": true,
     "dense_mean_logit_mse": 0.008194068482788723,
+    "dense_rank_norm_claim_status": "dense_rank16_24_controls_explain_ce_gain_threshold",
+    "dense_rank_norm_decision": "acsr_sparse_support_claim_blocked_by_dense_rank_norm_controls",
+    "dense_rank_norm_status": "pass",
     "dense_teacher_ce_guardrail_passed": false,
     "dense_teacher_ce_loss": 0.2611331641674042,
     "dense_teacher_claim_status": "dense_teacher_distillation_not_interpretable_or_not_better_than_controls",
@@ -55,6 +59,16 @@
     "mechanism_cl_status": "pass",
     "mechanism_cl_supporting_seed_count": 1,
     "mechanism_cl_topk2_repeat_status": "not_replicated",
+    "minimal_dense_rank_beating_sparse": 16.0,
+    "mlp_churn_claim_status": "raw_mlp_high_power_high_churn_scaled_mlp_not_dense_dominant",
+    "mlp_churn_decision": "return_to_sparse_acsr_support_diagnostics",
+    "mlp_churn_status": "pass",
+    "mlp_selected_next_action": "extract_sparse_acsr_per_token_churn_fingerprints",
+    "norm_budgeted_claim_status": "sparse_branches_locally_blocked_dense_control_pivot_selected",
+    "norm_budgeted_decision": "post_norm_budgeted_branch_selected",
+    "norm_budgeted_selected_next_action": "pivot_to_dense_teacher_control_mechanism_assay",
+    "norm_budgeted_status": "pass",
+    "rank24_delta_minus_sparse": -0.05769681930541992,
     "sparse_mean_logit_mse": 0.0006394577972709417,
     "strategy_recommended_next_action": "Run the local ACSR broader mechanism gate now, but make it fail closed on shuffled-feature/token-position/null controls, intervention fingerprints, churn, and residual-L2 before any GPU/default claim.",
     "strategy_verdict": "FIX"
@@ -75,6 +89,27 @@
       "status": "fail"
     },
     {
+      "claim_status": "dense_rank16_24_controls_explain_ce_gain_threshold",
+      "decision": "acsr_sparse_support_claim_blocked_by_dense_rank_norm_controls",
+      "interpretation": "blocks sparse-specific CE claims when dense rank16/24 controls explain or beat the sparse gain",
+      "source": "dense24_rank_norm_synthesis",
+      "status": "pass"
+    },
+    {
+      "claim_status": "raw_mlp_high_power_high_churn_scaled_mlp_not_dense_dominant",
+      "decision": "return_to_sparse_acsr_support_diagnostics",
+      "interpretation": "keeps raw MLP/dense controls active while requiring matched CE/L2/churn before mechanism claims",
+      "source": "mlp_churn_decision",
+      "status": "pass"
+    },
+    {
+      "claim_status": "sparse_branches_locally_blocked_dense_control_pivot_selected",
+      "decision": "post_norm_budgeted_branch_selected",
+      "interpretation": "records that sparse norm-target, retention, and finite-update branches are locally blocked",
+      "source": "norm_budgeted_branch_selector",
+      "status": "pass"
+    },
+    {
       "claim_status": "finite_update_commutator_too_small_for_sparse_mechanism_claim",
       "decision": "acsr_finite_update_commutator_assay_tiny_commutator",
       "interpretation": "blocks sparse-interference claims when the commutator is too small to interpret",
@@ -90,13 +125,13 @@
     }
   ],
   "failures": [],
-  "git_commit": "8d6038a19c37e74b230334288bd9810057fbcb7e",
+  "git_commit": "e05efb8f8e7bc3255bf7babb6319e23c2102fdff",
   "next_step": "treat ACSR as a diagnostic probe; make the next experiment target dense/MLP residual controls rather than ACSR/default-router promotion",
   "out_dir": "results/reports/acsr_negative_evidence_closeout",
   "platform": "macOS-26.5.1-x86_64-i386-64bit",
-  "rationale": "ACSR beats simple nulls but fails parameter-matched and retention-churn guardrails, while dense-teacher, commutator, and CL-repeat evidence do not establish a sparse-specific mechanism",
+  "rationale": "ACSR beats simple nulls but fails parameter-matched and retention-churn guardrails, while dense-teacher, dense24/rank-norm, MLP, norm-budgeted, commutator, and CL-repeat evidence do not establish a sparse-specific mechanism",
   "requires_gpu_now": false,
-  "runtime_seconds": 0.0009,
+  "runtime_seconds": 0.0077,
   "selected_next_action": "demote_acsr_to_diagnostic_status",
   "source_rows": [
     {
@@ -114,6 +149,30 @@
       "present": true,
       "source": "dense_teacher_distillation",
       "status": "fail"
+    },
+    {
+      "claim_status": "dense_rank16_24_controls_explain_ce_gain_threshold",
+      "decision": "acsr_sparse_support_claim_blocked_by_dense_rank_norm_controls",
+      "path": "results/reports/acsr_dense_rank_norm_synthesis/summary.json",
+      "present": true,
+      "source": "dense24_rank_norm_synthesis",
+      "status": "pass"
+    },
+    {
+      "claim_status": "raw_mlp_high_power_high_churn_scaled_mlp_not_dense_dominant",
+      "decision": "return_to_sparse_acsr_support_diagnostics",
+      "path": "results/reports/mlp_churn_decision/summary.json",
+      "present": true,
+      "source": "mlp_churn_decision",
+      "status": "pass"
+    },
+    {
+      "claim_status": "sparse_branches_locally_blocked_dense_control_pivot_selected",
+      "decision": "post_norm_budgeted_branch_selected",
+      "path": "results/reports/post_norm_budgeted_branch_selector/summary.json",
+      "present": true,
+      "source": "norm_budgeted_branch_selector",
+      "status": "pass"
     },
     {
       "claim_status": "finite_update_commutator_too_small_for_sparse_mechanism_claim",

@@ -19,6 +19,9 @@ class ACSRNegativeEvidenceCloseoutReportTest(unittest.TestCase):
             root = Path(tmpdir)
             acsr = root / "acsr.json"
             dense = root / "dense.json"
+            dense_rank_norm = root / "dense_rank_norm.json"
+            mlp_churn = root / "mlp_churn.json"
+            norm_budgeted = root / "norm_budgeted.json"
             commutator = root / "commutator.json"
             mechanism = root / "mechanism.json"
             review = root / "latest-review.md"
@@ -52,6 +55,41 @@ class ACSRNegativeEvidenceCloseoutReportTest(unittest.TestCase):
                             }
                         ]
                     },
+                },
+            )
+            _write_json(
+                dense_rank_norm,
+                {
+                    "status": "fail",
+                    "decision": "acsr_sparse_support_claim_blocked_by_dense_rank_norm_controls",
+                    "claim_status": "dense_rank16_24_controls_explain_ce_gain_threshold",
+                    "comparison_metrics": [
+                        {"metric": "minimal_dense_rank_beating_sparse", "value": 16},
+                        {"metric": "rank24_delta_minus_sparse", "value": -0.05},
+                    ],
+                },
+            )
+            _write_json(
+                mlp_churn,
+                {
+                    "status": "pass",
+                    "decision": "mlp_churn_decision_recorded",
+                    "claim_status": "mlp_or_sparse_advantage_not_decisive_after_ce_l2_churn_matching",
+                    "candidate_actions": [
+                        {
+                            "candidate_action": "extract_sparse_acsr_per_token_churn_fingerprints",
+                            "disposition": "selected",
+                        }
+                    ],
+                },
+            )
+            _write_json(
+                norm_budgeted,
+                {
+                    "status": "pass",
+                    "decision": "post_norm_budgeted_branch_selected",
+                    "claim_status": "sparse_branches_locally_blocked_dense_control_pivot_selected",
+                    "selected_next_action": "pivot_to_dense_teacher_control_mechanism_assay",
                 },
             )
             _write_json(
@@ -89,6 +127,9 @@ class ACSRNegativeEvidenceCloseoutReportTest(unittest.TestCase):
             summary = run_acsr_negative_evidence_closeout_report(
                 acsr_gate_path=acsr,
                 dense_teacher_path=dense,
+                dense_rank_norm_path=dense_rank_norm,
+                mlp_churn_path=mlp_churn,
+                norm_budgeted_path=norm_budgeted,
                 commutator_path=commutator,
                 mechanism_cl_path=mechanism,
                 strategy_review_path=review,
@@ -102,6 +143,15 @@ class ACSRNegativeEvidenceCloseoutReportTest(unittest.TestCase):
                 summary["claim_status"],
                 "acsr_promotion_path_demoted_to_diagnostic_no_default_change",
             )
+            self.assertTrue(summary["evidence"]["dense24_or_rank_norm_blocks_sparse"])
+            self.assertEqual(
+                summary["evidence"]["mlp_selected_next_action"],
+                "extract_sparse_acsr_per_token_churn_fingerprints",
+            )
+            self.assertEqual(
+                summary["evidence"]["norm_budgeted_selected_next_action"],
+                "pivot_to_dense_teacher_control_mechanism_assay",
+            )
             selected = [row for row in summary["candidate_actions"] if row["disposition"] == "selected"]
             self.assertEqual(len(selected), 1)
             self.assertEqual(selected[0]["candidate_action"], DEMOTE_ACSR_ACTION)
@@ -113,6 +163,9 @@ class ACSRNegativeEvidenceCloseoutReportTest(unittest.TestCase):
             root = Path(tmpdir)
             acsr = root / "acsr.json"
             dense = root / "dense.json"
+            dense_rank_norm = root / "dense_rank_norm.json"
+            mlp_churn = root / "mlp_churn.json"
+            norm_budgeted = root / "norm_budgeted.json"
             commutator = root / "commutator.json"
             mechanism = root / "mechanism.json"
             _write_json(
@@ -138,6 +191,30 @@ class ACSRNegativeEvidenceCloseoutReportTest(unittest.TestCase):
                     "variant_rows": [{"variant": "acsr_predicted_future_support", "ce_loss": 0.4}],
                 },
             )
+            _write_json(
+                dense_rank_norm,
+                {
+                    "status": "pass",
+                    "decision": "dense_rank_norm_does_not_block_sparse",
+                    "claim_status": "dense_rank_norm_controls_do_not_explain_sparse_gain",
+                },
+            )
+            _write_json(
+                mlp_churn,
+                {
+                    "status": "pass",
+                    "decision": "mlp_churn_decision_recorded",
+                    "claim_status": "mlp_control_not_promoted",
+                },
+            )
+            _write_json(
+                norm_budgeted,
+                {
+                    "status": "pass",
+                    "decision": "norm_budgeted_not_blocking",
+                    "claim_status": "norm_budgeted_branch_not_blocking",
+                },
+            )
             _write_json(commutator, {"status": "fail", "decision": "tiny", "claim_status": "negative"})
             _write_json(
                 mechanism,
@@ -152,6 +229,9 @@ class ACSRNegativeEvidenceCloseoutReportTest(unittest.TestCase):
             summary = run_acsr_negative_evidence_closeout_report(
                 acsr_gate_path=acsr,
                 dense_teacher_path=dense,
+                dense_rank_norm_path=dense_rank_norm,
+                mlp_churn_path=mlp_churn,
+                norm_budgeted_path=norm_budgeted,
                 commutator_path=commutator,
                 mechanism_cl_path=mechanism,
                 strategy_review_path=root / "missing-review.md",
@@ -165,15 +245,24 @@ class ACSRNegativeEvidenceCloseoutReportTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             dense = root / "dense.json"
+            dense_rank_norm = root / "dense_rank_norm.json"
+            mlp_churn = root / "mlp_churn.json"
+            norm_budgeted = root / "norm_budgeted.json"
             commutator = root / "commutator.json"
             mechanism = root / "mechanism.json"
             _write_json(dense, {"status": "fail"})
+            _write_json(dense_rank_norm, {"status": "fail"})
+            _write_json(mlp_churn, {"status": "pass"})
+            _write_json(norm_budgeted, {"status": "pass"})
             _write_json(commutator, {"status": "fail"})
             _write_json(mechanism, {"status": "pass"})
 
             summary = run_acsr_negative_evidence_closeout_report(
                 acsr_gate_path=root / "missing-acsr.json",
                 dense_teacher_path=dense,
+                dense_rank_norm_path=dense_rank_norm,
+                mlp_churn_path=mlp_churn,
+                norm_budgeted_path=norm_budgeted,
                 commutator_path=commutator,
                 mechanism_cl_path=mechanism,
                 strategy_review_path=root / "missing-review.md",
