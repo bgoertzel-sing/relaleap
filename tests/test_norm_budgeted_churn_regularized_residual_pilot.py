@@ -60,6 +60,17 @@ class NormBudgetedChurnRegularizedResidualPilotTest(unittest.TestCase):
             self.assertIn("sparse_contextual_topk2_norm_budgeted", arms)
             self.assertIn("bottleneck_gated_mlp_norm_budgeted", arms)
             self.assertTrue(all("scientific_gate" in row for row in rows))
+            self.assertTrue(all("heldout_anchor_kl_vs_base" in row for row in rows))
+            self.assertTrue(all("off_target_anchor_kl_vs_base" in row for row in rows))
+            with (root / "out" / "per_token_metrics.csv").open(newline="", encoding="utf-8") as handle:
+                token_rows = list(csv.DictReader(handle))
+            self.assertGreater(len(token_rows), 0)
+            token_fields = set(token_rows[0])
+            self.assertIn("anchor_kl_vs_base", token_fields)
+            self.assertIn("intervention_stratum", token_fields)
+            self.assertIn("is_off_target_anchor", token_fields)
+            self.assertIn("off_target_anchor", {row["intervention_stratum"] for row in token_rows})
+            self.assertIn("target_heldout", {row["intervention_stratum"] for row in token_rows})
 
 
 def _write_design(path: Path) -> None:

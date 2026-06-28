@@ -51,7 +51,7 @@ def run_norm_budgeted_churn_regularized_residual_pilot(
         except Exception as exc:  # pragma: no cover - environment dependent
             runtime_error = f"{type(exc).__name__}: {exc}"
 
-    gate_rows = preflight + _pilot_gate_rows(arm_rows, runtime_error)
+    gate_rows = preflight + _pilot_gate_rows(arm_rows, per_token_rows, runtime_error)
     failures = [row for row in gate_rows if not row["passed"]]
     advancing = [row for row in arm_rows if row.get("scientific_gate") == "advances"]
     status = "pass" if not failures else "fail"
@@ -203,7 +203,9 @@ def _evaluate_module(
         flat_logits = logits[:, :-1, :].reshape(-1, logits.shape[-1])
         flat_base = base_logits[:, :-1, :].reshape(-1, base_logits.shape[-1])
         logit_mse = ((flat_logits - flat_base) ** 2).mean(dim=-1)
+        anchor_kl = _per_token_anchor_kl(F, flat_logits, flat_base)
         flips = flat_logits.argmax(dim=-1) != flat_base.argmax(dim=-1)
+    anchor_mask = ~heldout_mask
     flat_losses = losses.reshape(-1)
     flat_base_losses = base_losses.reshape(-1)
     heldout_loss = float(flat_losses[heldout_mask].mean().item())
@@ -215,10 +217,15 @@ def _evaluate_module(
         "heldout_delta_vs_base_ce": heldout_loss - float(flat_base_losses[heldout_mask].mean().item()),
         "heldout_residual_update_l2": float(l2[heldout_mask].mean().item()),
         "heldout_logit_mse_vs_base": float(logit_mse[heldout_mask].mean().item()),
+        "heldout_anchor_kl_vs_base": float(anchor_kl[heldout_mask].mean().item()),
         "heldout_prediction_flip_rate": float(flips[heldout_mask].float().mean().item()),
+        "off_target_anchor_ce_loss": float(flat_losses[anchor_mask].mean().item()),
+        "off_target_anchor_delta_vs_base_ce": float((flat_losses[anchor_mask] - flat_base_losses[anchor_mask]).mean().item()),
+        "off_target_anchor_kl_vs_base": float(anchor_kl[anchor_mask].mean().item()),
+        "off_target_prediction_flip_rate": float(flips[anchor_mask].float().mean().item()),
         "posthoc_residual_norm_scale": scale,
     }
-    return row, _token_rows(arm, family, flat_losses, flat_base_losses, l2, logit_mse, flips, heldout_mask)
+    return row, _token_rows(arm, family, flat_losses, flat_base_losses, l2, logit_mse, anchor_kl, flips, heldout_mask)
 
 
 def _evaluate_random_null(
@@ -247,7 +254,9 @@ def _evaluate_random_null(
         flat_logits = logits[:, :-1, :].reshape(-1, logits.shape[-1])
         flat_base = base_logits[:, :-1, :].reshape(-1, base_logits.shape[-1])
         logit_mse = ((flat_logits - flat_base) ** 2).mean(dim=-1)
+        anchor_kl = _per_token_anchor_kl(F, flat_logits, flat_base)
         flips = flat_logits.argmax(dim=-1) != flat_base.argmax(dim=-1)
+    anchor_mask = ~heldout_mask
     row = {
         "arm": "sparse_random_residual_same_l2_null",
         "family": "residual_null",
@@ -256,10 +265,15 @@ def _evaluate_random_null(
         "heldout_delta_vs_base_ce": float(losses[heldout_mask].mean().item()) - float(base_flat[heldout_mask].mean().item()),
         "heldout_residual_update_l2": float(l2[heldout_mask].mean().item()),
         "heldout_logit_mse_vs_base": float(logit_mse[heldout_mask].mean().item()),
+        "heldout_anchor_kl_vs_base": float(anchor_kl[heldout_mask].mean().item()),
         "heldout_prediction_flip_rate": float(flips[heldout_mask].float().mean().item()),
+        "off_target_anchor_ce_loss": float(losses[anchor_mask].mean().item()),
+        "off_target_anchor_delta_vs_base_ce": float((losses[anchor_mask] - base_flat[anchor_mask]).mean().item()),
+        "off_target_anchor_kl_vs_base": float(anchor_kl[anchor_mask].mean().item()),
+        "off_target_prediction_flip_rate": float(flips[anchor_mask].float().mean().item()),
         "posthoc_residual_norm_scale": scale,
     }
-    return row, _token_rows(row["arm"], row["family"], losses, base_flat, l2, logit_mse, flips, heldout_mask)
+    return row, _token_rows(row["arm"], row["family"], losses, base_flat, l2, logit_mse, anchor_kl, flips, heldout_mask)
 
 
 def _module_update(module: Any, hidden: Any) -> Any:
@@ -273,6 +287,13 @@ def _per_token_ce(F: Any, logits: Any, targets: Any, vocab_size: int) -> Any:
     return F.cross_entropy(logits[:, :-1, :].reshape(-1, vocab_size), targets[:, :-1].reshape(-1), reduction="none")
 
 
+def _per_token_anchor_kl(F: Any, logits: Any, base_logits: Any) -> Any:
+    base_log_probs = F.log_softmax(base_logits, dim=-1)
+    log_probs = F.log_softmax(logits, dim=-1)
+    base_probs = base_log_probs.exp()
+    return (base_probs * (base_log_probs - log_probs)).sum(dim=-1)
+
+
 def _heldout_mask(shape: Any) -> Any:
     import torch
 
@@ -282,20 +303,34 @@ def _heldout_mask(shape: Any) -> Any:
     return mask
 
 
-def _token_rows(arm: str, family: str, losses: Any, base_losses: Any, l2: Any, logit_mse: Any, flips: Any, heldout_mask: Any) -> list[dict[str, Any]]:
+def _token_rows(
+    arm: str,
+    family: str,
+    losses: Any,
+    base_losses: Any,
+    l2: Any,
+    logit_mse: Any,
+    anchor_kl: Any,
+    flips: Any,
+    heldout_mask: Any,
+) -> list[dict[str, Any]]:
     rows = []
     for index in range(int(losses.numel())):
+        is_heldout = bool(heldout_mask[index].item())
         rows.append(
             {
                 "arm": arm,
                 "family": family,
                 "token_index": index,
-                "split": "heldout" if bool(heldout_mask[index].item()) else "anchor",
+                "split": "heldout" if is_heldout else "anchor",
+                "intervention_stratum": "target_heldout" if is_heldout else "off_target_anchor",
+                "is_off_target_anchor": not is_heldout,
                 "ce_loss": float(losses[index].item()),
                 "base_ce_loss": float(base_losses[index].item()),
                 "delta_vs_base_ce": float(losses[index].item() - base_losses[index].item()),
                 "residual_update_l2": float(l2[index].item()),
                 "logit_mse_vs_base": float(logit_mse[index].item()),
+                "anchor_kl_vs_base": float(anchor_kl[index].item()),
                 "prediction_changed_vs_base": bool(flips[index].item()),
             }
         )
@@ -306,6 +341,7 @@ def _add_gate(row: dict[str, Any], dense24: dict[str, Any], budget: float) -> No
     row["ce_delta_vs_dense24"] = _float(row.get("heldout_ce_loss")) - _float(dense24.get("heldout_ce_loss"))
     row["l2_delta_vs_budget"] = _float(row.get("heldout_residual_update_l2")) - budget
     row["logit_mse_delta_vs_dense24"] = _float(row.get("heldout_logit_mse_vs_base")) - _float(dense24.get("heldout_logit_mse_vs_base"))
+    row["anchor_kl_delta_vs_dense24"] = _float(row.get("heldout_anchor_kl_vs_base")) - _float(dense24.get("heldout_anchor_kl_vs_base"))
     row["flip_delta_vs_dense24"] = _float(row.get("heldout_prediction_flip_rate")) - _float(dense24.get("heldout_prediction_flip_rate"))
     row["improves_vs_base"] = _float(row.get("heldout_delta_vs_base_ce")) < 0.0
     row["nontrivial_budget_fraction"] = _float(row.get("heldout_residual_update_l2")) >= 0.5 * budget
@@ -318,6 +354,7 @@ def _add_gate(row: dict[str, Any], dense24: dict[str, Any], budget: float) -> No
         and row["within_budget"]
         and row["ce_delta_vs_dense24"] < 0.0
         and row["logit_mse_delta_vs_dense24"] <= 0.0
+        and row["anchor_kl_delta_vs_dense24"] <= 0.0
         and row["flip_delta_vs_dense24"] <= 0.0
         else "blocked_or_control"
     )
@@ -333,8 +370,10 @@ def _preflight_rows(design_dir: Path, design: dict[str, Any], residual_budget: f
     ]
 
 
-def _pilot_gate_rows(arm_rows: list[dict[str, Any]], runtime_error: str) -> list[dict[str, Any]]:
+def _pilot_gate_rows(arm_rows: list[dict[str, Any]], per_token_rows: list[dict[str, Any]], runtime_error: str) -> list[dict[str, Any]]:
     arms = {row.get("arm") for row in arm_rows}
+    token_fields = set(per_token_rows[0]) if per_token_rows else set()
+    strata = {row.get("intervention_stratum") for row in per_token_rows}
     required = {
         "dense_rank24_norm_budgeted",
         "dense_rank16_norm_budgeted",
@@ -347,6 +386,14 @@ def _pilot_gate_rows(arm_rows: list[dict[str, Any]], runtime_error: str) -> list
         _criterion("pilot_runtime_completed", not runtime_error, "local pilot runtime completes", runtime_error or "ok", "pilot runtime failed"),
         _criterion("required_arms_evaluated", required.issubset(arms), sorted(required), sorted(arms), "one or more pilot arms missing"),
         _criterion("dense24_comparator_present", "dense_rank24_norm_budgeted" in arms, "dense rank24 comparator exists", sorted(arms), "dense rank24 comparator missing"),
+        _criterion(
+            "per_token_anchor_kl_off_target_strata_present",
+            {"anchor_kl_vs_base", "intervention_stratum", "is_off_target_anchor"}.issubset(token_fields)
+            and {"off_target_anchor", "target_heldout"}.issubset(strata),
+            "per-token anchor KL and target/off-target strata exist",
+            sorted(token_fields),
+            "per-token anchor-KL/off-target diagnostic fields missing",
+        ),
     ]
 
 
@@ -419,7 +466,7 @@ def _write_artifacts(out_dir: Path, summary: dict[str, Any], arm_rows: list[dict
         f"- Scientific gate: `{summary['scientific_gate']}`",
         f"- Next step: {summary['selected_next_step']}",
         "",
-        "This is a bounded local CPU pilot. It trains small dense, sparse, and MLP residual arms under the dense-rank24 residual-L2 budget and reports CE, logit-MSE, and prediction-flip churn against the dense rank24 comparator. It does not promote any mechanism.",
+        "This is a bounded local CPU pilot. It trains small dense, sparse, and MLP residual arms under the dense-rank24 residual-L2 budget and reports CE, logit-MSE, anchor-KL, off-target anchor strata, and prediction-flip churn against the dense rank24 comparator. It does not promote any mechanism.",
     ]
     if summary["failures"]:
         lines.extend(["", "## Failures"])
