@@ -46,6 +46,8 @@ class _RescueArm:
     mechanism_spec: _MechanismArmSpec
     learning_rate_multiplier: float = 1.0
     value_learning_rate_multiplier: float = 1.0
+    target_loss: str = "ce"
+    focal_gamma: float = 0.0
 
 
 def run_sparse_target_adaptation_rescue_probe(
@@ -134,7 +136,7 @@ def run_sparse_target_adaptation_rescue_probe(
         "hidden_rule_boundaries": True,
         "task_id_visible_to_model": False,
         "shared_vocab_and_head": True,
-        "rescue_under_test": "contextual_topk2_sparse_value_lr_boost_with_anchor_kl",
+        "rescue_under_test": "contextual_topk2_sparse_value_lr_or_focal_target_objective_with_anchor_kl",
         "rescue_metrics": rescue_rows,
         "gate_criteria": gate_rows,
         "primary_result": _primary_result(rescue_rows),
@@ -189,6 +191,35 @@ def _rescue_arms(
                 anchor_kl_weight=anchor_kl_weight,
             ),
             value_learning_rate_multiplier=4.0,
+        ),
+        _RescueArm(
+            "contextual_topk2_focal_gamma2_anchor_kl",
+            _MechanismArmSpec(
+                "contextual_topk2_focal_gamma2_anchor_kl",
+                "sparse",
+                2,
+                num_columns,
+                atoms_per_column,
+                "contextual_mlp",
+                anchor_kl_weight=anchor_kl_weight,
+            ),
+            target_loss="focal_ce",
+            focal_gamma=2.0,
+        ),
+        _RescueArm(
+            "contextual_topk2_focal_gamma2_value_lr2_anchor_kl",
+            _MechanismArmSpec(
+                "contextual_topk2_focal_gamma2_value_lr2_anchor_kl",
+                "sparse",
+                2,
+                num_columns,
+                atoms_per_column,
+                "contextual_mlp",
+                anchor_kl_weight=anchor_kl_weight,
+            ),
+            value_learning_rate_multiplier=2.0,
+            target_loss="focal_ce",
+            focal_gamma=2.0,
         ),
         _RescueArm(
             "random_frequency_matched_topk2",
@@ -257,7 +288,7 @@ def _run_arm(
         for _ in range(steps_per_phase):
             optimizer.zero_grad(set_to_none=True)
             logits = _forward_logits(adapter, hidden, spec, torch, base.decode)
-            loss = F.cross_entropy(logits.reshape(-1, vocab_size), targets[rule].reshape(-1))
+            loss = _target_loss(logits, targets[rule], vocab_size, arm=arm, F=F)
             if spec.anchor_kl_weight > 0.0 and anchor_logits:
                 anchor_loss = torch.zeros((), dtype=loss.dtype, device=loss.device)
                 for reference_logits in anchor_logits.values():
@@ -294,6 +325,8 @@ def _run_arm(
         "support_router": spec.support_router,
         "learning_rate_multiplier": arm.learning_rate_multiplier,
         "value_learning_rate_multiplier": arm.value_learning_rate_multiplier,
+        "target_loss": arm.target_loss,
+        "focal_gamma": arm.focal_gamma,
         "anchor_kl_weight": spec.anchor_kl_weight,
         "stored_parameters": _stored_parameters(adapter),
         "active_parameters_proxy": _active_parameters_proxy(spec, hidden_dim),
@@ -325,6 +358,18 @@ def _optimizer(*, adapter: Any, torch: Any, learning_rate: float, arm: _RescueAr
     return torch.optim.AdamW(list(adapter.parameters()), lr=learning_rate * arm.learning_rate_multiplier)
 
 
+def _target_loss(logits: Any, target: Any, vocab_size: int, *, arm: _RescueArm, F: Any) -> Any:
+    flat_logits = logits.reshape(-1, vocab_size)
+    flat_target = target.reshape(-1)
+    if arm.target_loss == "ce":
+        return F.cross_entropy(flat_logits, flat_target)
+    if arm.target_loss == "focal_ce":
+        token_ce = F.cross_entropy(flat_logits, flat_target, reduction="none")
+        token_prob = (-token_ce).exp()
+        return (((1.0 - token_prob) ** arm.focal_gamma) * token_ce).mean()
+    raise ValueError(f"unknown sparse target rescue loss: {arm.target_loss}")
+
+
 def _evaluate_ce(
     adapter: Any,
     hidden: Any,
@@ -348,6 +393,8 @@ def _gate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "contextual_topk2_baseline",
         "contextual_topk2_value_lr2_anchor_kl",
         "contextual_topk2_value_lr4_anchor_kl",
+        "contextual_topk2_focal_gamma2_anchor_kl",
+        "contextual_topk2_focal_gamma2_value_lr2_anchor_kl",
         "random_frequency_matched_topk2",
     }
     missing = sorted(required - set(by_arm))
@@ -368,7 +415,12 @@ def _gate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _best_rescue(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    candidates = [row for row in rows if str(row.get("arm")).startswith("contextual_topk2_value_lr")]
+    candidates = [
+        row
+        for row in rows
+        if str(row.get("arm")).startswith("contextual_topk2_")
+        and str(row.get("arm")) != "contextual_topk2_baseline"
+    ]
     if not candidates:
         return {}
     return min(candidates, key=lambda row: float(row.get("mean_target_ce_delta") or 0.0))
@@ -400,7 +452,7 @@ def _selected_next_step(claim_status: str) -> str:
         return "repair sparse target-adaptation rescue artifact schema before interpretation"
     if claim_status == "sparse_target_adaptation_rescue_candidate_not_promoted":
         return "repeat sparse target-adaptation rescue on a second local seed before any RunPod validation"
-    return "switch from value-LR rescue to a stronger sparse target objective or retire this rescue path"
+    return "retire the current top-k2 rescue path or replace it with a mechanistically different sparse-retention objective"
 
 
 def _primary_result(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -475,7 +527,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "- Best rescue minus dense off-target KL: "
         f"`{result.get('best_rescue_minus_dense_off_target_kl')}`",
         "",
-        "This local screen tests whether boosting sparse top-k2 value updates under anchor KL can close the dense target-adaptation gap without surrendering the sparse off-target advantage.",
+        "This local screen tests whether boosting sparse top-k2 value updates or using a focal target objective under anchor KL can close the dense target-adaptation gap without surrendering the sparse off-target advantage.",
         "",
         "## Next Step",
         "",

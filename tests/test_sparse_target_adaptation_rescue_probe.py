@@ -38,7 +38,16 @@ class SparseTargetAdaptationRescueProbeTest(unittest.TestCase):
             self.assertIn("contextual_topk2_baseline", arms)
             self.assertIn("contextual_topk2_value_lr2_anchor_kl", arms)
             self.assertIn("contextual_topk2_value_lr4_anchor_kl", arms)
+            self.assertIn("contextual_topk2_focal_gamma2_anchor_kl", arms)
+            self.assertIn("contextual_topk2_focal_gamma2_value_lr2_anchor_kl", arms)
             self.assertIn("random_frequency_matched_topk2", arms)
+            focal_row = next(
+                row
+                for row in summary["rescue_metrics"]
+                if row["arm"] == "contextual_topk2_focal_gamma2_anchor_kl"
+            )
+            self.assertEqual(focal_row["target_loss"], "focal_ce")
+            self.assertEqual(focal_row["focal_gamma"], 2.0)
             for artifact in REQUIRED_ARTIFACTS:
                 self.assertTrue((out_dir / artifact).is_file(), artifact)
 
