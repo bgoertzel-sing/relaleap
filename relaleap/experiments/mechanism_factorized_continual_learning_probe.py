@@ -221,10 +221,15 @@ def run_mechanism_factorized_continual_learning_probe(
         final = snapshots[f"after_phase_{len(RULE_SEQUENCE)}_{RULE_SEQUENCE[-1]}"]
         off_target_rows = [row for row in phase_rows if row["arm"] == spec.name and not row["is_target_rule"]]
         target_rows = [row for row in phase_rows if row["arm"] == spec.name and row["is_target_rule"]]
+        mean_target_ce_delta = _mean([row["ce_delta_from_phase_start"] for row in target_rows])
+        mean_off_target_ce_drift = _mean([row["ce_delta_from_phase_start"] for row in off_target_rows])
+        mean_off_target_kl = _mean([row["kl_to_pre_phase_logits"] for row in off_target_rows])
         final_forgetting = {
             rule: final[rule]["ce_loss"] - best_ce[rule]
             for rule in sorted(targets)
         }
+        mean_final_forgetting = _mean(list(final_forgetting.values()))
+        target_improvement = _target_improvement(mean_target_ce_delta)
         arm_rows.append(
             {
                 "arm": spec.name,
@@ -236,11 +241,20 @@ def run_mechanism_factorized_continual_learning_probe(
                 "active_parameters_proxy": _active_parameters_proxy(spec, hidden_dim),
                 "flops_proxy": _active_parameters_proxy(spec, hidden_dim),
                 "anchor_kl_weight": spec.anchor_kl_weight,
-                "mean_target_ce_delta": _mean([row["ce_delta_from_phase_start"] for row in target_rows]),
-                "mean_off_target_ce_drift": _mean([row["ce_delta_from_phase_start"] for row in off_target_rows]),
-                "mean_off_target_kl": _mean([row["kl_to_pre_phase_logits"] for row in off_target_rows]),
+                "mean_target_ce_delta": mean_target_ce_delta,
+                "target_adaptation_improvement": target_improvement,
+                "mean_off_target_ce_drift": mean_off_target_ce_drift,
+                "mean_off_target_kl": mean_off_target_kl,
                 "max_off_target_kl": _max([row["kl_to_pre_phase_logits"] for row in off_target_rows]),
-                "mean_final_forgetting": _mean(list(final_forgetting.values())),
+                "mean_final_forgetting": mean_final_forgetting,
+                "forgetting_per_target_improvement": _safe_ratio(
+                    mean_final_forgetting,
+                    target_improvement,
+                ),
+                "off_target_kl_per_target_improvement": _safe_ratio(
+                    mean_off_target_kl,
+                    target_improvement,
+                ),
                 "max_final_forgetting": _max(list(final_forgetting.values())),
                 "final_copy_ce_loss": final["copy"]["ce_loss"],
                 "final_reverse_ce_loss": final["reverse"]["ce_loss"],
@@ -466,6 +480,7 @@ def _gate_rows(arm_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     }
     missing = sorted(required - set(by_arm))
     topk1 = by_arm.get("contextual_topk1", {})
+    topk2 = by_arm.get("contextual_topk2", {})
     dense = by_arm.get("dense_active_rank", {})
     random_null = by_arm.get("random_frequency_matched_topk2", {})
     topk1_kl = by_arm.get("contextual_topk1_anchor_kl", {})
@@ -479,6 +494,8 @@ def _gate_rows(arm_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         _criterion("topk1_off_target_kl_no_worse_than_dense", _leq(topk1.get("mean_off_target_kl"), dense.get("mean_off_target_kl"), margin=0.0), "claim", "top-k1 off-target KL no worse than dense", _delta_value(topk1.get("mean_off_target_kl"), dense.get("mean_off_target_kl")), "top-k1 off-target KL exceeds dense"),
         _criterion("topk1_forgetting_no_worse_than_dense", _leq(topk1.get("mean_final_forgetting"), dense.get("mean_final_forgetting"), margin=0.0), "claim", "top-k1 final forgetting no worse than dense", _delta_value(topk1.get("mean_final_forgetting"), dense.get("mean_final_forgetting")), "top-k1 forgetting exceeds dense"),
         _criterion("topk1_beats_random_support_null", _leq(topk1.get("mean_final_forgetting"), random_null.get("mean_final_forgetting"), margin=0.0), "claim", "top-k1 forgetting beats random/frequency support null", _delta_value(topk1.get("mean_final_forgetting"), random_null.get("mean_final_forgetting")), "top-k1 does not beat random support null"),
+        _criterion("topk2_interference_per_gain_no_worse_than_dense", _leq(topk2.get("forgetting_per_target_improvement"), dense.get("forgetting_per_target_improvement"), margin=0.0), "claim", "top-k2 forgetting per target CE improvement no worse than dense", _delta_value(topk2.get("forgetting_per_target_improvement"), dense.get("forgetting_per_target_improvement")), "top-k2 does not beat dense on retention/adaptation tradeoff"),
+        _criterion("topk2_beats_random_support_tradeoff_null", _leq(topk2.get("forgetting_per_target_improvement"), random_null.get("forgetting_per_target_improvement"), margin=0.0), "claim", "top-k2 forgetting per target CE improvement beats random/frequency support null", _delta_value(topk2.get("forgetting_per_target_improvement"), random_null.get("forgetting_per_target_improvement")), "top-k2 tradeoff does not beat random support null"),
         _criterion("anchor_kl_sparse_no_worse_than_dense_anchor_kl", _leq(topk1_kl.get("mean_off_target_kl"), dense_kl.get("mean_off_target_kl"), margin=0.0), "claim", "same anchor-KL mitigation helps sparse at least as much as dense", _delta_value(topk1_kl.get("mean_off_target_kl"), dense_kl.get("mean_off_target_kl")), "anchor-KL sparse does not beat dense anchor-KL"),
     ]
 
@@ -497,13 +514,20 @@ def _criterion(criterion: str, passed: bool, severity: str, requirement: str, ob
 def _primary_result(arm_rows: list[dict[str, Any]]) -> dict[str, Any]:
     by_arm = {str(row["arm"]): row for row in arm_rows}
     topk1 = by_arm.get("contextual_topk1", {})
+    topk2 = by_arm.get("contextual_topk2", {})
     dense = by_arm.get("dense_active_rank", {})
     return {
         "topk1_minus_dense_mean_target_ce_delta": _delta_value(topk1.get("mean_target_ce_delta"), dense.get("mean_target_ce_delta")),
         "topk1_minus_dense_mean_off_target_ce_drift": _delta_value(topk1.get("mean_off_target_ce_drift"), dense.get("mean_off_target_ce_drift")),
         "topk1_minus_dense_mean_off_target_kl": _delta_value(topk1.get("mean_off_target_kl"), dense.get("mean_off_target_kl")),
         "topk1_minus_dense_mean_final_forgetting": _delta_value(topk1.get("mean_final_forgetting"), dense.get("mean_final_forgetting")),
-        "interpretation": "Negative deltas favor contextual top-k1. This is a local mechanism-factorized screen, not promotion evidence without repeats.",
+        "topk1_minus_dense_forgetting_per_target_improvement": _delta_value(topk1.get("forgetting_per_target_improvement"), dense.get("forgetting_per_target_improvement")),
+        "topk2_minus_dense_mean_target_ce_delta": _delta_value(topk2.get("mean_target_ce_delta"), dense.get("mean_target_ce_delta")),
+        "topk2_minus_dense_mean_off_target_ce_drift": _delta_value(topk2.get("mean_off_target_ce_drift"), dense.get("mean_off_target_ce_drift")),
+        "topk2_minus_dense_mean_off_target_kl": _delta_value(topk2.get("mean_off_target_kl"), dense.get("mean_off_target_kl")),
+        "topk2_minus_dense_mean_final_forgetting": _delta_value(topk2.get("mean_final_forgetting"), dense.get("mean_final_forgetting")),
+        "topk2_minus_dense_forgetting_per_target_improvement": _delta_value(topk2.get("forgetting_per_target_improvement"), dense.get("forgetting_per_target_improvement")),
+        "interpretation": "Negative sparse-minus-dense deltas favor the named sparse arm. This is a local mechanism-factorized screen, not promotion evidence without repeats.",
     }
 
 
@@ -520,6 +544,11 @@ def _claim_status(gate_rows: list[dict[str, Any]]) -> str:
 def _selected_next_step(gate_rows: list[dict[str, Any]]) -> str:
     if any(not row["passed"] and row["severity"] == "hard" for row in gate_rows):
         return "repair_mechanism_factorized_cl_artifact_schema_before_interpretation"
+    if _gate_passed(gate_rows, "topk2_interference_per_gain_no_worse_than_dense") and _gate_passed(
+        gate_rows,
+        "topk2_beats_random_support_tradeoff_null",
+    ):
+        return "run_second_seed_mechanism_factorized_cl_repeat_before_any_gpu_validation"
     if any(not row["passed"] and row["severity"] == "claim" for row in gate_rows):
         return "use mechanism CL result to choose a stricter dense/null-controlled residual-interference mitigation"
     return "repeat mechanism-factorized CL probe on a second seed before any GPU validation"
@@ -554,6 +583,12 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"`{result['topk1_minus_dense_mean_off_target_kl']}`",
         "- Top-k1 minus dense final forgetting: "
         f"`{result['topk1_minus_dense_mean_final_forgetting']}`",
+        "- Top-k2 minus dense target CE delta: "
+        f"`{result['topk2_minus_dense_mean_target_ce_delta']}`",
+        "- Top-k2 minus dense final forgetting: "
+        f"`{result['topk2_minus_dense_mean_final_forgetting']}`",
+        "- Top-k2 minus dense forgetting per target improvement: "
+        f"`{result['topk2_minus_dense_forgetting_per_target_improvement']}`",
         "",
         "This local assay uses known transformation rules with hidden phase boundaries and a shared output head. It records dense, sparse, random-support, and identical anchor-KL controls before any promotion or GPU repeat.",
         "",
@@ -604,6 +639,25 @@ def _delta_value(left: Any, right: Any) -> float | None:
     if left is None or right is None:
         return None
     return float(left) - float(right)
+
+
+def _gate_passed(gate_rows: list[dict[str, Any]], criterion: str) -> bool:
+    return any(row["criterion"] == criterion and row["passed"] for row in gate_rows)
+
+
+def _target_improvement(mean_target_ce_delta: Any) -> float | None:
+    if mean_target_ce_delta is None:
+        return None
+    return max(0.0, -float(mean_target_ce_delta))
+
+
+def _safe_ratio(numerator: Any, denominator: Any) -> float | None:
+    if numerator is None or denominator is None:
+        return None
+    denominator_float = float(denominator)
+    if denominator_float <= 1e-12:
+        return None
+    return float(numerator) / denominator_float
 
 
 def _git_commit() -> str:

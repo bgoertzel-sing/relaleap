@@ -39,6 +39,13 @@ class MechanismFactorizedContinualLearningProbeTest(unittest.TestCase):
             self.assertIn("contextual_topk1", summary["controls"])
             self.assertIn("random_frequency_matched_topk2", summary["controls"])
             self.assertIn("contextual_topk1_anchor_kl", summary["controls"])
+            topk2 = next(row for row in summary["arm_metrics"] if row["arm"] == "contextual_topk2")
+            self.assertIn("target_adaptation_improvement", topk2)
+            self.assertIn("forgetting_per_target_improvement", topk2)
+            self.assertIn(
+                "topk2_minus_dense_forgetting_per_target_improvement",
+                summary["primary_result"],
+            )
             for artifact in REQUIRED_ARTIFACTS:
                 self.assertTrue((out_dir / artifact).is_file(), artifact)
 
@@ -65,6 +72,12 @@ class MechanismFactorizedContinualLearningProbeTest(unittest.TestCase):
                     for row in summary["gate_criteria"]
                 )
             )
+            self.assertTrue(
+                any(
+                    row["criterion"] == "topk2_interference_per_gain_no_worse_than_dense"
+                    for row in summary["gate_criteria"]
+                )
+            )
             self.assertIn(
                 summary["claim_status"],
                 {
@@ -72,6 +85,17 @@ class MechanismFactorizedContinualLearningProbeTest(unittest.TestCase):
                     "mechanism_factorized_sparse_retention_candidate_supported_not_promoted",
                 },
             )
+            if all(
+                any(row["criterion"] == criterion and row["passed"] for row in summary["gate_criteria"])
+                for criterion in (
+                    "topk2_interference_per_gain_no_worse_than_dense",
+                    "topk2_beats_random_support_tradeoff_null",
+                )
+            ):
+                self.assertEqual(
+                    summary["selected_next_step"],
+                    "run_second_seed_mechanism_factorized_cl_repeat_before_any_gpu_validation",
+                )
             self.assertIn("topk1_minus_dense_mean_off_target_kl", summary["primary_result"])
 
 
