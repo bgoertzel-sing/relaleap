@@ -1,0 +1,152 @@
+{
+  "artifacts": {
+    "candidate_actions_csv": "results/reports/acsr_negative_evidence_closeout/candidate_actions.csv",
+    "evidence_matrix_csv": "results/reports/acsr_negative_evidence_closeout/evidence_matrix.csv",
+    "notes_md": "results/reports/acsr_negative_evidence_closeout/notes.md",
+    "source_rows_csv": "results/reports/acsr_negative_evidence_closeout/source_rows.csv",
+    "summary_json": "results/reports/acsr_negative_evidence_closeout/summary.json"
+  },
+  "backend_policy": "local closeout only; RunPod/Colab validation remains blocked until a local rescue clears dense/null/churn/norm gates",
+  "candidate_actions": [
+    {
+      "candidate_action": "demote_acsr_to_diagnostic_status",
+      "claim_status": "acsr_promotion_path_demoted_to_diagnostic_no_default_change",
+      "disposition": "selected",
+      "next_step": "treat ACSR as a diagnostic probe; make the next experiment target dense/MLP residual controls rather than ACSR/default-router promotion",
+      "reason": "ACSR beats simple nulls but fails parameter-matched and retention-churn guardrails, while dense-teacher, commutator, and CL-repeat evidence do not establish a sparse-specific mechanism"
+    },
+    {
+      "candidate_action": "design_prefix_only_norm_normalized_acsr_rescue",
+      "claim_status": "rejected",
+      "disposition": "rejected",
+      "next_step": "only reconsider if a future local ACSR gate beats dense/null/churn/norm controls",
+      "reason": "a rescue would optimize a branch whose current mechanism evidence is explained by parameter-matched controls or fails downstream sparse-specific gates"
+    }
+  ],
+  "claim_status": "acsr_promotion_path_demoted_to_diagnostic_no_default_change",
+  "decision": "acsr_negative_evidence_closeout_branch_selected",
+  "direction_shift": {
+    "level": "minor",
+    "notify_ben": false,
+    "record": "No major strategy-review direction shift; local ACSR closeout follows the accepted fail-closed recommendation."
+  },
+  "evidence": {
+    "acsr_beats_nulls": true,
+    "acsr_beats_parameter_matched": false,
+    "acsr_claim_status": "acsr_anticipation_specific_claim_blocked_no_default_change",
+    "acsr_gate_decision": "acsr_broader_mechanism_gate_failed_closed",
+    "acsr_gate_status": "fail",
+    "acsr_intervention_l2_guardrail": true,
+    "acsr_retention_churn_guardrail": false,
+    "acsr_student_ce_loss": 2.8332395553588867,
+    "ben_notification_required": false,
+    "commutator_claim_status": "finite_update_commutator_too_small_for_sparse_mechanism_claim",
+    "commutator_decision": "acsr_finite_update_commutator_assay_tiny_commutator",
+    "commutator_material": false,
+    "commutator_status": "fail",
+    "dense_mean_logit_mse": 0.008194068482788723,
+    "dense_teacher_ce_guardrail_passed": false,
+    "dense_teacher_ce_loss": 0.2611331641674042,
+    "dense_teacher_claim_status": "dense_teacher_distillation_not_interpretable_or_not_better_than_controls",
+    "dense_teacher_decision": "dense_teacher_residual_distillation_pilot_not_supported",
+    "dense_teacher_status": "fail",
+    "mechanism_cl_claim_status": "mechanism_factorized_sparse_retention_not_established",
+    "mechanism_cl_decision": "mechanism_factorized_cl_second_seed_repeat_recorded",
+    "mechanism_cl_status": "pass",
+    "mechanism_cl_supporting_seed_count": 1,
+    "mechanism_cl_topk2_repeat_status": "not_replicated",
+    "sparse_mean_logit_mse": 0.0006394577972709417,
+    "strategy_recommended_next_action": "Run the local ACSR broader mechanism gate now, but make it fail closed on shuffled-feature/token-position/null controls, intervention fingerprints, churn, and residual-L2 before any GPU/default claim.",
+    "strategy_verdict": "FIX"
+  },
+  "evidence_matrix": [
+    {
+      "claim_status": "acsr_anticipation_specific_claim_blocked_no_default_change",
+      "decision": "acsr_broader_mechanism_gate_failed_closed",
+      "interpretation": "blocks rescue unless ACSR beats parameter-matched controls and churn guardrails",
+      "source": "broader_acsr_gate",
+      "status": "fail"
+    },
+    {
+      "claim_status": "dense_teacher_distillation_not_interpretable_or_not_better_than_controls",
+      "decision": "dense_teacher_residual_distillation_pilot_not_supported",
+      "interpretation": "blocks rescue when sparse ACSR cannot approach the dense teacher CE guardrail",
+      "source": "dense_teacher_distillation",
+      "status": "fail"
+    },
+    {
+      "claim_status": "finite_update_commutator_too_small_for_sparse_mechanism_claim",
+      "decision": "acsr_finite_update_commutator_assay_tiny_commutator",
+      "interpretation": "blocks sparse-interference claims when the commutator is too small to interpret",
+      "source": "finite_update_commutator",
+      "status": "fail"
+    },
+    {
+      "claim_status": "mechanism_factorized_sparse_retention_not_established",
+      "decision": "mechanism_factorized_cl_second_seed_repeat_recorded",
+      "interpretation": "blocks retention claims when the top-k2 tradeoff does not replicate",
+      "source": "mechanism_factorized_cl_repeat",
+      "status": "pass"
+    }
+  ],
+  "failures": [],
+  "git_commit": "8d6038a19c37e74b230334288bd9810057fbcb7e",
+  "next_step": "treat ACSR as a diagnostic probe; make the next experiment target dense/MLP residual controls rather than ACSR/default-router promotion",
+  "out_dir": "results/reports/acsr_negative_evidence_closeout",
+  "platform": "macOS-26.5.1-x86_64-i386-64bit",
+  "rationale": "ACSR beats simple nulls but fails parameter-matched and retention-churn guardrails, while dense-teacher, commutator, and CL-repeat evidence do not establish a sparse-specific mechanism",
+  "requires_gpu_now": false,
+  "runtime_seconds": 0.0009,
+  "selected_next_action": "demote_acsr_to_diagnostic_status",
+  "source_rows": [
+    {
+      "claim_status": "acsr_anticipation_specific_claim_blocked_no_default_change",
+      "decision": "acsr_broader_mechanism_gate_failed_closed",
+      "path": "results/audits/acsr_broader_mechanism_gate_local/summary.json",
+      "present": true,
+      "source": "acsr_broader_mechanism_gate",
+      "status": "fail"
+    },
+    {
+      "claim_status": "dense_teacher_distillation_not_interpretable_or_not_better_than_controls",
+      "decision": "dense_teacher_residual_distillation_pilot_not_supported",
+      "path": "results/audits/token_larger_dense_teacher_residual_distillation_comparison/summary.json",
+      "present": true,
+      "source": "dense_teacher_distillation",
+      "status": "fail"
+    },
+    {
+      "claim_status": "finite_update_commutator_too_small_for_sparse_mechanism_claim",
+      "decision": "acsr_finite_update_commutator_assay_tiny_commutator",
+      "path": "results/reports/acsr_finite_update_commutator_assay/summary.json",
+      "present": true,
+      "source": "finite_update_commutator",
+      "status": "fail"
+    },
+    {
+      "claim_status": "mechanism_factorized_sparse_retention_not_established",
+      "decision": "mechanism_factorized_cl_second_seed_repeat_recorded",
+      "path": "results/reports/mechanism_factorized_continual_learning_repeat/summary.json",
+      "present": true,
+      "source": "mechanism_factorized_cl_repeat",
+      "status": "pass"
+    },
+    {
+      "claim_status": "strategic_change_level=minor; notify_ben=false",
+      "decision": "Run the local ACSR broader mechanism gate now, but make it fail closed on shuffled-feature/token-position/null controls, intervention fingerprints, churn, and residual-L2 before any GPU/default claim.",
+      "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
+      "present": true,
+      "source": "strategy_review",
+      "status": "present"
+    }
+  ],
+  "status": "pass",
+  "strategy_review": {
+    "ben_notification_required": false,
+    "notify_ben": "false",
+    "present": true,
+    "recommended_next_action": "Run the local ACSR broader mechanism gate now, but make it fail closed on shuffled-feature/token-position/null controls, intervention fingerprints, churn, and residual-L2 before any GPU/default claim.",
+    "strategic_change_level": "minor",
+    "verdict": "FIX"
+  }
+}
