@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import platform
 import subprocess
 import time
@@ -56,6 +57,8 @@ REQUIRED_RAW_INTERVENTION_FIELDS = (
 REQUIRED_ARTIFACTS = (
     "summary.json",
     "matched_curves.csv",
+    "scaled_interventions.csv",
+    "scaled_match_summary.csv",
     "fingerprint_strata.csv",
     "available_arms.csv",
     "decision_criteria.csv",
@@ -81,6 +84,8 @@ def run_mlp_churn_intervention_fingerprint(
 
     available_arms = _available_arms(scorecard_rows, sparse_rows, per_token_rows)
     matched_curves = _matched_curves(per_token_rows)
+    scaled_interventions = _scaled_interventions(per_token_rows)
+    scaled_match_summary = _scaled_match_summary(scaled_interventions)
     fingerprint_strata = _fingerprint_strata(per_token_rows)
     missing_fields = _missing_required_fields(per_token_rows)
     criteria = _criteria(
@@ -88,6 +93,8 @@ def run_mlp_churn_intervention_fingerprint(
         per_token_rows=per_token_rows,
         available_arms=available_arms,
         missing_fields=missing_fields,
+        scaled_interventions=scaled_interventions,
+        scaled_match_summary=scaled_match_summary,
         min_heldout_rows_per_arm=min_heldout_rows_per_arm,
     )
     failures = [row for row in criteria if not row["passed"]]
@@ -108,9 +115,12 @@ def run_mlp_churn_intervention_fingerprint(
             selected_next_step = "repair missing source artifacts before rerunning this local report"
     else:
         status = "pass"
-        decision = "mlp_churn_intervention_fingerprint_raw_fields_available"
-        claim_status = "raw_intervention_fields_available_for_next_scaled_assay"
-        selected_next_step = "run the raw residual scaling and CE/L2 matched intervention assay locally"
+        decision = "mlp_churn_intervention_fingerprint_scaled_assay_completed"
+        claim_status = "raw_lambda_scaled_ce_l2_churn_fingerprints_available"
+        selected_next_step = (
+            "interpret the local scaled CE/L2 match summary before deciding whether a norm-budgeted "
+            "MLP training variant is scientifically warranted"
+        )
 
     summary = {
         "status": status,
@@ -128,6 +138,8 @@ def run_mlp_churn_intervention_fingerprint(
         "missing_required_fields": missing_fields,
         "available_arms": available_arms,
         "matched_curve_row_count": len(matched_curves),
+        "scaled_intervention_row_count": len(scaled_interventions),
+        "scaled_match_summary": scaled_match_summary,
         "fingerprint_strata_row_count": len(fingerprint_strata),
         "criteria": criteria,
         "failures": failures,
@@ -137,7 +149,16 @@ def run_mlp_churn_intervention_fingerprint(
         "git_commit": _git_commit(),
         "artifacts": {name.replace(".", "_"): str(out_dir / name) for name in REQUIRED_ARTIFACTS},
     }
-    _write_artifacts(out_dir, summary, matched_curves, fingerprint_strata, available_arms, criteria)
+    _write_artifacts(
+        out_dir,
+        summary,
+        matched_curves,
+        scaled_interventions,
+        scaled_match_summary,
+        fingerprint_strata,
+        available_arms,
+        criteria,
+    )
     return summary
 
 
@@ -240,6 +261,106 @@ def _fingerprint_strata(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     return strata
 
 
+def _scaled_interventions(rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+    lambdas = (0.0, 0.25, 0.5, 0.75, 1.0)
+    out: list[dict[str, Any]] = []
+    for arm in REQUIRED_ARMS:
+        heldout = [row for row in rows if row.get("arm") == arm and row.get("split") == "heldout"]
+        for lam in lambdas:
+            scaled_rows = [_scaled_row(row, lam) for row in heldout]
+            valid = [row for row in scaled_rows if row]
+            out.append(
+                {
+                    "arm": arm,
+                    "lambda": lam,
+                    "row_count": len(valid),
+                    "target_inference_failures": len(scaled_rows) - len(valid),
+                    "ce_loss": _mean_any(valid, "scaled_ce_loss"),
+                    "delta_vs_base_ce": _mean_any(valid, "scaled_delta_vs_base_ce"),
+                    "residual_update_l2": _mean_any(valid, "scaled_residual_update_l2"),
+                    "logit_mse_vs_base": _mean_any(valid, "scaled_logit_mse_vs_base"),
+                    "prediction_changed_vs_base": _mean_bool_any(valid, "scaled_prediction_changed_vs_base"),
+                }
+            )
+    return out
+
+
+def _scaled_row(row: dict[str, str], lam: float) -> dict[str, Any] | None:
+    base_logits = _json_float_list(row.get("base_logits"))
+    candidate_logits = _json_float_list(row.get("candidate_logits"))
+    base_ce = _float(row.get("base_ce_loss"))
+    raw_l2 = _float(row.get("residual_update_l2"))
+    if not base_logits or not candidate_logits or len(base_logits) != len(candidate_logits) or base_ce is None:
+        return None
+    target_index = _infer_target_index(base_logits, base_ce)
+    if target_index is None:
+        return None
+    scaled_logits = [
+        base + lam * (candidate - base)
+        for base, candidate in zip(base_logits, candidate_logits)
+    ]
+    scaled_ce = _ce_for_target(scaled_logits, target_index)
+    base_argmax = _argmax(base_logits)
+    scaled_argmax = _argmax(scaled_logits)
+    logit_mse = sum((scaled - base) ** 2 for scaled, base in zip(scaled_logits, base_logits)) / len(base_logits)
+    return {
+        "scaled_ce_loss": scaled_ce,
+        "scaled_delta_vs_base_ce": scaled_ce - base_ce,
+        "scaled_residual_update_l2": "" if raw_l2 is None else abs(lam) * raw_l2,
+        "scaled_logit_mse_vs_base": logit_mse,
+        "scaled_prediction_changed_vs_base": scaled_argmax != base_argmax,
+    }
+
+
+def _scaled_match_summary(scaled_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_arm = {
+        arm: [row for row in scaled_rows if row.get("arm") == arm and int(row.get("row_count") or 0) > 0]
+        for arm in REQUIRED_ARMS
+    }
+    refs = [row for arm in DENSE_ARMS for row in by_arm.get(arm, []) if _float(row.get("lambda")) == 1.0]
+    out: list[dict[str, Any]] = []
+    for ref in refs:
+        ref_arm = str(ref.get("arm", ""))
+        ref_l2 = _float(ref.get("residual_update_l2"))
+        ref_ce = _float(ref.get("ce_loss"))
+        if ref_l2 is None or ref_ce is None:
+            continue
+        for arm, candidates in by_arm.items():
+            l2_match = _closest_row(candidates, "residual_update_l2", ref_l2)
+            ce_match = _closest_row(candidates, "ce_loss", ref_ce)
+            if l2_match:
+                out.append(_match_row("residual_l2", ref_arm, ref_l2, ref_ce, arm, l2_match))
+            if ce_match:
+                out.append(_match_row("ce_loss", ref_arm, ref_l2, ref_ce, arm, ce_match))
+    return out
+
+
+def _match_row(
+    match_type: str,
+    reference_arm: str,
+    reference_l2: float,
+    reference_ce: float,
+    arm: str,
+    row: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "match_type": match_type,
+        "reference_arm": reference_arm,
+        "reference_residual_l2": reference_l2,
+        "reference_ce_loss": reference_ce,
+        "arm": arm,
+        "lambda": row.get("lambda"),
+        "ce_loss": row.get("ce_loss"),
+        "delta_vs_base_ce": row.get("delta_vs_base_ce"),
+        "residual_update_l2": row.get("residual_update_l2"),
+        "logit_mse_vs_base": row.get("logit_mse_vs_base"),
+        "prediction_changed_vs_base": row.get("prediction_changed_vs_base"),
+        "distance": abs((_float(row.get("residual_update_l2")) or 0.0) - reference_l2)
+        if match_type == "residual_l2"
+        else abs((_float(row.get("ce_loss")) or 0.0) - reference_ce),
+    }
+
+
 def _missing_required_fields(rows: list[dict[str, str]]) -> dict[str, Any]:
     fieldnames = set()
     for row in rows:
@@ -270,11 +391,28 @@ def _criteria(
     per_token_rows: list[dict[str, str]],
     available_arms: list[dict[str, Any]],
     missing_fields: dict[str, Any],
+    scaled_interventions: list[dict[str, Any]],
+    scaled_match_summary: list[dict[str, Any]],
     min_heldout_rows_per_arm: int,
 ) -> list[dict[str, Any]]:
     arms = {row["arm"]: row for row in available_arms}
     heldout_counts = {
         arm: len([row for row in per_token_rows if row.get("arm") == arm and row.get("split") == "heldout"])
+        for arm in REQUIRED_ARMS
+    }
+    scaled_counts = {
+        arm: max(
+            [int(row.get("row_count") or 0) for row in scaled_interventions if row.get("arm") == arm],
+            default=0,
+        )
+        for arm in REQUIRED_ARMS
+    }
+    scaled_failures = {
+        arm: sum(
+            int(row.get("target_inference_failures") or 0)
+            for row in scaled_interventions
+            if row.get("arm") == arm
+        )
         for arm in REQUIRED_ARMS
     }
     return [
@@ -320,6 +458,21 @@ def _criteria(
             missing_fields["raw_intervention_fields"],
             "raw residual/logit fields are missing, so CE/L2-matched intervention scaling cannot be reconstructed",
         ),
+        _criterion(
+            "scaled_lambda_interventions_reconstructed",
+            all(count >= min_heldout_rows_per_arm for count in scaled_counts.values())
+            and all(count == 0 for count in scaled_failures.values()),
+            f"each required arm has >= {min_heldout_rows_per_arm} heldout rows with inferred targets across lambda scaling",
+            {"scaled_counts": scaled_counts, "target_inference_failures": scaled_failures},
+            "lambda-scaled CE reconstruction failed for one or more required arms",
+        ),
+        _criterion(
+            "scaled_match_summary_written",
+            bool(scaled_match_summary),
+            "scaled rows support nearest CE and residual-L2 matching summaries",
+            {"rows": len(scaled_match_summary)},
+            "scaled CE/L2 matching summary is empty",
+        ),
     ]
 
 
@@ -343,6 +496,8 @@ def _write_artifacts(
     out_dir: Path,
     summary: dict[str, Any],
     matched_curves: list[dict[str, Any]],
+    scaled_interventions: list[dict[str, Any]],
+    scaled_match_summary: list[dict[str, Any]],
     fingerprint_strata: list[dict[str, Any]],
     available_arms: list[dict[str, Any]],
     criteria: list[dict[str, Any]],
@@ -350,6 +505,8 @@ def _write_artifacts(
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     _write_csv(out_dir / "matched_curves.csv", matched_curves)
+    _write_csv(out_dir / "scaled_interventions.csv", scaled_interventions)
+    _write_csv(out_dir / "scaled_match_summary.csv", scaled_match_summary)
     _write_csv(out_dir / "fingerprint_strata.csv", fingerprint_strata)
     _write_csv(out_dir / "available_arms.csv", available_arms)
     _write_csv(out_dir / "decision_criteria.csv", criteria)
@@ -362,10 +519,11 @@ def _write_artifacts(
         f"- Requires GPU now: `{summary['requires_gpu_now']}`",
         f"- Promotion allowed: `{summary['promotion_allowed']}`",
         f"- Matched proxy rows: `{summary['matched_curve_row_count']}`",
+        f"- Scaled intervention rows: `{summary['scaled_intervention_row_count']}`",
         f"- Fingerprint strata rows: `{summary['fingerprint_strata_row_count']}`",
         f"- Next step: {summary['selected_next_step']}",
         "",
-        "This report follows the external review by checking whether the MLP advantage is confounded by residual norm and churn. Existing artifacts support proxy CE/L2/fingerprint summaries, but decisive lambda-scaled residual interventions require raw residual update vectors and logits.",
+        "This report follows the external review by checking whether the MLP advantage is confounded by residual norm and churn. When raw residual update vectors and logits are available, it reconstructs lambda-scaled logit interventions by inferring the target class from base CE.",
     ]
     if summary["failures"]:
         lines.extend(["", "## Failures"])
@@ -417,7 +575,23 @@ def _mean(rows: list[dict[str, str]], field: str) -> Any:
     return sum(values) / len(values)
 
 
+def _mean_any(rows: list[dict[str, Any]], field: str) -> Any:
+    values = [_float(row.get(field)) for row in rows]
+    values = [value for value in values if value is not None]
+    if not values:
+        return ""
+    return sum(values) / len(values)
+
+
 def _mean_bool(rows: list[dict[str, str]], field: str) -> Any:
+    values = [_bool_or_none(row.get(field)) for row in rows]
+    values = [value for value in values if value is not None]
+    if not values:
+        return ""
+    return sum(1.0 if value else 0.0 for value in values) / len(values)
+
+
+def _mean_bool_any(rows: list[dict[str, Any]], field: str) -> Any:
     values = [_bool_or_none(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
     if not values:
@@ -491,6 +665,47 @@ def _bool_or_none(value: Any) -> bool | None:
     if lowered in {"false", "0", "no"}:
         return False
     return None
+
+
+def _json_float_list(value: Any) -> list[float]:
+    if value in ("", None):
+        return []
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    out: list[float] = []
+    for item in parsed:
+        number = _float(item)
+        if number is None:
+            return []
+        out.append(number)
+    return out
+
+
+def _infer_target_index(logits: list[float], ce_loss: float, *, tolerance: float = 1e-4) -> int | None:
+    losses = [_ce_for_target(logits, index) for index in range(len(logits))]
+    best_index = min(range(len(losses)), key=lambda index: abs(losses[index] - ce_loss))
+    return best_index if abs(losses[best_index] - ce_loss) <= tolerance else None
+
+
+def _ce_for_target(logits: list[float], target_index: int) -> float:
+    max_logit = max(logits)
+    log_sum_exp = max_logit + math.log(sum(math.exp(value - max_logit) for value in logits))
+    return log_sum_exp - logits[target_index]
+
+
+def _argmax(values: list[float]) -> int:
+    return max(range(len(values)), key=lambda index: values[index])
+
+
+def _closest_row(rows: list[dict[str, Any]], field: str, target: float) -> dict[str, Any]:
+    candidates = [row for row in rows if _float(row.get(field)) is not None]
+    if not candidates:
+        return {}
+    return min(candidates, key=lambda row: abs((_float(row.get(field)) or 0.0) - target))
 
 
 def _git_commit() -> str:

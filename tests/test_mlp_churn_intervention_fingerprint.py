@@ -8,6 +8,7 @@ from pathlib import Path
 
 from relaleap.experiments.mlp_churn_intervention_fingerprint import (
     REQUIRED_ARTIFACTS,
+    _ce_for_target,
     run_mlp_churn_intervention_fingerprint,
 )
 
@@ -68,6 +69,41 @@ class MLPChurnInterventionFingerprintTest(unittest.TestCase):
             notes = (root / "out" / "notes.md").read_text(encoding="utf-8")
             self.assertIn("raw residual update vectors and logits", notes)
 
+    def test_scaled_assay_reconstructs_ce_from_raw_logits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            followup = root / "followup"
+            observables = root / "observables"
+            sparse = root / "sparse"
+            _write_followup(followup)
+            _write_observables(observables, include_raw=True)
+            _write_sparse_gate(sparse)
+
+            summary = run_mlp_churn_intervention_fingerprint(
+                followup_dir=followup,
+                dense_observables_dir=observables,
+                sparse_gate_dir=sparse,
+                out_dir=root / "out",
+                min_heldout_rows_per_arm=2,
+            )
+
+            self.assertEqual(summary["status"], "pass")
+            self.assertEqual(
+                summary["decision"],
+                "mlp_churn_intervention_fingerprint_scaled_assay_completed",
+            )
+            self.assertGreater(summary["scaled_intervention_row_count"], 0)
+            self.assertTrue(summary["scaled_match_summary"])
+            with (root / "out" / "scaled_interventions.csv").open(newline="", encoding="utf-8") as handle:
+                scaled_rows = list(csv.DictReader(handle))
+            mlp_lambda_zero = next(
+                row
+                for row in scaled_rows
+                if row["arm"] == "parameter_matched_causal_mlp_control" and row["lambda"] == "0.0"
+            )
+            self.assertEqual(int(mlp_lambda_zero["target_inference_failures"]), 0)
+            self.assertEqual(float(mlp_lambda_zero["residual_update_l2"]), 0.0)
+
 
 def _write_followup(path: Path) -> None:
     path.mkdir(parents=True)
@@ -91,7 +127,7 @@ def _write_followup(path: Path) -> None:
     )
 
 
-def _write_observables(path: Path) -> None:
+def _write_observables(path: Path, *, include_raw: bool = False) -> None:
     path.mkdir(parents=True)
     rows = []
     arms = {
@@ -103,20 +139,42 @@ def _write_observables(path: Path) -> None:
         for index in range(6):
             split = "heldout" if index % 2 else "anchor"
             rows.append(
-                {
-                    "arm": arm,
-                    "split": split,
-                    "token_index": index,
-                    "position_index": index,
-                    "base_ce_loss": 3.5,
-                    "ce_loss": ce_loss + index * 0.01,
-                    "delta_vs_base_ce": ce_loss + index * 0.01 - 3.5,
-                    "residual_update_l2": 0.25 * (index + 1),
-                    "logit_mse_vs_base": 0.01 * (index + 1),
-                    "prediction_changed_vs_base": arm == "parameter_matched_causal_mlp_control",
-                }
+                _per_token_row(
+                    arm=arm,
+                    split=split,
+                    token_index=index,
+                    position_index=index,
+                    base_ce_loss=3.5,
+                    ce_loss=ce_loss + index * 0.01,
+                    delta_vs_base_ce=ce_loss + index * 0.01 - 3.5,
+                    residual_update_l2=0.25 * (index + 1),
+                    logit_mse_vs_base=0.01 * (index + 1),
+                    prediction_changed_vs_base=arm == "parameter_matched_causal_mlp_control",
+                    include_raw=include_raw,
+                    target_index=index % 3,
+                )
             )
     _write_csv(path / "per_token_observables.csv", rows)
+
+
+def _per_token_row(**kwargs: object) -> dict[str, object]:
+    include_raw = bool(kwargs.pop("include_raw"))
+    target_index = int(kwargs.pop("target_index"))
+    row = dict(kwargs)
+    if include_raw:
+        base_logits = [0.2, -0.1, 0.4]
+        candidate_logits = [
+            base_logits[0] + 0.1,
+            base_logits[1] - 0.05,
+            base_logits[2] + 0.2,
+        ]
+        row["base_ce_loss"] = _ce_for_target(base_logits, target_index)
+        row["ce_loss"] = _ce_for_target(candidate_logits, target_index)
+        row["delta_vs_base_ce"] = float(row["ce_loss"]) - float(row["base_ce_loss"])
+        row["residual_update_vector"] = json.dumps([0.1, 0.2, 0.3])
+        row["base_logits"] = json.dumps(base_logits)
+        row["candidate_logits"] = json.dumps(candidate_logits)
+    return row
 
 
 def _write_sparse_gate(path: Path) -> None:
