@@ -211,12 +211,48 @@ def _run_torch_pilot(
         model = _make_model(torch, nn, hidden_dim, num_columns, top_k, spec)
         optimizer = _optimizer(torch, model, spec)
         if spec.name != "lambda_zero_residual":
-            _train_variant_model(F, model, optimizer, hidden, teacher_target, train_mask, train_steps, spec)
+            _train_variant_model(
+                F,
+                model,
+                optimizer,
+                hidden,
+                teacher_target,
+                train_mask,
+                train_steps,
+                spec,
+                base=base,
+                targets=targets,
+                vocab_size=vocab_size,
+            )
         ba_model = _make_model(torch, nn, hidden_dim, num_columns, top_k, spec)
         ba_optimizer = _optimizer(torch, ba_model, spec)
         if spec.name != "lambda_zero_residual":
-            _train_variant_model(F, ba_model, ba_optimizer, hidden, teacher_target, heldout_mask, train_steps, spec)
-            _train_variant_model(F, ba_model, ba_optimizer, hidden, teacher_target, train_mask, train_steps, spec)
+            _train_variant_model(
+                F,
+                ba_model,
+                ba_optimizer,
+                hidden,
+                teacher_target,
+                heldout_mask,
+                train_steps,
+                spec,
+                base=base,
+                targets=targets,
+                vocab_size=vocab_size,
+            )
+            _train_variant_model(
+                F,
+                ba_model,
+                ba_optimizer,
+                hidden,
+                teacher_target,
+                train_mask,
+                train_steps,
+                spec,
+                base=base,
+                targets=targets,
+                vocab_size=vocab_size,
+            )
         row = _evaluate_variant(
             F,
             base,
@@ -522,6 +558,10 @@ def _train_variant_model(
     mask: Any,
     steps: int,
     spec: _VariantSpec,
+    *,
+    base: Any | None = None,
+    targets: Any | None = None,
+    vocab_size: int | None = None,
 ) -> None:
     if spec.kind != "split" or spec.training_mode not in {
         "shared_core_residual_periphery",
@@ -572,7 +612,18 @@ def _train_variant_model(
                 periphery_delta = model.periphery_delta(hidden, hard_gate=False, shuffled=False)
             else:
                 periphery_delta = model.periphery_delta(hidden, hard_gate=True, shuffled=False)
-            loss = F.mse_loss(periphery_delta[mask], residual_target[mask])
+            if (
+                spec.training_mode == "causal_gated_context_contrastive_periphery"
+                and base is not None
+                and targets is not None
+                and vocab_size is not None
+            ):
+                soft_full = core_only + periphery_delta
+                ce_losses = _per_token_ce(F, base.decode(soft_full), targets, vocab_size)
+                loss = ce_losses[mask].mean()
+                loss = loss + 0.05 * F.mse_loss(periphery_delta[mask], residual_target[mask])
+            else:
+                loss = F.mse_loss(periphery_delta[mask], residual_target[mask])
             loss = loss + 0.002 * (model.periphery * model.periphery_mask).pow(2).mean()
             loss.backward()
             periphery_optimizer.step()
@@ -587,8 +638,17 @@ def _train_variant_model(
             with torch.no_grad():
                 core_only = hidden + model.core.view(1, 1, -1) * model.core_mask
                 ungated = core_only + model.periphery_delta(hidden, hard_gate=False, shuffled=False)
-                per_token_core = (core_only - target).pow(2).mean(dim=-1)
-                per_token_full = (ungated - target).pow(2).mean(dim=-1)
+                if (
+                    spec.training_mode == "causal_gated_context_contrastive_periphery"
+                    and base is not None
+                    and targets is not None
+                    and vocab_size is not None
+                ):
+                    per_token_core = _per_token_ce(F, base.decode(core_only), targets, vocab_size)
+                    per_token_full = _per_token_ce(F, base.decode(ungated), targets, vocab_size)
+                else:
+                    per_token_core = (core_only - target).pow(2).mean(dim=-1)
+                    per_token_full = (ungated - target).pow(2).mean(dim=-1)
                 utility_labels = (per_token_core - per_token_full > 0.0).to(dtype=hidden.dtype).unsqueeze(-1)
             for _ in range(max(2, steps)):
                 gate_optimizer.zero_grad(set_to_none=True)
@@ -654,6 +714,7 @@ def _evaluate_variant(
         return {
             "variant": spec.name,
             "family": spec.family,
+            "periphery_training_objective": _periphery_training_objective(spec),
             "train_pc_mse": float(F.mse_loss(adapted[train_mask], teacher_target[train_mask]).detach().item()),
             "anchor_ce": float(losses[anchor_mask].mean().detach().item()),
             "heldout_ce": float(losses[heldout_mask].mean().detach().item()),
@@ -726,6 +787,18 @@ def _per_token_ce(F: Any, logits: Any, targets: Any, vocab_size: int) -> Any:
     losses = F.cross_entropy(logits[:, :-1, :].reshape(-1, vocab_size), targets[:, :-1].reshape(-1), reduction="none")
     pad = __import__("torch").zeros(logits.shape[0], 1, dtype=losses.dtype, device=logits.device)
     return __import__("torch").cat([losses.reshape(logits.shape[0], logits.shape[1] - 1), pad], dim=1)
+
+
+def _periphery_training_objective(spec: _VariantSpec) -> str:
+    if spec.training_mode == "causal_gated_context_contrastive_periphery":
+        return "direct_train_only_ce_utility_with_centered_residual_regularizer"
+    if spec.training_mode == "permuted_gated_context_contrastive_periphery":
+        return "permuted_centered_hidden_residual_mse_null"
+    if spec.training_mode == "contrastive_residual_periphery":
+        return "centered_hidden_residual_mse"
+    if spec.training_mode == "shared_core_residual_periphery":
+        return "shared_core_then_hidden_residual_mse"
+    return "joint_hidden_mse"
 
 
 def _masked_ce(F: Any, base: Any, hidden: Any, targets: Any, vocab_size: int, mask: Any) -> float:

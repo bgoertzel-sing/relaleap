@@ -110,6 +110,18 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
             self.assertIn("periphery_train_utility_delta", summary["primary_result"])
             self.assertIn("paired_heldout_periphery_utility_mean", summary["primary_result"])
             self.assertIn("periphery_deployment_fraction", summary["primary_result"])
+            objectives = {
+                row["variant"]: row["periphery_training_objective"]
+                for row in summary["variant_metrics"]
+            }
+            self.assertEqual(
+                objectives["causal_gated_context_contrastive_periphery"],
+                "direct_train_only_ce_utility_with_centered_residual_regularizer",
+            )
+            self.assertEqual(
+                objectives["permuted_periphery_target_null"],
+                "permuted_centered_hidden_residual_mse_null",
+            )
             for artifact in REQUIRED_ARTIFACTS:
                 self.assertTrue((root / "out" / artifact).is_file(), artifact)
             with (root / "out" / "variant_metrics.csv").open(newline="", encoding="utf-8") as handle:
@@ -121,6 +133,7 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
             self.assertTrue(all("periphery_train_utility_delta" in row for row in rows))
             self.assertTrue(all("paired_heldout_periphery_utility_mean" in row for row in rows))
             self.assertTrue(all("effective_periphery_residual_norm" in row for row in rows))
+            self.assertTrue(all("periphery_training_objective" in row for row in rows))
             with (root / "out" / "failed_gate_forensics.csv").open(newline="", encoding="utf-8") as handle:
                 forensic_rows = list(csv.DictReader(handle))
             self.assertTrue(
