@@ -161,6 +161,7 @@ def _train_module(torch: Any, F: Any, base: Any, module: Any, hidden: Any, targe
     module.train()
     optimizer = torch.optim.AdamW(module.parameters(), lr=3e-3)
     base_logits = base.decode(hidden).detach()
+    budget_floor = 0.5 * budget
     for _ in range(max(1, steps)):
         optimizer.zero_grad(set_to_none=True)
         update = _module_update(module, hidden)
@@ -168,7 +169,9 @@ def _train_module(torch: Any, F: Any, base: Any, module: Any, hidden: Any, targe
         ce = F.cross_entropy(logits[:, :-1, :].reshape(-1, vocab_size), targets[:, :-1].reshape(-1))
         update_l2 = update[:, :-1, :].reshape(-1, update.shape[-1]).norm(dim=-1).mean()
         logit_mse = F.mse_loss(logits[:, :-1, :], base_logits[:, :-1, :])
-        loss = ce + 0.75 * torch.relu(update_l2 - budget).pow(2) + 0.05 * logit_mse
+        budget_overuse = torch.relu(update_l2 - budget).pow(2)
+        budget_underuse = torch.relu(budget_floor - update_l2).pow(2)
+        loss = ce + 0.75 * budget_overuse + 2.0 * budget_underuse + 0.05 * logit_mse
         loss.backward()
         optimizer.step()
     module.eval()

@@ -208,6 +208,13 @@ def _objective_terms(residual_budget: float | None) -> list[dict[str, Any]]:
             "gate": f"mean heldout residual_update_l2 <= {budget}",
         },
         {
+            "term": "residual_l2_budget_floor_penalty",
+            "weight": 2.0,
+            "scope": "all trainable residual updates",
+            "purpose": "force sparse and MLP challengers to test a nontrivial dense24-budget operating point instead of winning only by tiny residuals",
+            "gate": f"mean heldout residual_update_l2 >= 0.5 * {budget} for scientific advancement",
+        },
+        {
             "term": "anchor_kl_or_logit_mse_penalty",
             "weight": 0.25,
             "scope": "anchor/off-target rows",

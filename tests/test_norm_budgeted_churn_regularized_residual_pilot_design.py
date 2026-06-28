@@ -53,6 +53,7 @@ class NormBudgetedChurnRegularizedResidualPilotDesignTest(unittest.TestCase):
             self.assertIn("bottleneck_gated_mlp_norm_budgeted", arms)
             terms = {row["term"] for row in summary["objective_terms"]}
             self.assertIn("residual_l2_budget_penalty", terms)
+            self.assertIn("residual_l2_budget_floor_penalty", terms)
             self.assertIn("prediction_flip_churn_penalty", terms)
             self.assertTrue(all(row["passed"] for row in summary["gate_criteria"]))
             for artifact in REQUIRED_ARTIFACTS:

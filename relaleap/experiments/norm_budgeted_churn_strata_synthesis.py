@@ -68,7 +68,7 @@ def run_norm_budgeted_churn_strata_synthesis(
     selected_next_step = (
         "prepare a bounded RunPod repeat only after confirming the weak local matched-strata signal is not a budget artifact"
         if warrants_runpod
-        else "keep work local and design explicit norm-budget training for sparse/MLP challengers before any RunPod repeat"
+        else "keep work local and diagnose sparse/MLP budget underuse with stronger norm-use mechanics before any RunPod repeat"
     )
     summary = {
         "status": status,
@@ -297,8 +297,8 @@ def _interpretation(status: str, warrants_runpod: bool, arm_signal_rows: list[di
         return (
             "Sparse/MLP challengers show lower CE or churn in some aggregate rows, but the "
             "effect occurs below the nontrivial dense24 residual-L2 budget fraction. Treat this "
-            "as direction-quality evidence only; the next step should train under an explicit "
-            "norm budget rather than repeat on GPU."
+            "as direction-quality evidence only; the next step should diagnose why the trainable "
+            "sparse/MLP arms still underuse the dense24 budget before any GPU repeat."
         )
     return "No sparse/MLP challenger shows a matched-strata signal strong enough to justify GPU repetition."
 
