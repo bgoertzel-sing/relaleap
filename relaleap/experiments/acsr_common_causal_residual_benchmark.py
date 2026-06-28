@@ -305,6 +305,12 @@ def _run_benchmark(
         num_columns=num_columns,
         seed=seed + 17,
     )
+    frequency_support_topk1 = _frequency_matched_random_support(
+        torch,
+        topk1_support,
+        num_columns=num_columns,
+        seed=seed + 19,
+    )
     shuffled_support = _shuffle_support(torch, topk2_support, seed=seed + 29)
     token_position_support = _token_position_support(torch, topk2_support, num_columns)
     oracle_support = _oracle_support_topk(torch, F, base, topk2, hidden, targets, vocab_size, topk2_scores, k=2)
@@ -493,6 +499,39 @@ def _run_benchmark(
         target_update_l2=target_l2,
         heldout_mask=mask,
     )
+    ablated_causal_inputs = torch.zeros_like(causal_inputs)
+    dense_ablated_context, dense_ablated_context_losses, dense_ablated_context_l2 = _train_dense_arm(
+        torch,
+        F,
+        nn,
+        base,
+        hidden,
+        targets,
+        vocab_size,
+        ablated_causal_inputs,
+        label="rank_flop_matched_ablated_context_dense",
+        target_parameter_count=sparse_value_params,
+        steps=dense_steps,
+        base_losses=base_losses,
+        target_update_l2=target_l2,
+        heldout_mask=mask,
+    )
+    frequency_matched_random_topk1 = _eval_sparse_arm(
+        torch,
+        F,
+        base,
+        topk1,
+        hidden,
+        targets,
+        vocab_size,
+        "sparse_frequency_matched_random_topk1",
+        frequency_support_topk1,
+        topk1_scores,
+        base_losses,
+        base_loss,
+        heldout_base,
+        mask,
+    )
     sparse_arms = [
         contextual2,
         contextual1,
@@ -502,6 +541,7 @@ def _run_benchmark(
         teacher_distilled_soft,
         teacher_distilled_token_position,
         shuffled_teacher_distilled,
+        frequency_matched_random_topk1,
         _eval_sparse_arm(torch, F, base, topk2, hidden, targets, vocab_size, "sparse_frequency_matched_random", frequency_support, topk2_scores, base_losses, base_loss, heldout_base, mask),
         _eval_sparse_arm(torch, F, base, topk2, hidden, targets, vocab_size, "sparse_shuffled_support_marginals", shuffled_support, topk2_scores, base_losses, base_loss, heldout_base, mask),
         _eval_sparse_arm(torch, F, base, topk2, hidden, targets, vocab_size, "sparse_token_position_null", token_position_support, topk2_scores, base_losses, base_loss, heldout_base, mask),
@@ -513,17 +553,19 @@ def _run_benchmark(
         + sparse_arms
         + [dense_causal]
         + dense_ladder_rows
-        + [dense_position, dense_shuffled_causal]
+        + [dense_position, dense_shuffled_causal, dense_ablated_context]
     )
     dense_loss_by_arm = {
         "rank_flop_matched_causal_dense": dense_causal_losses,
         "rank_flop_matched_token_position_dense": dense_position_losses,
         "rank_flop_matched_shuffled_causal_feature_dense_null": dense_shuffled_causal_losses,
+        "rank_flop_matched_ablated_context_dense": dense_ablated_context_losses,
     }
     dense_l2_by_arm = {
         "rank_flop_matched_causal_dense": dense_causal_l2,
         "rank_flop_matched_token_position_dense": dense_position_l2,
         "rank_flop_matched_shuffled_causal_feature_dense_null": dense_shuffled_causal_l2,
+        "rank_flop_matched_ablated_context_dense": dense_ablated_context_l2,
     }
     for row, losses, l2 in dense_ladder:
         dense_loss_by_arm[str(row["arm"])] = losses
@@ -541,6 +583,7 @@ def _run_benchmark(
             "sparse_teacher_distilled_soft_temperature_topk2": teacher_distilled_soft["per_token_losses"],
             "sparse_teacher_distilled_token_position_null": teacher_distilled_token_position["per_token_losses"],
             "sparse_teacher_distilled_shuffled_teacher_null": shuffled_teacher_distilled["per_token_losses"],
+            "sparse_frequency_matched_random_topk1": frequency_matched_random_topk1["per_token_losses"],
             },
             **dense_loss_by_arm,
         ),
@@ -554,6 +597,7 @@ def _run_benchmark(
             "sparse_teacher_distilled_soft_temperature_topk2": teacher_distilled_soft["residual_update_l2_per_token"],
             "sparse_teacher_distilled_token_position_null": teacher_distilled_token_position["residual_update_l2_per_token"],
             "sparse_teacher_distilled_shuffled_teacher_null": shuffled_teacher_distilled["residual_update_l2_per_token"],
+            "sparse_frequency_matched_random_topk1": frequency_matched_random_topk1["residual_update_l2_per_token"],
             },
             **dense_l2_by_arm,
         ),
@@ -1304,6 +1348,8 @@ def _benchmark_gate_rows(
         "rank_flop_matched_causal_dense",
         "rank_flop_matched_token_position_dense",
         "rank_flop_matched_shuffled_causal_feature_dense_null",
+        "rank_flop_matched_ablated_context_dense",
+        "sparse_frequency_matched_random_topk1",
         "sparse_frequency_matched_random",
         "sparse_shuffled_support_marginals",
         "sparse_token_position_null",

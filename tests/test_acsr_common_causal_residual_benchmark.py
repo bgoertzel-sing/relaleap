@@ -48,6 +48,8 @@ class ACSRCommonCausalResidualBenchmarkTest(unittest.TestCase):
             _arm("rank_flop_matched_causal_dense", -0.05, 0.45),
             _arm("rank_flop_matched_token_position_dense", 0.01, 0.25),
             _arm("rank_flop_matched_shuffled_causal_feature_dense_null", 0.02, 0.3),
+            _arm("rank_flop_matched_ablated_context_dense", 0.03, 0.3),
+            _arm("sparse_frequency_matched_random_topk1", -0.005, 0.3),
             _arm("sparse_frequency_matched_random", -0.01, 0.4, heldout_ce=4.2),
             _arm("sparse_shuffled_support_marginals", -0.02, 0.4),
             _arm("sparse_token_position_null", 0.03, 0.4),
@@ -71,6 +73,8 @@ class ACSRCommonCausalResidualBenchmarkTest(unittest.TestCase):
             _arm("rank_flop_matched_causal_dense", -0.08, 0.45),
             _arm("rank_flop_matched_token_position_dense", 0.01, 0.25),
             _arm("rank_flop_matched_shuffled_causal_feature_dense_null", 0.02, 0.3),
+            _arm("rank_flop_matched_ablated_context_dense", 0.03, 0.3),
+            _arm("sparse_frequency_matched_random_topk1", -0.005, 0.3),
             _arm("sparse_frequency_matched_random", 0.0, 0.4, heldout_ce=4.1),
             _arm("sparse_shuffled_support_marginals", -0.01, 0.4),
             _arm("sparse_token_position_null", 0.02, 0.4),
@@ -96,6 +100,8 @@ class ACSRCommonCausalResidualBenchmarkTest(unittest.TestCase):
             _arm("rank_flop_matched_causal_dense", -0.4195396900177002, 1.0178145170211792, active_params=9288),
             _arm("rank_flop_matched_token_position_dense", 0.029190540313720703, 1.0178143978118896, active_params=9306),
             _arm("rank_flop_matched_shuffled_causal_feature_dense_null", 0.02, 1.0, active_params=9306),
+            _arm("rank_flop_matched_ablated_context_dense", 0.03, 1.0, active_params=9306),
+            _arm("sparse_frequency_matched_random_topk1", -0.005, 1.0, active_params=96),
             _arm("sparse_frequency_matched_random", 0.0, 1.0, active_params=192, heldout_ce=4.2),
             _arm("sparse_shuffled_support_marginals", -0.01, 1.0, active_params=192),
             _arm("sparse_token_position_null", 0.02, 1.0, active_params=192),
@@ -106,7 +112,7 @@ class ACSRCommonCausalResidualBenchmarkTest(unittest.TestCase):
 
         self.assertFalse(compute_gate["passed"])
         self.assertEqual(compute_gate["actual"]["sparse_active_params_proxy"], 192)
-        self.assertEqual(compute_gate["actual"]["dense_active_params_proxy"], [9288, 9306, 9306])
+        self.assertEqual(compute_gate["actual"]["dense_active_params_proxy"], [9288, 9306, 9306, 9306])
         self.assertGreater(compute_gate["actual"]["dense_to_sparse_active_ratios"][0], 48.0)
 
         summary = _summary(
@@ -144,6 +150,8 @@ class ACSRCommonCausalResidualBenchmarkTest(unittest.TestCase):
             _arm("dense_bottleneck_causal_rank1", -0.03, 0.2, active_params=384),
             _arm("rank_flop_matched_token_position_dense", 0.01, 0.25, active_params=9306),
             _arm("rank_flop_matched_shuffled_causal_feature_dense_null", 0.02, 0.3, active_params=9306),
+            _arm("rank_flop_matched_ablated_context_dense", 0.03, 0.3, active_params=9306),
+            _arm("sparse_frequency_matched_random_topk1", -0.005, 0.3, active_params=96),
             _arm("sparse_frequency_matched_random", -0.01, 0.4, active_params=192, heldout_ce=4.2),
             _arm("sparse_shuffled_support_marginals", -0.02, 0.4, active_params=192),
             _arm("sparse_token_position_null", 0.03, 0.4, active_params=192),
@@ -185,6 +193,8 @@ class ACSRCommonCausalResidualBenchmarkTest(unittest.TestCase):
             _arm("dense_bottleneck_causal_rank1", -0.03, 0.2, active_params=384),
             _arm("rank_flop_matched_token_position_dense", 0.01, 0.25, active_params=9306),
             _arm("rank_flop_matched_shuffled_causal_feature_dense_null", 0.02, 0.3, active_params=9306),
+            _arm("rank_flop_matched_ablated_context_dense", 0.03, 0.3, active_params=9306),
+            _arm("sparse_frequency_matched_random_topk1", -0.005, 0.3, active_params=96),
             _arm("sparse_frequency_matched_random", -0.01, 0.4, active_params=192, heldout_ce=4.2),
             _arm("sparse_shuffled_support_marginals", -0.02, 0.4, active_params=192),
             _arm("sparse_token_position_null", 0.03, 0.4, active_params=192),

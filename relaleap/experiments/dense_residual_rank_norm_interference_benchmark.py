@@ -28,7 +28,14 @@ REQUIRED_ARMS = (
     "sparse_rank_matched_topk1",
     "rank_flop_matched_causal_dense",
     "rank_flop_matched_token_position_dense",
+    "rank_flop_matched_shuffled_context_dense",
+    "rank_flop_matched_ablated_context_dense",
+    "sparse_frequency_matched_random_topk1",
 )
+
+ARM_ALIASES = {
+    "rank_flop_matched_shuffled_context_dense": "rank_flop_matched_shuffled_causal_feature_dense_null",
+}
 
 
 def run_dense_residual_rank_norm_interference_benchmark(
@@ -91,7 +98,7 @@ def _rank_norm_rows(arm_rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     sparse_l2 = _float_or_none(by_arm.get("sparse_contextual_topk2", {}).get("heldout_residual_update_l2"))
     rows: list[dict[str, Any]] = []
     for arm in REQUIRED_ARMS:
-        source = by_arm.get(arm, {})
+        source = _source_arm_row(by_arm, arm)
         heldout_delta = _float_or_none(source.get("heldout_delta_vs_base_ce"))
         heldout_l2 = _float_or_none(source.get("heldout_residual_update_l2"))
         active_params = _float_or_none(source.get("active_params_proxy"))
@@ -99,6 +106,7 @@ def _rank_norm_rows(arm_rows: list[dict[str, str]]) -> list[dict[str, Any]]:
         rows.append(
             {
                 "arm": arm,
+                "source_arm": source.get("arm", arm if source else ""),
                 "family": source.get("family", ""),
                 "top_k": source.get("top_k", ""),
                 "rank": source.get("rank", ""),
@@ -115,14 +123,19 @@ def _rank_norm_rows(arm_rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     return rows
 
 
+def _source_arm_row(by_arm: dict[str, dict[str, str]], arm: str) -> dict[str, str]:
+    return by_arm.get(arm) or by_arm.get(ARM_ALIASES.get(arm, ""), {})
+
+
 def _interference_rows(per_token_rows: list[dict[str, str]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for arm in REQUIRED_ARMS:
+        source_arm = ARM_ALIASES.get(arm, arm)
         for split in ("train", "heldout"):
             values = [
                 row
                 for row in per_token_rows
-                if row.get("arm") == arm and row.get("split") == split
+                if row.get("arm") == source_arm and row.get("split") == split
             ]
             deltas = [_float_or_none(row.get("delta_vs_base_ce")) for row in values]
             l2s = [_float_or_none(row.get("residual_update_l2")) for row in values]
@@ -134,6 +147,7 @@ def _interference_rows(per_token_rows: list[dict[str, str]]) -> list[dict[str, A
                 {
                     "row_type": "arm_split",
                     "arm": arm,
+                    "source_arm": source_arm,
                     "split": split,
                     "token_count": len(deltas),
                     "mean_delta_vs_base_ce": mean_delta,
@@ -152,6 +166,27 @@ def _interference_rows(per_token_rows: list[dict[str, str]]) -> list[dict[str, A
             "rank_flop_matched_token_position_dense",
         )
     )
+    rows.extend(
+        _paired_interference_rows(
+            per_token_rows,
+            "rank_flop_matched_causal_dense",
+            "rank_flop_matched_shuffled_context_dense",
+        )
+    )
+    rows.extend(
+        _paired_interference_rows(
+            per_token_rows,
+            "rank_flop_matched_causal_dense",
+            "rank_flop_matched_ablated_context_dense",
+        )
+    )
+    rows.extend(
+        _paired_interference_rows(
+            per_token_rows,
+            "sparse_rank_matched_topk1",
+            "sparse_frequency_matched_random_topk1",
+        )
+    )
     return rows
 
 
@@ -165,12 +200,12 @@ def _paired_interference_rows(
         left = {
             row.get("token_index"): _float_or_none(row.get("delta_vs_base_ce"))
             for row in per_token_rows
-            if row.get("arm") == left_arm and row.get("split") == split
+            if row.get("arm") == ARM_ALIASES.get(left_arm, left_arm) and row.get("split") == split
         }
         right = {
             row.get("token_index"): _float_or_none(row.get("delta_vs_base_ce"))
             for row in per_token_rows
-            if row.get("arm") == right_arm and row.get("split") == split
+            if row.get("arm") == ARM_ALIASES.get(right_arm, right_arm) and row.get("split") == split
         }
         paired = [
             (left[index], right[index])
@@ -213,6 +248,24 @@ def _benchmark_gate_rows(
         interference_rows,
         "rank_flop_matched_causal_dense",
         "rank_flop_matched_token_position_dense",
+        "heldout",
+    )
+    dense_shuffled_pair = _paired_row(
+        interference_rows,
+        "rank_flop_matched_causal_dense",
+        "rank_flop_matched_shuffled_context_dense",
+        "heldout",
+    )
+    dense_ablated_pair = _paired_row(
+        interference_rows,
+        "rank_flop_matched_causal_dense",
+        "rank_flop_matched_ablated_context_dense",
+        "heldout",
+    )
+    sparse_random_pair = _paired_row(
+        interference_rows,
+        "sparse_rank_matched_topk1",
+        "sparse_frequency_matched_random_topk1",
         "heldout",
     )
     sparse = rank_by_arm.get("sparse_contextual_topk2", {})
@@ -285,6 +338,27 @@ def _benchmark_gate_rows(
             "paired held-out causal dense advantage beats token-position dense null",
             dense_token_pair,
             "causal dense did not beat token-position dense null in paired held-out rows",
+        ),
+        _criterion(
+            "paired_dense_shuffled_context_null_recorded",
+            _float_or_none(dense_shuffled_pair.get("mean_delta_advantage_vs_reference")) is not None,
+            "paired held-out dense-vs-shuffled-context-null advantage is recorded",
+            dense_shuffled_pair,
+            "missing paired dense-vs-shuffled-context-null held-out row",
+        ),
+        _criterion(
+            "paired_dense_ablated_context_null_recorded",
+            _float_or_none(dense_ablated_pair.get("mean_delta_advantage_vs_reference")) is not None,
+            "paired held-out dense-vs-ablated-context-null advantage is recorded",
+            dense_ablated_pair,
+            "missing paired dense-vs-ablated-context-null held-out row",
+        ),
+        _criterion(
+            "paired_topk1_random_support_null_recorded",
+            _float_or_none(sparse_random_pair.get("mean_delta_advantage_vs_reference")) is not None,
+            "paired held-out top-k1-vs-frequency-random-support-null advantage is recorded",
+            sparse_random_pair,
+            "missing paired top-k1-vs-random-support-null held-out row",
         ),
     ]
 

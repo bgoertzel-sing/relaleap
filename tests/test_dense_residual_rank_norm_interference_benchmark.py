@@ -38,11 +38,30 @@ class DenseResidualRankNormInterferenceBenchmarkTest(unittest.TestCase):
                 [
                     _arm("sparse_contextual_topk2", "sparse", -0.30, 1.0, active=200, flops=200, top_k=2),
                     _arm("sparse_rank_matched_topk1", "sparse", -0.20, 1.0, active=100, flops=100, top_k=1),
+                    _arm("sparse_frequency_matched_random_topk1", "sparse", -0.05, 1.0, active=100, flops=100, top_k=1),
                     _arm("rank_flop_matched_causal_dense", "dense", -0.40, 1.0, active=9000, flops=9000, rank=24),
                     _arm(
                         "rank_flop_matched_token_position_dense",
                         "dense",
                         0.01,
+                        1.0,
+                        active=9000,
+                        flops=9000,
+                        rank=94,
+                    ),
+                    _arm(
+                        "rank_flop_matched_shuffled_causal_feature_dense_null",
+                        "dense",
+                        0.02,
+                        1.0,
+                        active=9000,
+                        flops=9000,
+                        rank=94,
+                    ),
+                    _arm(
+                        "rank_flop_matched_ablated_context_dense",
+                        "dense",
+                        0.03,
                         1.0,
                         active=9000,
                         flops=9000,
@@ -54,8 +73,11 @@ class DenseResidualRankNormInterferenceBenchmarkTest(unittest.TestCase):
                 common / "per_token_metrics.csv",
                 _per_token("sparse_contextual_topk2", [-0.2, -0.4], [-0.2, -0.4])
                 + _per_token("sparse_rank_matched_topk1", [-0.1, -0.3], [-0.1, -0.3])
+                + _per_token("sparse_frequency_matched_random_topk1", [0.0, -0.1], [0.0, -0.1])
                 + _per_token("rank_flop_matched_causal_dense", [-0.3, -0.5], [-0.3, -0.5])
-                + _per_token("rank_flop_matched_token_position_dense", [0.1, -0.1], [0.1, -0.1]),
+                + _per_token("rank_flop_matched_token_position_dense", [0.1, -0.1], [0.1, -0.1])
+                + _per_token("rank_flop_matched_shuffled_causal_feature_dense_null", [0.1, 0.0], [0.1, 0.0])
+                + _per_token("rank_flop_matched_ablated_context_dense", [0.2, 0.0], [0.2, 0.0]),
             )
 
             summary = run_dense_residual_rank_norm_interference_benchmark(
@@ -86,16 +108,22 @@ class DenseResidualRankNormInterferenceBenchmarkTest(unittest.TestCase):
                 [
                     _arm("sparse_contextual_topk2", "sparse", -0.30, 1.0, active=200, flops=200, top_k=2),
                     _arm("sparse_rank_matched_topk1", "sparse", -0.20, 1.0, active=100, flops=100, top_k=1),
+                    _arm("sparse_frequency_matched_random_topk1", "sparse", -0.05, 1.0, active=100, flops=100, top_k=1),
                     _arm("rank_flop_matched_causal_dense", "dense", -0.40, 1.5, active=9000, flops=9000, rank=24),
                     _arm("rank_flop_matched_token_position_dense", "dense", 0.01, 1.0, active=9000, flops=9000, rank=94),
+                    _arm("rank_flop_matched_shuffled_causal_feature_dense_null", "dense", 0.02, 1.0, active=9000, flops=9000, rank=94),
+                    _arm("rank_flop_matched_ablated_context_dense", "dense", 0.03, 1.0, active=9000, flops=9000, rank=94),
                 ],
             )
             _write_csv(
                 common / "per_token_metrics.csv",
                 _per_token("sparse_contextual_topk2", [-0.2, -0.4], [-0.2, -0.4])
                 + _per_token("sparse_rank_matched_topk1", [-0.1, -0.3], [-0.1, -0.3])
+                + _per_token("sparse_frequency_matched_random_topk1", [0.0, -0.1], [0.0, -0.1])
                 + _per_token("rank_flop_matched_causal_dense", [-0.3, -0.5], [-0.3, -0.5])
-                + _per_token("rank_flop_matched_token_position_dense", [0.1, -0.1], [0.1, -0.1]),
+                + _per_token("rank_flop_matched_token_position_dense", [0.1, -0.1], [0.1, -0.1])
+                + _per_token("rank_flop_matched_shuffled_causal_feature_dense_null", [0.1, 0.0], [0.1, 0.0])
+                + _per_token("rank_flop_matched_ablated_context_dense", [0.2, 0.0], [0.2, 0.0]),
             )
 
             summary = run_dense_residual_rank_norm_interference_benchmark(
