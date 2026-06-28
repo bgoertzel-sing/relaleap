@@ -37,6 +37,8 @@ REQUIRED_ARTIFACTS = (
 )
 
 REQUIRED_VARIANTS = (
+    "causal_gated_context_contrastive_periphery",
+    "permuted_periphery_target_null",
     "contrastive_residual_periphery",
     "repaired_shared_core_residual_periphery",
     "core_periphery_pc_contextual_router",
@@ -53,7 +55,8 @@ REQUIRED_VARIANTS = (
     "shuffled_core_periphery_assignment",
 )
 
-ACTIVE_CANDIDATE = "contrastive_residual_periphery"
+ACTIVE_CANDIDATE = "causal_gated_context_contrastive_periphery"
+CONTRASTIVE_CANDIDATE = "contrastive_residual_periphery"
 REPAIRED_CANDIDATE = "repaired_shared_core_residual_periphery"
 LEGACY_CANDIDATE = "core_periphery_pc_contextual_router"
 
@@ -251,8 +254,22 @@ def _run_torch_pilot(
 def _variant_specs() -> list[_VariantSpec]:
     return [
         _VariantSpec(
-            "contrastive_residual_periphery",
+            "causal_gated_context_contrastive_periphery",
             "candidate",
+            training_mode="causal_gated_context_contrastive_periphery",
+            core_lr_scale=0.18,
+            periphery_lr_scale=0.55,
+        ),
+        _VariantSpec(
+            "permuted_periphery_target_null",
+            "mechanism_null",
+            training_mode="permuted_gated_context_contrastive_periphery",
+            core_lr_scale=0.18,
+            periphery_lr_scale=0.55,
+        ),
+        _VariantSpec(
+            "contrastive_residual_periphery",
+            "contrastive_control",
             training_mode="contrastive_residual_periphery",
             core_lr_scale=0.18,
             periphery_lr_scale=0.45,
@@ -306,10 +323,13 @@ def _SplitResidual(torch: Any, nn: Any, hidden_dim: int, num_columns: int, top_k
             self.core = nn.Parameter(torch.zeros(hidden_dim))
             self.periphery = nn.Parameter(torch.zeros(self.num_columns, hidden_dim))
             self.router = nn.Linear(hidden_dim + 3, self.num_columns, bias=False)
+            self.utility_gate = nn.Linear(hidden_dim + 3, 1, bias=True)
             self.dummy = nn.Parameter(torch.zeros(()))
             if self.spec.training_mode in {
                 "shared_core_residual_periphery",
                 "contrastive_residual_periphery",
+                "causal_gated_context_contrastive_periphery",
+                "permuted_gated_context_contrastive_periphery",
             }:
                 core_mask = torch.ones(hidden_dim)
                 periphery_mask = torch.zeros(hidden_dim)
@@ -323,7 +343,11 @@ def _SplitResidual(torch: Any, nn: Any, hidden_dim: int, num_columns: int, top_k
             self.initial_core = self.core.detach().clone()
             self.initial_periphery = self.periphery.detach().clone()
             self.initial_router = self.router.weight.detach().clone()
+            self.initial_gate_weight = self.utility_gate.weight.detach().clone()
+            self.initial_gate_bias = self.utility_gate.bias.detach().clone()
             nn.init.zeros_(self.router.weight)
+            nn.init.zeros_(self.utility_gate.weight)
+            nn.init.zeros_(self.utility_gate.bias)
 
         def _features(self, hidden: Any) -> Any:
             seq_len = hidden.shape[1]
@@ -342,22 +366,65 @@ def _SplitResidual(torch: Any, nn: Any, hidden_dim: int, num_columns: int, top_k
                 return (pos % self.num_columns).long()
             return self.router(self._features(hidden)).argmax(dim=-1)
 
-        def forward(self, hidden: Any, ablate: str | None = None) -> Any:
+        def periphery_delta(self, hidden: Any, *, hard_gate: bool = True, shuffled: bool | None = None) -> Any:
+            if self.spec.training_mode in {
+                "causal_gated_context_contrastive_periphery",
+                "permuted_gated_context_contrastive_periphery",
+            }:
+                features = self._features(hidden)
+                weights = torch.softmax(self.router(features), dim=-1)
+                use_shuffled = self.spec.shuffled_eval if shuffled is None else shuffled
+                if use_shuffled:
+                    weights = torch.roll(weights, shifts=1, dims=-1)
+                delta = torch.einsum("btn,nh->bth", weights, self.periphery) * self.periphery_mask
+                gate = torch.sigmoid(self.utility_gate(features))
+                if hard_gate:
+                    gate = (gate > 0.5).to(dtype=delta.dtype)
+                return delta * gate
             indices = self._indices(hidden)
-            if self.spec.shuffled_eval:
+            use_shuffled = self.spec.shuffled_eval if shuffled is None else shuffled
+            if use_shuffled:
                 indices = (indices + 1) % self.num_columns
+            return self.periphery[indices] * self.periphery_mask
+
+        def periphery_deployment_fraction(self, hidden: Any) -> float:
+            if not self.spec.use_periphery:
+                return 0.0
+            if self.spec.training_mode not in {
+                "causal_gated_context_contrastive_periphery",
+                "permuted_gated_context_contrastive_periphery",
+            }:
+                return 1.0
+            with torch.no_grad():
+                gate = torch.sigmoid(self.utility_gate(self._features(hidden)))
+                return float((gate > 0.5).to(dtype=hidden.dtype).mean().item())
+
+        def effective_periphery_residual_norm(self, hidden: Any) -> float:
+            if not self.spec.use_periphery:
+                return 0.0
+            with torch.no_grad():
+                return float(self.periphery_delta(hidden, hard_gate=True).norm(dim=-1).mean().item())
+
+        def forward(self, hidden: Any, ablate: str | None = None) -> Any:
             residual = torch.zeros_like(hidden) + self.dummy * 0.0
             if self.spec.use_core and ablate != "core":
                 residual = residual + self.core.view(1, 1, -1) * self.core_mask
             if self.spec.use_periphery and ablate != "periphery":
-                residual = residual + self.periphery[indices] * self.periphery_mask
+                residual = residual + self.periphery_delta(hidden, hard_gate=True)
             return hidden + residual
 
         def core_parameters(self) -> list[Any]:
             return [self.core] if self.spec.use_core else []
 
         def periphery_parameters(self) -> list[Any]:
-            return [self.periphery, self.router.weight] if self.spec.use_periphery else []
+            if not self.spec.use_periphery:
+                return []
+            if self.spec.training_mode in {
+                "causal_gated_context_contrastive_periphery",
+                "permuted_gated_context_contrastive_periphery",
+            }:
+                return [self.periphery, self.router.weight, self.utility_gate.weight, self.utility_gate.bias]
+            return [self.periphery, self.router.weight]
 
         def core_residual_norm(self) -> float:
             return float((self.core.detach() * self.core_mask).norm().item()) if self.spec.use_core else 0.0
@@ -373,6 +440,13 @@ def _SplitResidual(torch: Any, nn: Any, hidden_dim: int, num_columns: int, top_k
                 return 0.0
             periphery_delta = (self.periphery.detach() - self.initial_periphery).norm()
             router_delta = (self.router.weight.detach() - self.initial_router).norm()
+            if self.spec.training_mode in {
+                "causal_gated_context_contrastive_periphery",
+                "permuted_gated_context_contrastive_periphery",
+            }:
+                gate_weight_delta = (self.utility_gate.weight.detach() - self.initial_gate_weight).norm()
+                gate_bias_delta = (self.utility_gate.bias.detach() - self.initial_gate_bias).norm()
+                return float((periphery_delta + router_delta + gate_weight_delta + gate_bias_delta).item())
             return float((periphery_delta + router_delta).item())
 
     return SplitResidual()
@@ -452,6 +526,8 @@ def _train_variant_model(
     if spec.kind != "split" or spec.training_mode not in {
         "shared_core_residual_periphery",
         "contrastive_residual_periphery",
+        "causal_gated_context_contrastive_periphery",
+        "permuted_gated_context_contrastive_periphery",
     }:
         _train_model(F, model, optimizer, hidden, target, mask, steps)
         return
@@ -478,17 +554,49 @@ def _train_variant_model(
             with torch.no_grad():
                 core_only = hidden + model.core.view(1, 1, -1) * model.core_mask
                 residual_target = target - core_only
-                if spec.training_mode == "contrastive_residual_periphery":
+                if spec.training_mode in {
+                    "contrastive_residual_periphery",
+                    "causal_gated_context_contrastive_periphery",
+                    "permuted_gated_context_contrastive_periphery",
+                }:
                     shared_residual = residual_target[mask].mean(dim=0, keepdim=True).expand_as(residual_target[mask])
                     contrastive_target = residual_target.clone()
                     contrastive_target[mask] = residual_target[mask] - shared_residual
                     residual_target = contrastive_target
-            periphery_indices = model._indices(hidden)
-            periphery_delta = model.periphery[periphery_indices] * model.periphery_mask
+                    if spec.training_mode == "permuted_gated_context_contrastive_periphery":
+                        residual_target = residual_target.roll(shifts=1, dims=1)
+            if spec.training_mode in {
+                "causal_gated_context_contrastive_periphery",
+                "permuted_gated_context_contrastive_periphery",
+            }:
+                periphery_delta = model.periphery_delta(hidden, hard_gate=False, shuffled=False)
+            else:
+                periphery_delta = model.periphery_delta(hidden, hard_gate=True, shuffled=False)
             loss = F.mse_loss(periphery_delta[mask], residual_target[mask])
             loss = loss + 0.002 * (model.periphery * model.periphery_mask).pow(2).mean()
             loss.backward()
             periphery_optimizer.step()
+        if spec.training_mode in {
+            "causal_gated_context_contrastive_periphery",
+            "permuted_gated_context_contrastive_periphery",
+        }:
+            gate_optimizer = torch.optim.AdamW(
+                [model.utility_gate.weight, model.utility_gate.bias],
+                lr=0.05 * spec.periphery_lr_scale,
+            )
+            with torch.no_grad():
+                core_only = hidden + model.core.view(1, 1, -1) * model.core_mask
+                ungated = core_only + model.periphery_delta(hidden, hard_gate=False, shuffled=False)
+                per_token_core = (core_only - target).pow(2).mean(dim=-1)
+                per_token_full = (ungated - target).pow(2).mean(dim=-1)
+                utility_labels = (per_token_core - per_token_full > 0.0).to(dtype=hidden.dtype).unsqueeze(-1)
+            for _ in range(max(2, steps)):
+                gate_optimizer.zero_grad(set_to_none=True)
+                logits = model.utility_gate(model._features(hidden))
+                loss = F.binary_cross_entropy_with_logits(logits[mask], utility_labels[mask])
+                loss = loss + 0.0005 * model.utility_gate.weight.pow(2).mean()
+                loss.backward()
+                gate_optimizer.step()
         if spec.training_mode == "contrastive_residual_periphery":
             with torch.no_grad():
                 core_only = hidden + model.core.view(1, 1, -1) * model.core_mask
@@ -539,6 +647,8 @@ def _evaluate_variant(
         periphery_train_prune = _masked_ce_delta(F, base, model, hidden, targets, vocab_size, train_mask, "periphery")
         core_prune_heldout = _masked_ce_delta(F, base, model, hidden, targets, vocab_size, heldout_mask, "core")
         periphery_prune_heldout = _masked_ce_delta(F, base, model, hidden, targets, vocab_size, heldout_mask, "periphery")
+        paired_train = _paired_periphery_ce_utility(F, base, model, hidden, targets, vocab_size, train_mask)
+        paired_heldout = _paired_periphery_ce_utility(F, base, model, hidden, targets, vocab_size, heldout_mask)
         commutator = float(F.mse_loss(model(hidden)[train_mask], ba_model(hidden)[train_mask]).detach().item())
         residual = adapted - hidden
         return {
@@ -558,12 +668,18 @@ def _evaluate_variant(
             "residual_l2": float(residual.norm(dim=-1).mean().detach().item()),
             "core_residual_norm": float(getattr(model, "core_residual_norm", lambda: 0.0)()),
             "periphery_residual_norm": float(getattr(model, "periphery_residual_norm", lambda: 0.0)()),
+            "effective_periphery_residual_norm": float(getattr(model, "effective_periphery_residual_norm", lambda _: 0.0)(hidden)),
+            "periphery_deployment_fraction": float(getattr(model, "periphery_deployment_fraction", lambda _: 0.0)(hidden)),
             "core_update_norm": float(getattr(model, "core_update_norm", lambda: 0.0)()),
             "periphery_update_norm": float(getattr(model, "periphery_update_norm", lambda: 0.0)()),
             "plasticity_ratio": _safe_divide(float(getattr(model, "periphery_update_norm", lambda: 0.0)()), float(getattr(model, "core_update_norm", lambda: 0.0)())),
             "core_first_prune_delta": core_prune,
             "periphery_first_prune_delta": periphery_prune,
             "periphery_train_utility_delta": periphery_train_prune,
+            "paired_train_periphery_utility_mean": paired_train["mean"],
+            "paired_train_periphery_utility_positive_fraction": paired_train["positive_fraction"],
+            "paired_heldout_periphery_utility_mean": paired_heldout["mean"],
+            "paired_heldout_periphery_utility_positive_fraction": paired_heldout["positive_fraction"],
             "periphery_first_minus_core_first_prune_delta": core_prune - periphery_prune,
             "core_first_prune_delta_heldout": core_prune_heldout,
             "periphery_first_prune_delta_heldout": periphery_prune_heldout,
@@ -622,6 +738,25 @@ def _masked_ce_delta(F: Any, base: Any, model: Any, hidden: Any, targets: Any, v
     return ablated - full
 
 
+def _paired_periphery_ce_utility(
+    F: Any,
+    base: Any,
+    model: Any,
+    hidden: Any,
+    targets: Any,
+    vocab_size: int,
+    mask: Any,
+) -> dict[str, float]:
+    periphery_on = _per_token_ce(F, base.decode(model(hidden)), targets, vocab_size)
+    periphery_off = _per_token_ce(F, base.decode(model(hidden, ablate="periphery")), targets, vocab_size)
+    utility = periphery_off - periphery_on
+    selected = utility[mask]
+    return {
+        "mean": float(selected.mean().detach().item()),
+        "positive_fraction": float((selected > 0.0).to(dtype=utility.dtype).mean().detach().item()),
+    }
+
+
 def _masked_kl(F: Any, base_logits: Any, logits: Any, mask: Any) -> float:
     import torch
 
@@ -675,6 +810,7 @@ def _pilot_gates(
     dense = _row(variant_rows, "dense_rank_norm_residual")
     mlp = _row(variant_rows, "parameter_matched_causal_mlp")
     null = _row(variant_rows, "lambda_zero_residual")
+    permuted = _row(variant_rows, "permuted_periphery_target_null")
     return [
         _criterion("runtime_completed", not runtime_error, "hard", "torch pilot runs without exception", runtime_error or "ok", "fix runtime error"),
         _criterion("required_variants_present", set(REQUIRED_VARIANTS).issubset(variants), "hard", "candidate plus all controls are present", sorted(str(v) for v in variants), "add missing variant rows"),
@@ -692,9 +828,18 @@ def _pilot_gates(
         _criterion("matched_mlp_retention", _float(primary.get("anchor_kl_drift")) <= _float(mlp.get("anchor_kl_drift")) + 1e-8, "claim", "active candidate anchor KL no worse than MLP", {"candidate_variant": ACTIVE_CANDIDATE, "candidate": primary.get("anchor_kl_drift"), "mlp": mlp.get("anchor_kl_drift")}, "MLP control remains active"),
         _criterion("core_periphery_update_separation", _float(primary.get("plasticity_ratio")) > 1.5, "claim", "periphery update norm exceeds protected core update norm", primary.get("plasticity_ratio"), "split may be accounting-only"),
         _criterion("periphery_first_pruning_signal", _float(primary.get("periphery_first_minus_core_first_prune_delta")) > 0.0, "claim", "core pruning is more damaging than periphery pruning on anchors", primary.get("periphery_first_minus_core_first_prune_delta"), "protected core not causally distinguished"),
-        _criterion("periphery_effective_residual_nonzero", _float(primary.get("periphery_residual_norm")) > 1e-6, "claim", "active candidate deploys a nonzero periphery residual", primary.get("periphery_residual_norm"), "periphery cannot pass by silently turning off"),
+        _criterion("periphery_deployment_nonzero", _float(primary.get("periphery_deployment_fraction")) > 0.0, "claim", "active candidate deploys periphery on at least one context", primary.get("periphery_deployment_fraction"), "periphery cannot pass by gating every context off"),
+        _criterion("periphery_effective_residual_nonzero", _float(primary.get("effective_periphery_residual_norm")) > 1e-6, "claim", "active candidate deploys a nonzero effective periphery residual", {"effective": primary.get("effective_periphery_residual_norm"), "parameter": primary.get("periphery_residual_norm")}, "periphery cannot pass by silently turning off"),
         _criterion("train_only_periphery_use_nonnegative", _float(primary.get("periphery_train_utility_delta")) >= 0.0, "claim", "train-only periphery ablation does not improve CE", primary.get("periphery_train_utility_delta"), "periphery fails the train-only use selection rule"),
-        _criterion("periphery_heldout_utility_positive", _float(primary.get("periphery_first_prune_delta_heldout")) > 1e-8, "claim", "periphery ablation hurts heldout CE on selected contexts", primary.get("periphery_first_prune_delta_heldout"), "periphery is silent or suppressive rather than context-useful"),
+        _criterion("periphery_heldout_utility_positive", _float(primary.get("paired_heldout_periphery_utility_mean")) > 1e-8, "claim", "paired per-token periphery-on/off utility is positive on heldout contexts", primary.get("paired_heldout_periphery_utility_mean"), "periphery is silent or suppressive rather than context-useful"),
+        _criterion(
+            "periphery_beats_permuted_target_null",
+            _float(primary.get("paired_heldout_periphery_utility_mean")) > _float(permuted.get("paired_heldout_periphery_utility_mean")) + 1e-8,
+            "claim",
+            "active heldout periphery utility beats a permuted-target periphery null",
+            {"candidate": primary.get("paired_heldout_periphery_utility_mean"), "permuted_null": permuted.get("paired_heldout_periphery_utility_mean")},
+            "periphery utility is not distinguished from target-permutation null",
+        ),
     ]
 
 
@@ -709,7 +854,12 @@ def _primary_result(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "core_minus_dense_anchor_kl_drift": _float(primary.get("anchor_kl_drift")) - _float(dense.get("anchor_kl_drift")),
         "core_minus_mlp_anchor_kl_drift": _float(primary.get("anchor_kl_drift")) - _float(mlp.get("anchor_kl_drift")),
         "core_periphery_update_norm_ratio": primary.get("plasticity_ratio"),
+        "periphery_deployment_fraction": primary.get("periphery_deployment_fraction"),
+        "effective_periphery_residual_norm": primary.get("effective_periphery_residual_norm"),
         "periphery_train_utility_delta": primary.get("periphery_train_utility_delta"),
+        "paired_train_periphery_utility_mean": primary.get("paired_train_periphery_utility_mean"),
+        "paired_heldout_periphery_utility_mean": primary.get("paired_heldout_periphery_utility_mean"),
+        "paired_heldout_periphery_utility_positive_fraction": primary.get("paired_heldout_periphery_utility_positive_fraction"),
         "periphery_first_minus_core_first_prune_delta": primary.get("periphery_first_minus_core_first_prune_delta"),
         "periphery_first_prune_delta_heldout": primary.get("periphery_first_prune_delta_heldout"),
     }
@@ -722,6 +872,8 @@ def _failed_gate_forensics(
 ) -> list[dict[str, Any]]:
     interesting_variants = [
         ACTIVE_CANDIDATE,
+        "permuted_periphery_target_null",
+        CONTRASTIVE_CANDIDATE,
         REPAIRED_CANDIDATE,
         LEGACY_CANDIDATE,
         "parameter_matched_causal_mlp",
@@ -749,12 +901,17 @@ def _failed_gate_forensics(
                 "residual_l2": row.get("residual_l2"),
                 "core_residual_norm": row.get("core_residual_norm"),
                 "periphery_residual_norm": row.get("periphery_residual_norm"),
+                "effective_periphery_residual_norm": row.get("effective_periphery_residual_norm"),
+                "periphery_deployment_fraction": row.get("periphery_deployment_fraction"),
                 "core_update_norm": row.get("core_update_norm"),
                 "periphery_update_norm": row.get("periphery_update_norm"),
                 "plasticity_ratio": row.get("plasticity_ratio"),
                 "core_prune_anchor_delta": row.get("core_first_prune_delta"),
                 "periphery_prune_anchor_delta": row.get("periphery_first_prune_delta"),
                 "periphery_train_utility_delta": row.get("periphery_train_utility_delta"),
+                "paired_train_periphery_utility_mean": row.get("paired_train_periphery_utility_mean"),
+                "paired_heldout_periphery_utility_mean": row.get("paired_heldout_periphery_utility_mean"),
+                "paired_heldout_periphery_utility_positive_fraction": row.get("paired_heldout_periphery_utility_positive_fraction"),
                 "core_minus_periphery_prune_anchor_delta": row.get("periphery_first_minus_core_first_prune_delta"),
                 "core_prune_heldout_delta": row.get("core_first_prune_delta_heldout"),
                 "periphery_prune_heldout_delta": row.get("periphery_first_prune_delta_heldout"),

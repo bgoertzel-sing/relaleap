@@ -80,7 +80,7 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
             self.assertTrue(set(REQUIRED_VARIANTS).issubset(variants))
             self.assertEqual(
                 summary["primary_result"]["primary_variant"],
-                "contrastive_residual_periphery",
+                "causal_gated_context_contrastive_periphery",
             )
             self.assertGreaterEqual(
                 len(summary["intervention_fingerprints"]),
@@ -102,10 +102,14 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
             self.assertIn("matched_mlp_retention", gate_names)
             self.assertIn("ce_guardrail_not_worse_than_null", gate_names)
             self.assertIn("periphery_effective_residual_nonzero", gate_names)
+            self.assertIn("periphery_deployment_nonzero", gate_names)
             self.assertIn("periphery_heldout_utility_positive", gate_names)
+            self.assertIn("periphery_beats_permuted_target_null", gate_names)
             self.assertIn("core_periphery_update_norm_ratio", summary["primary_result"])
             self.assertIn("periphery_first_prune_delta_heldout", summary["primary_result"])
             self.assertIn("periphery_train_utility_delta", summary["primary_result"])
+            self.assertIn("paired_heldout_periphery_utility_mean", summary["primary_result"])
+            self.assertIn("periphery_deployment_fraction", summary["primary_result"])
             for artifact in REQUIRED_ARTIFACTS:
                 self.assertTrue((root / "out" / artifact).is_file(), artifact)
             with (root / "out" / "variant_metrics.csv").open(newline="", encoding="utf-8") as handle:
@@ -115,10 +119,12 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
             self.assertTrue(all("finite_update_commutator" in row for row in rows))
             self.assertTrue(all("core_first_prune_delta_heldout" in row for row in rows))
             self.assertTrue(all("periphery_train_utility_delta" in row for row in rows))
+            self.assertTrue(all("paired_heldout_periphery_utility_mean" in row for row in rows))
+            self.assertTrue(all("effective_periphery_residual_norm" in row for row in rows))
             with (root / "out" / "failed_gate_forensics.csv").open(newline="", encoding="utf-8") as handle:
                 forensic_rows = list(csv.DictReader(handle))
             self.assertTrue(
-                any(row["variant"] == "contrastive_residual_periphery" for row in forensic_rows)
+                any(row["variant"] == "causal_gated_context_contrastive_periphery" for row in forensic_rows)
             )
             self.assertTrue(all("anchor_kl_minus_mlp" in row for row in forensic_rows))
 
@@ -129,6 +135,8 @@ class CorePeripheryPCColumnNonSyntheticPilotTest(unittest.TestCase):
         for name, training_mode in (
             ("repaired_shared_core_residual_periphery", "shared_core_residual_periphery"),
             ("contrastive_residual_periphery", "contrastive_residual_periphery"),
+            ("causal_gated_context_contrastive_periphery", "causal_gated_context_contrastive_periphery"),
+            ("permuted_periphery_target_null", "permuted_gated_context_contrastive_periphery"),
         ):
             model = _make_model(
                 torch,
