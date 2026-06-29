@@ -43,6 +43,7 @@ REQUIRED_ARTIFACTS = (
     "teacher_distillation_closeout.csv",
     "value_capacity_core_periphery_diagnostic.csv",
     "core_periphery_sparse_value_capacity_probe.csv",
+    "core_periphery_update_stability_bracket.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -294,6 +295,16 @@ def run_synthetic_mechanism_causal_modularity(
         "core_periphery_sparse_value_capacity_probe_primary_result": (
             _core_periphery_sparse_value_capacity_probe_summary(
                 training_smoke["core_periphery_sparse_value_capacity_probe"]
+            )
+            if training_smoke is not None
+            else None
+        ),
+        "core_periphery_update_stability_bracket_row_count": (
+            len(training_smoke["core_periphery_update_stability_bracket"]) if training_smoke is not None else 0
+        ),
+        "core_periphery_update_stability_bracket_primary_result": (
+            _core_periphery_update_stability_bracket_summary(
+                training_smoke["core_periphery_update_stability_bracket"]
             )
             if training_smoke is not None
             else None
@@ -578,6 +589,7 @@ def _run_training_smoke(
                 "used_columns": used_columns,
                 "unique_support_sets": unique_support_sets,
                 "teacher_distillation_enabled": spec.teacher_distillation_weight > 0.0,
+                "anchor_kl_weight": spec.anchor_kl_weight,
                 "teacher_distillation_weight": spec.teacher_distillation_weight,
                 "shuffled_teacher_null": spec.shuffled_teacher_null,
                 "teacher_residual_mse": teacher_residual_mse,
@@ -753,6 +765,11 @@ def _run_training_smoke(
             commutator_rows=commutator_rows,
             forgetting_rows=forgetting_rows,
             router_only_branch_rows=router_only_branch_selection,
+        ),
+        "core_periphery_update_stability_bracket": _core_periphery_update_stability_bracket_rows(
+            arm_metrics=arm_metrics,
+            commutator_rows=commutator_rows,
+            forgetting_rows=forgetting_rows,
         ),
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
@@ -963,6 +980,40 @@ def _synthetic_arm_specs(
             value_head_variant="periphery_only",
             core_rank=core_rank,
             periphery_rank=periphery_rank,
+            periphery_l1_weight=1e-4,
+            residual_norm_clip=0.075,
+        ),
+        _SyntheticArmSpec(
+            "core_periphery_stability_slow_core_topk2",
+            "core_periphery_control",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            anchor_kl_weight=0.02,
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="update_stability_slow_core_anchor_control",
+            value_head_variant="core_periphery_both",
+            core_rank=core_rank,
+            periphery_rank=periphery_rank,
+            core_lr_scale=0.10,
+            core_drift_penalty_weight=0.15,
+            periphery_l1_weight=1e-4,
+            residual_norm_clip=0.075,
+        ),
+        _SyntheticArmSpec(
+            "flat_column_value_mlp_anchor_topk2",
+            "core_periphery_control",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            anchor_kl_weight=0.02,
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="update_stability_flat_anchor_control",
+            value_head_variant="flat_column_mlp",
+            core_rank=0,
+            periphery_rank=max(1, core_rank + periphery_rank),
             periphery_l1_weight=1e-4,
             residual_norm_clip=0.075,
         ),
@@ -3098,6 +3149,8 @@ def _comparator_controls(
         _control("flat_column_value_mlp_topk2", "core_periphery_control", support_width, "contextual_mlp_flat_column_value", True, "same-router flat per-column value MLP control"),
         _control("core_only_sparse_topk2", "core_periphery_control", support_width, "contextual_mlp_core_only", True, "core-only value-capacity ablation control"),
         _control("periphery_only_sparse_topk2", "core_periphery_control", support_width, "contextual_mlp_periphery_only", True, "periphery-only value-capacity ablation control"),
+        _control("core_periphery_stability_slow_core_topk2", "core_periphery_control", support_width, "contextual_mlp_core_periphery_slow_core_anchor", True, "same-router core/periphery update-stability bracket with slower core and anchor KL"),
+        _control("flat_column_value_mlp_anchor_topk2", "core_periphery_control", support_width, "contextual_mlp_flat_column_value_anchor", True, "same-router flat value-capacity update-stability bracket with anchor KL"),
         _control("dense_rank_norm_matched", "dense_control", 0, "dense_rank_norm", True, "active-proxy matched dense low-rank residual"),
         _control("low_churn_mlp_active_matched", "mlp_control", 0, "low_churn_mlp", True, "active-proxy matched low-churn MLP residual"),
         _control("dense_stored_parameter_matched", "dense_control", 0, "dense_rank_norm", True, "stored-parameter matched dense upper-bound residual"),
@@ -3515,6 +3568,19 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("core_periphery_update_stability_bracket"):
+        summary = _core_periphery_update_stability_bracket_summary(
+            training_smoke["core_periphery_update_stability_bracket"]
+        )
+        if summary.get("stability_candidate_count", 0) > 0:
+            return (
+                "repeat the local seed-17 update-stability candidate with one adjacent regularization setting "
+                "before any GPU validation"
+            )
+        return (
+            "close or redesign the current clipped core/periphery value-capacity branch locally because "
+            "the update-stability bracket did not clear commutator and churn budgets"
+        )
     if training_smoke.get("value_capacity_core_periphery_diagnostic"):
         summary = _value_capacity_core_periphery_diagnostic_summary(
             training_smoke["value_capacity_core_periphery_diagnostic"]
@@ -4292,6 +4358,182 @@ def _core_periphery_sparse_value_capacity_probe_summary(rows: list[dict[str, Any
     }
 
 
+def _core_periphery_update_stability_bracket_rows(
+    *,
+    arm_metrics: list[dict[str, Any]],
+    commutator_rows: list[dict[str, Any]],
+    forgetting_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not arm_metrics:
+        return []
+    by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
+    reference = by_arm.get("promoted_contextual_topk2")
+    primary = by_arm.get("core_periphery_sparse_topk2")
+    flat = by_arm.get("flat_column_value_mlp_topk2")
+    if reference is None:
+        return []
+
+    reference_ce = _metric_float(reference.get("holdout_ce"))
+    reference_norm = _metric_float(reference.get("residual_l2"))
+    reference_commutator = _mean_metric(
+        commutator_rows,
+        ["promoted_contextual_topk2"],
+        "finite_update_commutator_l2",
+    )
+    reference_churn = _mean_abs_metric(
+        forgetting_rows,
+        ["promoted_contextual_topk2"],
+        "functional_churn",
+    )
+    primary_ce = _metric_float(primary.get("holdout_ce")) if primary else None
+    primary_commutator = (
+        _mean_metric(commutator_rows, ["core_periphery_sparse_topk2"], "finite_update_commutator_l2")
+        if primary
+        else None
+    )
+    primary_churn = (
+        _mean_abs_metric(forgetting_rows, ["core_periphery_sparse_topk2"], "functional_churn")
+        if primary
+        else None
+    )
+    flat_ce = _metric_float(flat.get("holdout_ce")) if flat else None
+    flat_commutator = (
+        _mean_metric(commutator_rows, ["flat_column_value_mlp_topk2"], "finite_update_commutator_l2")
+        if flat
+        else None
+    )
+    flat_churn = (
+        _mean_abs_metric(forgetting_rows, ["flat_column_value_mlp_topk2"], "functional_churn")
+        if flat
+        else None
+    )
+
+    rows: list[dict[str, Any]] = []
+    for arm in (
+        "core_periphery_stability_slow_core_topk2",
+        "flat_column_value_mlp_anchor_topk2",
+    ):
+        row = by_arm.get(arm)
+        if row is None:
+            continue
+        arm_ce = _metric_float(row.get("holdout_ce"))
+        arm_norm = _metric_float(row.get("residual_l2"))
+        arm_commutator = _mean_metric(commutator_rows, [arm], "finite_update_commutator_l2")
+        arm_churn = _mean_abs_metric(forgetting_rows, [arm], "functional_churn")
+        compares_to = (
+            "core_periphery_sparse_topk2"
+            if arm == "core_periphery_stability_slow_core_topk2"
+            else "flat_column_value_mlp_topk2"
+        )
+        comparator_ce = primary_ce if compares_to == "core_periphery_sparse_topk2" else flat_ce
+        comparator_commutator = (
+            primary_commutator
+            if compares_to == "core_periphery_sparse_topk2"
+            else flat_commutator
+        )
+        comparator_churn = primary_churn if compares_to == "core_periphery_sparse_topk2" else flat_churn
+        norm_ok = arm_norm is not None and reference_norm is not None and arm_norm <= reference_norm * 1.05
+        commutator_ok = (
+            arm_commutator is not None
+            and reference_commutator is not None
+            and arm_commutator <= reference_commutator * 1.10
+        )
+        churn_ok = (
+            arm_churn is not None
+            and reference_churn is not None
+            and arm_churn <= reference_churn * 1.10
+        )
+        improves_vs_unregularized = (
+            comparator_ce is not None
+            and arm_ce is not None
+            and arm_ce <= comparator_ce + 0.01
+            and (
+                comparator_commutator is None
+                or arm_commutator is None
+                or arm_commutator <= comparator_commutator
+            )
+            and (
+                comparator_churn is None
+                or arm_churn is None
+                or arm_churn <= comparator_churn
+            )
+        )
+        rows.append(
+            {
+                "arm": arm,
+                "bracket_role": str(row.get("control_budget_role", "")),
+                "value_head_variant": row.get("value_head_variant", ""),
+                "reference_sparse_arm": "promoted_contextual_topk2",
+                "unregularized_comparator_arm": compares_to,
+                "reference_sparse_ce": reference_ce,
+                "unregularized_comparator_ce": comparator_ce,
+                "holdout_ce": arm_ce,
+                "ce_delta_vs_reference_sparse": _delta_value(arm_ce, reference_ce),
+                "ce_delta_vs_unregularized_comparator": _delta_value(arm_ce, comparator_ce),
+                "residual_l2": arm_norm,
+                "reference_sparse_residual_l2": reference_norm,
+                "residual_l2_ratio_vs_reference_sparse": _safe_ratio(arm_norm, reference_norm),
+                "mean_commutator_l2": arm_commutator,
+                "reference_sparse_mean_commutator_l2": reference_commutator,
+                "unregularized_comparator_mean_commutator_l2": comparator_commutator,
+                "commutator_ratio_vs_reference_sparse": _safe_ratio(arm_commutator, reference_commutator),
+                "commutator_ratio_vs_unregularized_comparator": _safe_ratio(arm_commutator, comparator_commutator),
+                "mean_abs_functional_churn": arm_churn,
+                "reference_sparse_mean_abs_functional_churn": reference_churn,
+                "unregularized_comparator_mean_abs_functional_churn": comparator_churn,
+                "functional_churn_ratio_vs_reference_sparse": _safe_ratio(arm_churn, reference_churn),
+                "functional_churn_ratio_vs_unregularized_comparator": _safe_ratio(arm_churn, comparator_churn),
+                "anchor_kl_weight": _metric_float(row.get("anchor_kl_weight")),
+                "core_lr_scale": _metric_float(row.get("core_lr_scale")),
+                "core_drift_penalty_weight": _metric_float(row.get("core_drift_penalty_weight")),
+                "core_parameter_drift_l2": _metric_float(row.get("core_parameter_drift_l2")),
+                "periphery_l1_weight": _metric_float(row.get("periphery_l1_weight")),
+                "periphery_l1": _metric_float(row.get("periphery_l1")),
+                "residual_norm_clip": _metric_float(row.get("residual_norm_clip")),
+                "residual_norm_clipped": row.get("residual_norm_clipped") is True,
+                "norm_budget_ok": bool(norm_ok),
+                "commutator_budget_ok": bool(commutator_ok),
+                "functional_churn_budget_ok": bool(churn_ok),
+                "stability_candidate": bool(norm_ok and commutator_ok and churn_ok and improves_vs_unregularized),
+                "requires_gpu_now": False,
+                "promotion_allowed": False,
+                "mechanism_labels_used_for_scoring_only": True,
+                "interpretation": (
+                    "Local update-stability bracket only: anchor/core-LR variants must retain CE while "
+                    "reducing commutator and churn before they can replace the value-capacity probe."
+                ),
+            }
+        )
+    return rows
+
+
+def _core_periphery_update_stability_bracket_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "stability_candidate_count": 0,
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "interpretation": "core/periphery update-stability bracket was not run",
+        }
+    candidates = [row for row in rows if row.get("stability_candidate") is True]
+    best = _best_ce_row(rows)
+    return {
+        "row_count": len(rows),
+        "stability_candidate_count": len(candidates),
+        "best_ce_arm": best.get("arm", "") if best else "",
+        "best_ce": _metric_float(best.get("holdout_ce")) if best else None,
+        "candidate_arms": [str(row.get("arm", "")) for row in candidates],
+        "requires_gpu_now": False,
+        "promotion_allowed": False,
+        "interpretation": (
+            "Fail-closed local bracket over clipped value-capacity arms. A variant only becomes a "
+            "follow-up candidate if it keeps CE near its unregularized comparator and improves the "
+            "commutator/churn budget while staying norm-matched."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -4383,6 +4625,10 @@ def _write_artifacts(
     _write_csv(
         out_dir / "core_periphery_sparse_value_capacity_probe.csv",
         [] if training_smoke is None else training_smoke["core_periphery_sparse_value_capacity_probe"],
+    )
+    _write_csv(
+        out_dir / "core_periphery_update_stability_bracket.csv",
+        [] if training_smoke is None else training_smoke["core_periphery_update_stability_bracket"],
     )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
