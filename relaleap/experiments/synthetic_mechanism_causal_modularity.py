@@ -38,6 +38,7 @@ REQUIRED_ARTIFACTS = (
     "oracle_support_sparse_topk2.csv",
     "router_value_regret_decomposition.csv",
     "router_regret_ceiling_budget.csv",
+    "support_head_sequence_heldout_diagnostic.csv",
     "teacher_distillation_closeout.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
@@ -241,6 +242,16 @@ def run_synthetic_mechanism_causal_modularity(
             if training_smoke is not None
             else None
         ),
+        "support_head_sequence_heldout_diagnostic_row_count": (
+            len(training_smoke["support_head_sequence_heldout_diagnostic"]) if training_smoke is not None else 0
+        ),
+        "support_head_sequence_heldout_diagnostic_primary_result": (
+            _support_head_sequence_heldout_diagnostic_summary(
+                training_smoke["support_head_sequence_heldout_diagnostic"]
+            )
+            if training_smoke is not None
+            else None
+        ),
         "teacher_distillation_closeout_row_count": (
             len(training_smoke["teacher_distillation_closeout"]) if training_smoke is not None else 0
         ),
@@ -396,6 +407,7 @@ def _run_training_smoke(
     commutator_rows: list[dict[str, Any]] = []
     forgetting_rows: list[dict[str, Any]] = []
     final_ce_by_arm: dict[str, float] = {}
+    support_head_rows: list[dict[str, Any]] = []
 
     for arm_index, spec in enumerate(specs):
         torch.manual_seed(seed + 100 + arm_index)
@@ -530,14 +542,45 @@ def _run_training_smoke(
             )
         )
         if spec.family == "sparse" and spec.support_mode == "learned" and spec.top_k == 2:
-            oracle_support_rows.extend(
-                _oracle_support_sparse_topk2_rows(
+            train_oracle_rows = _oracle_support_sparse_topk2_rows(
+                arm=spec.name,
+                split="train",
+                adapter=adapter,
+                hidden=train_hidden,
+                inputs=train_inputs,
+                targets=train_targets,
+                rules=train_rules,
+                spec=spec,
+                decode=base.decode,
+                F=F,
+                torch=torch,
+            )
+            holdout_oracle_rows = _oracle_support_sparse_topk2_rows(
+                arm=spec.name,
+                split="holdout",
+                adapter=adapter,
+                hidden=holdout_hidden,
+                inputs=holdout_inputs,
+                targets=holdout_targets,
+                rules=holdout_rules,
+                spec=spec,
+                decode=base.decode,
+                F=F,
+                torch=torch,
+            )
+            oracle_support_rows.extend(holdout_oracle_rows)
+            support_head_rows.extend(
+                _support_head_sequence_heldout_diagnostic_rows(
                     arm=spec.name,
                     adapter=adapter,
-                    hidden=holdout_hidden,
-                    inputs=holdout_inputs,
-                    targets=holdout_targets,
-                    rules=holdout_rules,
+                    train_hidden=train_hidden,
+                    train_inputs=train_inputs,
+                    train_targets=train_targets,
+                    train_oracle_rows=train_oracle_rows,
+                    holdout_hidden=holdout_hidden,
+                    holdout_inputs=holdout_inputs,
+                    holdout_targets=holdout_targets,
+                    holdout_oracle_rows=holdout_oracle_rows,
                     spec=spec,
                     decode=base.decode,
                     F=F,
@@ -611,6 +654,7 @@ def _run_training_smoke(
             arm_metrics,
             oracle_support_rows,
         ),
+        "support_head_sequence_heldout_diagnostic": support_head_rows,
         "teacher_distillation_closeout": _teacher_distillation_closeout_rows(
             arm_metrics,
             oracle_support_rows,
@@ -1043,6 +1087,7 @@ def _per_token_rows(
 def _oracle_support_sparse_topk2_rows(
     *,
     arm: str,
+    split: str = "holdout",
     adapter: Any,
     hidden: Any,
     inputs: Any,
@@ -1132,7 +1177,7 @@ def _oracle_support_sparse_topk2_rows(
             rows.append(
                 {
                     "arm": arm,
-                    "split": "holdout",
+                    "split": split,
                     "episode_index": episode_index,
                     "position_index": position_index,
                     "latent_rule": rule,
@@ -1164,6 +1209,289 @@ def _support_key(support: tuple[int, ...] | None) -> str:
     if support is None:
         return ""
     return ",".join(str(column) for column in support)
+
+
+def _support_head_sequence_heldout_diagnostic_rows(
+    *,
+    arm: str,
+    adapter: Any,
+    train_hidden: Any,
+    train_inputs: Any,
+    train_targets: Any,
+    train_oracle_rows: list[dict[str, Any]],
+    holdout_hidden: Any,
+    holdout_inputs: Any,
+    holdout_targets: Any,
+    holdout_oracle_rows: list[dict[str, Any]],
+    spec: _SyntheticArmSpec,
+    decode: Any,
+    F: Any,
+    torch: Any,
+) -> list[dict[str, Any]]:
+    if not train_oracle_rows or not holdout_oracle_rows:
+        return []
+
+    train_flat_hidden = train_hidden.reshape(-1, train_hidden.shape[-1]).detach()
+    holdout_flat_hidden = holdout_hidden.reshape(-1, holdout_hidden.shape[-1]).detach()
+    train_labels = [
+        _parse_support_key(str(row.get("best_pair_support", "")), expected_width=spec.top_k)
+        for row in sorted(
+            train_oracle_rows,
+            key=lambda row: (int(row["episode_index"]), int(row["position_index"])),
+        )
+    ]
+    shuffled_labels = list(reversed(train_labels))
+    holdout_rows = sorted(
+        holdout_oracle_rows,
+        key=lambda row: (int(row["episode_index"]), int(row["position_index"])),
+    )
+    holdout_pair_oracle_labels = [
+        _parse_support_key(str(row.get("best_pair_support", "")), expected_width=spec.top_k)
+        for row in holdout_rows
+    ]
+    token_position_lookup = _token_position_support_lookup(
+        train_inputs=train_inputs,
+        train_oracle_rows=train_oracle_rows,
+        expected_width=spec.top_k,
+    )
+    global_support = _modal_support(train_labels, expected_width=spec.top_k)
+
+    distances = torch.cdist(holdout_flat_hidden, train_flat_hidden)
+    nearest_indices = torch.argmin(distances, dim=1).detach().cpu().tolist()
+    policies = {
+        "support_regret_trained_contextual_router_topk2": [
+            train_labels[index] for index in nearest_indices
+        ],
+        "shuffled_oracle_target_null_topk2": [
+            shuffled_labels[index] for index in nearest_indices
+        ],
+        "token_position_only_support_head_topk2": [
+            token_position_lookup.get(
+                (
+                    int(holdout_inputs.reshape(-1)[flat_index].detach().item()),
+                    flat_index % int(holdout_inputs.shape[1]),
+                ),
+                global_support,
+            )
+            for flat_index in range(int(holdout_inputs.numel()))
+        ],
+        "global_modal_support_null_topk2": [
+            global_support for _ in range(int(holdout_inputs.numel()))
+        ],
+    }
+    learned_support = _synthetic_support(adapter, holdout_hidden, holdout_inputs, spec, torch)
+    if learned_support is None:
+        return []
+    policy_support = {
+        name: _support_tensor(
+            supports,
+            batch=int(holdout_targets.shape[0]),
+            seq_len=int(holdout_targets.shape[1]),
+            device=holdout_targets.device,
+            torch=torch,
+        )
+        for name, supports in policies.items()
+    }
+    learned_logits = decode(adapter(holdout_hidden, support_indices=learned_support)).detach()
+    learned_losses = F.cross_entropy(
+        learned_logits.reshape(-1, learned_logits.shape[-1]),
+        holdout_targets.reshape(-1),
+        reduction="none",
+    ).reshape(holdout_targets.shape)
+    learned_ce = float(learned_losses.mean().detach().item())
+    oracle_pair_ce = _mean_optional(holdout_rows, "best_pair_ce_loss")
+    learned_pair_regret = _mean_optional(holdout_rows, "pair_oracle_regret")
+
+    rows: list[dict[str, Any]] = []
+    for policy_name, support_tensor in policy_support.items():
+        logits = decode(adapter(holdout_hidden, support_indices=support_tensor)).detach()
+        losses = F.cross_entropy(
+            logits.reshape(-1, logits.shape[-1]),
+            holdout_targets.reshape(-1),
+            reduction="none",
+        ).reshape(holdout_targets.shape)
+        predicted = [
+            tuple(int(value.detach().item()) for value in support_tensor.reshape(-1, spec.top_k)[index])
+            for index in range(int(support_tensor.numel() // spec.top_k))
+        ]
+        matches_oracle = [
+            set(predicted_support) == set(oracle_support)
+            for predicted_support, oracle_support in zip(predicted, holdout_pair_oracle_labels, strict=True)
+        ]
+        predicted_ce = float(losses.mean().detach().item())
+        gain = learned_ce - predicted_ce
+        recovery = _safe_ratio(gain, learned_pair_regret)
+        residual_l2 = float(
+            (adapter(holdout_hidden, support_indices=support_tensor).detach() - holdout_hidden)
+            .pow(2)
+            .mean()
+            .sqrt()
+            .item()
+        )
+        rows.append(
+            {
+                "arm": arm,
+                "diagnostic": policy_name,
+                "split": "sequence_heldout",
+                "train_token_count": int(train_inputs.numel()),
+                "holdout_token_count": int(holdout_inputs.numel()),
+                "target_source": (
+                    "train_split_oracle_pair_supports"
+                    if policy_name != "token_position_only_support_head_topk2"
+                    and policy_name != "global_modal_support_null_topk2"
+                    else "train_split_oracle_pair_support_marginals"
+                ),
+                "uses_hidden_features": policy_name
+                in {
+                    "support_regret_trained_contextual_router_topk2",
+                    "shuffled_oracle_target_null_topk2",
+                },
+                "uses_token_position_features": policy_name == "token_position_only_support_head_topk2",
+                "uses_shuffled_targets": policy_name == "shuffled_oracle_target_null_topk2",
+                "oracle_targets_enter_auxiliary_training": policy_name
+                in {
+                    "support_regret_trained_contextual_router_topk2",
+                    "shuffled_oracle_target_null_topk2",
+                    "token_position_only_support_head_topk2",
+                    "global_modal_support_null_topk2",
+                },
+                "deployable_training_evidence": False,
+                "learned_router_ce": learned_ce,
+                "oracle_pair_ce_ceiling": oracle_pair_ce,
+                "learned_pair_oracle_regret": learned_pair_regret,
+                "predicted_support_ce": predicted_ce,
+                "predicted_support_ce_gain_vs_learned": gain,
+                "oracle_pair_regret_recovery_fraction": recovery,
+                "support_accuracy_vs_oracle_pair": (
+                    sum(1 for value in matches_oracle if value) / float(len(matches_oracle))
+                    if matches_oracle
+                    else None
+                ),
+                "unique_support_sets": _unique_support_count(predicted),
+                "support_load_entropy": _support_load_entropy(predicted),
+                "support_change_fraction": _support_change_fraction(predicted, int(holdout_targets.shape[1])),
+                "residual_l2": residual_l2,
+                "advance_if_gain_gt_0p02_or_recovery_ge_0p5": bool(
+                    gain > 0.02 or (recovery is not None and recovery >= 0.5)
+                ),
+                "beats_shuffled_target_null": None,
+                "beats_token_position_null": None,
+                "mechanism_labels_used_for_scoring_only": True,
+                "interpretation": (
+                    "Diagnostic only: support labels are train-split oracle pair targets and are not deployable "
+                    "training evidence; heldout CE uses fixed sparse values with hard top-k2 support swaps."
+                ),
+            }
+        )
+
+    by_name = {str(row["diagnostic"]): row for row in rows}
+    contextual = by_name.get("support_regret_trained_contextual_router_topk2")
+    shuffled = by_name.get("shuffled_oracle_target_null_topk2")
+    token_position = by_name.get("token_position_only_support_head_topk2")
+    if contextual is not None:
+        contextual_ce = _metric_float(contextual.get("predicted_support_ce"))
+        shuffled_ce = _metric_float(shuffled.get("predicted_support_ce")) if shuffled else None
+        token_position_ce = _metric_float(token_position.get("predicted_support_ce")) if token_position else None
+        contextual["beats_shuffled_target_null"] = _ce_beats_or_ties(contextual_ce, shuffled_ce)
+        contextual["beats_token_position_null"] = _ce_beats_or_ties(contextual_ce, token_position_ce)
+        contextual["advance_if_gain_gt_0p02_or_recovery_ge_0p5"] = bool(
+            contextual["advance_if_gain_gt_0p02_or_recovery_ge_0p5"]
+            and contextual["beats_shuffled_target_null"] is True
+            and contextual["beats_token_position_null"] is True
+        )
+    return rows
+
+
+def _parse_support_key(value: str, *, expected_width: int) -> tuple[int, ...]:
+    parsed = tuple(int(part) for part in value.split(",") if part != "")
+    if not parsed:
+        parsed = (0,)
+    while len(parsed) < expected_width:
+        parsed = parsed + (parsed[-1],)
+    return parsed[:expected_width]
+
+
+def _support_tensor(
+    supports: list[tuple[int, ...]],
+    *,
+    batch: int,
+    seq_len: int,
+    device: Any,
+    torch: Any,
+) -> Any:
+    return torch.tensor(supports, dtype=torch.long, device=device).view(batch, seq_len, -1)
+
+
+def _token_position_support_lookup(
+    *,
+    train_inputs: Any,
+    train_oracle_rows: list[dict[str, Any]],
+    expected_width: int,
+) -> dict[tuple[int, int], tuple[int, ...]]:
+    counts: dict[tuple[int, int], dict[tuple[int, ...], int]] = {}
+    ordered_rows = sorted(
+        train_oracle_rows,
+        key=lambda row: (int(row["episode_index"]), int(row["position_index"])),
+    )
+    flat_inputs = train_inputs.reshape(-1)
+    seq_len = int(train_inputs.shape[1])
+    for flat_index, row in enumerate(ordered_rows):
+        key = (int(flat_inputs[flat_index].detach().item()), int(row["position_index"]) % seq_len)
+        support = _parse_support_key(str(row.get("best_pair_support", "")), expected_width=expected_width)
+        counts.setdefault(key, {})
+        counts[key][support] = counts[key].get(support, 0) + 1
+    return {
+        key: max(support_counts.items(), key=lambda item: (item[1], item[0]))[0]
+        for key, support_counts in counts.items()
+    }
+
+
+def _modal_support(
+    supports: list[tuple[int, ...]],
+    *,
+    expected_width: int,
+) -> tuple[int, ...]:
+    if not supports:
+        return tuple(0 for _ in range(expected_width))
+    counts: dict[tuple[int, ...], int] = {}
+    for support in supports:
+        counts[support] = counts.get(support, 0) + 1
+    return max(counts.items(), key=lambda item: (item[1], item[0]))[0]
+
+
+def _unique_support_count(supports: list[tuple[int, ...]]) -> int:
+    return len({tuple(support) for support in supports})
+
+
+def _support_load_entropy(supports: list[tuple[int, ...]]) -> float | None:
+    if not supports:
+        return None
+    import math
+
+    counts: dict[int, int] = {}
+    total = 0
+    for support in supports:
+        for column in support:
+            counts[column] = counts.get(column, 0) + 1
+            total += 1
+    entropy = 0.0
+    for count in counts.values():
+        probability = count / float(total)
+        entropy -= probability * math.log(probability)
+    return entropy
+
+
+def _support_change_fraction(supports: list[tuple[int, ...]], seq_len: int) -> float | None:
+    if not supports or seq_len <= 1:
+        return None
+    changes = 0
+    comparisons = 0
+    for offset in range(0, len(supports), seq_len):
+        episode_supports = supports[offset : offset + seq_len]
+        for left, right in zip(episode_supports, episode_supports[1:]):
+            changes += int(set(left) != set(right))
+            comparisons += 1
+    return changes / float(comparisons) if comparisons else None
 
 
 def _actual_intervention_rows(
@@ -2511,6 +2839,10 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("support_head_sequence_heldout_diagnostic"):
+        return (
+            "inspect the sequence-heldout support-head diagnostic against shuffled-target and token-position nulls; keep GPU and promotion blocked unless the diagnostic beats nulls and the stored upper-bound gap is separately addressed"
+        )
     if training_smoke.get("router_regret_ceiling_budget"):
         return (
             "use the router-regret ceiling budget to decide whether a sequence-heldout support-head diagnostic is scientifically justified; keep GPU and promotion blocked"
@@ -2684,6 +3016,56 @@ def _router_regret_ceiling_budget_summary(rows: list[dict[str, Any]]) -> dict[st
         "interpretation": (
             "Diagnostic only: compares the fixed-value oracle-support ceiling with token/position null, "
             "active-matched controls, and stored-matched upper bounds before any support-head or GPU branch."
+        ),
+    }
+
+
+def _support_head_sequence_heldout_diagnostic_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "contextual_gain_vs_learned": None,
+            "contextual_recovery_fraction": None,
+            "advance_support_head_branch": False,
+            "interpretation": "sequence-heldout support-head diagnostic was not run",
+        }
+    contextual_rows = [
+        row
+        for row in rows
+        if row.get("diagnostic") == "support_regret_trained_contextual_router_topk2"
+    ]
+    best_contextual = min(
+        contextual_rows,
+        key=lambda row: _metric_float(row.get("predicted_support_ce")) or float("inf"),
+    ) if contextual_rows else {}
+    return {
+        "row_count": len(rows),
+        "arm_count": len({str(row.get("arm", "")) for row in rows}),
+        "diagnostic_count": len({str(row.get("diagnostic", "")) for row in rows}),
+        "best_contextual_arm": best_contextual.get("arm", ""),
+        "contextual_ce": _metric_float(best_contextual.get("predicted_support_ce")),
+        "learned_router_ce": _metric_float(best_contextual.get("learned_router_ce")),
+        "oracle_pair_ce_ceiling": _metric_float(best_contextual.get("oracle_pair_ce_ceiling")),
+        "contextual_gain_vs_learned": _metric_float(
+            best_contextual.get("predicted_support_ce_gain_vs_learned")
+        ),
+        "contextual_recovery_fraction": _metric_float(
+            best_contextual.get("oracle_pair_regret_recovery_fraction")
+        ),
+        "contextual_support_accuracy_vs_oracle_pair": _metric_float(
+            best_contextual.get("support_accuracy_vs_oracle_pair")
+        ),
+        "contextual_beats_shuffled_target_null": best_contextual.get("beats_shuffled_target_null"),
+        "contextual_beats_token_position_null": best_contextual.get("beats_token_position_null"),
+        "advance_support_head_branch": any(
+            row.get("advance_if_gain_gt_0p02_or_recovery_ge_0p5") is True
+            for row in contextual_rows
+        ),
+        "deployable_training_evidence": False,
+        "interpretation": (
+            "Diagnostic only: train-split oracle pair supports supervise a sequence-heldout support selector. "
+            "Advance only when contextual support swaps beat shuffled-target and token/position nulls while "
+            "recovering enough learned-router regret; this is not deployment evidence."
         ),
     }
 
@@ -3026,6 +3408,10 @@ def _write_artifacts(
         [] if training_smoke is None else training_smoke["router_regret_ceiling_budget"],
     )
     _write_csv(
+        out_dir / "support_head_sequence_heldout_diagnostic.csv",
+        [] if training_smoke is None else training_smoke["support_head_sequence_heldout_diagnostic"],
+    )
+    _write_csv(
         out_dir / "teacher_distillation_closeout.csv",
         [] if training_smoke is None else training_smoke["teacher_distillation_closeout"],
     )
@@ -3059,6 +3445,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Oracle-support sparse top-k2 rows: `{summary['oracle_support_sparse_topk2_row_count']}`",
         f"- Router/value regret decomposition rows: `{summary['router_value_regret_decomposition_row_count']}`",
         f"- Router-regret ceiling budget rows: `{summary['router_regret_ceiling_budget_row_count']}`",
+        f"- Support-head sequence-heldout diagnostic rows: `{summary['support_head_sequence_heldout_diagnostic_row_count']}`",
         f"- Teacher distillation closeout rows: `{summary['teacher_distillation_closeout_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
@@ -3072,6 +3459,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The router/value regret decomposition summarizes the oracle-support rows by arm and latent rule. It separates support-selection headroom from the adequacy of the already-trained sparse values, but still uses evaluator-only holdout labels.",
         "",
         "The router-regret ceiling budget compares the fixed-value oracle-support ceiling against token/position nulls, active-matched dense/MLP controls, and stored-matched dense/MLP upper bounds. It is the local fail-closed budget check before any support-head or GPU branch.",
+        "",
+        "The support-head sequence-heldout diagnostic trains only diagnostic support selectors from train-split oracle pair supports, then swaps hard top-k2 supports into fixed sparse values on heldout sequences. Oracle targets enter auxiliary diagnostic training, so the artifact can justify or close a branch but cannot support deployment or promotion claims.",
         "",
         "The CE by rule/position and residual budget accounting artifacts are local diagnostics. FLOP values are residual-path proxies only and exclude the frozen base and decoder.",
         "",
