@@ -50,6 +50,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["sparse_value_redesign_selector_row_count"], 0)
             self.assertEqual(summary["budget_normalized_gated_value_mixture_pregate_row_count"], 0)
             self.assertEqual(summary["pc_core_periphery_residual_inference_pregate_row_count"], 0)
+            self.assertEqual(summary["pc_residual_inference_mechanism_inspection_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -258,6 +259,21 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(
                 summary["pc_core_periphery_residual_inference_pregate_primary_result"]["primary_arm"],
                 "pc_core_periphery_residual_inference_topk2",
+            )
+            self.assertEqual(summary["pc_residual_inference_mechanism_inspection_row_count"], 5)
+            self.assertIsNotNone(summary["pc_residual_inference_mechanism_inspection_primary_result"])
+            self.assertEqual(
+                summary["pc_residual_inference_mechanism_inspection_primary_result"]["row_count"],
+                summary["pc_residual_inference_mechanism_inspection_row_count"],
+            )
+            self.assertFalse(
+                summary["pc_residual_inference_mechanism_inspection_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["pc_residual_inference_mechanism_inspection_primary_result"]["promotion_allowed"]
+            )
+            self.assertTrue(
+                summary["pc_residual_inference_mechanism_inspection_primary_result"]["notify_ben"]
             )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
@@ -563,6 +579,37 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 "mechanism_labels_used_for_scoring_only",
             }:
                 self.assertIn(required_field, selected_pc)
+
+            with (out_dir / "pc_residual_inference_mechanism_inspection.csv").open(newline="", encoding="utf-8") as handle:
+                pc_inspection_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(pc_inspection_rows), 5)
+            selected_inspection_rows = [row for row in pc_inspection_rows if row["selected"] == "True"]
+            self.assertEqual(len(selected_inspection_rows), 1)
+            selected_inspection = selected_inspection_rows[0]
+            self.assertEqual(selected_inspection["inspection_role"], "primary_pc_failure_fingerprint")
+            self.assertEqual(selected_inspection["arm"], "pc_core_periphery_residual_inference_topk2")
+            for required_field in {
+                "primary_ce_gain_vs_reference_sparse",
+                "primary_ce_minus_flat_control_ce",
+                "primary_ce_minus_shuffled_target_null_ce",
+                "primary_stored_gap_closed_fraction",
+                "primary_commutator_ratio_vs_reference_sparse",
+                "failed_gate_count",
+                "failure_reasons",
+                "selected_next_experiment",
+                "redesign_hint",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "advance_to_gpu_validation",
+                "notify_ben",
+                "mechanism_labels_used_for_scoring_only",
+            }:
+                self.assertIn(required_field, selected_inspection)
+            self.assertNotEqual(selected_inspection["selected_next_experiment"], "")
+            self.assertEqual(selected_inspection["requires_gpu_now"], "False")
+            self.assertEqual(selected_inspection["promotion_allowed"], "False")
+            self.assertEqual(selected_inspection["advance_to_gpu_validation"], "False")
+            self.assertEqual(selected_inspection["notify_ben"], "True")
             self.assertEqual(selected_pc["source_failed_branch"], "budget_normalized_gated_low_rank_value_mixture")
             self.assertEqual(selected_pc["source_failed_branch_pregate_passes"], "False")
             self.assertEqual(selected_pc["requires_gpu_now"], "False")
