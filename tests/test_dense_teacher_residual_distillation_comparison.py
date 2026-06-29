@@ -75,12 +75,14 @@ class DenseTeacherResidualDistillationComparisonTest(unittest.TestCase):
                 teacher_steps=1,
                 student_steps=1,
                 predictor_steps=1,
+                teacher_scales=(1.0, 0.5),
             )
 
             self.assertIn(summary["status"], {"pass", "fail"})
             self.assertEqual(summary["config_train_steps"], 2)
             self.assertEqual(summary["teacher_steps"], 1)
             self.assertEqual(summary["student_steps"], 1)
+            self.assertEqual(summary["teacher_scales"], [1.0, 0.5])
             self.assertEqual(summary["claim_statuses"]["promoted_default_router"], "no_default_change")
             self.assertTrue((root / "out" / "summary.json").is_file())
             self.assertTrue((root / "out" / "variant_metrics.csv").is_file())
@@ -99,6 +101,10 @@ class DenseTeacherResidualDistillationComparisonTest(unittest.TestCase):
             self.assertIn("random_support_topk2", arms)
             self.assertIn("fixed_support_topk2", arms)
             self.assertIn("shuffled_teacher_target_topk2", arms)
+            self.assertIn("acsr_predicted_future_support_teacher_scale_0p5", variants)
+            self.assertIn("promoted_contextual_topk2_ce_mse_distill_teacher_scale_0p5", arms)
+            self.assertIn("dense_teacher_calibrated_scale_0p5", arms)
+            self.assertTrue(summary["teacher_scale_summaries"])
             teacher = next(
                 row
                 for row in summary["variant_rows"]
@@ -121,6 +127,7 @@ class DenseTeacherResidualDistillationComparisonTest(unittest.TestCase):
             criteria = {row["criterion"] for row in summary["gate_status"]["criteria"]}
             self.assertIn("source_gates_present_and_passing", criteria)
             self.assertIn("acsr_beats_token_position_and_shuffled_distillation_nulls", criteria)
+            self.assertIn("calibrated_teacher_scale_gate", criteria)
 
 
 def _write_source(path: Path, *, decision: str) -> None:

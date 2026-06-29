@@ -81,6 +81,7 @@ def run_dense_teacher_residual_distillation_comparison(
     teacher_steps: int = 80,
     student_steps: int = 240,
     predictor_steps: int = 50,
+    teacher_scales: tuple[float, ...] = (1.0, 0.25),
 ) -> dict[str, Any]:
     """Run a bounded local dense-teacher distillation comparison."""
 
@@ -107,6 +108,7 @@ def run_dense_teacher_residual_distillation_comparison(
     train_steps = int(max_steps if max_steps is not None else run_cfg.get("max_steps", 50))
     teacher_step_budget = max(1, int(teacher_steps))
     student_step_budget = max(1, int(student_steps))
+    scale_values = _teacher_scales(teacher_scales)
     dataset = str(data_cfg.get("dataset", "tiny_shakespeare_word"))
     seq_len = int(data_cfg.get("seq_len", 64))
     hidden_dim = int(base_cfg.get("hidden_dim", 96))
@@ -265,6 +267,7 @@ def run_dense_teacher_residual_distillation_comparison(
         base_logits=base_logits,
         teacher_hidden_residual_export=teacher_hidden_residual_export,
         teacher_logit_residual_export=teacher_logit_residual_export,
+        teacher_scale=1.0,
     )
     variant_rows.append(dict(teacher_accounting, arm="parameter_matched_causal_mlp_control", variant="dense_teacher"))
     variant_rows.append(dict(teacher_accounting, arm="dense_teacher_parameter_matched_mlp", variant="dense_teacher_parameter_matched_mlp"))
@@ -276,70 +279,104 @@ def run_dense_teacher_residual_distillation_comparison(
             active_rank_or_topk=min(teacher_accounting["active_rank_or_topk"], top_k * atoms_per_column),
         )
     )
-    for name, spec in variants.items():
-        residual = ResidualColumns(
-            hidden_dim=hidden_dim,
-            num_columns=num_columns,
-            atoms_per_column=atoms_per_column,
-            top_k=int(spec["top_k"]),
-            support_router="contextual_mlp",
-            contextual_router_hidden_dim=contextual_width,
-        )
-        student_teacher_logits = teacher_logits
-        if spec["loss_mode"] == "shuffled_target":
-            student_teacher_logits = _shuffle_tokens(torch, teacher_logits)
-        _train_student(
-            torch,
-            F,
-            base,
-            residual,
-            hidden,
-            targets,
-            student_teacher_logits,
-            vocab_size,
-            variant_kind=str(spec["kind"]),
-            features=spec["features"],
-            steps=student_step_budget,
-            loss_mode=str(spec["loss_mode"]),
-        )
-        row, support = _student_metric_row(
-            torch,
-            F,
-            base,
-            residual,
-            hidden,
-            targets,
-            teacher_logits,
-            teacher_hidden_residual,
-            base_logits,
-            vocab_size,
-            variant=name,
-            variant_kind=str(spec["kind"]),
-            features=spec["features"],
-            top_k=int(spec["top_k"]),
-            num_columns=num_columns,
-            atoms_per_column=atoms_per_column,
-        )
-        row["arm"] = {
-            CONTEXTUAL_VARIANT: "promoted_contextual_topk2_ce_mse_distill",
-            "promoted_contextual_topk2_ce_mse_distill": "promoted_contextual_topk2_ce_mse_distill",
-            "promoted_contextual_topk2_mse_only_distill": "promoted_contextual_topk2_mse_only_distill",
-            "rank_matched_contextual_topk1": "rank_matched_contextual_topk1",
-            "random_support_topk2": "random_support_topk2",
-            "fixed_support_topk2": "fixed_support_topk2",
-            "token_position_only_predicted_support": "token_position_only_router_topk2",
-            "shuffled_predicted_support": "shuffled_feature_router_topk2",
-            "shuffled_teacher_target_topk2": "shuffled_teacher_target_topk2",
-        }.get(name, name)
-        variant_rows.append(row)
-        support_rows.append(
-            {
-                "variant": name,
-                "arm": row["arm"],
-                "used_columns": _used_columns(support),
-                "unique_support_sets": _unique_support_sets(support),
-                "support_entropy": _support_entropy(torch, support, num_columns),
-            }
+    scale_summaries: list[dict[str, Any]] = []
+    for teacher_scale in scale_values:
+        scaled_teacher_logits = base_logits + teacher_scale * teacher_logit_residual
+        scaled_teacher_hidden_residual = teacher_scale * teacher_hidden_residual
+        scaled_teacher_ce = _loss_value(_ce_loss(F, scaled_teacher_logits, targets, vocab_size))
+        if teacher_scale != 1.0:
+            scaled_accounting = _teacher_accounting(
+                teacher=teacher,
+                hidden_dim=hidden_dim,
+                hidden=hidden,
+                teacher_hidden_residual=scaled_teacher_hidden_residual,
+                teacher_logit_residual=teacher_scale * teacher_logit_residual,
+                teacher_ce=scaled_teacher_ce,
+                base_logits=base_logits,
+                teacher_hidden_residual_export=teacher_hidden_residual_export,
+                teacher_logit_residual_export=teacher_logit_residual_export,
+                teacher_scale=teacher_scale,
+            )
+            scale_arm = f"dense_teacher_calibrated_scale_{_scale_suffix(teacher_scale)}"
+            variant_rows.append(dict(scaled_accounting, arm=scale_arm, variant=scale_arm))
+        for name, spec in variants.items():
+            residual = ResidualColumns(
+                hidden_dim=hidden_dim,
+                num_columns=num_columns,
+                atoms_per_column=atoms_per_column,
+                top_k=int(spec["top_k"]),
+                support_router="contextual_mlp",
+                contextual_router_hidden_dim=contextual_width,
+            )
+            student_teacher_logits = scaled_teacher_logits
+            if spec["loss_mode"] == "shuffled_target":
+                student_teacher_logits = _shuffle_tokens(torch, scaled_teacher_logits)
+            _train_student(
+                torch,
+                F,
+                base,
+                residual,
+                hidden,
+                targets,
+                student_teacher_logits,
+                vocab_size,
+                variant_kind=str(spec["kind"]),
+                features=spec["features"],
+                steps=student_step_budget,
+                loss_mode=str(spec["loss_mode"]),
+            )
+            row, support = _student_metric_row(
+                torch,
+                F,
+                base,
+                residual,
+                hidden,
+                targets,
+                scaled_teacher_logits,
+                scaled_teacher_hidden_residual,
+                base_logits,
+                vocab_size,
+                variant=_scaled_variant_name(name, teacher_scale),
+                variant_kind=str(spec["kind"]),
+                features=spec["features"],
+                top_k=int(spec["top_k"]),
+                num_columns=num_columns,
+                atoms_per_column=atoms_per_column,
+                teacher_scale=teacher_scale,
+                teacher_ce=scaled_teacher_ce,
+            )
+            row["arm"] = _scaled_arm_name(
+                {
+                    CONTEXTUAL_VARIANT: "promoted_contextual_topk2_ce_mse_distill",
+                    "promoted_contextual_topk2_ce_mse_distill": "promoted_contextual_topk2_ce_mse_distill",
+                    "promoted_contextual_topk2_mse_only_distill": "promoted_contextual_topk2_mse_only_distill",
+                    "rank_matched_contextual_topk1": "rank_matched_contextual_topk1",
+                    "random_support_topk2": "random_support_topk2",
+                    "fixed_support_topk2": "fixed_support_topk2",
+                    "token_position_only_predicted_support": "token_position_only_router_topk2",
+                    "shuffled_predicted_support": "shuffled_feature_router_topk2",
+                    "shuffled_teacher_target_topk2": "shuffled_teacher_target_topk2",
+                }.get(name, name),
+                teacher_scale,
+            )
+            variant_rows.append(row)
+            support_rows.append(
+                {
+                    "variant": row["variant"],
+                    "arm": row["arm"],
+                    "teacher_scale": teacher_scale,
+                    "used_columns": _used_columns(support),
+                    "unique_support_sets": _unique_support_sets(support),
+                    "support_entropy": _support_entropy(torch, support, num_columns),
+                }
+            )
+        scale_summaries.append(
+            _scale_summary(
+                variant_rows=variant_rows,
+                teacher_scale=teacher_scale,
+                teacher_ce=scaled_teacher_ce,
+                base_ce=base_ce,
+            )
         )
 
     source_rows = _source_rows(
@@ -382,9 +419,11 @@ def run_dense_teacher_residual_distillation_comparison(
         "teacher_steps": teacher_step_budget,
         "student_steps": student_step_budget,
         "predictor_steps": max(1, predictor_steps),
+        "teacher_scales": scale_values,
         "base_ce_loss": base_ce,
         "dense_teacher_ce_loss": teacher_ce,
         "dense_teacher_ce_improvement": base_ce - teacher_ce,
+        "teacher_scale_summaries": scale_summaries,
         "variant_rows": variant_rows,
         "support_rows": support_rows,
         "predictor_rows": predictor_rows,
@@ -502,6 +541,8 @@ def _student_metric_row(
     top_k: int,
     num_columns: int,
     atoms_per_column: int,
+    teacher_scale: float,
+    teacher_ce: float,
 ) -> tuple[dict[str, Any], Any]:
     with torch.no_grad():
         logits, support, student_hidden = _student_logits_and_support(
@@ -527,12 +568,14 @@ def _student_metric_row(
         {
             "variant": variant,
             "variant_kind": variant_kind,
+            "teacher_scale": teacher_scale,
+            "teacher_ce_loss": teacher_ce,
             "ce_loss": ce_loss,
             "teacher_logit_mse": distill_mse,
             "anchor_kl_or_logit_mse": logit_mse,
             "functional_churn": churn,
             "intervention_fingerprint_purity": max(0.0, min(1.0, 1.0 - churn)),
-            "support_regret": max(0.0, ce_loss - _loss_value(_ce_loss(F, teacher_logits, targets, vocab_size))),
+            "support_regret": max(0.0, ce_loss - teacher_ce),
             "commutator_norm": 0.0,
             "stored_params": _param_count(residual),
             "active_params": float(top_k * atoms_per_column * hidden.shape[-1]),
@@ -609,11 +652,14 @@ def _teacher_accounting(
     base_logits: Any,
     teacher_hidden_residual_export: Path,
     teacher_logit_residual_export: Path,
+    teacher_scale: float,
 ) -> dict[str, Any]:
     teacher_l2 = float(teacher_hidden_residual.norm(dim=-1).mean().item())
     logit_l2 = float(teacher_logit_residual.norm(dim=-1).mean().item())
     return {
         "stored_params": _param_count(teacher),
+        "teacher_scale": teacher_scale,
+        "teacher_ce_loss": teacher_ce,
         "active_params": _param_count(teacher),
         "active_rank_or_topk": float(hidden_dim),
         "residual_l2": teacher_l2,
@@ -647,6 +693,72 @@ def _r2(torch: Any, prediction: Any, target: Any) -> float:
 
 def _cosine(F: Any, prediction: Any, target: Any) -> float:
     return float(F.cosine_similarity(prediction.reshape(1, -1), target.reshape(1, -1), dim=-1).item())
+
+
+def _teacher_scales(values: tuple[float, ...]) -> list[float]:
+    scales: list[float] = []
+    for value in values:
+        scale = float(value)
+        if scale <= 0.0:
+            continue
+        if not any(abs(scale - existing) <= 1e-12 for existing in scales):
+            scales.append(scale)
+    if not any(abs(scale - 1.0) <= 1e-12 for scale in scales):
+        scales.insert(0, 1.0)
+    return scales
+
+
+def _scale_suffix(scale: float) -> str:
+    return f"{scale:g}".replace("-", "m").replace(".", "p")
+
+
+def _scaled_variant_name(name: str, scale: float) -> str:
+    if abs(scale - 1.0) <= 1e-12:
+        return name
+    return f"{name}_teacher_scale_{_scale_suffix(scale)}"
+
+
+def _scaled_arm_name(name: str, scale: float) -> str:
+    if abs(scale - 1.0) <= 1e-12:
+        return name
+    return f"{name}_teacher_scale_{_scale_suffix(scale)}"
+
+
+def _scale_summary(
+    *,
+    variant_rows: list[dict[str, Any]],
+    teacher_scale: float,
+    teacher_ce: float,
+    base_ce: float,
+) -> dict[str, Any]:
+    rows = [row for row in variant_rows if abs(float(row.get("teacher_scale", 1.0)) - teacher_scale) <= 1e-12]
+    by_variant = {str(row.get("variant")): row for row in rows}
+    primary = by_variant.get(_scaled_variant_name(PRIMARY_VARIANT, teacher_scale), {})
+    contextual = by_variant.get(_scaled_variant_name(CONTEXTUAL_VARIANT, teacher_scale), {})
+    controls = [
+        by_variant.get(_scaled_variant_name(name, teacher_scale), {})
+        for name in CONTROL_VARIANTS
+    ]
+    primary_mse = _number(primary.get("teacher_logit_mse"))
+    contextual_mse = _number(contextual.get("teacher_logit_mse"))
+    control_mses = [_number(row.get("teacher_logit_mse")) for row in controls]
+    primary_ce = _number(primary.get("ce_loss"))
+    return {
+        "teacher_scale": teacher_scale,
+        "teacher_ce_loss": teacher_ce,
+        "teacher_ce_improvement": base_ce - teacher_ce,
+        "primary_variant": _scaled_variant_name(PRIMARY_VARIANT, teacher_scale),
+        "primary_ce_loss": primary_ce,
+        "primary_teacher_logit_mse": primary_mse,
+        "contextual_teacher_logit_mse": contextual_mse,
+        "null_teacher_logit_mses": control_mses,
+        "primary_beats_contextual_mse": primary_mse is not None
+        and contextual_mse is not None
+        and primary_mse <= contextual_mse,
+        "primary_beats_null_mses": primary_mse is not None
+        and all(value is not None and primary_mse <= value for value in control_mses),
+        "primary_ce_within_teacher_margin": primary_ce is not None and primary_ce <= teacher_ce + 0.25,
+    }
 
 
 def _causal_predictor_inputs(torch: Any, chunks: dict[str, Any]) -> Any:
@@ -693,6 +805,23 @@ def _gate_criteria(
     acsr_ce = _number(acsr.get("ce_loss"))
     contextual_mse = _number(contextual.get("teacher_logit_mse"))
     control_mses = [_number(row.get("teacher_logit_mse")) for row in controls]
+    calibrated_summaries = [
+        _scale_summary(
+            variant_rows=variant_rows,
+            teacher_scale=float(row.get("teacher_scale")),
+            teacher_ce=float(row.get("teacher_ce_loss")),
+            base_ce=base_ce,
+        )
+        for row in _unique_scale_rows(variant_rows, teacher_ce)
+        if abs(float(row.get("teacher_scale")) - 1.0) > 1e-12
+    ]
+    calibrated_passes = [
+        row
+        for row in calibrated_summaries
+        if row["primary_beats_contextual_mse"]
+        and row["primary_beats_null_mses"]
+        and row["primary_ce_within_teacher_margin"]
+    ]
     return [
         {
             "criterion": "source_gates_present_and_passing",
@@ -725,7 +854,30 @@ def _gate_criteria(
             "threshold": "ACSR CE <= dense teacher CE + 0.25",
             "actual": f"{acsr_ce} <= {teacher_ce + 0.25:.6f}",
         },
+        {
+            "criterion": "calibrated_teacher_scale_gate",
+            "passed": bool(calibrated_passes),
+            "threshold": "at least one teacher scale < 1.0 passes contextual/null MSE controls and CE margin",
+            "actual": json.dumps(calibrated_summaries, sort_keys=True),
+        },
     ]
+
+
+def _unique_scale_rows(variant_rows: list[dict[str, Any]], teacher_ce: float) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[float] = set()
+    for row in variant_rows:
+        scale = _number(row.get("teacher_scale"))
+        if scale is None or scale in seen:
+            continue
+        seen.add(scale)
+        rows.append(
+            {
+                "teacher_scale": scale,
+                "teacher_ce_loss": row.get("teacher_ce_loss", teacher_ce if scale == 1.0 else row.get("ce_loss", teacher_ce)),
+            }
+        )
+    return rows
 
 
 def _source_rows(
@@ -908,6 +1060,15 @@ def _git_commit() -> str | None:
         return None
 
 
+def _parse_teacher_scales(value: str) -> tuple[float, ...]:
+    scales: list[float] = []
+    for raw in value.split(","):
+        raw = raw.strip()
+        if raw:
+            scales.append(float(raw))
+    return tuple(scales or [1.0])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
@@ -924,6 +1085,12 @@ def main() -> None:
     parser.add_argument("--teacher-steps", type=int, default=80)
     parser.add_argument("--student-steps", type=int, default=240)
     parser.add_argument("--predictor-steps", type=int, default=50)
+    parser.add_argument(
+        "--teacher-scales",
+        type=str,
+        default="1.0,0.25",
+        help="Comma-separated dense teacher residual/logit scales; 1.0 is always included.",
+    )
     args = parser.parse_args()
     summary = run_dense_teacher_residual_distillation_comparison(
         config_path=args.config,
@@ -936,6 +1103,7 @@ def main() -> None:
         teacher_steps=args.teacher_steps,
         student_steps=args.student_steps,
         predictor_steps=args.predictor_steps,
+        teacher_scales=_parse_teacher_scales(args.teacher_scales),
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     raise SystemExit(0 if summary["status"] == "pass" else 1)
