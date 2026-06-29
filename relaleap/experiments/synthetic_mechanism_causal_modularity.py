@@ -37,6 +37,7 @@ REQUIRED_ARTIFACTS = (
     "ce_gap_decomposition.csv",
     "oracle_support_sparse_topk2.csv",
     "router_value_regret_decomposition.csv",
+    "router_regret_ceiling_budget.csv",
     "teacher_distillation_closeout.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
@@ -229,6 +230,14 @@ def run_synthetic_mechanism_causal_modularity(
         ),
         "router_value_regret_primary_result": (
             _router_value_regret_summary(training_smoke["router_value_regret_decomposition"])
+            if training_smoke is not None
+            else None
+        ),
+        "router_regret_ceiling_budget_row_count": (
+            len(training_smoke["router_regret_ceiling_budget"]) if training_smoke is not None else 0
+        ),
+        "router_regret_ceiling_budget_primary_result": (
+            _router_regret_ceiling_budget_summary(training_smoke["router_regret_ceiling_budget"])
             if training_smoke is not None
             else None
         ),
@@ -597,6 +606,10 @@ def _run_training_smoke(
         "oracle_support_sparse_topk2": oracle_support_rows,
         "router_value_regret_decomposition": _router_value_regret_decomposition_rows(
             oracle_support_rows
+        ),
+        "router_regret_ceiling_budget": _router_regret_ceiling_budget_rows(
+            arm_metrics,
+            oracle_support_rows,
         ),
         "teacher_distillation_closeout": _teacher_distillation_closeout_rows(
             arm_metrics,
@@ -1838,6 +1851,136 @@ def _router_value_regret_decomposition_rows(rows: list[dict[str, Any]]) -> list[
     return output_rows
 
 
+def _router_regret_ceiling_budget_rows(
+    arm_metrics: list[dict[str, Any]],
+    oracle_support_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not arm_metrics or not oracle_support_rows:
+        return []
+
+    by_arm = {str(row.get("arm")): row for row in arm_metrics}
+    regret_all = {
+        str(row.get("arm")): row
+        for row in _router_value_regret_decomposition_rows(oracle_support_rows)
+        if row.get("latent_rule") == "all"
+    }
+    token_position = by_arm.get("token_position_router_topk2")
+    active_controls = [
+        row
+        for row in arm_metrics
+        if row.get("control_budget_role") == "active_proxy_matched_dense_mlp_control"
+    ]
+    stored_controls = [
+        row
+        for row in arm_metrics
+        if row.get("control_budget_role") == "stored_parameter_matched_dense_mlp_upper_bound"
+    ]
+    best_active = _best_ce_row(active_controls)
+    best_stored = _best_ce_row(stored_controls)
+    token_position_ce = _metric_float(token_position.get("holdout_ce")) if token_position else None
+    active_ce = _metric_float(best_active.get("holdout_ce")) if best_active else None
+    stored_ce = _metric_float(best_stored.get("holdout_ce")) if best_stored else None
+
+    rows: list[dict[str, Any]] = []
+    for arm in sorted(regret_all):
+        arm_row = by_arm.get(arm)
+        if arm_row is None:
+            continue
+        learned_ce = _metric_float(arm_row.get("holdout_ce"))
+        regret_row = regret_all[arm]
+        oracle_ce = _metric_float(regret_row.get("mean_oracle_ce_loss"))
+        oracle_gain = _delta_value(learned_ce, oracle_ce)
+        token_gap = _positive_gap(learned_ce, token_position_ce)
+        active_gap = _positive_gap(learned_ce, active_ce)
+        stored_gap = _positive_gap(learned_ce, stored_ce)
+        token_closes = _ceiling_closes_gap(oracle_gain, token_gap)
+        active_closes = _ceiling_closes_gap(oracle_gain, active_gap)
+        stored_closes = _ceiling_closes_gap(oracle_gain, stored_gap)
+        rows.append(
+            {
+                "arm": arm,
+                "family": arm_row.get("family", ""),
+                "router": arm_row.get("router", ""),
+                "support_mode": arm_row.get("support_mode", ""),
+                "learned_holdout_ce": learned_ce,
+                "mean_learned_token_ce": _metric_float(regret_row.get("mean_learned_ce_loss")),
+                "oracle_support_ce_ceiling": oracle_ce,
+                "oracle_support_ce_gain": oracle_gain,
+                "mean_oracle_regret": _metric_float(regret_row.get("mean_oracle_regret")),
+                "token_position_null_arm": "token_position_router_topk2" if token_position else "",
+                "token_position_null_ce": token_position_ce,
+                "learned_ce_gap_to_token_position_null": token_gap,
+                "oracle_gain_fraction_of_token_position_gap": _safe_ratio(oracle_gain, token_gap),
+                "router_only_can_close_token_position_gap": token_closes,
+                "oracle_ce_beats_token_position_null": _ce_beats_or_ties(oracle_ce, token_position_ce),
+                "active_matched_control_arm": best_active.get("arm", "") if best_active else "",
+                "active_matched_control_ce": active_ce,
+                "learned_ce_gap_to_active_matched_control": active_gap,
+                "oracle_gain_fraction_of_active_matched_gap": _safe_ratio(oracle_gain, active_gap),
+                "router_only_can_close_active_matched_gap": active_closes,
+                "oracle_ce_beats_active_matched_control": _ce_beats_or_ties(oracle_ce, active_ce),
+                "stored_matched_control_arm": best_stored.get("arm", "") if best_stored else "",
+                "stored_matched_control_ce": stored_ce,
+                "learned_ce_gap_to_stored_matched_control": stored_gap,
+                "oracle_gain_fraction_of_stored_matched_gap": _safe_ratio(oracle_gain, stored_gap),
+                "router_only_can_close_stored_matched_gap": stored_closes,
+                "oracle_ce_beats_stored_matched_control": _ce_beats_or_ties(oracle_ce, stored_ce),
+                "router_only_sufficiency_status": _router_only_sufficiency_status(
+                    token_closes,
+                    active_closes,
+                    stored_closes,
+                    oracle_gain,
+                    stored_gap,
+                ),
+                "mechanism_labels_used_for_scoring_only": True,
+                "interpretation": (
+                    "Diagnostic only: the oracle ceiling uses holdout labels to measure how much a perfect "
+                    "support selector could recover with fixed sparse values."
+                ),
+            }
+        )
+    return rows
+
+
+def _positive_gap(learned_ce: float | None, comparator_ce: float | None) -> float | None:
+    gap = _delta_value(learned_ce, comparator_ce)
+    if gap is None:
+        return None
+    return max(0.0, gap)
+
+
+def _ceiling_closes_gap(oracle_gain: float | None, positive_gap: float | None) -> bool | None:
+    if oracle_gain is None or positive_gap is None:
+        return None
+    return oracle_gain + 1e-12 >= positive_gap
+
+
+def _ce_beats_or_ties(candidate_ce: float | None, comparator_ce: float | None) -> bool | None:
+    if candidate_ce is None or comparator_ce is None:
+        return None
+    return candidate_ce <= comparator_ce + 1e-12
+
+
+def _router_only_sufficiency_status(
+    token_closes: bool | None,
+    active_closes: bool | None,
+    stored_closes: bool | None,
+    oracle_gain: float | None,
+    stored_gap: float | None,
+) -> str:
+    if token_closes is None or active_closes is None or stored_closes is None:
+        return "missing_comparator"
+    if stored_closes:
+        return "router_ceiling_closes_stored_gap"
+    if active_closes:
+        return "router_ceiling_closes_active_gap_but_not_stored_gap"
+    if token_closes:
+        return "router_ceiling_only_addresses_null_gap"
+    if oracle_gain is not None and stored_gap is not None and oracle_gain < stored_gap:
+        return "router_ceiling_insufficient_for_stored_gap"
+    return "router_ceiling_insufficient"
+
+
 def _flop_proxy(row: dict[str, Any]) -> float | None:
     active_parameters = _metric_float(row.get("active_parameters_proxy"))
     if active_parameters is None:
@@ -2368,6 +2511,10 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("router_regret_ceiling_budget"):
+        return (
+            "use the router-regret ceiling budget to decide whether a sequence-heldout support-head diagnostic is scientifically justified; keep GPU and promotion blocked"
+        )
     if any(row.get("teacher_distillation_enabled") is True for row in training_smoke.get("arm_metrics", [])):
         if training_smoke.get("teacher_distillation_closeout"):
             return (
@@ -2488,6 +2635,55 @@ def _router_value_regret_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "Diagnostic only: learned-vs-oracle support gaps use holdout labels for scoring. "
             "High regret indicates router/support selection headroom for already-trained sparse values; "
             "it does not prove deployable causal modularity."
+        ),
+    }
+
+
+def _router_regret_ceiling_budget_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "best_router_only_status": "",
+            "max_oracle_support_ce_gain": None,
+            "min_stored_gap": None,
+            "interpretation": "router-regret ceiling budget was not run",
+        }
+    max_gain_row = max(
+        rows,
+        key=lambda row: _metric_float(row.get("oracle_support_ce_gain")) or float("-inf"),
+    )
+    stored_gaps = [
+        _metric_float(row.get("learned_ce_gap_to_stored_matched_control")) for row in rows
+    ]
+    stored_gaps = [gap for gap in stored_gaps if gap is not None]
+    statuses = {str(row.get("router_only_sufficiency_status", "")) for row in rows}
+    if "router_ceiling_closes_stored_gap" in statuses:
+        best_status = "router_ceiling_closes_stored_gap"
+    elif "router_ceiling_closes_active_gap_but_not_stored_gap" in statuses:
+        best_status = "router_ceiling_closes_active_gap_but_not_stored_gap"
+    elif "router_ceiling_only_addresses_null_gap" in statuses:
+        best_status = "router_ceiling_only_addresses_null_gap"
+    else:
+        best_status = "router_ceiling_insufficient_for_stored_gap"
+    return {
+        "row_count": len(rows),
+        "arm_count": len({str(row.get("arm", "")) for row in rows}),
+        "best_router_only_status": best_status,
+        "max_oracle_support_ce_gain": _metric_float(max_gain_row.get("oracle_support_ce_gain")),
+        "max_gain_arm": max_gain_row.get("arm", ""),
+        "min_stored_gap": min(stored_gaps) if stored_gaps else None,
+        "stored_gap_closable_by_router_only": any(
+            row.get("router_only_can_close_stored_matched_gap") is True for row in rows
+        ),
+        "active_gap_closable_by_router_only": any(
+            row.get("router_only_can_close_active_matched_gap") is True for row in rows
+        ),
+        "token_position_gap_closable_by_router_only": any(
+            row.get("router_only_can_close_token_position_gap") is True for row in rows
+        ),
+        "interpretation": (
+            "Diagnostic only: compares the fixed-value oracle-support ceiling with token/position null, "
+            "active-matched controls, and stored-matched upper bounds before any support-head or GPU branch."
         ),
     }
 
@@ -2826,6 +3022,10 @@ def _write_artifacts(
         [] if training_smoke is None else training_smoke["router_value_regret_decomposition"],
     )
     _write_csv(
+        out_dir / "router_regret_ceiling_budget.csv",
+        [] if training_smoke is None else training_smoke["router_regret_ceiling_budget"],
+    )
+    _write_csv(
         out_dir / "teacher_distillation_closeout.csv",
         [] if training_smoke is None else training_smoke["teacher_distillation_closeout"],
     )
@@ -2858,6 +3058,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Local scientific gates: `{summary['local_scientific_gate_status']}`",
         f"- Oracle-support sparse top-k2 rows: `{summary['oracle_support_sparse_topk2_row_count']}`",
         f"- Router/value regret decomposition rows: `{summary['router_value_regret_decomposition_row_count']}`",
+        f"- Router-regret ceiling budget rows: `{summary['router_regret_ceiling_budget_row_count']}`",
         f"- Teacher distillation closeout rows: `{summary['teacher_distillation_closeout_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
@@ -2869,6 +3070,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The oracle-support sparse top-k2 artifact is diagnostic only: it uses holdout labels to score exhaustive singleton/pair supports for trained sparse values and must not be treated as deployable training evidence.",
         "",
         "The router/value regret decomposition summarizes the oracle-support rows by arm and latent rule. It separates support-selection headroom from the adequacy of the already-trained sparse values, but still uses evaluator-only holdout labels.",
+        "",
+        "The router-regret ceiling budget compares the fixed-value oracle-support ceiling against token/position nulls, active-matched dense/MLP controls, and stored-matched dense/MLP upper bounds. It is the local fail-closed budget check before any support-head or GPU branch.",
         "",
         "The CE by rule/position and residual budget accounting artifacts are local diagnostics. FLOP values are residual-path proxies only and exclude the frozen base and decoder.",
         "",

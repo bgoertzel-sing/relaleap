@@ -39,6 +39,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertGreater(summary["forgetting_row_count"], 0)
             self.assertEqual(summary["oracle_support_sparse_topk2_row_count"], 0)
             self.assertEqual(summary["router_value_regret_decomposition_row_count"], 0)
+            self.assertEqual(summary["router_regret_ceiling_budget_row_count"], 0)
             self.assertEqual(summary["teacher_distillation_closeout_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
@@ -125,6 +126,12 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(
                 summary["router_value_regret_primary_result"]["row_count"],
                 summary["router_value_regret_decomposition_row_count"],
+            )
+            self.assertEqual(summary["router_regret_ceiling_budget_row_count"], 2)
+            self.assertIsNotNone(summary["router_regret_ceiling_budget_primary_result"])
+            self.assertEqual(
+                summary["router_regret_ceiling_budget_primary_result"]["row_count"],
+                summary["router_regret_ceiling_budget_row_count"],
             )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
@@ -322,6 +329,39 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 {"True"},
             )
 
+            with (out_dir / "router_regret_ceiling_budget.csv").open(newline="", encoding="utf-8") as handle:
+                ceiling_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(ceiling_rows), summary["router_regret_ceiling_budget_row_count"])
+            self.assertEqual(
+                {row["arm"] for row in ceiling_rows},
+                {"promoted_contextual_topk2", "intervention_trained_sparse_topk2"},
+            )
+            for required_field in {
+                "learned_holdout_ce",
+                "oracle_support_ce_ceiling",
+                "oracle_support_ce_gain",
+                "token_position_null_ce",
+                "learned_ce_gap_to_token_position_null",
+                "router_only_can_close_token_position_gap",
+                "active_matched_control_arm",
+                "active_matched_control_ce",
+                "learned_ce_gap_to_active_matched_control",
+                "router_only_can_close_active_matched_gap",
+                "stored_matched_control_arm",
+                "stored_matched_control_ce",
+                "learned_ce_gap_to_stored_matched_control",
+                "router_only_can_close_stored_matched_gap",
+                "router_only_sufficiency_status",
+                "mechanism_labels_used_for_scoring_only",
+            }:
+                self.assertIn(required_field, ceiling_rows[0])
+            self.assertEqual(
+                {row["mechanism_labels_used_for_scoring_only"] for row in ceiling_rows},
+                {"True"},
+            )
+            self.assertTrue(all(float(row["oracle_support_ce_gain"]) >= -1e-8 for row in ceiling_rows))
+            self.assertTrue(all(row["router_only_sufficiency_status"] for row in ceiling_rows))
+
             with (out_dir / "per_mechanism_interventions.csv").open(newline="", encoding="utf-8") as handle:
                 intervention_rows = list(csv.DictReader(handle))
             self.assertTrue(intervention_rows)
@@ -389,6 +429,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["ce_gap_decomposition_row_count"], 12)
             self.assertEqual(summary["residual_budget_accounting_row_count"], 12)
             self.assertEqual(summary["router_value_regret_decomposition_row_count"], 15)
+            self.assertEqual(summary["router_regret_ceiling_budget_row_count"], 3)
             self.assertEqual(summary["teacher_distillation_closeout_row_count"], 1)
             teacher_summary = summary["teacher_distillation_primary_result"]
             self.assertEqual(teacher_summary["row_count"], 2)
