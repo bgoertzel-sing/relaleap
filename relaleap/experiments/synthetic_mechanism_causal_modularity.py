@@ -34,6 +34,7 @@ REQUIRED_ARTIFACTS = (
     "gate_criteria.csv",
     "local_scientific_gates.csv",
     "arm_metrics.csv",
+    "ce_gap_decomposition.csv",
     "per_token_metrics.csv",
     "notes.md",
 )
@@ -186,6 +187,9 @@ def run_synthetic_mechanism_causal_modularity(
         ),
         "arm_metric_row_count": (
             len(training_smoke["arm_metrics"]) if training_smoke is not None else 0
+        ),
+        "ce_gap_decomposition_row_count": (
+            len(training_smoke["ce_gap_decomposition"]) if training_smoke is not None else 0
         ),
         "per_token_metric_row_count": (
             len(training_smoke["per_token_metrics"]) if training_smoke is not None else 0
@@ -453,6 +457,7 @@ def _run_training_smoke(
     primary = _synthetic_primary_result(arm_metrics, intervention_rows, commutator_rows)
     return {
         "arm_metrics": arm_metrics,
+        "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
         "per_token_metrics": per_token_metrics,
         "per_mechanism_interventions": intervention_rows,
         "commutator_rows": commutator_rows,
@@ -1177,6 +1182,73 @@ def _synthetic_primary_result(
     }
 
 
+def _ce_gap_decomposition_rows(arm_metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not arm_metrics:
+        return []
+    sparse_rows = [
+        row
+        for row in arm_metrics
+        if row.get("arm") in {"promoted_contextual_topk2", "intervention_trained_sparse_topk2"}
+    ]
+    dense_mlp_rows = [
+        row
+        for row in arm_metrics
+        if row.get("arm") in {"dense_rank_norm_matched", "low_churn_mlp_control"}
+    ]
+    best_sparse = _best_ce_row(sparse_rows)
+    best_dense_mlp = _best_ce_row(dense_mlp_rows)
+    best_sparse_ce = _metric_float(best_sparse.get("holdout_ce")) if best_sparse else None
+    best_dense_mlp_ce = _metric_float(best_dense_mlp.get("holdout_ce")) if best_dense_mlp else None
+    best_sparse_active = _metric_float(best_sparse.get("active_parameters_proxy")) if best_sparse else None
+    best_sparse_stored = _metric_float(best_sparse.get("stored_parameters")) if best_sparse else None
+    rows: list[dict[str, Any]] = []
+    for row in arm_metrics:
+        holdout_ce = _metric_float(row.get("holdout_ce"))
+        active_parameters = _metric_float(row.get("active_parameters_proxy"))
+        stored_parameters = _metric_float(row.get("stored_parameters"))
+        family = str(row.get("family", ""))
+        is_dense_or_mlp = family in {"dense_control", "mlp_control"}
+        rows.append(
+            {
+                "arm": row.get("arm", ""),
+                "family": family,
+                "router": row.get("router", ""),
+                "support_mode": row.get("support_mode", ""),
+                "holdout_ce": holdout_ce,
+                "residual_l2": _metric_float(row.get("residual_l2")),
+                "active_parameters_proxy": active_parameters,
+                "stored_parameters": stored_parameters,
+                "stored_parameter_floor": _metric_float(row.get("stored_parameter_floor")),
+                "active_to_best_sparse_ratio": _safe_ratio(active_parameters, best_sparse_active),
+                "stored_to_best_sparse_ratio": _safe_ratio(stored_parameters, best_sparse_stored),
+                "best_sparse_arm": best_sparse.get("arm", "") if best_sparse else "",
+                "best_sparse_holdout_ce": best_sparse_ce,
+                "best_dense_mlp_arm": best_dense_mlp.get("arm", "") if best_dense_mlp else "",
+                "best_dense_mlp_holdout_ce": best_dense_mlp_ce,
+                "holdout_ce_minus_best_sparse_ce": _delta_value(holdout_ce, best_sparse_ce),
+                "holdout_ce_minus_best_dense_mlp_ce": _delta_value(holdout_ce, best_dense_mlp_ce),
+                "best_sparse_ce_minus_this_dense_mlp_ce": (
+                    _delta_value(best_sparse_ce, holdout_ce) if is_dense_or_mlp else None
+                ),
+                "best_sparse_ce_minus_best_dense_mlp_ce": _delta_value(best_sparse_ce, best_dense_mlp_ce),
+                "control_budget_role": (
+                    "stored_parameter_matched_dense_mlp_upper_bound"
+                    if is_dense_or_mlp
+                    else "sparse_or_null_or_base_reference"
+                ),
+            }
+        )
+    return rows
+
+
+def _best_ce_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    scored = [(row, _metric_float(row.get("holdout_ce"))) for row in rows]
+    scored = [(row, ce) for row, ce in scored if ce is not None]
+    if not scored:
+        return None
+    return min(scored, key=lambda item: item[1])[0]
+
+
 def _stored_parameters(adapter: Any) -> int:
     return int(sum(parameter.numel() for parameter in adapter.parameters()))
 
@@ -1622,6 +1694,12 @@ def _delta_value(left: Any, right: Any) -> float | None:
     return float(left) - float(right)
 
 
+def _safe_ratio(left: Any, right: Any) -> float | None:
+    if left is None or right in {None, 0, 0.0}:
+        return None
+    return float(left) / float(right)
+
+
 def _missing_training_hooks(training_hooks_available: bool) -> list[str]:
     if training_hooks_available:
         return []
@@ -1658,6 +1736,10 @@ def _write_artifacts(
     _write_csv(out_dir / "gate_criteria.csv", gate_rows)
     _write_csv(out_dir / "local_scientific_gates.csv", local_scientific_gate_rows)
     _write_csv(out_dir / "arm_metrics.csv", [] if training_smoke is None else training_smoke["arm_metrics"])
+    _write_csv(
+        out_dir / "ce_gap_decomposition.csv",
+        [] if training_smoke is None else training_smoke["ce_gap_decomposition"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_notes(out_dir / "notes.md", summary)
 

@@ -99,6 +99,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertFalse(summary["promotion_allowed"])
             self.assertFalse(summary["requires_gpu_now"])
             self.assertEqual(summary["arm_metric_row_count"], 8)
+            self.assertEqual(summary["ce_gap_decomposition_row_count"], 8)
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertFalse(summary["missing_training_hooks"])
             self.assertIn("not causal modularity evidence", summary["training_smoke_primary_result"]["interpretation"])
@@ -142,6 +143,31 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             ]
             self.assertTrue(dense_mlp_stored)
             self.assertGreaterEqual(max(dense_mlp_stored), sparse_floor)
+
+            with (out_dir / "ce_gap_decomposition.csv").open(newline="", encoding="utf-8") as handle:
+                ce_gap_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(ce_gap_rows), 8)
+            ce_gap_by_arm = {row["arm"]: row for row in ce_gap_rows}
+            self.assertEqual(set(ce_gap_by_arm), arms)
+            for required_field in {
+                "holdout_ce",
+                "residual_l2",
+                "active_parameters_proxy",
+                "stored_parameters",
+                "active_to_best_sparse_ratio",
+                "stored_to_best_sparse_ratio",
+                "best_sparse_arm",
+                "best_dense_mlp_arm",
+                "best_sparse_ce_minus_best_dense_mlp_ce",
+                "control_budget_role",
+            }:
+                self.assertIn(required_field, ce_gap_rows[0])
+            self.assertEqual(
+                ce_gap_by_arm["dense_rank_norm_matched"]["control_budget_role"],
+                "stored_parameter_matched_dense_mlp_upper_bound",
+            )
+            self.assertTrue(ce_gap_by_arm["promoted_contextual_topk2"]["best_sparse_arm"])
+            self.assertTrue(ce_gap_by_arm["promoted_contextual_topk2"]["best_dense_mlp_arm"])
 
             with (out_dir / "per_mechanism_interventions.csv").open(newline="", encoding="utf-8") as handle:
                 intervention_rows = list(csv.DictReader(handle))
