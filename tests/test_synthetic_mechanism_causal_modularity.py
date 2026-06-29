@@ -55,6 +55,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["pc_error_target_inference_path_audit_row_count"], 0)
             self.assertEqual(summary["pc_decoder_adjoint_target_alignment_probe_row_count"], 0)
             self.assertEqual(summary["pc_decoder_adjoint_minimal_retrain_probe_row_count"], 0)
+            self.assertEqual(summary["pc_decoder_adjoint_closeout_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -317,6 +318,27 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
             self.assertFalse(
                 summary["pc_decoder_adjoint_minimal_retrain_probe_primary_result"]["promotion_allowed"]
+            )
+            self.assertEqual(summary["pc_decoder_adjoint_closeout_row_count"], 1)
+            self.assertIsNotNone(summary["pc_decoder_adjoint_closeout_primary_result"])
+            self.assertEqual(
+                summary["pc_decoder_adjoint_closeout_primary_result"]["row_count"],
+                summary["pc_decoder_adjoint_closeout_row_count"],
+            )
+            self.assertFalse(summary["pc_decoder_adjoint_closeout_primary_result"]["requires_gpu_now"])
+            self.assertFalse(summary["pc_decoder_adjoint_closeout_primary_result"]["promotion_allowed"])
+            self.assertTrue(summary["pc_decoder_adjoint_closeout_primary_result"]["notify_ben"])
+            self.assertEqual(
+                summary["pc_decoder_adjoint_closeout_primary_result"]["strategic_change_level"],
+                "major",
+            )
+            self.assertTrue(
+                summary["pc_decoder_adjoint_closeout_primary_result"]["one_site_decoder_adjoint_path_closed"]
+            )
+            self.assertTrue(
+                summary["pc_decoder_adjoint_closeout_primary_result"][
+                    "amortized_label_free_pc_pregate_allowed"
+                ]
             )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
@@ -759,6 +781,42 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(selected_retrain["selected"], "True")
             self.assertEqual(selected_retrain["requires_gpu_now"], "False")
             self.assertEqual(selected_retrain["promotion_allowed"], "False")
+
+            with (out_dir / "pc_decoder_adjoint_closeout.csv").open(newline="", encoding="utf-8") as handle:
+                closeout_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(closeout_rows), 1)
+            closeout = closeout_rows[0]
+            for required_field in {
+                "closeout_status",
+                "target_alignment_gate_passes",
+                "minimal_retrain_gate_passes",
+                "decoder_adjoint_holdout_ce",
+                "shuffled_target_holdout_ce",
+                "sign_flipped_target_holdout_ce",
+                "no_aux_ce_control_holdout_ce",
+                "promoted_sparse_ce",
+                "same_router_flat_control_ce",
+                "decoder_minus_same_router_flat_control_ce",
+                "finite_update_commutator_ratio_vs_promoted_sparse",
+                "functional_churn_ratio_vs_promoted_sparse",
+                "failure_reasons",
+                "selected_next_experiment",
+                "one_site_decoder_adjoint_path_closed",
+                "amortized_label_free_pc_pregate_allowed",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "advance_to_gpu_validation",
+                "strategic_change_level",
+                "notify_ben",
+            }:
+                self.assertIn(required_field, closeout)
+            self.assertEqual(closeout["requires_gpu_now"], "False")
+            self.assertEqual(closeout["promotion_allowed"], "False")
+            self.assertEqual(closeout["advance_to_gpu_validation"], "False")
+            self.assertEqual(closeout["strategic_change_level"], "major")
+            self.assertEqual(closeout["notify_ben"], "True")
+            self.assertEqual(closeout["one_site_decoder_adjoint_path_closed"], "True")
+            self.assertEqual(closeout["amortized_label_free_pc_pregate_allowed"], "True")
             self.assertEqual(selected_pc["source_failed_branch"], "budget_normalized_gated_low_rank_value_mixture")
             self.assertEqual(selected_pc["source_failed_branch_pregate_passes"], "False")
             self.assertEqual(selected_pc["requires_gpu_now"], "False")

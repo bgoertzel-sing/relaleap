@@ -52,6 +52,7 @@ REQUIRED_ARTIFACTS = (
     "pc_error_target_inference_path_audit.csv",
     "pc_decoder_adjoint_target_alignment_probe.csv",
     "pc_decoder_adjoint_minimal_retrain_probe.csv",
+    "pc_decoder_adjoint_closeout.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -190,12 +191,17 @@ def run_synthetic_mechanism_causal_modularity(
         "requires_gpu_now": False,
         "backend_policy": "local synthetic pregate only; RunPod and Colab remain blocked",
         "strategy_review_handling": (
-            "Accepted the latest urgent GPT-5.5-Pro review: treat the active/stored comparator split as a minor "
-            "local diagnostic reclassification, keep GPU and promotion blocked, and add oracle-support/value "
-            "decomposition before any modularity claim."
+            "Accepted the latest GPT-5.5-Pro major-pivot review: close the one-site decoder-adjoint PC retrain "
+            "path with explicit row-level null/control evidence before any GPU validation, and redirect only to "
+            "a tiny label-free amortized multi-site PC pregate. Ben should be notified because this changes the "
+            "active PC branch direction."
         ),
-        "strategic_change_level": "minor",
-        "notify_ben": False,
+        "strategic_change_level": (
+            "major"
+            if training_smoke is not None and training_smoke.get("pc_decoder_adjoint_closeout")
+            else "minor"
+        ),
+        "notify_ben": bool(training_smoke is not None and training_smoke.get("pc_decoder_adjoint_closeout")),
         "rules": list(RULES),
         "hidden_rule_boundaries": True,
         "task_id_visible_to_model": False,
@@ -396,6 +402,16 @@ def run_synthetic_mechanism_causal_modularity(
         "pc_decoder_adjoint_minimal_retrain_probe_primary_result": (
             _pc_decoder_adjoint_minimal_retrain_probe_summary(
                 training_smoke["pc_decoder_adjoint_minimal_retrain_probe"]
+            )
+            if training_smoke is not None
+            else None
+        ),
+        "pc_decoder_adjoint_closeout_row_count": (
+            len(training_smoke["pc_decoder_adjoint_closeout"]) if training_smoke is not None else 0
+        ),
+        "pc_decoder_adjoint_closeout_primary_result": (
+            _pc_decoder_adjoint_closeout_summary(
+                training_smoke["pc_decoder_adjoint_closeout"]
             )
             if training_smoke is not None
             else None
@@ -930,6 +946,14 @@ def _run_training_smoke(
         nn=nn,
         F=F,
     )
+    pc_decoder_adjoint_closeout = _pc_decoder_adjoint_closeout_rows(
+        target_probe_rows=pc_decoder_adjoint_target_alignment_probe,
+        retrain_probe_rows=pc_decoder_adjoint_minimal_retrain_probe,
+        arm_metrics=arm_metrics,
+        residual_budget_rows=residual_budget_accounting,
+        commutator_rows=commutator_rows,
+        forgetting_rows=forgetting_rows,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -955,6 +979,7 @@ def _run_training_smoke(
         "pc_error_target_inference_path_audit": pc_error_target_inference_path_audit,
         "pc_decoder_adjoint_target_alignment_probe": pc_decoder_adjoint_target_alignment_probe,
         "pc_decoder_adjoint_minimal_retrain_probe": pc_decoder_adjoint_minimal_retrain_probe,
+        "pc_decoder_adjoint_closeout": pc_decoder_adjoint_closeout,
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": residual_budget_accounting,
@@ -4031,6 +4056,12 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("pc_decoder_adjoint_closeout"):
+        summary = _pc_decoder_adjoint_closeout_summary(
+            training_smoke["pc_decoder_adjoint_closeout"]
+        )
+        if summary.get("selected_next_experiment"):
+            return str(summary["selected_next_experiment"]).replace("_", " ")
     if training_smoke.get("pc_decoder_adjoint_minimal_retrain_probe"):
         summary = _pc_decoder_adjoint_minimal_retrain_probe_summary(
             training_smoke["pc_decoder_adjoint_minimal_retrain_probe"]
@@ -6586,6 +6617,212 @@ def _pc_decoder_adjoint_minimal_retrain_probe_summary(rows: list[dict[str, Any]]
     }
 
 
+def _pc_decoder_adjoint_closeout_rows(
+    *,
+    target_probe_rows: list[dict[str, Any]],
+    retrain_probe_rows: list[dict[str, Any]],
+    arm_metrics: list[dict[str, Any]],
+    residual_budget_rows: list[dict[str, Any]],
+    commutator_rows: list[dict[str, Any]],
+    forgetting_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    retrain_summary = _pc_decoder_adjoint_minimal_retrain_probe_summary(retrain_probe_rows)
+    if not retrain_probe_rows:
+        return []
+
+    target_summary = _pc_decoder_adjoint_target_alignment_probe_summary(target_probe_rows)
+    retrain_by_variant = {str(row.get("target_variant", "")): row for row in retrain_probe_rows}
+    primary = retrain_by_variant.get("decoder_adjoint_aux_target", retrain_probe_rows[0])
+    by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
+    promoted = by_arm.get("promoted_contextual_topk2")
+    flat = by_arm.get("pc_same_router_flat_mlp_control_topk2") or by_arm.get("flat_column_value_mlp_topk2")
+    pc_arm_name = "pc_core_periphery_residual_inference_topk2"
+    pc_budget = next((row for row in residual_budget_rows if row.get("arm") == pc_arm_name), {})
+    promoted_budget = next((row for row in residual_budget_rows if row.get("arm") == "promoted_contextual_topk2"), {})
+    pc_comm = next((row for row in commutator_rows if row.get("arm") == pc_arm_name), {})
+    promoted_comm = next((row for row in commutator_rows if row.get("arm") == "promoted_contextual_topk2"), {})
+    pc_forgetting = next((row for row in forgetting_rows if row.get("arm") == pc_arm_name), {})
+    promoted_forgetting = next((row for row in forgetting_rows if row.get("arm") == "promoted_contextual_topk2"), {})
+
+    primary_ce = _metric_float(primary.get("holdout_ce"))
+    promoted_ce = _metric_float(primary.get("promoted_sparse_ce"))
+    if promoted_ce is None and promoted is not None:
+        promoted_ce = _metric_float(promoted.get("holdout_ce"))
+    flat_ce = _metric_float(primary.get("same_router_flat_control_ce"))
+    if flat_ce is None and flat is not None:
+        flat_ce = _metric_float(flat.get("holdout_ce"))
+    no_aux_ce = _metric_float(primary.get("ce_only_holdout_ce"))
+    shuffled_ce = _metric_float(primary.get("shuffled_target_holdout_ce"))
+    sign_flip_ce = _metric_float(primary.get("sign_flipped_target_holdout_ce"))
+    current_ce = _metric_float(primary.get("current_target_holdout_ce"))
+    residual_l2 = _metric_float(primary.get("residual_l2"))
+    promoted_residual_l2 = _metric_float(promoted_budget.get("residual_l2"))
+    residual_norm_ratio = _safe_ratio(residual_l2, promoted_residual_l2)
+    commutator_ratio = _safe_ratio(
+        pc_comm.get("mean_abs_order_delta"),
+        promoted_comm.get("mean_abs_order_delta"),
+    )
+    churn_ratio = _safe_ratio(
+        pc_forgetting.get("functional_churn_fraction"),
+        promoted_forgetting.get("functional_churn_fraction"),
+    )
+
+    beats_current = primary.get("decoder_beats_current_target") is True
+    beats_shuffled = primary.get("decoder_beats_shuffled_target") is True
+    beats_sign_flip = primary.get("decoder_beats_sign_flip") is True
+    beats_no_aux = primary.get("decoder_beats_ce_only_control") is True
+    flat_control_ok = primary.get("flat_control_ok") is True
+    promoted_signal_ok = primary.get("promoted_signal_ok") is True
+    norm_budget_ok = bool(residual_norm_ratio is not None and residual_norm_ratio <= 1.25)
+    commutator_budget_ok = bool(commutator_ratio is not None and commutator_ratio <= 1.0)
+    functional_churn_budget_ok = bool(churn_ratio is not None and churn_ratio <= 1.0)
+    closeout_blocks = not (
+        target_summary.get("alignment_gate_passes") is True
+        and retrain_summary.get("retrain_gate_passes") is True
+        and beats_current
+        and beats_shuffled
+        and beats_sign_flip
+        and beats_no_aux
+        and flat_control_ok
+        and promoted_signal_ok
+        and norm_budget_ok
+        and commutator_budget_ok
+        and functional_churn_budget_ok
+    )
+
+    blockers: list[str] = []
+    if target_summary.get("alignment_gate_passes") is not True:
+        blockers.append("target_alignment_gate_failed")
+    if not beats_current:
+        blockers.append("current_pc_target_control_not_beaten")
+    if not beats_shuffled:
+        blockers.append("shuffled_target_retrain_null_not_beaten")
+    if not beats_sign_flip:
+        blockers.append("sign_flipped_target_retrain_null_not_beaten")
+    if not beats_no_aux:
+        blockers.append("no_aux_ce_control_not_beaten")
+    if not flat_control_ok:
+        blockers.append("same_router_flat_control_not_beaten")
+    if not promoted_signal_ok:
+        blockers.append("promoted_sparse_reference_not_beaten")
+    if not norm_budget_ok:
+        blockers.append("residual_norm_budget_failed_or_missing")
+    if not commutator_budget_ok:
+        blockers.append("finite_update_commutator_budget_failed_or_missing")
+    if not functional_churn_budget_ok:
+        blockers.append("functional_churn_budget_failed_or_missing")
+
+    closeout_status = (
+        "closed_one_site_decoder_adjoint_retrain_path"
+        if closeout_blocks
+        else "unexpected_pass_requires_amortized_pc_redesign_review"
+    )
+    selected_next = (
+        "prototype_tiny_label_free_amortized_multi_site_pc_pregate_with_flat_dense_shuffled_signflip_position_nulls"
+        if closeout_blocks
+        else "request_strategy_review_before_any_gpu_validation"
+    )
+    return [
+        {
+            "closeout_name": "pc_decoder_adjoint_closeout",
+            "closeout_status": closeout_status,
+            "target_alignment_gate_passes": target_summary.get("alignment_gate_passes") is True,
+            "minimal_retrain_gate_passes": retrain_summary.get("retrain_gate_passes") is True,
+            "decoder_adjoint_holdout_ce": primary_ce,
+            "current_target_holdout_ce": current_ce,
+            "shuffled_target_holdout_ce": shuffled_ce,
+            "sign_flipped_target_holdout_ce": sign_flip_ce,
+            "no_aux_ce_control_holdout_ce": no_aux_ce,
+            "promoted_sparse_ce": promoted_ce,
+            "same_router_flat_control_ce": flat_ce,
+            "decoder_minus_current_target_ce": _delta_value(primary_ce, current_ce),
+            "decoder_minus_shuffled_target_ce": _delta_value(primary_ce, shuffled_ce),
+            "decoder_minus_sign_flipped_target_ce": _delta_value(primary_ce, sign_flip_ce),
+            "decoder_minus_no_aux_control_ce": _delta_value(primary_ce, no_aux_ce),
+            "decoder_minus_promoted_sparse_ce": _delta_value(primary_ce, promoted_ce),
+            "decoder_minus_same_router_flat_control_ce": _delta_value(primary_ce, flat_ce),
+            "decoder_beats_current_target": beats_current,
+            "decoder_beats_shuffled_target": beats_shuffled,
+            "decoder_beats_sign_flip": beats_sign_flip,
+            "decoder_beats_no_aux_ce_control": beats_no_aux,
+            "flat_control_ok": flat_control_ok,
+            "promoted_signal_ok": promoted_signal_ok,
+            "residual_l2": residual_l2,
+            "promoted_sparse_residual_l2": promoted_residual_l2,
+            "residual_norm_ratio_vs_promoted_sparse": residual_norm_ratio,
+            "finite_update_commutator_ratio_vs_promoted_sparse": commutator_ratio,
+            "functional_churn_ratio_vs_promoted_sparse": churn_ratio,
+            "norm_budget_ok": norm_budget_ok,
+            "commutator_budget_ok": commutator_budget_ok,
+            "functional_churn_budget_ok": functional_churn_budget_ok,
+            "failure_reasons": ";".join(blockers),
+            "selected_next_experiment": selected_next,
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "advance_to_gpu_validation": False,
+            "label_derived_training_only_target": True,
+            "one_site_decoder_adjoint_path_closed": closeout_blocks,
+            "amortized_label_free_pc_pregate_allowed": closeout_blocks,
+            "strategic_change_level": "major",
+            "notify_ben": True,
+            "interpretation": (
+                "Fail-closed row-level closeout of the one-site decoder-adjoint PC retrain path. "
+                "It records target/null/no-aux/flat/promoted sparse and interference-budget comparisons, "
+                "blocks GPU and promotion, and redirects only to a tiny label-free amortized multi-site PC pregate."
+            ),
+        }
+    ]
+
+
+def _pc_decoder_adjoint_closeout_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "closeout_status": "",
+            "selected_next_experiment": "",
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "notify_ben": False,
+            "strategic_change_level": "minor",
+        }
+    row = rows[0]
+    return {
+        "row_count": len(rows),
+        "closeout_status": row.get("closeout_status", ""),
+        "target_alignment_gate_passes": row.get("target_alignment_gate_passes") is True,
+        "minimal_retrain_gate_passes": row.get("minimal_retrain_gate_passes") is True,
+        "decoder_adjoint_holdout_ce": _metric_float(row.get("decoder_adjoint_holdout_ce")),
+        "current_target_holdout_ce": _metric_float(row.get("current_target_holdout_ce")),
+        "shuffled_target_holdout_ce": _metric_float(row.get("shuffled_target_holdout_ce")),
+        "sign_flipped_target_holdout_ce": _metric_float(row.get("sign_flipped_target_holdout_ce")),
+        "no_aux_ce_control_holdout_ce": _metric_float(row.get("no_aux_ce_control_holdout_ce")),
+        "promoted_sparse_ce": _metric_float(row.get("promoted_sparse_ce")),
+        "same_router_flat_control_ce": _metric_float(row.get("same_router_flat_control_ce")),
+        "decoder_minus_current_target_ce": _metric_float(row.get("decoder_minus_current_target_ce")),
+        "decoder_minus_shuffled_target_ce": _metric_float(row.get("decoder_minus_shuffled_target_ce")),
+        "decoder_minus_sign_flipped_target_ce": _metric_float(row.get("decoder_minus_sign_flipped_target_ce")),
+        "decoder_minus_no_aux_control_ce": _metric_float(row.get("decoder_minus_no_aux_control_ce")),
+        "decoder_minus_promoted_sparse_ce": _metric_float(row.get("decoder_minus_promoted_sparse_ce")),
+        "decoder_minus_same_router_flat_control_ce": _metric_float(row.get("decoder_minus_same_router_flat_control_ce")),
+        "norm_budget_ok": row.get("norm_budget_ok") is True,
+        "commutator_budget_ok": row.get("commutator_budget_ok") is True,
+        "functional_churn_budget_ok": row.get("functional_churn_budget_ok") is True,
+        "failure_reasons": row.get("failure_reasons", ""),
+        "selected_next_experiment": row.get("selected_next_experiment", ""),
+        "one_site_decoder_adjoint_path_closed": row.get("one_site_decoder_adjoint_path_closed") is True,
+        "amortized_label_free_pc_pregate_allowed": row.get("amortized_label_free_pc_pregate_allowed") is True,
+        "requires_gpu_now": any(closeout.get("requires_gpu_now") is True for closeout in rows),
+        "promotion_allowed": any(closeout.get("promotion_allowed") is True for closeout in rows),
+        "advance_to_gpu_validation": any(closeout.get("advance_to_gpu_validation") is True for closeout in rows),
+        "notify_ben": any(closeout.get("notify_ben") is True for closeout in rows),
+        "strategic_change_level": "major" if any(closeout.get("strategic_change_level") == "major" for closeout in rows) else "minor",
+        "interpretation": (
+            "One-site decoder-adjoint PC retrain path closeout with explicit null/control and interference-budget fields. "
+            "GPU remains blocked."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -6713,6 +6950,10 @@ def _write_artifacts(
     _write_csv(
         out_dir / "pc_decoder_adjoint_minimal_retrain_probe.csv",
         [] if training_smoke is None else training_smoke["pc_decoder_adjoint_minimal_retrain_probe"],
+    )
+    _write_csv(
+        out_dir / "pc_decoder_adjoint_closeout.csv",
+        [] if training_smoke is None else training_smoke["pc_decoder_adjoint_closeout"],
     )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
