@@ -46,6 +46,7 @@ REQUIRED_ARTIFACTS = (
     "core_periphery_update_stability_bracket.csv",
     "core_periphery_branch_closeout.csv",
     "sparse_value_redesign_selector.csv",
+    "budget_normalized_gated_value_mixture_pregate.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -76,6 +77,7 @@ class _SyntheticArmSpec:
     core_drift_penalty_weight: float = 0.0
     periphery_l1_weight: float = 0.0
     residual_norm_clip: float = 0.0
+    gate_l1_weight: float = 0.0
 
 
 def run_synthetic_mechanism_causal_modularity(
@@ -331,6 +333,16 @@ def run_synthetic_mechanism_causal_modularity(
             if training_smoke is not None
             else None
         ),
+        "budget_normalized_gated_value_mixture_pregate_row_count": (
+            len(training_smoke["budget_normalized_gated_value_mixture_pregate"]) if training_smoke is not None else 0
+        ),
+        "budget_normalized_gated_value_mixture_pregate_primary_result": (
+            _budget_normalized_gated_value_mixture_pregate_summary(
+                training_smoke["budget_normalized_gated_value_mixture_pregate"]
+            )
+            if training_smoke is not None
+            else None
+        ),
         "per_token_metric_row_count": (
             len(training_smoke["per_token_metrics"]) if training_smoke is not None else 0
         ),
@@ -551,6 +563,8 @@ def _run_training_smoke(
                 loss = loss + spec.core_drift_penalty_weight * adapter.core_drift_penalty(core_reference)
             if spec.periphery_l1_weight > 0.0 and hasattr(adapter, "periphery_l1"):
                 loss = loss + spec.periphery_l1_weight * adapter.periphery_l1()
+            if spec.gate_l1_weight > 0.0 and hasattr(adapter, "gate_l1"):
+                loss = loss + spec.gate_l1_weight * adapter.gate_l1(train_hidden)
             loss.backward()
             optimizer.step()
 
@@ -625,6 +639,7 @@ def _run_training_smoke(
                 "core_lr_scale": spec.core_lr_scale,
                 "core_drift_penalty_weight": spec.core_drift_penalty_weight,
                 "periphery_l1_weight": spec.periphery_l1_weight,
+                "gate_l1_weight": spec.gate_l1_weight,
                 "residual_norm_clip": spec.residual_norm_clip,
                 "residual_norm_clipped": spec.residual_norm_clip > 0.0,
                 "core_parameter_drift_l2": (
@@ -635,6 +650,11 @@ def _run_training_smoke(
                 "periphery_l1": (
                     float(adapter.periphery_l1().detach().item())
                     if hasattr(adapter, "periphery_l1")
+                    else None
+                ),
+                "mean_gate_value": (
+                    float(adapter.mean_gate_value(holdout_hidden).detach().item())
+                    if hasattr(adapter, "mean_gate_value")
                     else None
                 ),
             }
@@ -790,6 +810,13 @@ def _run_training_smoke(
         commutator_rows=commutator_rows,
         forgetting_rows=forgetting_rows,
     )
+    budget_normalized_gated_value_mixture_pregate = _budget_normalized_gated_value_mixture_pregate_rows(
+        redesign_rows=sparse_value_redesign_selector,
+        arm_metrics=arm_metrics,
+        residual_budget_rows=residual_budget_accounting,
+        commutator_rows=commutator_rows,
+        forgetting_rows=forgetting_rows,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -809,6 +836,7 @@ def _run_training_smoke(
         "core_periphery_update_stability_bracket": core_periphery_update_stability_bracket,
         "core_periphery_branch_closeout": core_periphery_branch_closeout,
         "sparse_value_redesign_selector": sparse_value_redesign_selector,
+        "budget_normalized_gated_value_mixture_pregate": budget_normalized_gated_value_mixture_pregate,
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": residual_budget_accounting,
@@ -1056,6 +1084,25 @@ def _synthetic_arm_specs(
             residual_norm_clip=0.075,
         ),
         _SyntheticArmSpec(
+            "budget_normalized_gated_low_rank_value_mixture_topk2",
+            "core_periphery_control",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            anchor_kl_weight=0.01,
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="budget_normalized_gated_low_rank_value_mixture_pregate",
+            value_head_variant="gated_low_rank_value_mixture",
+            core_rank=max(1, core_rank),
+            periphery_rank=max(1, periphery_rank),
+            core_lr_scale=0.25,
+            core_drift_penalty_weight=0.05,
+            periphery_l1_weight=5e-5,
+            residual_norm_clip=0.055,
+            gate_l1_weight=1e-4,
+        ),
+        _SyntheticArmSpec(
             "dense_rank_norm_matched",
             "dense_control",
             0,
@@ -1248,11 +1295,14 @@ class _CorePeripherySparseAdapter:
         )
         self.core_down = nn.Linear(hidden_dim, core_rank, bias=False)
         self.core_up = nn.Linear(core_rank, hidden_dim, bias=False)
+        self.gate = nn.Linear(hidden_dim, 1)
         self.periphery_down = nn.Parameter(torch.empty(num_columns, hidden_dim, periphery_rank))
         self.periphery_up = nn.Parameter(torch.zeros(num_columns, periphery_rank, hidden_dim))
         self.score_tie_breaker = torch.arange(num_columns, 0, -1, dtype=self.periphery_down.dtype) * 1e-6
         nn.init.normal_(self.core_down.weight, std=0.02)
         nn.init.zeros_(self.core_up.weight)
+        nn.init.zeros_(self.gate.weight)
+        nn.init.zeros_(self.gate.bias)
         nn.init.normal_(self.periphery_down, std=0.02)
 
     def parameters(self) -> Any:
@@ -1260,6 +1310,7 @@ class _CorePeripherySparseAdapter:
         yield from self.contextual_column_scores.parameters()
         yield from self.core_down.parameters()
         yield from self.core_up.parameters()
+        yield from self.gate.parameters()
         yield self.periphery_down
         yield self.periphery_up
 
@@ -1268,6 +1319,7 @@ class _CorePeripherySparseAdapter:
         other_params = (
             list(self.layer_norm.parameters())
             + list(self.contextual_column_scores.parameters())
+            + list(self.gate.parameters())
             + [self.periphery_down, self.periphery_up]
         )
         return [
@@ -1294,6 +1346,25 @@ class _CorePeripherySparseAdapter:
 
     def periphery_l1(self) -> Any:
         return self.periphery_up.abs().mean()
+
+    def mean_gate_value(self, hidden: Any) -> Any:
+        return self._gate_values(hidden).mean()
+
+    def gate_l1(self, hidden: Any) -> Any:
+        return self._gate_values(hidden).abs().mean()
+
+    def _gate_values(self, hidden: Any) -> Any:
+        import torch
+
+        if self.variant == "gated_low_rank_value_mixture":
+            return 0.5 * torch.sigmoid(self.gate(self.layer_norm(hidden)))
+        return torch.ones(
+            hidden.shape[0],
+            hidden.shape[1],
+            1,
+            dtype=hidden.dtype,
+            device=hidden.device,
+        )
 
     def _contextual_features(self, hidden: Any) -> Any:
         import torch
@@ -1362,6 +1433,8 @@ class _CorePeripherySparseAdapter:
             residual = core_delta
         elif self.variant in {"periphery_only", "flat_column_mlp"}:
             residual = periphery_delta
+        elif self.variant == "gated_low_rank_value_mixture":
+            residual = self._gate_values(hidden) * (core_delta + periphery_delta)
         else:
             residual = core_delta + periphery_delta
         if self.residual_norm_clip > 0.0:
@@ -3189,6 +3262,7 @@ def _comparator_controls(
         _control("periphery_only_sparse_topk2", "core_periphery_control", support_width, "contextual_mlp_periphery_only", True, "periphery-only value-capacity ablation control"),
         _control("core_periphery_stability_slow_core_topk2", "core_periphery_control", support_width, "contextual_mlp_core_periphery_slow_core_anchor", True, "same-router core/periphery update-stability bracket with slower core and anchor KL"),
         _control("flat_column_value_mlp_anchor_topk2", "core_periphery_control", support_width, "contextual_mlp_flat_column_value_anchor", True, "same-router flat value-capacity update-stability bracket with anchor KL"),
+        _control("budget_normalized_gated_low_rank_value_mixture_topk2", "core_periphery_control", support_width, "contextual_mlp_gated_low_rank_value_mixture", True, "selected local pregate with residual budget normalization and contextual low-rank value gating"),
         _control("dense_rank_norm_matched", "dense_control", 0, "dense_rank_norm", True, "active-proxy matched dense low-rank residual"),
         _control("low_churn_mlp_active_matched", "mlp_control", 0, "low_churn_mlp", True, "active-proxy matched low-churn MLP residual"),
         _control("dense_stored_parameter_matched", "dense_control", 0, "dense_rank_norm", True, "stored-parameter matched dense upper-bound residual"),
@@ -3606,6 +3680,19 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("budget_normalized_gated_value_mixture_pregate"):
+        summary = _budget_normalized_gated_value_mixture_pregate_summary(
+            training_smoke["budget_normalized_gated_value_mixture_pregate"]
+        )
+        if summary.get("pregate_passes"):
+            return (
+                "repeat the budget-normalized gated low-rank value-mixture pregate on one adjacent local seed "
+                "before considering RunPod validation"
+            )
+        return (
+            "close or redesign the budget-normalized gated low-rank sparse value-mixture branch locally; "
+            "do not run GPU until a sparse value arm clears flat-control and interference gates"
+        )
     if training_smoke.get("sparse_value_redesign_selector"):
         summary = _sparse_value_redesign_selector_summary(
             training_smoke["sparse_value_redesign_selector"]
@@ -4856,6 +4943,195 @@ def _sparse_value_redesign_selector_summary(rows: list[dict[str, Any]]) -> dict[
     }
 
 
+def _budget_normalized_gated_value_mixture_pregate_rows(
+    *,
+    redesign_rows: list[dict[str, Any]],
+    arm_metrics: list[dict[str, Any]],
+    residual_budget_rows: list[dict[str, Any]],
+    commutator_rows: list[dict[str, Any]],
+    forgetting_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    selected = next(
+        (
+            row
+            for row in redesign_rows
+            if row.get("selected") is True
+            and row.get("candidate_path") == "budget_normalized_gated_low_rank_value_mixture"
+        ),
+        None,
+    )
+    if selected is None:
+        return []
+
+    by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
+    budget_by_arm = {str(row.get("arm", "")): row for row in residual_budget_rows}
+    reference = by_arm.get("promoted_contextual_topk2")
+    pregate = by_arm.get("budget_normalized_gated_low_rank_value_mixture_topk2")
+    flat = by_arm.get("flat_column_value_mlp_topk2")
+    stored = _best_ce_row(
+        [row for row in arm_metrics if row.get("control_budget_role") == "stored_parameter_matched_dense_mlp_upper_bound"]
+    )
+    if reference is None or pregate is None or flat is None:
+        return []
+
+    reference_ce = _metric_float(reference.get("holdout_ce"))
+    flat_ce = _metric_float(flat.get("holdout_ce"))
+    stored_ce = _metric_float(stored.get("holdout_ce")) if stored else None
+    stored_gap = _positive_gap(reference_ce, stored_ce)
+    reference_norm = _metric_float(reference.get("residual_l2"))
+    flat_norm = _metric_float(flat.get("residual_l2"))
+    reference_commutator = _mean_metric(
+        commutator_rows,
+        ["promoted_contextual_topk2"],
+        "finite_update_commutator_l2",
+    )
+    reference_churn = _mean_abs_metric(
+        forgetting_rows,
+        ["promoted_contextual_topk2"],
+        "functional_churn",
+    )
+    flat_commutator = _mean_metric(commutator_rows, ["flat_column_value_mlp_topk2"], "finite_update_commutator_l2")
+    flat_churn = _mean_abs_metric(forgetting_rows, ["flat_column_value_mlp_topk2"], "functional_churn")
+
+    rows: list[dict[str, Any]] = []
+    for arm, role in (
+        ("budget_normalized_gated_low_rank_value_mixture_topk2", "primary_budget_normalized_gated_low_rank_value_mixture"),
+        ("flat_column_value_mlp_topk2", "flat_same_router_value_capacity_control"),
+        ("promoted_contextual_topk2", "promoted_sparse_reference"),
+    ):
+        row = by_arm.get(arm)
+        if row is None:
+            continue
+        arm_ce = _metric_float(row.get("holdout_ce"))
+        arm_norm = _metric_float(row.get("residual_l2"))
+        arm_commutator = _mean_metric(commutator_rows, [arm], "finite_update_commutator_l2")
+        arm_churn = _mean_abs_metric(forgetting_rows, [arm], "functional_churn")
+        budget = budget_by_arm.get(arm, {})
+        is_primary = arm == "budget_normalized_gated_low_rank_value_mixture_topk2"
+        ce_gain = _delta_value(reference_ce, arm_ce)
+        stored_gap_closed = _safe_ratio(ce_gain, stored_gap)
+        flat_margin = _delta_value(arm_ce, flat_ce)
+        norm_ok = arm_norm is not None and reference_norm is not None and arm_norm <= reference_norm * 1.05
+        commutator_ok = (
+            arm_commutator is not None
+            and reference_commutator is not None
+            and arm_commutator <= reference_commutator * 1.10
+        )
+        churn_ok = (
+            arm_churn is not None
+            and reference_churn is not None
+            and arm_churn <= reference_churn * 1.10
+        )
+        signal_ok = bool(
+            (ce_gain is not None and ce_gain >= 0.05)
+            or (stored_gap_closed is not None and stored_gap_closed >= 0.10)
+        )
+        flat_control_ok = bool(flat_margin is None or flat_margin <= 0.01)
+        pregate_passes = bool(
+            is_primary
+            and signal_ok
+            and flat_control_ok
+            and norm_ok
+            and commutator_ok
+            and churn_ok
+        )
+        rows.append(
+            {
+                "arm": arm,
+                "pregate_role": role,
+                "selected_candidate_path": selected.get("candidate_path", ""),
+                "reference_sparse_arm": "promoted_contextual_topk2",
+                "reference_sparse_ce": reference_ce,
+                "holdout_ce": arm_ce,
+                "ce_gain_vs_reference_sparse": ce_gain,
+                "stored_control_arm": stored.get("arm", "") if stored else "",
+                "stored_control_ce": stored_ce,
+                "reference_sparse_gap_to_stored_control": stored_gap,
+                "stored_gap_closed_fraction": stored_gap_closed,
+                "flat_control_arm": "flat_column_value_mlp_topk2",
+                "flat_control_ce": flat_ce,
+                "ce_minus_flat_control_ce": flat_margin,
+                "flat_control_ok": flat_control_ok,
+                "residual_l2": arm_norm,
+                "reference_sparse_residual_l2": reference_norm,
+                "flat_control_residual_l2": flat_norm,
+                "residual_l2_ratio_vs_reference_sparse": _safe_ratio(arm_norm, reference_norm),
+                "residual_norm_clip": _metric_float(row.get("residual_norm_clip")),
+                "residual_norm_clipped": row.get("residual_norm_clipped") is True,
+                "mean_gate_value": _metric_float(row.get("mean_gate_value")),
+                "gate_l1_weight": _metric_float(row.get("gate_l1_weight")),
+                "active_parameters_proxy": _metric_float(row.get("active_parameters_proxy")),
+                "stored_parameters": _metric_float(row.get("stored_parameters")),
+                "flop_proxy_per_token": _metric_float(budget.get("flop_proxy_per_token")),
+                "mean_commutator_l2": arm_commutator,
+                "reference_sparse_mean_commutator_l2": reference_commutator,
+                "flat_control_mean_commutator_l2": flat_commutator,
+                "commutator_ratio_vs_reference_sparse": _safe_ratio(arm_commutator, reference_commutator),
+                "mean_abs_functional_churn": arm_churn,
+                "reference_sparse_mean_abs_functional_churn": reference_churn,
+                "flat_control_mean_abs_functional_churn": flat_churn,
+                "functional_churn_ratio_vs_reference_sparse": _safe_ratio(arm_churn, reference_churn),
+                "signal_gate_ok": signal_ok if is_primary else False,
+                "norm_budget_ok": norm_ok,
+                "commutator_budget_ok": commutator_ok,
+                "functional_churn_budget_ok": churn_ok,
+                "pregate_passes": pregate_passes,
+                "advance_to_gpu_validation": False,
+                "requires_gpu_now": False,
+                "promotion_allowed": False,
+                "mechanism_labels_used_for_scoring_only": True,
+                "interpretation": (
+                    "Local pregate only. The selected gated low-rank sparse value mixture must clear CE or "
+                    "stored-gap signal thresholds, not lose to the flat same-router control, and pass residual "
+                    "norm, commutator, and functional-churn budgets before any backend validation."
+                ),
+            }
+        )
+    return rows
+
+
+def _budget_normalized_gated_value_mixture_pregate_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "pregate_passes": False,
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "interpretation": "budget-normalized gated value-mixture pregate was not run",
+        }
+    primary = next(
+        (
+            row
+            for row in rows
+            if row.get("pregate_role") == "primary_budget_normalized_gated_low_rank_value_mixture"
+        ),
+        {},
+    )
+    return {
+        "row_count": len(rows),
+        "primary_arm": primary.get("arm", ""),
+        "primary_holdout_ce": _metric_float(primary.get("holdout_ce")),
+        "ce_gain_vs_reference_sparse": _metric_float(primary.get("ce_gain_vs_reference_sparse")),
+        "stored_gap_closed_fraction": _metric_float(primary.get("stored_gap_closed_fraction")),
+        "ce_minus_flat_control_ce": _metric_float(primary.get("ce_minus_flat_control_ce")),
+        "mean_gate_value": _metric_float(primary.get("mean_gate_value")),
+        "signal_gate_ok": primary.get("signal_gate_ok") is True,
+        "flat_control_ok": primary.get("flat_control_ok") is True,
+        "norm_budget_ok": primary.get("norm_budget_ok") is True,
+        "commutator_budget_ok": primary.get("commutator_budget_ok") is True,
+        "functional_churn_budget_ok": primary.get("functional_churn_budget_ok") is True,
+        "pregate_passes": primary.get("pregate_passes") is True,
+        "advance_to_gpu_validation": any(row.get("advance_to_gpu_validation") is True for row in rows),
+        "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
+        "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
+        "interpretation": (
+            "Fail-closed local pregate for the selected budget-normalized gated low-rank sparse value mixture. "
+            "It records whether the new value mechanism has signal after flat-control and interference budgets; "
+            "it never promotes or requests GPU by itself."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -4960,6 +5236,10 @@ def _write_artifacts(
         out_dir / "sparse_value_redesign_selector.csv",
         [] if training_smoke is None else training_smoke["sparse_value_redesign_selector"],
     )
+    _write_csv(
+        out_dir / "budget_normalized_gated_value_mixture_pregate.csv",
+        [] if training_smoke is None else training_smoke["budget_normalized_gated_value_mixture_pregate"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -4998,6 +5278,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Core/periphery update-stability bracket rows: `{summary['core_periphery_update_stability_bracket_row_count']}`",
         f"- Core/periphery branch closeout rows: `{summary['core_periphery_branch_closeout_row_count']}`",
         f"- Sparse value redesign selector rows: `{summary['sparse_value_redesign_selector_row_count']}`",
+        f"- Budget-normalized gated value-mixture pregate rows: `{summary['budget_normalized_gated_value_mixture_pregate_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
@@ -5024,6 +5305,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The value/capacity core-periphery diagnostic synthesizes the measured CE, residual-budget, finite-update commutator, and functional-churn rows after the router-only branch is closed. It selects a local core/periphery sparse value-capacity probe only when the stored-control gap remains too large for support selection to explain; it does not request GPU validation or promotion.",
         "",
         "The core/periphery branch closeout artifact is fail-closed. It closes or redirects the current clipped core/periphery value-capacity branch unless the primary arm clears CE or stored-gap thresholds, norm, commutator, and churn budgets, and is not explained by the flat same-router value-capacity control.",
+        "",
+        "The budget-normalized gated value-mixture pregate is the selected local sparse-value redesign. It keeps the promoted contextual top-k2 router, adds residual-budget clipping plus a learned low-rank value gate, compares against the flat same-router value MLP control, and remains fail-closed with no GPU or promotion request.",
         "",
         "## Next Step",
         "",

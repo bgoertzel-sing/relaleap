@@ -48,6 +48,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["core_periphery_update_stability_bracket_row_count"], 0)
             self.assertEqual(summary["core_periphery_branch_closeout_row_count"], 0)
             self.assertEqual(summary["sparse_value_redesign_selector_row_count"], 0)
+            self.assertEqual(summary["budget_normalized_gated_value_mixture_pregate_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -120,8 +121,8 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertTrue(summary["training_smoke_ran"])
             self.assertFalse(summary["promotion_allowed"])
             self.assertFalse(summary["requires_gpu_now"])
-            self.assertEqual(summary["arm_metric_row_count"], 16)
-            self.assertEqual(summary["ce_gap_decomposition_row_count"], 16)
+            self.assertEqual(summary["arm_metric_row_count"], 17)
+            self.assertEqual(summary["ce_gap_decomposition_row_count"], 17)
             self.assertGreater(summary["oracle_support_sparse_topk2_row_count"], 0)
             self.assertIsNotNone(summary["oracle_support_primary_result"])
             self.assertEqual(
@@ -221,9 +222,21 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertFalse(
                 summary["sparse_value_redesign_selector_primary_result"]["promotion_allowed"]
             )
+            self.assertEqual(summary["budget_normalized_gated_value_mixture_pregate_row_count"], 3)
+            self.assertIsNotNone(summary["budget_normalized_gated_value_mixture_pregate_primary_result"])
+            self.assertEqual(
+                summary["budget_normalized_gated_value_mixture_pregate_primary_result"]["row_count"],
+                summary["budget_normalized_gated_value_mixture_pregate_row_count"],
+            )
+            self.assertFalse(
+                summary["budget_normalized_gated_value_mixture_pregate_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["budget_normalized_gated_value_mixture_pregate_primary_result"]["promotion_allowed"]
+            )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
-            self.assertEqual(summary["residual_budget_accounting_row_count"], 16)
+            self.assertEqual(summary["residual_budget_accounting_row_count"], 17)
             self.assertIsNotNone(summary["residual_budget_primary_result"])
             self.assertFalse(summary["missing_training_hooks"])
             self.assertIn("not causal modularity evidence", summary["training_smoke_primary_result"]["interpretation"])
@@ -258,6 +271,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                     "periphery_only_sparse_topk2",
                     "core_periphery_stability_slow_core_topk2",
                     "flat_column_value_mlp_anchor_topk2",
+                    "budget_normalized_gated_low_rank_value_mixture_topk2",
                     "dense_rank_norm_matched",
                     "low_churn_mlp_active_matched",
                     "dense_stored_parameter_matched",
@@ -283,7 +297,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
 
             with (out_dir / "ce_gap_decomposition.csv").open(newline="", encoding="utf-8") as handle:
                 ce_gap_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(ce_gap_rows), 16)
+            self.assertEqual(len(ce_gap_rows), 17)
             ce_gap_by_arm = {row["arm"]: row for row in ce_gap_rows}
             self.assertEqual(set(ce_gap_by_arm), arms)
             for required_field in {
@@ -444,6 +458,52 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(selected_redesign["promotion_allowed"], "False")
             self.assertEqual(selected_redesign["mechanism_labels_used_for_scoring_only"], "True")
 
+            with (out_dir / "budget_normalized_gated_value_mixture_pregate.csv").open(newline="", encoding="utf-8") as handle:
+                pregate_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(pregate_rows), 3)
+            pregate_by_role = {row["pregate_role"]: row for row in pregate_rows}
+            self.assertEqual(
+                set(pregate_by_role),
+                {
+                    "primary_budget_normalized_gated_low_rank_value_mixture",
+                    "flat_same_router_value_capacity_control",
+                    "promoted_sparse_reference",
+                },
+            )
+            primary_pregate = pregate_by_role["primary_budget_normalized_gated_low_rank_value_mixture"]
+            self.assertEqual(
+                primary_pregate["arm"],
+                "budget_normalized_gated_low_rank_value_mixture_topk2",
+            )
+            for required_field in {
+                "selected_candidate_path",
+                "ce_gain_vs_reference_sparse",
+                "stored_gap_closed_fraction",
+                "ce_minus_flat_control_ce",
+                "flat_control_ok",
+                "residual_norm_clip",
+                "residual_norm_clipped",
+                "mean_gate_value",
+                "gate_l1_weight",
+                "signal_gate_ok",
+                "norm_budget_ok",
+                "commutator_budget_ok",
+                "functional_churn_budget_ok",
+                "pregate_passes",
+                "advance_to_gpu_validation",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "mechanism_labels_used_for_scoring_only",
+            }:
+                self.assertIn(required_field, primary_pregate)
+            self.assertEqual(primary_pregate["selected_candidate_path"], "budget_normalized_gated_low_rank_value_mixture")
+            self.assertEqual(primary_pregate["residual_norm_clipped"], "True")
+            self.assertTrue(primary_pregate["mean_gate_value"])
+            self.assertEqual(primary_pregate["advance_to_gpu_validation"], "False")
+            self.assertEqual(primary_pregate["requires_gpu_now"], "False")
+            self.assertEqual(primary_pregate["promotion_allowed"], "False")
+            self.assertEqual(primary_pregate["mechanism_labels_used_for_scoring_only"], "True")
+
             with (out_dir / "ce_by_rule_position.csv").open(newline="", encoding="utf-8") as handle:
                 ce_rule_position_rows = list(csv.DictReader(handle))
             self.assertEqual(len(ce_rule_position_rows), summary["ce_by_rule_position_row_count"])
@@ -470,7 +530,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
 
             with (out_dir / "residual_budget_accounting.csv").open(newline="", encoding="utf-8") as handle:
                 budget_accounting_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(budget_accounting_rows), 16)
+            self.assertEqual(len(budget_accounting_rows), 17)
             budget_by_arm = {row["arm"]: row for row in budget_accounting_rows}
             self.assertEqual(set(budget_by_arm), arms)
             for required_field in {
@@ -794,9 +854,9 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["status"], "pass")
             self.assertTrue(summary["teacher_distillation_included"])
             self.assertEqual(summary["teacher_distillation_arm_count"], 2)
-            self.assertEqual(summary["arm_metric_row_count"], 18)
-            self.assertEqual(summary["ce_gap_decomposition_row_count"], 18)
-            self.assertEqual(summary["residual_budget_accounting_row_count"], 18)
+            self.assertEqual(summary["arm_metric_row_count"], 19)
+            self.assertEqual(summary["ce_gap_decomposition_row_count"], 19)
+            self.assertEqual(summary["residual_budget_accounting_row_count"], 19)
             self.assertEqual(summary["router_value_regret_decomposition_row_count"], 20)
             self.assertEqual(summary["router_regret_ceiling_budget_row_count"], 4)
             self.assertEqual(summary["support_head_sequence_heldout_diagnostic_row_count"], 16)
@@ -806,6 +866,8 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["core_periphery_sparse_value_capacity_probe_row_count"], 4)
             self.assertEqual(summary["core_periphery_update_stability_bracket_row_count"], 2)
             self.assertEqual(summary["core_periphery_branch_closeout_row_count"], 1)
+            self.assertEqual(summary["sparse_value_redesign_selector_row_count"], 3)
+            self.assertEqual(summary["budget_normalized_gated_value_mixture_pregate_row_count"], 3)
             teacher_summary = summary["teacher_distillation_primary_result"]
             self.assertEqual(teacher_summary["row_count"], 2)
             self.assertIsNotNone(teacher_summary["distilled_holdout_ce"])
@@ -844,7 +906,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
 
             with (out_dir / "ce_gap_decomposition.csv").open(newline="", encoding="utf-8") as handle:
                 ce_gap_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(ce_gap_rows), 18)
+            self.assertEqual(len(ce_gap_rows), 19)
             self.assertIn(
                 "dense_teacher_distilled_sparse_topk2",
                 {row["arm"] for row in ce_gap_rows},
