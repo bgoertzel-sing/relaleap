@@ -42,12 +42,13 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             )
             self.assertTrue(all(row["present"] for row in summary["tensor_inventory"]))
             self.assertIn("teacher_hidden_residual_mse", summary["metric_fields"])
-            self.assertIn("retrained-oracle", summary["selected_next_step"])
+            self.assertIn("pair-composer", summary["selected_next_step"])
             self.assertEqual(
                 summary["filled_evaluator_arms"],
                 [
                     "learned_support_sparse_student",
                     "oracle_support_trained_values",
+                    "retrained_oracle_support_values",
                     "dense_teacher",
                     "dense_rank_norm_control",
                     "random_support_null",
@@ -56,7 +57,7 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
                     "shuffled_teacher_target_null",
                 ],
             )
-            self.assertIn("retrained_oracle_support_values", summary["pending_evaluator_arms"])
+            self.assertNotIn("retrained_oracle_support_values", summary["pending_evaluator_arms"])
             self.assertIn(
                 "oracle_support_gated_value_pair_composer",
                 summary["pending_evaluator_arms"],
@@ -71,9 +72,17 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
                 evaluator_by_arm["oracle_support_trained_values"]["availability"],
                 "filled",
             )
+            self.assertEqual(
+                evaluator_by_arm["retrained_oracle_support_values"]["availability"],
+                "filled",
+            )
             self.assertLessEqual(
                 evaluator_by_arm["oracle_support_trained_values"]["teacher_logit_residual_mse"],
                 evaluator_by_arm["learned_support_sparse_student"]["teacher_logit_residual_mse"],
+            )
+            self.assertLessEqual(
+                evaluator_by_arm["retrained_oracle_support_values"]["teacher_hidden_residual_mse"],
+                evaluator_by_arm["learned_support_sparse_student"]["teacher_hidden_residual_mse"],
             )
             self.assertEqual(evaluator_by_arm["random_support_null"]["availability"], "filled")
             self.assertEqual(evaluator_by_arm["random_support_null"]["ce_loss"], 4.0)
@@ -82,6 +91,10 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             self.assertEqual(
                 contract_by_arm["oracle_support_gated_value_pair_composer"]["availability"],
                 "required_pending",
+            )
+            self.assertEqual(
+                contract_by_arm["retrained_oracle_support_values"]["availability"],
+                "implemented_local_evaluator",
             )
             self.assertEqual(
                 contract_by_arm["random_support_null"]["availability"],

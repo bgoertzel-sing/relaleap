@@ -23,7 +23,7 @@ CONTRACT_RECORDED = "dense_teacher_failure_localization_contract_recorded"
 INSUFFICIENT_EVIDENCE = "dense_teacher_failure_localization_contract_failed_closed"
 PARTIAL_EVALUATOR_RECORDED = "dense_teacher_failure_localization_partial_evaluator_recorded"
 NEXT_STEP = (
-    "implement retrained-oracle and gated pair-composer rows for "
+    "implement oracle-support gated pair-composer row for "
     "dense_teacher_failure_localization"
 )
 
@@ -212,10 +212,12 @@ def run_dense_teacher_failure_localization_contract(
         summary["claim_status"] = "partial_local_evaluator_no_columnability_claim"
         summary["selected_next_step"] = NEXT_STEP
         summary["rationale"] = (
-            "This artifact now fills learned-support and exhaustive oracle-support-trained-values "
-            "rows from exported dense-teacher tensors, and records dense/rank/norm plus null "
-            "rows from the source distillation summary. It still makes no columnability claim "
-            "because retrained-oracle and pair-composer rows remain pending."
+            "This artifact now fills learned-support, exhaustive oracle-support-trained-values, "
+            "and fixed-oracle-support retrained-value rows from exported dense-teacher tensors, "
+            "and records dense/rank/norm plus null rows from the source distillation summary. "
+            "It still makes no columnability claim because the pair-composer row remains pending "
+            "and the retrained row uses a local linearized logit-value surrogate when reporting "
+            "CE/logit metrics."
         )
     else:
         summary["evaluator_rows"] = []
@@ -270,8 +272,21 @@ def _evaluator_rows(distillation_dir: Path, distillation: dict[str, Any]) -> lis
         top_k=top_k,
     )
     oracle_logits = base_logits + oracle_logit_update
+    (
+        retrained_hidden_update,
+        retrained_logit_update,
+        retrained_stored_params,
+    ) = _retrained_values_for_fixed_support(
+        torch,
+        oracle_support,
+        teacher_hidden_residual,
+        teacher_logit_residual,
+        num_columns=num_columns,
+    )
+    retrained_logits = base_logits + retrained_logit_update
     learned_logit_mse = float(F.mse_loss(learned_logit_update, teacher_logit_residual).item())
     oracle_logit_mse = float(F.mse_loss(oracle_logit_update, teacher_logit_residual).item())
+    retrained_logit_mse = float(F.mse_loss(retrained_logit_update, teacher_logit_residual).item())
     learned_minus_oracle_logit_mse = learned_logit_mse - oracle_logit_mse
 
     learned_row = _metrics_from_prediction(
@@ -326,8 +341,42 @@ def _evaluator_rows(distillation_dir: Path, distillation: dict[str, Any]) -> lis
     oracle_row["oracle_selected_support_sets"] = _unique_support_count(torch, oracle_support)
     oracle_row["learned_minus_oracle_logit_mse"] = learned_minus_oracle_logit_mse
     oracle_row["learned_minus_oracle_ce"] = learned_row["ce_loss"] - oracle_row["ce_loss"]
+    retrained_row = _metrics_from_prediction(
+        torch,
+        F,
+        arm="retrained_oracle_support_values",
+        arm_family="oracle_value",
+        availability="filled",
+        support_source=f"fixed exhaustive per-token best {top_k}-of-{num_columns} support",
+        value_source="ridge least-squares values retrained under fixed oracle supports",
+        composer="uniform fixed-support independent column sum",
+        logits=retrained_logits,
+        hidden_update=retrained_hidden_update,
+        targets=targets,
+        teacher_logits=teacher_logits,
+        teacher_hidden_residual=teacher_hidden_residual,
+        teacher_logit_residual=teacher_logit_residual,
+        base_logits=base_logits,
+        teacher_ce=teacher_ce,
+        stored_params=retrained_stored_params,
+        active_params=active_params,
+        flops_proxy=float(base_logits.numel() * max(top_k, 1)),
+        oracle_support_regret=retrained_logit_mse - oracle_logit_mse,
+        notes=(
+            "filled by retraining ridge least-squares column values with oracle supports fixed; "
+            "hidden metrics use retrained hidden values, while CE/logit metrics use separate "
+            "linearized logit values because the frozen decoder is not exported"
+        ),
+    )
+    retrained_row["oracle_selected_support_sets"] = oracle_row["oracle_selected_support_sets"]
+    retrained_row["retrained_minus_oracle_trained_value_logit_mse"] = (
+        retrained_logit_mse - oracle_logit_mse
+    )
+    retrained_row["retrained_minus_oracle_trained_value_ce"] = (
+        retrained_row["ce_loss"] - oracle_row["ce_loss"]
+    )
     source_rows = _source_summary_evaluator_rows(distillation)
-    return [learned_row, oracle_row, *source_rows]
+    return [learned_row, oracle_row, retrained_row, *source_rows]
 
 
 def _source_summary_evaluator_rows(distillation: dict[str, Any]) -> list[dict[str, Any]]:
@@ -546,6 +595,38 @@ def _oracle_support_trained_values(
     )
 
 
+def _retrained_values_for_fixed_support(
+    torch: Any,
+    support: Any,
+    teacher_hidden_residual: Any,
+    teacher_logit_residual: Any,
+    *,
+    num_columns: int,
+    ridge: float = 1e-4,
+) -> tuple[Any, Any, float]:
+    batch, seq_len, top_k = support.shape
+    token_count = batch * seq_len
+    design = torch.zeros(
+        token_count,
+        num_columns,
+        dtype=teacher_hidden_residual.dtype,
+        device=teacher_hidden_residual.device,
+    )
+    flat_support = support.reshape(token_count, top_k)
+    weights = torch.full_like(flat_support, 1.0 / max(top_k, 1), dtype=design.dtype)
+    design.scatter_add_(dim=1, index=flat_support, src=weights)
+    hidden_target = teacher_hidden_residual.reshape(token_count, teacher_hidden_residual.shape[-1])
+    logit_target = teacher_logit_residual.reshape(token_count, teacher_logit_residual.shape[-1])
+    eye = torch.eye(num_columns, dtype=design.dtype, device=design.device)
+    gram = design.transpose(0, 1).matmul(design) + float(ridge) * eye
+    hidden_values = torch.linalg.solve(gram, design.transpose(0, 1).matmul(hidden_target))
+    logit_values = torch.linalg.solve(gram, design.transpose(0, 1).matmul(logit_target))
+    hidden_update = design.matmul(hidden_values).reshape(batch, seq_len, hidden_target.shape[-1])
+    logit_update = design.matmul(logit_values).reshape(batch, seq_len, logit_target.shape[-1])
+    stored_params = float(hidden_values.numel())
+    return hidden_update, logit_update, stored_params
+
+
 def _compose_selected(per_column: Any, support: Any, weights: Any) -> Any:
     gather_index = support.unsqueeze(-1).expand(*support.shape, per_column.shape[-1])
     selected = per_column.gather(dim=2, index=gather_index)
@@ -681,11 +762,11 @@ def _contract_rows() -> list[dict[str, Any]]:
         _contract(
             "retrained_oracle_support_values",
             "oracle_value",
-            "required_pending",
+            "implemented_local_evaluator",
             "oracle support fixed during training/eval",
             "values retrained under oracle support",
             "independent column sum",
-            "tests value representability after removing router error",
+            "tests value representability after removing router error with local ridge least-squares values",
         ),
         _contract(
             "oracle_support_gated_value_pair_composer",
