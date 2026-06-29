@@ -38,6 +38,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertGreater(summary["commutator_row_count"], 0)
             self.assertGreater(summary["forgetting_row_count"], 0)
             self.assertEqual(summary["oracle_support_sparse_topk2_row_count"], 0)
+            self.assertEqual(summary["router_value_regret_decomposition_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -117,6 +118,12 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(
                 summary["oracle_support_primary_result"]["row_count"],
                 summary["oracle_support_sparse_topk2_row_count"],
+            )
+            self.assertGreater(summary["router_value_regret_decomposition_row_count"], 0)
+            self.assertIsNotNone(summary["router_value_regret_primary_result"])
+            self.assertEqual(
+                summary["router_value_regret_primary_result"]["row_count"],
+                summary["router_value_regret_decomposition_row_count"],
             )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
@@ -285,6 +292,35 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertTrue(all(row["oracle_support"] for row in oracle_rows))
             self.assertTrue(all(row["best_one_swap_support"] for row in oracle_rows))
 
+            with (out_dir / "router_value_regret_decomposition.csv").open(newline="", encoding="utf-8") as handle:
+                regret_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(regret_rows), summary["router_value_regret_decomposition_row_count"])
+            self.assertEqual(
+                {row["arm"] for row in regret_rows},
+                {"promoted_contextual_topk2", "intervention_trained_sparse_topk2"},
+            )
+            self.assertIn("all", {row["latent_rule"] for row in regret_rows})
+            for required_field in {
+                "mean_learned_ce_loss",
+                "mean_oracle_ce_loss",
+                "mean_oracle_regret",
+                "max_oracle_regret",
+                "positive_oracle_regret_fraction",
+                "mean_pair_oracle_regret",
+                "mean_one_swap_regret",
+                "mean_one_swap_recovery_fraction",
+                "oracle_pair_fraction",
+                "mean_best_pair_ce_minus_best_singleton_ce",
+                "learned_support_matches_oracle_fraction",
+                "router_value_status",
+                "mechanism_labels_used_for_scoring_only",
+            }:
+                self.assertIn(required_field, regret_rows[0])
+            self.assertEqual(
+                {row["mechanism_labels_used_for_scoring_only"] for row in regret_rows},
+                {"True"},
+            )
+
             with (out_dir / "per_mechanism_interventions.csv").open(newline="", encoding="utf-8") as handle:
                 intervention_rows = list(csv.DictReader(handle))
             self.assertTrue(intervention_rows)
@@ -351,6 +387,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["arm_metric_row_count"], 12)
             self.assertEqual(summary["ce_gap_decomposition_row_count"], 12)
             self.assertEqual(summary["residual_budget_accounting_row_count"], 12)
+            self.assertEqual(summary["router_value_regret_decomposition_row_count"], 15)
             teacher_summary = summary["teacher_distillation_primary_result"]
             self.assertEqual(teacher_summary["row_count"], 2)
             self.assertIsNotNone(teacher_summary["distilled_holdout_ce"])

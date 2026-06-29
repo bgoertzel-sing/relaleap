@@ -36,6 +36,7 @@ REQUIRED_ARTIFACTS = (
     "arm_metrics.csv",
     "ce_gap_decomposition.csv",
     "oracle_support_sparse_topk2.csv",
+    "router_value_regret_decomposition.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -219,6 +220,14 @@ def run_synthetic_mechanism_causal_modularity(
         ),
         "oracle_support_primary_result": (
             _oracle_support_summary(training_smoke["oracle_support_sparse_topk2"])
+            if training_smoke is not None
+            else None
+        ),
+        "router_value_regret_decomposition_row_count": (
+            len(training_smoke["router_value_regret_decomposition"]) if training_smoke is not None else 0
+        ),
+        "router_value_regret_primary_result": (
+            _router_value_regret_summary(training_smoke["router_value_regret_decomposition"])
             if training_smoke is not None
             else None
         ),
@@ -577,6 +586,9 @@ def _run_training_smoke(
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
         "oracle_support_sparse_topk2": oracle_support_rows,
+        "router_value_regret_decomposition": _router_value_regret_decomposition_rows(
+            oracle_support_rows
+        ),
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": _residual_budget_accounting_rows(arm_metrics),
@@ -1730,6 +1742,89 @@ def _residual_budget_accounting_rows(arm_metrics: list[dict[str, Any]]) -> list[
     return rows
 
 
+def _router_value_regret_decomposition_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        arm = str(row.get("arm", ""))
+        rule = str(row.get("latent_rule", ""))
+        grouped.setdefault((arm, "all"), []).append(row)
+        grouped.setdefault((arm, rule), []).append(row)
+
+    output_rows: list[dict[str, Any]] = []
+    for (arm, latent_rule), group_rows in sorted(grouped.items()):
+        oracle_sizes = [_metric_float(row.get("oracle_support_size")) for row in group_rows]
+        oracle_sizes = [size for size in oracle_sizes if size is not None]
+        oracle_regrets = [_metric_float(row.get("oracle_regret")) for row in group_rows]
+        oracle_regrets = [value for value in oracle_regrets if value is not None]
+        one_swap_recovery = [
+            _metric_float(row.get("one_swap_recovery_fraction")) for row in group_rows
+        ]
+        one_swap_recovery = [value for value in one_swap_recovery if value is not None]
+        learned_equals_oracle = [
+            str(row.get("learned_support", "")) == str(row.get("oracle_support", ""))
+            for row in group_rows
+            if row.get("learned_support") not in {None, ""}
+            and row.get("oracle_support") not in {None, ""}
+        ]
+        best_pair_minus_singleton = [
+            _delta_value(row.get("best_pair_ce_loss"), row.get("best_singleton_ce_loss"))
+            for row in group_rows
+        ]
+        best_pair_minus_singleton = [
+            value for value in best_pair_minus_singleton if value is not None
+        ]
+        mean_regret = _mean_optional(group_rows, "oracle_regret")
+        output_rows.append(
+            {
+                "arm": arm,
+                "latent_rule": latent_rule,
+                "token_count": len(group_rows),
+                "mean_learned_ce_loss": _mean_optional(group_rows, "learned_ce_loss"),
+                "mean_oracle_ce_loss": _mean_optional(group_rows, "oracle_ce_loss"),
+                "mean_oracle_regret": mean_regret,
+                "max_oracle_regret": max(oracle_regrets) if oracle_regrets else None,
+                "positive_oracle_regret_fraction": (
+                    sum(1 for value in oracle_regrets if value > 1e-12) / float(len(oracle_regrets))
+                    if oracle_regrets
+                    else None
+                ),
+                "mean_pair_oracle_regret": _mean_optional(group_rows, "pair_oracle_regret"),
+                "mean_one_swap_regret": _mean_optional(group_rows, "one_swap_regret"),
+                "mean_one_swap_recovery_fraction": (
+                    sum(one_swap_recovery) / float(len(one_swap_recovery))
+                    if one_swap_recovery
+                    else None
+                ),
+                "oracle_pair_fraction": (
+                    sum(1 for size in oracle_sizes if int(size) == 2) / float(len(oracle_sizes))
+                    if oracle_sizes
+                    else None
+                ),
+                "mean_best_pair_ce_minus_best_singleton_ce": (
+                    sum(best_pair_minus_singleton) / float(len(best_pair_minus_singleton))
+                    if best_pair_minus_singleton
+                    else None
+                ),
+                "learned_support_matches_oracle_fraction": (
+                    sum(1 for value in learned_equals_oracle if value) / float(len(learned_equals_oracle))
+                    if learned_equals_oracle
+                    else None
+                ),
+                "router_value_status": (
+                    "router_regret_present"
+                    if mean_regret is not None and mean_regret > 0.02
+                    else "low_router_regret"
+                    if mean_regret is not None
+                    else "missing"
+                ),
+                "mechanism_labels_used_for_scoring_only": True,
+            }
+        )
+    return output_rows
+
+
 def _flop_proxy(row: dict[str, Any]) -> float | None:
     active_parameters = _metric_float(row.get("active_parameters_proxy"))
     if active_parameters is None:
@@ -2261,6 +2356,10 @@ def _selected_next_step(
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
     if any(row.get("teacher_distillation_enabled") is True for row in training_smoke.get("arm_metrics", [])):
+        if training_smoke.get("router_value_regret_decomposition"):
+            return (
+                "close the teacher-distillation branch as non-improving on this local seed and test whether lower router regret, not value distillation, explains the remaining sparse gap"
+            )
         return (
             "inspect dense-teacher sparse student versus shuffled-teacher null, then add oracle-support regret decomposition for the teacher-distilled arm if it clears CE guardrails"
         )
@@ -2332,6 +2431,46 @@ def _oracle_support_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "interpretation": (
             "Diagnostic only: oracle supports use holdout labels for scoring and expose router/value regret; "
             "they are not deployable training evidence."
+        ),
+    }
+
+
+def _router_value_regret_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "worst_arm": "",
+            "worst_latent_rule": "",
+            "worst_mean_oracle_regret": None,
+            "interpretation": "router/value regret decomposition was not run",
+        }
+    all_rows = [row for row in rows if row.get("latent_rule") == "all"]
+    worst = max(
+        rows,
+        key=lambda row: _metric_float(row.get("mean_oracle_regret")) or float("-inf"),
+    )
+    worst_all = (
+        max(
+            all_rows,
+            key=lambda row: _metric_float(row.get("mean_oracle_regret")) or float("-inf"),
+        )
+        if all_rows
+        else {}
+    )
+    return {
+        "row_count": len(rows),
+        "arm_count": len({str(row.get("arm", "")) for row in all_rows}),
+        "worst_arm": worst.get("arm", ""),
+        "worst_latent_rule": worst.get("latent_rule", ""),
+        "worst_mean_oracle_regret": _metric_float(worst.get("mean_oracle_regret")),
+        "worst_overall_arm": worst_all.get("arm", ""),
+        "worst_overall_mean_oracle_regret": _metric_float(
+            worst_all.get("mean_oracle_regret")
+        ),
+        "interpretation": (
+            "Diagnostic only: learned-vs-oracle support gaps use holdout labels for scoring. "
+            "High regret indicates router/support selection headroom for already-trained sparse values; "
+            "it does not prove deployable causal modularity."
         ),
     }
 
@@ -2496,6 +2635,10 @@ def _write_artifacts(
         out_dir / "oracle_support_sparse_topk2.csv",
         [] if training_smoke is None else training_smoke["oracle_support_sparse_topk2"],
     )
+    _write_csv(
+        out_dir / "router_value_regret_decomposition.csv",
+        [] if training_smoke is None else training_smoke["router_value_regret_decomposition"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -2524,6 +2667,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Mechanism labels enter training: `{summary['mechanism_labels_enter_training']}`",
         f"- Local scientific gates: `{summary['local_scientific_gate_status']}`",
         f"- Oracle-support sparse top-k2 rows: `{summary['oracle_support_sparse_topk2_row_count']}`",
+        f"- Router/value regret decomposition rows: `{summary['router_value_regret_decomposition_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
@@ -2532,6 +2676,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "This artifact implements the major-pivot pregate by generating same-vocabulary synthetic latent-rule episodes and the comparator/intervention schemas. It intentionally separates artifact readiness from scientific gates; GPU validation remains blocked until local scientific gates pass.",
         "",
         "The oracle-support sparse top-k2 artifact is diagnostic only: it uses holdout labels to score exhaustive singleton/pair supports for trained sparse values and must not be treated as deployable training evidence.",
+        "",
+        "The router/value regret decomposition summarizes the oracle-support rows by arm and latent rule. It separates support-selection headroom from the adequacy of the already-trained sparse values, but still uses evaluator-only holdout labels.",
         "",
         "The CE by rule/position and residual budget accounting artifacts are local diagnostics. FLOP values are residual-path proxies only and exclude the frozen base and decoder.",
         "",
