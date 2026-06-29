@@ -7,6 +7,7 @@ from pathlib import Path
 
 from relaleap.experiments.synthetic_mechanism_causal_modularity import (
     REQUIRED_ARTIFACTS,
+    _decoder_adjoint_hidden_ce_error,
     run_synthetic_mechanism_causal_modularity,
 )
 
@@ -52,6 +53,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["pc_core_periphery_residual_inference_pregate_row_count"], 0)
             self.assertEqual(summary["pc_residual_inference_mechanism_inspection_row_count"], 0)
             self.assertEqual(summary["pc_error_target_inference_path_audit_row_count"], 0)
+            self.assertEqual(summary["pc_decoder_adjoint_target_alignment_probe_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -290,6 +292,18 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
             self.assertTrue(
                 summary["pc_error_target_inference_path_audit_primary_result"]["notify_ben"]
+            )
+            self.assertEqual(summary["pc_decoder_adjoint_target_alignment_probe_row_count"], 5)
+            self.assertIsNotNone(summary["pc_decoder_adjoint_target_alignment_probe_primary_result"])
+            self.assertEqual(
+                summary["pc_decoder_adjoint_target_alignment_probe_primary_result"]["row_count"],
+                summary["pc_decoder_adjoint_target_alignment_probe_row_count"],
+            )
+            self.assertFalse(
+                summary["pc_decoder_adjoint_target_alignment_probe_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["pc_decoder_adjoint_target_alignment_probe_primary_result"]["promotion_allowed"]
             )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
@@ -656,6 +670,43 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(selected_audit["advance_to_gpu_validation"], "False")
             self.assertEqual(selected_audit["notify_ben"], "True")
             self.assertEqual(selected_audit["mechanism_labels_used_for_scoring_only"], "True")
+
+            with (out_dir / "pc_decoder_adjoint_target_alignment_probe.csv").open(newline="", encoding="utf-8") as handle:
+                pc_target_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(pc_target_rows), 5)
+            target_by_variant = {row["target_variant"]: row for row in pc_target_rows}
+            self.assertEqual(
+                set(target_by_variant),
+                {
+                    "current_decoder_embedding_minus_hidden",
+                    "decoder_adjoint_ce_descent",
+                    "finite_difference_hidden_ce_descent_proxy",
+                    "shuffled_decoder_adjoint_target_null",
+                    "sign_flipped_decoder_adjoint_null",
+                },
+            )
+            selected_target = target_by_variant["decoder_adjoint_ce_descent"]
+            for required_field in {
+                "base_ce",
+                "injected_ce",
+                "injection_ce_delta",
+                "matched_step_rms",
+                "cosine_to_finite_difference_proxy",
+                "decoder_beats_current_target",
+                "decoder_beats_shuffled_target",
+                "decoder_beats_sign_flip",
+                "alignment_gate_passes",
+                "selected_next_experiment",
+                "label_derived_training_only_target",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "advance_to_gpu_validation",
+            }:
+                self.assertIn(required_field, selected_target)
+            self.assertEqual(selected_target["selected"], "True")
+            self.assertEqual(selected_target["label_derived_training_only_target"], "True")
+            self.assertEqual(selected_target["requires_gpu_now"], "False")
+            self.assertEqual(selected_target["promotion_allowed"], "False")
             self.assertEqual(selected_pc["source_failed_branch"], "budget_normalized_gated_low_rank_value_mixture")
             self.assertEqual(selected_pc["source_failed_branch_pregate_passes"], "False")
             self.assertEqual(selected_pc["requires_gpu_now"], "False")
@@ -1096,6 +1147,42 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             }:
                 self.assertIn(required_field, closeout_rows[0])
             self.assertEqual(closeout_rows[0]["mechanism_labels_used_for_scoring_only"], "True")
+
+    def test_decoder_adjoint_target_positive_step_lowers_toy_linear_decoder_ce(self) -> None:
+        import torch
+        import torch.nn.functional as F
+
+        torch.manual_seed(11)
+        hidden = torch.randn(3, 4, 5)
+        targets = torch.tensor(
+            [
+                [0, 1, 2, 3],
+                [1, 2, 3, 4],
+                [2, 3, 4, 0],
+            ],
+            dtype=torch.long,
+        )
+        decoder = torch.nn.Linear(5, 5, bias=False)
+
+        def decode(value):
+            return decoder(value)
+
+        base_logits = decode(hidden)
+        base_ce = F.cross_entropy(base_logits.reshape(-1, 5), targets.reshape(-1))
+        target = _decoder_adjoint_hidden_ce_error(
+            hidden,
+            targets,
+            decoder.weight,
+            decode=decode,
+            F=F,
+            normalize=True,
+        )
+        step = 0.05 * target / target.pow(2).mean(dim=-1, keepdim=True).add(1e-12).sqrt()
+        positive_ce = F.cross_entropy(decode(hidden + step).reshape(-1, 5), targets.reshape(-1))
+        sign_flipped_ce = F.cross_entropy(decode(hidden - step).reshape(-1, 5), targets.reshape(-1))
+
+        self.assertLess(float(positive_ce.item()), float(base_ce.item()))
+        self.assertLess(float(positive_ce.item()), float(sign_flipped_ce.item()))
 
 
 if __name__ == "__main__":

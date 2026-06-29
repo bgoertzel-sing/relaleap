@@ -50,6 +50,7 @@ REQUIRED_ARTIFACTS = (
     "pc_core_periphery_residual_inference_pregate.csv",
     "pc_residual_inference_mechanism_inspection.csv",
     "pc_error_target_inference_path_audit.csv",
+    "pc_decoder_adjoint_target_alignment_probe.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -374,6 +375,16 @@ def run_synthetic_mechanism_causal_modularity(
         "pc_error_target_inference_path_audit_primary_result": (
             _pc_error_target_inference_path_audit_summary(
                 training_smoke["pc_error_target_inference_path_audit"]
+            )
+            if training_smoke is not None
+            else None
+        ),
+        "pc_decoder_adjoint_target_alignment_probe_row_count": (
+            len(training_smoke["pc_decoder_adjoint_target_alignment_probe"]) if training_smoke is not None else 0
+        ),
+        "pc_decoder_adjoint_target_alignment_probe_primary_result": (
+            _pc_decoder_adjoint_target_alignment_probe_summary(
+                training_smoke["pc_decoder_adjoint_target_alignment_probe"]
             )
             if training_smoke is not None
             else None
@@ -883,6 +894,15 @@ def _run_training_smoke(
         commutator_rows=commutator_rows,
         forgetting_rows=forgetting_rows,
     )
+    pc_decoder_adjoint_target_alignment_probe = _pc_decoder_adjoint_target_alignment_probe_rows(
+        pc_audit_rows=pc_error_target_inference_path_audit,
+        hidden=holdout_hidden,
+        targets=holdout_targets,
+        decode=base.decode,
+        decoder_weight=base.lm_head.weight,
+        F=F,
+        torch=torch,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -906,6 +926,7 @@ def _run_training_smoke(
         "pc_core_periphery_residual_inference_pregate": pc_core_periphery_residual_inference_pregate,
         "pc_residual_inference_mechanism_inspection": pc_residual_inference_mechanism_inspection,
         "pc_error_target_inference_path_audit": pc_error_target_inference_path_audit,
+        "pc_decoder_adjoint_target_alignment_probe": pc_decoder_adjoint_target_alignment_probe,
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": residual_budget_accounting,
@@ -1749,6 +1770,31 @@ def _teacher_residual_delta(
         flat = delta.reshape(-1, delta.shape[-1])
         order = torch.arange(flat.shape[0] - 1, -1, -1, device=flat.device)
         return flat.index_select(0, order).reshape_as(delta)
+
+
+def _decoder_adjoint_hidden_ce_error(
+    hidden: Any,
+    targets: Any,
+    decoder_weight: Any,
+    *,
+    decode: Any,
+    F: Any,
+    normalize: bool = True,
+) -> Any:
+    """Return the hidden-space CE descent direction for a linear decoder."""
+
+    logits = decode(hidden)
+    probabilities = F.softmax(logits, dim=-1)
+    expected_decoder = probabilities @ decoder_weight
+    gold_decoder = decoder_weight.index_select(0, targets.reshape(-1)).reshape(
+        targets.shape[0],
+        targets.shape[1],
+        -1,
+    )
+    target = gold_decoder - expected_decoder
+    if normalize:
+        target = F.layer_norm(target, (target.shape[-1],))
+    return target
 
 
 def _synthetic_forward_logits(
@@ -3957,6 +4003,12 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("pc_decoder_adjoint_target_alignment_probe"):
+        summary = _pc_decoder_adjoint_target_alignment_probe_summary(
+            training_smoke["pc_decoder_adjoint_target_alignment_probe"]
+        )
+        if summary.get("selected_next_experiment"):
+            return str(summary["selected_next_experiment"]).replace("_", " ")
     if training_smoke.get("pc_error_target_inference_path_audit"):
         summary = _pc_error_target_inference_path_audit_summary(
             training_smoke["pc_error_target_inference_path_audit"]
@@ -6010,6 +6062,239 @@ def _pc_error_target_inference_path_audit_summary(rows: list[dict[str, Any]]) ->
     }
 
 
+def _pc_decoder_adjoint_target_alignment_probe_rows(
+    *,
+    pc_audit_rows: list[dict[str, Any]],
+    hidden: Any,
+    targets: Any,
+    decode: Any,
+    decoder_weight: Any,
+    F: Any,
+    torch: Any,
+) -> list[dict[str, Any]]:
+    audit_summary = _pc_error_target_inference_path_audit_summary(pc_audit_rows)
+    if audit_summary.get("selected_next_experiment") != "fix_pc_residual_error_target_alignment_before_retraining":
+        return []
+
+    base_logits = decode(hidden)
+    base_ce = float(F.cross_entropy(base_logits.reshape(-1, base_logits.shape[-1]), targets.reshape(-1)).detach().item())
+    step_rms = 0.05
+    current_target = F.layer_norm(
+        decoder_weight.index_select(0, targets.reshape(-1)).reshape(
+            targets.shape[0],
+            targets.shape[1],
+            -1,
+        )
+        - hidden,
+        (hidden.shape[-1],),
+    ).detach()
+    decoder_adjoint = _decoder_adjoint_hidden_ce_error(
+        hidden,
+        targets,
+        decoder_weight,
+        decode=decode,
+        F=F,
+        normalize=True,
+    ).detach()
+    shuffled_targets = targets.reshape(-1).index_select(
+        0,
+        torch.arange(targets.numel() - 1, -1, -1, device=targets.device),
+    ).reshape_as(targets)
+    shuffled_decoder_adjoint = _decoder_adjoint_hidden_ce_error(
+        hidden,
+        shuffled_targets,
+        decoder_weight,
+        decode=decode,
+        F=F,
+        normalize=True,
+    ).detach()
+    finite_difference = _finite_difference_hidden_ce_descent_proxy(
+        hidden=hidden,
+        targets=targets,
+        decode=decode,
+        F=F,
+    ).detach()
+
+    target_map = {
+        "current_decoder_embedding_minus_hidden": current_target,
+        "decoder_adjoint_ce_descent": decoder_adjoint,
+        "finite_difference_hidden_ce_descent_proxy": finite_difference,
+        "shuffled_decoder_adjoint_target_null": shuffled_decoder_adjoint,
+        "sign_flipped_decoder_adjoint_null": -decoder_adjoint,
+    }
+    metrics = {
+        name: _target_injection_metrics(
+            target=target,
+            hidden=hidden,
+            targets=targets,
+            base_ce=base_ce,
+            step_rms=step_rms,
+            decode=decode,
+            F=F,
+        )
+        for name, target in target_map.items()
+    }
+    decoder_delta = metrics["decoder_adjoint_ce_descent"]["injection_ce_delta"]
+    current_delta = metrics["current_decoder_embedding_minus_hidden"]["injection_ce_delta"]
+    shuffled_delta = metrics["shuffled_decoder_adjoint_target_null"]["injection_ce_delta"]
+    sign_flipped_delta = metrics["sign_flipped_decoder_adjoint_null"]["injection_ce_delta"]
+    finite_delta = metrics["finite_difference_hidden_ce_descent_proxy"]["injection_ce_delta"]
+    decoder_lowers_ce = decoder_delta < 0.0
+    decoder_beats_current = decoder_delta < current_delta - 1e-4
+    decoder_beats_shuffled = decoder_delta < shuffled_delta - 1e-4
+    decoder_beats_sign_flip = decoder_delta < sign_flipped_delta - 1e-4
+    decoder_tracks_finite_difference = decoder_delta <= finite_delta + 1e-4
+    alignment_gate_passes = bool(
+        decoder_lowers_ce
+        and decoder_beats_current
+        and decoder_beats_shuffled
+        and decoder_beats_sign_flip
+        and decoder_tracks_finite_difference
+    )
+    selected_next = (
+        "wire_decoder_adjoint_pc_target_into_minimal_retrain_probe"
+        if alignment_gate_passes
+        else "close_or_redesign_pc_target_before_retraining"
+    )
+
+    rows: list[dict[str, Any]] = []
+    for name, role, selected in (
+        ("decoder_adjoint_ce_descent", "primary_decoder_adjoint_ce_target", True),
+        ("current_decoder_embedding_minus_hidden", "current_pc_target_control", False),
+        ("finite_difference_hidden_ce_descent_proxy", "finite_difference_descent_proxy", False),
+        ("shuffled_decoder_adjoint_target_null", "shuffled_target_null", False),
+        ("sign_flipped_decoder_adjoint_null", "sign_flipped_target_null", False),
+    ):
+        row_metrics = metrics[name]
+        rows.append(
+            {
+                "probe_name": "pc_decoder_adjoint_target_alignment_probe",
+                "target_variant": name,
+                "probe_role": role,
+                "selected": selected,
+                "base_ce": base_ce,
+                "injected_ce": row_metrics["injected_ce"],
+                "injection_ce_delta": row_metrics["injection_ce_delta"],
+                "matched_step_rms": step_rms,
+                "target_rms": row_metrics["target_rms"],
+                "cosine_to_decoder_adjoint": _target_cosine(target_map[name], decoder_adjoint, F=F),
+                "cosine_to_finite_difference_proxy": _target_cosine(target_map[name], finite_difference, F=F),
+                "decoder_adjoint_injection_ce_delta": decoder_delta,
+                "current_target_injection_ce_delta": current_delta,
+                "finite_difference_injection_ce_delta": finite_delta,
+                "shuffled_target_injection_ce_delta": shuffled_delta,
+                "sign_flipped_target_injection_ce_delta": sign_flipped_delta,
+                "decoder_lowers_ce": decoder_lowers_ce,
+                "decoder_beats_current_target": decoder_beats_current,
+                "decoder_beats_shuffled_target": decoder_beats_shuffled,
+                "decoder_beats_sign_flip": decoder_beats_sign_flip,
+                "decoder_tracks_finite_difference": decoder_tracks_finite_difference,
+                "alignment_gate_passes": alignment_gate_passes,
+                "selected_next_experiment": selected_next,
+                "requires_gpu_now": False,
+                "promotion_allowed": False,
+                "advance_to_gpu_validation": False,
+                "strategic_change_level": "minor",
+                "notify_ben": False,
+                "label_derived_training_only_target": True,
+                "mechanism_labels_used_for_scoring_only": True,
+                "interpretation": (
+                    "Diagnostic target-alignment probe only. Decoder-adjoint CE targets use labels and can "
+                    "validate sign/alignment for training-time PC experiments, but they are not deployable "
+                    "label-free inference evidence."
+                ),
+            }
+        )
+    return rows
+
+
+def _finite_difference_hidden_ce_descent_proxy(
+    *,
+    hidden: Any,
+    targets: Any,
+    decode: Any,
+    F: Any,
+) -> Any:
+    probe_hidden = hidden.detach().clone().requires_grad_(True)
+    logits = decode(probe_hidden)
+    loss = F.cross_entropy(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1))
+    loss.backward()
+    gradient = probe_hidden.grad.detach()
+    return F.layer_norm(-gradient, (gradient.shape[-1],))
+
+
+def _target_injection_metrics(
+    *,
+    target: Any,
+    hidden: Any,
+    targets: Any,
+    base_ce: float,
+    step_rms: float,
+    decode: Any,
+    F: Any,
+) -> dict[str, float]:
+    target_rms_tensor = target.pow(2).mean(dim=-1, keepdim=True).add(1e-12).sqrt()
+    residual = target * (float(step_rms) / target_rms_tensor)
+    logits = decode(hidden + residual)
+    injected_ce = float(F.cross_entropy(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1)).detach().item())
+    return {
+        "injected_ce": injected_ce,
+        "injection_ce_delta": injected_ce - float(base_ce),
+        "target_rms": float(target.pow(2).mean().sqrt().detach().item()),
+    }
+
+
+def _target_cosine(left: Any, right: Any, *, F: Any) -> float:
+    return float(
+        F.cosine_similarity(
+            left.reshape(-1, left.shape[-1]),
+            right.reshape(-1, right.shape[-1]),
+            dim=-1,
+        )
+        .mean()
+        .detach()
+        .item()
+    )
+
+
+def _pc_decoder_adjoint_target_alignment_probe_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "selected_next_experiment": "",
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "notify_ben": False,
+            "strategic_change_level": "minor",
+        }
+    selected = next((row for row in rows if row.get("selected") is True), rows[0])
+    return {
+        "row_count": len(rows),
+        "selected_next_experiment": selected.get("selected_next_experiment", ""),
+        "decoder_adjoint_injection_ce_delta": _metric_float(selected.get("decoder_adjoint_injection_ce_delta")),
+        "current_target_injection_ce_delta": _metric_float(selected.get("current_target_injection_ce_delta")),
+        "finite_difference_injection_ce_delta": _metric_float(selected.get("finite_difference_injection_ce_delta")),
+        "shuffled_target_injection_ce_delta": _metric_float(selected.get("shuffled_target_injection_ce_delta")),
+        "sign_flipped_target_injection_ce_delta": _metric_float(selected.get("sign_flipped_target_injection_ce_delta")),
+        "decoder_lowers_ce": selected.get("decoder_lowers_ce") is True,
+        "decoder_beats_current_target": selected.get("decoder_beats_current_target") is True,
+        "decoder_beats_shuffled_target": selected.get("decoder_beats_shuffled_target") is True,
+        "decoder_beats_sign_flip": selected.get("decoder_beats_sign_flip") is True,
+        "decoder_tracks_finite_difference": selected.get("decoder_tracks_finite_difference") is True,
+        "alignment_gate_passes": selected.get("alignment_gate_passes") is True,
+        "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
+        "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
+        "advance_to_gpu_validation": any(row.get("advance_to_gpu_validation") is True for row in rows),
+        "notify_ben": any(row.get("notify_ben") is True for row in rows),
+        "strategic_change_level": "major" if any(row.get("strategic_change_level") == "major" for row in rows) else "minor",
+        "interpretation": (
+            "Local decoder-adjoint CE target alignment probe. It allows only a minimal retrain probe when "
+            "the decoder-adjoint target lowers CE and beats current, shuffled, and sign-flipped controls "
+            "under matched norm."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -6130,6 +6415,10 @@ def _write_artifacts(
         out_dir / "pc_error_target_inference_path_audit.csv",
         [] if training_smoke is None else training_smoke["pc_error_target_inference_path_audit"],
     )
+    _write_csv(
+        out_dir / "pc_decoder_adjoint_target_alignment_probe.csv",
+        [] if training_smoke is None else training_smoke["pc_decoder_adjoint_target_alignment_probe"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -6172,6 +6461,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- PC core/periphery residual-inference pregate rows: `{summary['pc_core_periphery_residual_inference_pregate_row_count']}`",
         f"- PC residual-inference mechanism inspection rows: `{summary['pc_residual_inference_mechanism_inspection_row_count']}`",
         f"- PC error-target inference-path audit rows: `{summary['pc_error_target_inference_path_audit_row_count']}`",
+        f"- PC decoder-adjoint target-alignment probe rows: `{summary['pc_decoder_adjoint_target_alignment_probe_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
@@ -6204,6 +6494,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The PC core/periphery residual-inference pregate is a major-pivot scaffold from the external strategy review. It closes the current sparse value-capacity branch as unsupported, records that Ben should be notified, and defines the next local trainable packet: fixed contextual top-k2 router, protected predictive core, plastic residual-error periphery, two local inference steps, anchor KL, norm clamp, commutator/churn penalties, and flat/dense/token-position/random/shuffled controls. It is not promotion evidence.",
         "",
         "The PC error-target inference-path audit is the local follow-up after the trainable PC pregate failed. It checks whether the shuffled residual-error target null is competitive, whether the inference path has CE signal versus promoted sparse, whether the same-router flat control explains the result, and whether the finite-update commutator budget remains failed. It blocks retraining/GPU until those local checks support a coherent PC mechanism.",
+        "",
+        "The PC decoder-adjoint target-alignment probe compares the current decoder-embedding-minus-hidden target with a hidden-space CE descent target, finite-difference descent proxy, shuffled target, and sign-flipped null under matched injection norm. It is label-derived and training-time diagnostic only.",
         "",
         "## Next Step",
         "",
