@@ -45,9 +45,23 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             self.assertIn("retrained-oracle", summary["selected_next_step"])
             self.assertEqual(
                 summary["filled_evaluator_arms"],
-                ["learned_support_sparse_student", "oracle_support_trained_values"],
+                [
+                    "learned_support_sparse_student",
+                    "oracle_support_trained_values",
+                    "dense_teacher",
+                    "dense_rank_norm_control",
+                    "random_support_null",
+                    "fixed_support_null",
+                    "token_position_router_null",
+                    "shuffled_teacher_target_null",
+                ],
             )
             self.assertIn("retrained_oracle_support_values", summary["pending_evaluator_arms"])
+            self.assertIn(
+                "oracle_support_gated_value_pair_composer",
+                summary["pending_evaluator_arms"],
+            )
+            self.assertNotIn("dense_teacher", summary["pending_evaluator_arms"])
             evaluator_by_arm = {row["arm"]: row for row in summary["evaluator_rows"]}
             self.assertEqual(
                 evaluator_by_arm["learned_support_sparse_student"]["availability"],
@@ -61,6 +75,9 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
                 evaluator_by_arm["oracle_support_trained_values"]["teacher_logit_residual_mse"],
                 evaluator_by_arm["learned_support_sparse_student"]["teacher_logit_residual_mse"],
             )
+            self.assertEqual(evaluator_by_arm["random_support_null"]["availability"], "filled")
+            self.assertEqual(evaluator_by_arm["random_support_null"]["ce_loss"], 4.0)
+            self.assertEqual(evaluator_by_arm["dense_teacher"]["ce_loss"], 0.25)
             contract_by_arm = {row["arm"]: row for row in summary["contract_rows"]}
             self.assertEqual(
                 contract_by_arm["oracle_support_gated_value_pair_composer"]["availability"],
@@ -157,14 +174,36 @@ def _write_distillation(path: Path) -> None:
             "claim_status": "dense_teacher_distillation_not_interpretable_or_not_better_than_controls",
             "git_commit": "distillation-commit",
             "variant_rows": [
-                {"arm": "promoted_contextual_topk2_ce_mse_distill"},
-                {"arm": "random_support_topk2"},
-                {"arm": "fixed_support_topk2"},
-                {"arm": "token_position_only_router_topk2"},
-                {"arm": "shuffled_teacher_target_topk2"},
+                _variant_row("promoted_contextual_topk2_ce_mse_distill", ce_loss=2.5),
+                _variant_row("parameter_matched_causal_mlp_control", ce_loss=0.25),
+                _variant_row("dense_rank_norm_control", ce_loss=0.5),
+                _variant_row("random_support_topk2", ce_loss=4.0),
+                _variant_row("fixed_support_topk2", ce_loss=4.1),
+                _variant_row("token_position_only_router_topk2", ce_loss=2.7),
+                _variant_row("shuffled_teacher_target_topk2", ce_loss=4.2),
             ],
         },
     )
+
+
+def _variant_row(arm: str, *, ce_loss: float) -> dict[str, float | str]:
+    return {
+        "arm": arm,
+        "teacher_scale": 1.0,
+        "active_params": 10.0,
+        "stored_params": 20.0,
+        "flops_estimate": 30.0,
+        "ce_loss": ce_loss,
+        "teacher_ce_loss": 0.25,
+        "teacher_residual_mse": ce_loss + 1.0,
+        "teacher_residual_r2": 0.1,
+        "teacher_residual_cosine": 0.2,
+        "teacher_logit_mse": ce_loss + 2.0,
+        "support_regret": ce_loss - 0.25,
+        "functional_churn": 0.3,
+        "anchor_kl_or_logit_mse": 0.4,
+        "residual_norm_ratio": 0.5,
+    }
 
 
 def _write_required_tensors(path: Path, *, skip: set[str] | None = None) -> None:

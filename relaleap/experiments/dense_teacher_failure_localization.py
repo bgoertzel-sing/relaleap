@@ -23,8 +23,8 @@ CONTRACT_RECORDED = "dense_teacher_failure_localization_contract_recorded"
 INSUFFICIENT_EVIDENCE = "dense_teacher_failure_localization_contract_failed_closed"
 PARTIAL_EVALUATOR_RECORDED = "dense_teacher_failure_localization_partial_evaluator_recorded"
 NEXT_STEP = (
-    "implement retrained-oracle, gated pair-composer, dense/rank/norm control, "
-    "and shuffled/random/token-position null rows for dense_teacher_failure_localization"
+    "implement retrained-oracle and gated pair-composer rows for "
+    "dense_teacher_failure_localization"
 )
 
 REQUIRED_ARMS = (
@@ -213,8 +213,9 @@ def run_dense_teacher_failure_localization_contract(
         summary["selected_next_step"] = NEXT_STEP
         summary["rationale"] = (
             "This artifact now fills learned-support and exhaustive oracle-support-trained-values "
-            "rows from the exported dense-teacher tensors. It still makes no columnability claim "
-            "because retrained-oracle, pair-composer, dense/rank/norm, and null rows remain pending."
+            "rows from exported dense-teacher tensors, and records dense/rank/norm plus null "
+            "rows from the source distillation summary. It still makes no columnability claim "
+            "because retrained-oracle and pair-composer rows remain pending."
         )
     else:
         summary["evaluator_rows"] = []
@@ -325,7 +326,171 @@ def _evaluator_rows(distillation_dir: Path, distillation: dict[str, Any]) -> lis
     oracle_row["oracle_selected_support_sets"] = _unique_support_count(torch, oracle_support)
     oracle_row["learned_minus_oracle_logit_mse"] = learned_minus_oracle_logit_mse
     oracle_row["learned_minus_oracle_ce"] = learned_row["ce_loss"] - oracle_row["ce_loss"]
-    return [learned_row, oracle_row]
+    source_rows = _source_summary_evaluator_rows(distillation)
+    return [learned_row, oracle_row, *source_rows]
+
+
+def _source_summary_evaluator_rows(distillation: dict[str, Any]) -> list[dict[str, Any]]:
+    variant_rows = distillation.get("variant_rows") if isinstance(distillation.get("variant_rows"), list) else []
+    mappings = (
+        (
+            "dense_teacher",
+            ("parameter_matched_causal_mlp_control", "dense_teacher_parameter_matched_mlp"),
+            "upper_bound",
+            "dense",
+            "dense teacher residual",
+            "dense residual adapter",
+        ),
+        (
+            "dense_rank_norm_control",
+            ("dense_rank_norm_control",),
+            "control",
+            "dense/rank/norm matched",
+            "matched dense or low-rank residual",
+            "matched control",
+        ),
+        (
+            "random_support_null",
+            ("random_support_topk2",),
+            "null",
+            "random top-k support",
+            "trained sparse values",
+            "independent column sum",
+        ),
+        (
+            "fixed_support_null",
+            ("fixed_support_topk2",),
+            "null",
+            "fixed top-k support",
+            "trained sparse values",
+            "independent column sum",
+        ),
+        (
+            "token_position_router_null",
+            ("token_position_only_router_topk2",),
+            "null",
+            "token/position-only support predictor",
+            "trained sparse values",
+            "independent column sum",
+        ),
+        (
+            "shuffled_teacher_target_null",
+            ("shuffled_teacher_target_topk2",),
+            "null",
+            "shuffled teacher target support",
+            "shuffled residual/logit target",
+            "independent column sum",
+        ),
+    )
+    rows: list[dict[str, Any]] = []
+    for arm, source_arms, family, support_source, value_source, composer in mappings:
+        source = _find_variant_row(variant_rows, source_arms, teacher_scale=1.0)
+        if source is None:
+            rows.append(
+                _metric_row(
+                    arm=arm,
+                    arm_family=family,
+                    availability="missing_source_summary_row",
+                    support_source=support_source,
+                    value_source=value_source,
+                    composer=composer,
+                    notes=f"missing source distillation row among {', '.join(source_arms)}",
+                )
+            )
+            continue
+        rows.append(
+            _metric_row_from_variant(
+                arm=arm,
+                arm_family=family,
+                source=source,
+                support_source=support_source,
+                value_source=value_source,
+                composer=composer,
+            )
+        )
+    return rows
+
+
+def _find_variant_row(
+    variant_rows: list[Any],
+    source_arms: tuple[str, ...],
+    *,
+    teacher_scale: float,
+) -> dict[str, Any] | None:
+    for row in variant_rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("arm") not in source_arms:
+            continue
+        if abs(float(row.get("teacher_scale", 1.0)) - teacher_scale) <= 1e-12:
+            return row
+    return None
+
+
+def _metric_row_from_variant(
+    *,
+    arm: str,
+    arm_family: str,
+    source: dict[str, Any],
+    support_source: str,
+    value_source: str,
+    composer: str,
+) -> dict[str, Any]:
+    teacher_logit_mse = _safe_number(source.get("teacher_logit_mse"))
+    if teacher_logit_mse is None and _is_exact_teacher_control(source):
+        teacher_logit_mse = 0.0
+    return _metric_row(
+        arm=arm,
+        arm_family=arm_family,
+        availability="filled",
+        support_source=support_source,
+        value_source=value_source,
+        composer=composer,
+        train_steps=0,
+        active_params=_safe_number(source.get("active_params")),
+        stored_params=_safe_number(source.get("stored_params")),
+        flops_proxy=_safe_number(source.get("flops_estimate")),
+        ce_loss=_safe_number(source.get("ce_loss")),
+        teacher_hidden_residual_mse=_safe_number(source.get("teacher_residual_mse")),
+        teacher_hidden_residual_r2=_safe_number(source.get("teacher_residual_r2")),
+        teacher_hidden_residual_cosine=_safe_number(source.get("teacher_residual_cosine")),
+        teacher_logit_residual_mse=teacher_logit_mse,
+        teacher_logit_residual_r2="not_reported_in_source_summary",
+        teacher_logit_residual_cosine="not_reported_in_source_summary",
+        oracle_support_regret=_safe_number(source.get("support_regret")),
+        functional_churn=_safe_number(source.get("functional_churn")),
+        anchor_kl=_safe_number(source.get("anchor_kl_or_logit_mse")),
+        offtarget_logit_leakage=max(
+            0.0,
+            (_safe_number(source.get("ce_loss")) or 0.0)
+            - (_safe_number(source.get("teacher_ce_loss")) or 0.0),
+        ),
+        residual_norm_ratio=_safe_number(source.get("residual_norm_ratio")),
+        residual_direction_error=(
+            1.0 - float(source["teacher_residual_cosine"])
+            if source.get("teacher_residual_cosine") is not None
+            else ""
+        ),
+        pair_synergy="not_measured",
+        passes_no_gpu_pregate=False,
+        notes=f"filled from source distillation summary arm {source.get('arm')}",
+    )
+
+
+def _is_exact_teacher_control(source: dict[str, Any]) -> bool:
+    ce_loss = _safe_number(source.get("ce_loss"))
+    teacher_ce = _safe_number(source.get("teacher_ce_loss"))
+    support_regret = _safe_number(source.get("support_regret"))
+    hidden_mse = _safe_number(source.get("teacher_residual_mse"))
+    return (
+        ce_loss is not None
+        and teacher_ce is not None
+        and abs(ce_loss - teacher_ce) <= 1e-12
+        and support_regret is not None
+        and abs(support_regret) <= 1e-12
+        and hidden_mse is not None
+        and abs(hidden_mse) <= 1e-12
+    )
 
 
 def _load_evaluator_tensors(torch: Any, distillation_dir: Path) -> dict[str, Any]:
@@ -543,7 +708,7 @@ def _contract_rows() -> list[dict[str, Any]]:
         _contract(
             "dense_rank_norm_control",
             "control",
-            "required_pending",
+            "available_from_distillation_summary",
             "dense/rank/norm matched",
             "matched dense or low-rank residual",
             "matched control",
@@ -669,9 +834,9 @@ def _pregate_rows(
             sorted(arms),
         ),
         _pregate(
-            "oracle_and_composer_rows_pending",
+            "retrained_oracle_and_composer_rows_pending",
             True,
-            "this scaffold records, but does not yet execute, oracle/composer rows",
+            "this evaluator records, but does not yet execute, retrained-oracle and composer rows",
             "pending evaluator implementation",
         ),
     ]
