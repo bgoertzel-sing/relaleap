@@ -423,8 +423,20 @@ def _run_training_smoke(
         forgetting_rows.extend(
             _actual_forgetting_rows(
                 arm=spec.name,
-                holdout_ce=holdout_ce,
-                per_token_rows=per_token_metrics,
+                adapter=adapter,
+                spec=spec,
+                train_hidden=train_hidden,
+                train_inputs=train_inputs,
+                train_targets=train_targets,
+                train_rules=train_rules,
+                holdout_hidden=holdout_hidden,
+                holdout_inputs=holdout_inputs,
+                holdout_targets=holdout_targets,
+                holdout_rules=holdout_rules,
+                decode=base.decode,
+                learning_rate=learning_rate,
+                F=F,
+                torch=torch,
             )
         )
 
@@ -839,19 +851,76 @@ def _actual_intervention_rows(
 def _actual_forgetting_rows(
     *,
     arm: str,
-    holdout_ce: float,
-    per_token_rows: list[dict[str, Any]],
+    adapter: Any,
+    spec: _SyntheticArmSpec,
+    train_hidden: Any,
+    train_inputs: Any,
+    train_targets: Any,
+    train_rules: list[str],
+    holdout_hidden: Any,
+    holdout_inputs: Any,
+    holdout_targets: Any,
+    holdout_rules: list[str],
+    decode: Any,
+    learning_rate: float,
+    F: Any,
+    torch: Any,
 ) -> list[dict[str, Any]]:
     rows = []
-    arm_rows = [row for row in per_token_rows if row["arm"] == arm]
+    with torch.no_grad():
+        before_logits = _synthetic_forward_logits(
+            adapter=adapter,
+            hidden=holdout_hidden,
+            inputs=holdout_inputs,
+            spec=spec,
+            decode=decode,
+            torch=torch,
+        ).detach()
     for trained_rule in RULES:
+        updated_adapter = copy.deepcopy(adapter)
+        _single_rule_update(
+            adapter=updated_adapter,
+            rule=trained_rule,
+            train_hidden=train_hidden,
+            train_inputs=train_inputs,
+            train_targets=train_targets,
+            train_rules=train_rules,
+            spec=spec,
+            decode=decode,
+            learning_rate=learning_rate,
+            F=F,
+            torch=torch,
+        )
+        with torch.no_grad():
+            after_logits = _synthetic_forward_logits(
+                adapter=updated_adapter,
+                hidden=holdout_hidden,
+                inputs=holdout_inputs,
+                spec=spec,
+                decode=decode,
+                torch=torch,
+            ).detach()
+            after_hidden = _synthetic_adapt_hidden(
+                updated_adapter,
+                holdout_hidden,
+                holdout_inputs,
+                spec,
+                torch,
+            ).detach()
         for eval_rule in RULES:
-            eval_losses = [
-                float(row["ce_loss"])
-                for row in arm_rows
-                if row["latent_rule"] == eval_rule
-            ]
-            ce_after = sum(eval_losses) / float(len(eval_losses)) if eval_losses else holdout_ce
+            indices = [index for index, rule in enumerate(holdout_rules) if rule == eval_rule]
+            if not indices:
+                continue
+            index_tensor = torch.tensor(indices, dtype=torch.long, device=holdout_targets.device)
+            ce_before = _ce_for_indices(before_logits, holdout_targets, index_tensor, F=F)
+            ce_after = _ce_for_indices(after_logits, holdout_targets, index_tensor, F=F)
+            before_eval = before_logits.index_select(0, index_tensor)
+            after_eval = after_logits.index_select(0, index_tensor)
+            churn = (after_eval - before_eval).pow(2).mean().sqrt()
+            residual_l2 = (
+                after_hidden.index_select(0, index_tensor)
+                - holdout_hidden.index_select(0, index_tensor)
+            ).pow(2).mean().sqrt()
             rows.append(
                 {
                     "arm": arm,
@@ -860,11 +929,11 @@ def _actual_forgetting_rows(
                     "is_target_rule": trained_rule == eval_rule,
                     "required_metrics": "ce_before;ce_after;forgetting_delta;functional_churn;residual_l2",
                     "metric_values_available": True,
-                    "ce_before": "",
-                    "ce_after": ce_after,
-                    "forgetting_delta": 0.0,
-                    "functional_churn": 0.0,
-                    "residual_l2": "",
+                    "ce_before": float(ce_before.detach().item()),
+                    "ce_after": float(ce_after.detach().item()),
+                    "forgetting_delta": float((ce_after - ce_before).detach().item()),
+                    "functional_churn": float(churn.detach().item()),
+                    "residual_l2": float(residual_l2.detach().item()),
                 }
             )
     return rows

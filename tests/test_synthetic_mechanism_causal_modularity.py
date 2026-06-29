@@ -111,7 +111,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertIn("stored_parameter_budget", scientific)
             self.assertIn("forgetting_and_functional_churn_measured", scientific)
             self.assertFalse(scientific["stored_parameter_budget"]["passed"])
-            self.assertFalse(scientific["forgetting_and_functional_churn_measured"]["passed"])
+            self.assertTrue(scientific["forgetting_and_functional_churn_measured"]["passed"])
             self.assertTrue((out_dir / "local_scientific_gates.csv").is_file())
 
             with (out_dir / "arm_metrics.csv").open(newline="", encoding="utf-8") as handle:
@@ -157,6 +157,21 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                     if row["arm"] != "base_no_residual"
                 )
             )
+
+            with (out_dir / "forgetting_rows.csv").open(newline="", encoding="utf-8") as handle:
+                forgetting_rows = list(csv.DictReader(handle))
+            self.assertTrue(forgetting_rows)
+            self.assertEqual({row["metric_values_available"] for row in forgetting_rows}, {"True"})
+            self.assertTrue(
+                any(
+                    abs(float(row["forgetting_delta"])) > 0.0
+                    or abs(float(row["functional_churn"])) > 0.0
+                    for row in forgetting_rows
+                    if row["arm"] != "base_no_residual"
+                )
+            )
+            self.assertTrue(all(row["ce_before"] for row in forgetting_rows))
+            self.assertTrue(all(row["residual_l2"] for row in forgetting_rows))
 
 
 if __name__ == "__main__":
