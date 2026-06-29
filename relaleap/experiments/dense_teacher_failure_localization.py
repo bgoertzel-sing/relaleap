@@ -35,6 +35,10 @@ DECODER_EXPORTED_PREGATE_NEXT_STEP = (
     "run local decoder-exported train/holdout pair-composer pregate with true "
     "frozen-decoder CE before any GPU validation"
 )
+NEGATIVE_PREGATE_NEXT_STEP = (
+    "record negative local pair-composer pregate evidence and choose the next "
+    "non-GPU sparse-column mechanism branch"
+)
 
 REQUIRED_ARMS = (
     "learned_support_sparse_student",
@@ -64,6 +68,11 @@ REQUIRED_TENSORS = (
         "tensor": "base_hidden",
         "filename": "base_hidden.pt",
         "required_for": "oracle/retrained sparse value evaluation against frozen hidden states",
+    },
+    {
+        "tensor": "frozen_decoder_state",
+        "filename": "frozen_decoder_state.pt",
+        "required_for": "true frozen-decoder CE/logit scoring for train/holdout composer pregate",
     },
     {
         "tensor": "base_logits",
@@ -184,6 +193,7 @@ def run_dense_teacher_failure_localization_contract(
         "tensor_inventory": tensor_inventory,
         "pregate_rows": pregate,
         "no_gpu_pregate_rows": [],
+        "pair_composer_pregate_rows": [],
         "no_gpu_pregate_status": "not_evaluated_source_contract_failed",
         "composer_train_holdout_split_recorded": False,
         "composer_uses_true_frozen_decoder_for_ce": False,
@@ -210,6 +220,7 @@ def run_dense_teacher_failure_localization_contract(
             "tensor_inventory_csv": str(out_dir / "tensor_inventory.csv"),
             "pregate_rows_csv": str(out_dir / "pregate_rows.csv"),
             "no_gpu_pregate_rows_csv": str(out_dir / "no_gpu_pregate_rows.csv"),
+            "pair_composer_pregate_rows_csv": str(out_dir / "pair_composer_pregate_rows.csv"),
             "contract_rows_csv": str(out_dir / "contract_rows.csv"),
             "evaluator_rows_csv": str(out_dir / "evaluator_rows.csv"),
             "notes_md": str(out_dir / "notes.md"),
@@ -237,6 +248,9 @@ def run_dense_teacher_failure_localization_contract(
                 "when reporting CE/logit metrics."
             )
         else:
+            summary["pair_composer_pregate_rows"] = _extract_pair_composer_pregate_rows(
+                summary["evaluator_rows"]
+            )
             no_gpu_pregate_rows = _no_gpu_pregate_rows(summary["evaluator_rows"])
             no_gpu_failures = [row for row in no_gpu_pregate_rows if not row["passed"]]
             summary["no_gpu_pregate_rows"] = no_gpu_pregate_rows
@@ -257,25 +271,25 @@ def run_dense_teacher_failure_localization_contract(
             summary["decision"] = EVALUATOR_RECORDED
             summary["claim_status"] = "local_evaluator_complete_no_columnability_claim"
             if no_gpu_failures:
-                summary["selected_next_step"] = DECODER_EXPORTED_PREGATE_NEXT_STEP
-                summary["composer_validation_blocker"] = (
-                    "pair-composer evidence is a same-artifact local upper-bound diagnostic: "
-                    "train/holdout split and true frozen-decoder CE are not both recorded"
-                )
+                if not summary["composer_train_holdout_split_recorded"] or not summary["composer_uses_true_frozen_decoder_for_ce"]:
+                    summary["selected_next_step"] = DECODER_EXPORTED_PREGATE_NEXT_STEP
+                    summary["composer_validation_blocker"] = (
+                        "pair-composer evidence is a same-artifact local upper-bound diagnostic: "
+                        "train/holdout split and true frozen-decoder CE are not both recorded"
+                    )
+                else:
+                    summary["selected_next_step"] = NEGATIVE_PREGATE_NEXT_STEP
+                    summary["composer_validation_blocker"] = (
+                        "split true-decoder pair-composer pregate failed at least one heldout "
+                        "performance control, so GPU validation remains blocked"
+                    )
             else:
                 summary["selected_next_step"] = POST_EVALUATOR_NEXT_STEP
                 summary["composer_validation_blocker"] = ""
-            summary["rationale"] = (
-                "This artifact fills all required dense-teacher failure-localization rows, including "
-                "learned support, oracle support over trained values, retrained oracle values, an "
-                "oracle-support gated pair composer, dense/rank/norm controls, and null rows. It "
-                "still makes no columnability, promotion, or GPU-validation claim because local "
-                "retrained/composer CE and logit metrics use linearized logit-value surrogates when "
-                "the frozen decoder is not exported, and the composer fit is not recorded as an "
-                "independent train/holdout evaluation."
-            )
+            summary["rationale"] = _evaluator_rationale(summary)
     else:
         summary["evaluator_rows"] = []
+        summary["pair_composer_pregate_rows"] = []
         summary["filled_evaluator_arms"] = []
         summary["pending_evaluator_arms"] = list(REQUIRED_ARMS)
     _write_artifacts(out_dir, summary)
@@ -299,6 +313,7 @@ def _evaluator_rows(distillation_dir: Path, distillation: dict[str, Any]) -> lis
     tensors = _load_evaluator_tensors(torch, distillation_dir)
     targets = tensors["targets"]
     base_logits = tensors["base_logits"]
+    frozen_decoder_state = tensors["frozen_decoder_state"]
     teacher_logits = tensors["teacher_logits"]
     teacher_hidden_residual = tensors["teacher_hidden_residual"]
     teacher_logit_residual = tensors["teacher_logit_residual"]
@@ -480,8 +495,318 @@ def _evaluator_rows(distillation_dir: Path, distillation: dict[str, Any]) -> lis
     )
     composer_row["composer_minus_retrained_ce"] = composer_row["ce_loss"] - retrained_row["ce_loss"]
     composer_row["pair_synergy"] = retrained_logit_mse - composer_logit_mse
+    pregate_rows = _pair_composer_train_holdout_pregate(
+        torch,
+        F,
+        support=oracle_support,
+        base_hidden=tensors["base_hidden"],
+        base_logits=base_logits,
+        targets=targets,
+        teacher_hidden_residual=teacher_hidden_residual,
+        teacher_logits=teacher_logits,
+        frozen_decoder_state=frozen_decoder_state,
+        num_columns=num_columns,
+    )
+    composer_pregate = next(
+        (
+            row
+            for row in pregate_rows
+            if row.get("arm") == "oracle_support_gated_value_pair_composer"
+            and row.get("split") == "holdout"
+        ),
+        {},
+    )
+    composer_row["train_holdout_split_recorded"] = True
+    composer_row["uses_true_frozen_decoder_for_ce"] = True
+    composer_row["composer_ce_metric_path"] = "true_frozen_decoder"
+    composer_row["holdout_true_decoder_ce_loss"] = composer_pregate.get("true_decoder_ce_loss", "")
+    composer_row["holdout_teacher_logit_residual_r2"] = composer_pregate.get(
+        "teacher_logit_residual_r2",
+        "",
+    )
+    composer_row["passes_no_gpu_pregate"] = bool(
+        composer_pregate
+        and composer_pregate.get("beats_independent_holdout_ce")
+        and composer_pregate.get("beats_shuffled_pair_null_holdout_ce")
+    )
+    composer_row["notes"] = (
+        "filled by same-artifact ridge support-conditioned singleton gates plus explicit "
+        "support-pair interaction features, and additionally pregated by deterministic "
+        "train/holdout true frozen-decoder CE; local same-batch surrogate metrics remain "
+        "diagnostic only"
+    )
     source_rows = _source_summary_evaluator_rows(distillation)
-    return [learned_row, oracle_row, retrained_row, composer_row, *source_rows]
+    rows = [learned_row, oracle_row, retrained_row, composer_row, *source_rows]
+    for row in rows:
+        row["pair_composer_pregate_rows"] = pregate_rows if row["arm"] == composer_row["arm"] else ""
+    return rows
+
+
+def _pair_composer_train_holdout_pregate(
+    torch: Any,
+    F: Any,
+    *,
+    support: Any,
+    base_hidden: Any,
+    base_logits: Any,
+    targets: Any,
+    teacher_hidden_residual: Any,
+    teacher_logits: Any,
+    frozen_decoder_state: dict[str, Any],
+    num_columns: int,
+    ridge: float = 1e-4,
+    split_seed: int = 1729,
+) -> list[dict[str, Any]]:
+    batch, seq_len, top_k = support.shape
+    token_count = batch * seq_len
+    flat_support = support.reshape(token_count, top_k)
+    valid_mask = torch.ones(batch, seq_len, dtype=torch.bool, device=base_hidden.device)
+    valid_mask[:, -1] = False
+    valid_indices = torch.nonzero(valid_mask.reshape(-1), as_tuple=False).reshape(-1)
+    if int(valid_indices.numel()) < 2:
+        return [
+            {
+                "arm": "pair_composer_pregate_unavailable",
+                "split": "none",
+                "availability": "failed",
+                "notes": "not enough shifted-token CE positions for train/holdout split",
+            }
+        ]
+    generator = torch.Generator(device=valid_indices.device)
+    generator.manual_seed(int(split_seed))
+    ordered = valid_indices[torch.randperm(int(valid_indices.numel()), generator=generator, device=valid_indices.device)]
+    train_count = max(1, int(round(0.6 * int(ordered.numel()))))
+    train_indices = ordered[:train_count]
+    holdout_indices = ordered[train_count:]
+    if int(holdout_indices.numel()) == 0:
+        holdout_indices = ordered[-1:]
+        train_indices = ordered[:-1]
+    pair_tuples = sorted({tuple(sorted(int(item) for item in row.tolist())) for row in flat_support})
+    independent_design = _support_design(torch, flat_support, num_columns=num_columns)
+    composer_design, feature_count = _support_pair_design(
+        torch,
+        flat_support,
+        num_columns=num_columns,
+        pair_tuples=pair_tuples,
+    )
+    shuffled_design, shuffled_feature_count = _shuffled_support_pair_design(
+        torch,
+        flat_support,
+        num_columns=num_columns,
+        pair_tuples=pair_tuples,
+    )
+    target = teacher_hidden_residual.reshape(token_count, teacher_hidden_residual.shape[-1])
+    decoder_weight = frozen_decoder_state.get("lm_head_weight")
+    decoder_bias = frozen_decoder_state.get("lm_head_bias")
+    if decoder_weight is None or not hasattr(decoder_weight, "to"):
+        return [
+            {
+                "arm": "pair_composer_pregate_unavailable",
+                "split": "none",
+                "availability": "failed",
+                "notes": "frozen_decoder_state.pt does not contain lm_head_weight",
+            }
+        ]
+    decoder_weight = decoder_weight.to(dtype=base_hidden.dtype, device=base_hidden.device)
+    if decoder_bias is not None and hasattr(decoder_bias, "to"):
+        decoder_bias = decoder_bias.to(dtype=base_hidden.dtype, device=base_hidden.device)
+    else:
+        decoder_bias = None
+    fitted = {
+        "retrained_oracle_support_values": (
+            independent_design,
+            _ridge_fit(torch, independent_design[train_indices], target[train_indices], ridge=ridge),
+            int(num_columns),
+        ),
+        "oracle_support_gated_value_pair_composer": (
+            composer_design,
+            _ridge_fit(torch, composer_design[train_indices], target[train_indices], ridge=ridge),
+            int(feature_count),
+        ),
+        "feature_count_matched_shuffled_pair_null": (
+            shuffled_design,
+            _ridge_fit(torch, shuffled_design[train_indices], target[train_indices], ridge=ridge),
+            int(shuffled_feature_count),
+        ),
+    }
+    rows: list[dict[str, Any]] = []
+    holdout_ce: dict[str, float] = {}
+    for arm, (design, values, count) in fitted.items():
+        update = design.matmul(values).reshape(batch, seq_len, target.shape[-1])
+        logits = torch.matmul(base_hidden + update, decoder_weight.t())
+        if decoder_bias is not None:
+            logits = logits + decoder_bias
+        for split_name, indices in (("train", train_indices), ("holdout", holdout_indices)):
+            row = _split_pregate_metric_row(
+                torch,
+                F,
+                arm=arm,
+                split=split_name,
+                logits=logits,
+                base_hidden=base_hidden,
+                base_logits=base_logits,
+                hidden_update=update,
+                targets=targets,
+                teacher_logits=teacher_logits,
+                teacher_hidden_residual=teacher_hidden_residual,
+                indices=indices,
+                feature_count=count,
+                split_seed=split_seed,
+            )
+            rows.append(row)
+            if split_name == "holdout":
+                holdout_ce[arm] = float(row["true_decoder_ce_loss"])
+    composer_holdout = holdout_ce.get("oracle_support_gated_value_pair_composer")
+    independent_holdout = holdout_ce.get("retrained_oracle_support_values")
+    shuffled_holdout = holdout_ce.get("feature_count_matched_shuffled_pair_null")
+    for row in rows:
+        if row.get("arm") != "oracle_support_gated_value_pair_composer":
+            continue
+        row["beats_independent_holdout_ce"] = (
+            bool(composer_holdout is not None and independent_holdout is not None and composer_holdout <= independent_holdout)
+            if row.get("split") == "holdout"
+            else ""
+        )
+        row["beats_shuffled_pair_null_holdout_ce"] = (
+            bool(composer_holdout is not None and shuffled_holdout is not None and composer_holdout <= shuffled_holdout)
+            if row.get("split") == "holdout"
+            else ""
+        )
+    return rows
+
+
+def _support_design(torch: Any, flat_support: Any, *, num_columns: int) -> Any:
+    token_count, top_k = flat_support.shape
+    design = torch.zeros(
+        token_count,
+        num_columns,
+        dtype=torch.float32,
+        device=flat_support.device,
+    )
+    weights = torch.full_like(flat_support, 1.0 / max(top_k, 1), dtype=design.dtype)
+    design.scatter_add_(dim=1, index=flat_support, src=weights)
+    return design
+
+
+def _support_pair_design(
+    torch: Any,
+    flat_support: Any,
+    *,
+    num_columns: int,
+    pair_tuples: list[tuple[int, ...]],
+) -> tuple[Any, int]:
+    singleton = _support_design(torch, flat_support, num_columns=num_columns)
+    feature_tuples: list[tuple[int, ...]] = [(column,) for column in range(num_columns)]
+    feature_tuples.extend(pair_tuples)
+    lookup = {feature: index for index, feature in enumerate(feature_tuples)}
+    design = torch.zeros(
+        flat_support.shape[0],
+        len(feature_tuples),
+        dtype=singleton.dtype,
+        device=singleton.device,
+    )
+    design[:, :num_columns] = singleton
+    pair_indices = torch.as_tensor(
+        [
+            lookup[tuple(sorted(int(item) for item in row.tolist()))]
+            for row in flat_support
+        ],
+        dtype=torch.long,
+        device=design.device,
+    )
+    design[torch.arange(flat_support.shape[0], device=design.device), pair_indices] = 1.0
+    return design, len(feature_tuples)
+
+
+def _shuffled_pair_tuples(pair_tuples: list[tuple[int, ...]], *, num_columns: int) -> list[tuple[int, ...]]:
+    del num_columns
+    if len(pair_tuples) <= 1:
+        return pair_tuples
+    return pair_tuples[1:] + pair_tuples[:1]
+
+
+def _shuffled_support_pair_design(
+    torch: Any,
+    flat_support: Any,
+    *,
+    num_columns: int,
+    pair_tuples: list[tuple[int, ...]],
+) -> tuple[Any, int]:
+    singleton = _support_design(torch, flat_support, num_columns=num_columns)
+    feature_count = num_columns + len(pair_tuples)
+    design = torch.zeros(
+        flat_support.shape[0],
+        feature_count,
+        dtype=singleton.dtype,
+        device=singleton.device,
+    )
+    design[:, :num_columns] = singleton
+    if pair_tuples:
+        row_ids = torch.arange(flat_support.shape[0], device=design.device)
+        shuffled_pair_ids = (row_ids + 1) % len(pair_tuples)
+        design[row_ids, num_columns + shuffled_pair_ids] = 1.0
+    return design, feature_count
+
+
+def _ridge_fit(torch: Any, design: Any, target: Any, *, ridge: float) -> Any:
+    eye = torch.eye(design.shape[1], dtype=design.dtype, device=design.device)
+    gram = design.transpose(0, 1).matmul(design) + float(ridge) * eye
+    return torch.linalg.solve(gram, design.transpose(0, 1).matmul(target))
+
+
+def _split_pregate_metric_row(
+    torch: Any,
+    F: Any,
+    *,
+    arm: str,
+    split: str,
+    logits: Any,
+    base_hidden: Any,
+    base_logits: Any | None,
+    hidden_update: Any,
+    targets: Any,
+    teacher_logits: Any,
+    teacher_hidden_residual: Any,
+    indices: Any,
+    feature_count: int,
+    split_seed: int,
+) -> dict[str, Any]:
+    flat_logits = logits.reshape(-1, logits.shape[-1])
+    flat_base_logits = base_logits.reshape(-1, base_logits.shape[-1]) if base_logits is not None else None
+    flat_targets = targets.reshape(-1)
+    flat_teacher_logits = teacher_logits.reshape(-1, teacher_logits.shape[-1])
+    flat_hidden_update = hidden_update.reshape(-1, hidden_update.shape[-1])
+    flat_teacher_hidden_residual = teacher_hidden_residual.reshape(-1, teacher_hidden_residual.shape[-1])
+    selected_logits = flat_logits[indices]
+    selected_targets = flat_targets[indices]
+    selected_teacher_logits = flat_teacher_logits[indices]
+    selected_update = flat_hidden_update[indices]
+    selected_hidden_target = flat_teacher_hidden_residual[indices]
+    selected_base_logits = flat_base_logits[indices] if flat_base_logits is not None else None
+    logit_update = selected_logits - selected_base_logits if selected_base_logits is not None else selected_logits
+    logit_target = (
+        selected_teacher_logits - selected_base_logits
+        if selected_base_logits is not None
+        else selected_teacher_logits
+    )
+    return {
+        "arm": arm,
+        "split": split,
+        "availability": "filled",
+        "split_seed": split_seed,
+        "token_count": int(indices.numel()),
+        "feature_count": int(feature_count),
+        "true_decoder_ce_loss": float(F.cross_entropy(selected_logits, selected_targets).detach().item()),
+        "teacher_logit_residual_mse": float(F.mse_loss(logit_update, logit_target).detach().item()),
+        "teacher_logit_residual_r2": _r2(torch, logit_update, logit_target),
+        "teacher_logit_residual_cosine": _cosine(F, logit_update, logit_target),
+        "teacher_hidden_residual_mse": float(F.mse_loss(selected_update, selected_hidden_target).detach().item()),
+        "teacher_hidden_residual_r2": _r2(torch, selected_update, selected_hidden_target),
+        "teacher_hidden_residual_cosine": _cosine(F, selected_update, selected_hidden_target),
+        "uses_true_frozen_decoder_for_ce": True,
+        "train_holdout_split_recorded": True,
+        "notes": "ridge values fit on train split and evaluated through exported frozen lm_head",
+    }
 
 
 def _source_summary_evaluator_rows(distillation: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1093,6 +1418,17 @@ def _no_gpu_pregate_rows(evaluator_rows: list[dict[str, Any]]) -> list[dict[str,
         {},
     )
     notes = str(composer.get("notes", ""))
+    uses_true_decoder = bool(composer.get("uses_true_frozen_decoder_for_ce"))
+    pregate_rows = _extract_pair_composer_pregate_rows(evaluator_rows)
+    composer_holdout = next(
+        (
+            row
+            for row in pregate_rows
+            if row.get("arm") == "oracle_support_gated_value_pair_composer"
+            and row.get("split") == "holdout"
+        ),
+        {},
+    )
     return [
         _pregate(
             "composer_train_holdout_split_recorded",
@@ -1108,11 +1444,60 @@ def _no_gpu_pregate_rows(evaluator_rows: list[dict[str, Any]]) -> list[dict[str,
         ),
         _pregate(
             "composer_surrogate_caveat_recorded",
-            "linearized logit" in notes and "frozen decoder is not exported" in notes,
+            uses_true_decoder
+            or ("linearized logit" in notes and "frozen decoder is not exported" in notes),
             "when decoder CE is absent, artifact must explicitly label CE/logit metrics as surrogate",
             notes,
         ),
+        _pregate(
+            "composer_beats_independent_holdout_true_decoder_ce",
+            bool(composer_holdout.get("beats_independent_holdout_ce")),
+            "pair composer must beat fixed-support independent retrained values on heldout true-decoder CE",
+            composer_holdout.get("beats_independent_holdout_ce", "not_recorded"),
+        ),
+        _pregate(
+            "composer_beats_feature_count_matched_null_holdout_true_decoder_ce",
+            bool(composer_holdout.get("beats_shuffled_pair_null_holdout_ce")),
+            "pair composer must beat a feature-count-matched shuffled-pair null on heldout true-decoder CE",
+            composer_holdout.get("beats_shuffled_pair_null_holdout_ce", "not_recorded"),
+        ),
     ]
+
+
+def _extract_pair_composer_pregate_rows(evaluator_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for row in evaluator_rows:
+        if row.get("arm") != "oracle_support_gated_value_pair_composer":
+            continue
+        pregate_rows = row.get("pair_composer_pregate_rows")
+        if isinstance(pregate_rows, list):
+            return [item for item in pregate_rows if isinstance(item, dict)]
+    return []
+
+
+def _evaluator_rationale(summary: dict[str, Any]) -> str:
+    base = (
+        "This artifact fills all required dense-teacher failure-localization rows, including "
+        "learned support, oracle support over trained values, retrained oracle values, an "
+        "oracle-support gated pair composer, dense/rank/norm controls, and null rows."
+    )
+    if summary.get("no_gpu_pregate_status") == "pass":
+        return (
+            f"{base} It also records a deterministic train/holdout pregate using the exported "
+            "frozen decoder; this remains local evidence only and does not by itself make a "
+            "columnability, promotion, or GPU-validation claim."
+        )
+    if summary.get("composer_uses_true_frozen_decoder_for_ce"):
+        return (
+            f"{base} The exported-decoder train/holdout pregate fails at least one heldout "
+            "performance control, so the pair-composer row is negative local evidence and "
+            "does not justify GPU validation."
+        )
+    return (
+        f"{base} It still makes no columnability, promotion, or GPU-validation claim because "
+        "local retrained/composer CE and logit metrics use linearized logit-value surrogates "
+        "when the frozen decoder is not exported, or the composer fit is not recorded as an "
+        "independent train/holdout evaluation."
+    )
 
 
 def _source_row(source: str, path: Path, packet: dict[str, Any]) -> dict[str, Any]:
@@ -1167,6 +1552,7 @@ def _write_artifacts(out_dir: Path, summary: dict[str, Any]) -> None:
     _write_csv(out_dir / "tensor_inventory.csv", summary["tensor_inventory"])
     _write_csv(out_dir / "pregate_rows.csv", summary["pregate_rows"])
     _write_csv(out_dir / "no_gpu_pregate_rows.csv", summary["no_gpu_pregate_rows"])
+    _write_csv(out_dir / "pair_composer_pregate_rows.csv", summary["pair_composer_pregate_rows"])
     _write_csv(out_dir / "contract_rows.csv", summary["contract_rows"])
     _write_csv(out_dir / "evaluator_rows.csv", summary["evaluator_rows"])
     _write_notes(out_dir / "notes.md", summary)

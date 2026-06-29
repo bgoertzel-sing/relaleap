@@ -72,6 +72,7 @@ REQUIRED_EVALUATOR_TENSORS = (
     "inputs.pt",
     "targets.pt",
     "base_hidden.pt",
+    "frozen_decoder_state.pt",
     "base_logits.pt",
     "teacher_logits.pt",
     "teacher_hidden_residual.pt",
@@ -176,6 +177,7 @@ def run_dense_teacher_residual_distillation_comparison(
     tensor_exports = _export_base_teacher_tensors(
         torch,
         out_dir=out_dir,
+        base=base,
         inputs=inputs,
         targets=targets,
         hidden=hidden,
@@ -706,6 +708,7 @@ def _export_base_teacher_tensors(
     torch: Any,
     *,
     out_dir: Path,
+    base: Any,
     inputs: Any,
     targets: Any,
     hidden: Any,
@@ -718,6 +721,7 @@ def _export_base_teacher_tensors(
         "inputs": out_dir / "inputs.pt",
         "targets": out_dir / "targets.pt",
         "base_hidden": out_dir / "base_hidden.pt",
+        "frozen_decoder_state": out_dir / "frozen_decoder_state.pt",
         "base_logits": out_dir / "base_logits.pt",
         "teacher_logits": out_dir / "teacher_logits.pt",
         "teacher_hidden_residual": out_dir / "teacher_hidden_residual.pt",
@@ -727,13 +731,25 @@ def _export_base_teacher_tensors(
         "inputs": inputs,
         "targets": targets,
         "base_hidden": hidden,
+        "frozen_decoder_state": {
+            "decoder_type": "linear_lm_head_after_exported_norm_hidden",
+            "lm_head_weight": base.lm_head.weight.detach().cpu(),
+            "lm_head_bias": (
+                base.lm_head.bias.detach().cpu()
+                if getattr(base.lm_head, "bias", None) is not None
+                else None
+            ),
+            "hidden_is_post_norm": True,
+            "ce_target_shift": "logits[:, :-1] vs targets[:, :-1]",
+        },
         "base_logits": base_logits,
         "teacher_logits": teacher_logits,
         "teacher_hidden_residual": teacher_hidden_residual,
         "teacher_logit_residual": teacher_logit_residual,
     }
     for name, path in exports.items():
-        torch.save(values[name].detach().cpu(), path)
+        value = values[name]
+        torch.save(value.detach().cpu() if hasattr(value, "detach") else value, path)
     return {name: str(path) for name, path in exports.items()}
 
 

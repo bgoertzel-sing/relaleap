@@ -9,10 +9,9 @@ from relaleap.experiments.dense_teacher_failure_localization import (
     CONTRACT_RECORDED,
     EVALUATOR_RECORDED,
     INSUFFICIENT_EVIDENCE,
-    PARTIAL_EVALUATOR_RECORDED,
+    NEGATIVE_PREGATE_NEXT_STEP,
     REQUIRED_ARMS,
     REQUIRED_TENSORS,
-    DECODER_EXPORTED_PREGATE_NEXT_STEP,
     run_dense_teacher_failure_localization_contract,
 )
 
@@ -38,10 +37,10 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             self.assertFalse(summary["requires_gpu_now"])
             self.assertFalse(summary["promotion_allowed"])
             self.assertEqual(summary["no_gpu_pregate_status"], "fail")
-            self.assertFalse(summary["composer_train_holdout_split_recorded"])
-            self.assertFalse(summary["composer_uses_true_frozen_decoder_for_ce"])
-            self.assertEqual(summary["composer_ce_metric_path"], "linearized_logit_surrogate")
-            self.assertEqual(summary["selected_next_step"], DECODER_EXPORTED_PREGATE_NEXT_STEP)
+            self.assertTrue(summary["composer_train_holdout_split_recorded"])
+            self.assertTrue(summary["composer_uses_true_frozen_decoder_for_ce"])
+            self.assertEqual(summary["composer_ce_metric_path"], "true_frozen_decoder")
+            self.assertEqual(summary["selected_next_step"], NEGATIVE_PREGATE_NEXT_STEP)
             self.assertEqual(summary["required_arms"], list(REQUIRED_ARMS))
             self.assertEqual(
                 [row["tensor"] for row in summary["tensor_inventory"]],
@@ -71,13 +70,33 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             no_gpu_by_criterion = {
                 row["criterion"]: row for row in summary["no_gpu_pregate_rows"]
             }
-            self.assertFalse(
+            self.assertTrue(
                 no_gpu_by_criterion["composer_train_holdout_split_recorded"]["passed"]
             )
-            self.assertFalse(
+            self.assertTrue(
                 no_gpu_by_criterion["composer_uses_true_frozen_decoder_for_ce"]["passed"]
             )
             self.assertTrue(no_gpu_by_criterion["composer_surrogate_caveat_recorded"]["passed"])
+            self.assertIn(
+                "composer_beats_feature_count_matched_null_holdout_true_decoder_ce",
+                no_gpu_by_criterion,
+            )
+            self.assertTrue(summary["pair_composer_pregate_rows"])
+            holdout_rows = {
+                row["arm"]: row
+                for row in summary["pair_composer_pregate_rows"]
+                if row["split"] == "holdout"
+            }
+            self.assertIn("oracle_support_gated_value_pair_composer", holdout_rows)
+            self.assertTrue(
+                holdout_rows["oracle_support_gated_value_pair_composer"][
+                    "uses_true_frozen_decoder_for_ce"
+                ]
+            )
+            self.assertIn(
+                "feature_count_matched_shuffled_pair_null",
+                holdout_rows,
+            )
             self.assertEqual(
                 evaluator_by_arm["learned_support_sparse_student"]["availability"],
                 "filled",
@@ -255,6 +274,16 @@ def _write_required_tensors(path: Path, *, skip: set[str] | None = None) -> None
     targets = torch.tensor([[1, 2, 0, 1]], dtype=torch.long)
     base_hidden = torch.zeros(1, 4, 2)
     base_logits = torch.zeros(1, 4, 3)
+    frozen_decoder_state = {
+        "decoder_type": "linear_lm_head_after_exported_norm_hidden",
+        "lm_head_weight": torch.tensor(
+            [[1.0, 0.0], [0.0, 1.0], [-1.0, -1.0]],
+            dtype=torch.float32,
+        ),
+        "lm_head_bias": None,
+        "hidden_is_post_norm": True,
+        "ce_target_shift": "logits[:, :-1] vs targets[:, :-1]",
+    }
     teacher_logit_residual = torch.zeros(1, 4, 3)
     teacher_logit_residual[:, :, 0] = 1.0
     teacher_hidden_residual = torch.zeros(1, 4, 2)
@@ -274,6 +303,7 @@ def _write_required_tensors(path: Path, *, skip: set[str] | None = None) -> None
         "inputs": inputs,
         "targets": targets,
         "base_hidden": base_hidden,
+        "frozen_decoder_state": frozen_decoder_state,
         "base_logits": base_logits,
         "teacher_logits": teacher_logits,
         "teacher_hidden_residual": teacher_hidden_residual,
