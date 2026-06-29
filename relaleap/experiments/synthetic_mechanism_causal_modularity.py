@@ -32,6 +32,7 @@ REQUIRED_ARTIFACTS = (
     "forgetting_rows.csv",
     "budget_rows.csv",
     "gate_criteria.csv",
+    "local_scientific_gates.csv",
     "arm_metrics.csv",
     "per_token_metrics.csv",
     "notes.md",
@@ -126,15 +127,22 @@ def run_synthetic_mechanism_causal_modularity(
         training_hooks_available=hooks_available,
         training_smoke=training_smoke,
     )
+    local_scientific_gate_rows = _local_scientific_gate_rows(training_smoke)
     hard_failures = [row for row in gate_rows if not row["passed"] and row["severity"] == "hard"]
+    local_scientific_failures = [
+        row for row in local_scientific_gate_rows if not row["passed"]
+    ]
     status = "fail" if hard_failures else "pass"
+    decision = (
+        "synthetic_mechanism_causal_modularity_pregate_failed_closed"
+        if hard_failures
+        else "synthetic_mechanism_causal_modularity_local_gates_failed_closed"
+        if local_scientific_failures
+        else "synthetic_mechanism_causal_modularity_pregate_ready"
+    )
     summary = {
         "status": status,
-        "decision": (
-            "synthetic_mechanism_causal_modularity_pregate_failed_closed"
-            if hard_failures
-            else "synthetic_mechanism_causal_modularity_pregate_ready"
-        ),
+        "decision": decision,
         "claim_status": "schema_and_generator_only_no_causal_modularity_claim",
         "promotion_allowed": False,
         "requires_gpu_now": False,
@@ -160,7 +168,16 @@ def run_synthetic_mechanism_causal_modularity(
         "forgetting_row_count": len(forgetting_rows),
         "budget_row_count": len(budget_rows),
         "gate_criteria": gate_rows,
+        "local_scientific_gate_status": (
+            "not_run"
+            if training_smoke is None
+            else "fail"
+            if local_scientific_failures
+            else "pass"
+        ),
+        "local_scientific_gates": local_scientific_gate_rows,
         "failures": hard_failures,
+        "local_scientific_failures": local_scientific_failures,
         "training_smoke_ran": training_smoke is not None,
         "training_steps": training_steps if training_smoke is not None else 0,
         "training_smoke_primary_result": (
@@ -202,6 +219,7 @@ def run_synthetic_mechanism_causal_modularity(
         budget_rows,
         gate_rows,
         training_smoke,
+        local_scientific_gate_rows,
     )
     return summary
 
@@ -1250,6 +1268,179 @@ def _gate_rows(
     return rows
 
 
+def _local_scientific_gate_rows(training_smoke: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if training_smoke is None:
+        return []
+    arm_metrics = training_smoke["arm_metrics"]
+    intervention_rows = training_smoke["per_mechanism_interventions"]
+    commutator_rows = training_smoke["commutator_rows"]
+    forgetting_rows = training_smoke["forgetting_rows"]
+    by_arm = {row["arm"]: row for row in arm_metrics}
+    sparse_arms = ["promoted_contextual_topk2", "intervention_trained_sparse_topk2"]
+    dense_mlp_arms = ["dense_rank_norm_matched", "low_churn_mlp_control"]
+    router_null_arms = ["random_support_topk2", "fixed_support_topk2", "token_position_router_topk2"]
+    base_ce = _metric_float(by_arm.get("base_no_residual", {}).get("holdout_ce"))
+    sparse_ces = _arm_metric_values(by_arm, sparse_arms, "holdout_ce")
+    dense_mlp_ces = _arm_metric_values(by_arm, dense_mlp_arms, "holdout_ce")
+    sparse_norms = _arm_metric_values(by_arm, sparse_arms, "residual_l2")
+    dense_mlp_norms = _arm_metric_values(by_arm, dense_mlp_arms, "residual_l2")
+    sparse_stored = _arm_metric_values(by_arm, sparse_arms, "stored_parameters")
+    dense_mlp_stored = _arm_metric_values(by_arm, dense_mlp_arms, "stored_parameters")
+    sparse_active = _arm_metric_values(by_arm, sparse_arms, "active_parameters_proxy")
+    dense_mlp_active = _arm_metric_values(by_arm, dense_mlp_arms, "active_parameters_proxy")
+    sparse_selectivity = _mean_metric(intervention_rows, sparse_arms, "selectivity")
+    sparse_necessity = _mean_metric(intervention_rows, sparse_arms, "necessity")
+    sparse_leakage = _mean_metric(intervention_rows, sparse_arms, "off_target_leakage")
+    null_selectivity = _mean_metric(intervention_rows, router_null_arms, "selectivity")
+    sparse_commutator = _mean_metric(commutator_rows, sparse_arms, "finite_update_commutator_l2")
+    dense_mlp_commutator = _mean_metric(commutator_rows, dense_mlp_arms, "finite_update_commutator_l2")
+    forgetting_nonzero = any(
+        abs(_metric_float(row.get("forgetting_delta"))) > 1e-12
+        or abs(_metric_float(row.get("functional_churn"))) > 1e-12
+        for row in forgetting_rows
+    )
+    return [
+        _scientific_gate(
+            "measured_training_smoke_metrics_present",
+            bool(arm_metrics and intervention_rows and commutator_rows and forgetting_rows),
+            "arm, per-mechanism intervention, commutator, and forgetting rows must all be measured",
+            {
+                "arm_rows": len(arm_metrics),
+                "intervention_rows": len(intervention_rows),
+                "commutator_rows": len(commutator_rows),
+                "forgetting_rows": len(forgetting_rows),
+            },
+            "missing measured local synthetic rows",
+        ),
+        _scientific_gate(
+            "ce_guardrail_vs_base",
+            bool(base_ce is not None and sparse_ces and max(sparse_ces) <= base_ce + 0.05),
+            "both sparse arms must stay within +0.05 CE of base/no-residual",
+            {"base_ce": base_ce, "sparse_ces": sparse_ces, "tolerance": 0.05},
+            "sparse CE violates base guardrail",
+        ),
+        _scientific_gate(
+            "ce_competitive_with_dense_or_mlp",
+            bool(sparse_ces and dense_mlp_ces and min(sparse_ces) <= min(dense_mlp_ces) + 0.02),
+            "best sparse arm must be within +0.02 CE of the best dense/MLP control",
+            {"best_sparse_ce": min(sparse_ces) if sparse_ces else None, "best_dense_mlp_ce": min(dense_mlp_ces) if dense_mlp_ces else None, "tolerance": 0.02},
+            "sparse arm is not CE-competitive with the best dense/MLP control",
+        ),
+        _scientific_gate(
+            "positive_sparse_intervention_selectivity",
+            bool(sparse_selectivity is not None and sparse_selectivity > 0.0),
+            "mean sparse selected-column selectivity must be positive",
+            {"mean_sparse_selectivity": sparse_selectivity},
+            "sparse selected-column ablation/drop-in selectivity is not positive",
+        ),
+        _scientific_gate(
+            "sparse_selectivity_beats_router_nulls",
+            bool(
+                sparse_selectivity is not None
+                and null_selectivity is not None
+                and sparse_selectivity >= null_selectivity + 0.005
+            ),
+            "mean sparse selectivity must beat random/fixed/token-position support nulls by at least 0.005",
+            {"mean_sparse_selectivity": sparse_selectivity, "mean_router_null_selectivity": null_selectivity, "margin": 0.005},
+            "sparse selectivity does not beat router nulls by margin",
+        ),
+        _scientific_gate(
+            "off_target_leakage_below_necessity",
+            bool(
+                sparse_leakage is not None
+                and sparse_necessity is not None
+                and sparse_leakage <= sparse_necessity
+            ),
+            "mean sparse off-target leakage must not exceed mean necessity",
+            {"mean_sparse_off_target_leakage": sparse_leakage, "mean_sparse_necessity": sparse_necessity},
+            "off-target leakage exceeds selected-column necessity",
+        ),
+        _scientific_gate(
+            "finite_update_commutator_not_worse_than_dense_mlp",
+            bool(
+                sparse_commutator is not None
+                and dense_mlp_commutator is not None
+                and sparse_commutator <= dense_mlp_commutator * 1.1
+            ),
+            "mean sparse finite-update commutator must be no worse than 1.1x dense/MLP controls",
+            {"mean_sparse_commutator_l2": sparse_commutator, "mean_dense_mlp_commutator_l2": dense_mlp_commutator, "max_ratio": 1.1},
+            "sparse finite-update commutator is worse than dense/MLP controls",
+        ),
+        _scientific_gate(
+            "residual_norm_budget",
+            bool(sparse_norms and dense_mlp_norms and max(sparse_norms) <= max(dense_mlp_norms)),
+            "sparse residual norm must not exceed the larger dense/MLP residual norm",
+            {"max_sparse_residual_l2": max(sparse_norms) if sparse_norms else None, "max_dense_mlp_residual_l2": max(dense_mlp_norms) if dense_mlp_norms else None},
+            "sparse residual norm exceeds dense/MLP norm budget",
+        ),
+        _scientific_gate(
+            "stored_parameter_budget",
+            bool(sparse_stored and dense_mlp_stored and max(sparse_stored) <= max(dense_mlp_stored)),
+            "sparse stored parameters must not exceed the larger dense/MLP stored-parameter control",
+            {"max_sparse_stored_parameters": max(sparse_stored) if sparse_stored else None, "max_dense_mlp_stored_parameters": max(dense_mlp_stored) if dense_mlp_stored else None},
+            "sparse stored-parameter budget is not matched to dense/MLP controls",
+        ),
+        _scientific_gate(
+            "active_parameter_budget",
+            bool(sparse_active and dense_mlp_active and max(sparse_active) <= max(dense_mlp_active)),
+            "sparse active parameter proxy must not exceed the larger dense/MLP active proxy",
+            {"max_sparse_active_parameters": max(sparse_active) if sparse_active else None, "max_dense_mlp_active_parameters": max(dense_mlp_active) if dense_mlp_active else None},
+            "sparse active-parameter budget exceeds dense/MLP controls",
+        ),
+        _scientific_gate(
+            "forgetting_and_functional_churn_measured",
+            forgetting_nonzero,
+            "forgetting rows must contain non-placeholder forgetting_delta or functional_churn values before interpretation",
+            {"any_nonzero_forgetting_or_churn": forgetting_nonzero},
+            "forgetting/functional-churn rows are still placeholder zeros",
+        ),
+    ]
+
+
+def _scientific_gate(
+    criterion: str,
+    passed: bool,
+    requirement: str,
+    observed: Any,
+    failure_reason: str,
+) -> dict[str, Any]:
+    return {
+        "criterion": criterion,
+        "passed": bool(passed),
+        "severity": "scientific",
+        "requirement": requirement,
+        "observed": observed,
+        "failure_reason": "" if passed else failure_reason,
+    }
+
+
+def _mean_metric(rows: list[dict[str, Any]], arms: list[str], metric: str) -> float | None:
+    values = [
+        _metric_float(row.get(metric))
+        for row in rows
+        if row.get("arm") in arms and row.get("metric_values_available") is True
+    ]
+    values = [value for value in values if value is not None]
+    if not values:
+        return None
+    return sum(values) / float(len(values))
+
+
+def _arm_metric_values(by_arm: dict[str, dict[str, Any]], arms: list[str], metric: str) -> list[float]:
+    values = [
+        _metric_float(by_arm[arm].get(metric))
+        for arm in arms
+        if arm in by_arm
+    ]
+    return [value for value in values if value is not None]
+
+
+def _metric_float(value: Any) -> float | None:
+    if value in {None, ""}:
+        return None
+    return float(value)
+
+
 def _required_controls() -> set[str]:
     return {
         "base_no_residual",
@@ -1290,7 +1481,7 @@ def _selected_next_step(
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
     return (
-        "add stricter local pass/fail gates over measured purity, off-target leakage, commutators, CE, norm, and parameter budgets before any second seed or GPU validation"
+        "repair any failed local scientific gates over CE, selectivity/leakage, commutators, forgetting/churn, norm, and parameter budgets before any second seed or GPU validation"
     )
 
 
@@ -1323,6 +1514,7 @@ def _write_artifacts(
     budget_rows: list[dict[str, Any]],
     gate_rows: list[dict[str, Any]],
     training_smoke: dict[str, Any] | None,
+    local_scientific_gate_rows: list[dict[str, Any]],
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -1333,6 +1525,7 @@ def _write_artifacts(
     _write_csv(out_dir / "forgetting_rows.csv", forgetting_rows)
     _write_csv(out_dir / "budget_rows.csv", budget_rows)
     _write_csv(out_dir / "gate_criteria.csv", gate_rows)
+    _write_csv(out_dir / "local_scientific_gates.csv", local_scientific_gate_rows)
     _write_csv(out_dir / "arm_metrics.csv", [] if training_smoke is None else training_smoke["arm_metrics"])
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_notes(out_dir / "notes.md", summary)
@@ -1352,13 +1545,20 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Hidden rule boundaries: `{summary['hidden_rule_boundaries']}`",
         f"- Task id visible to model: `{summary['task_id_visible_to_model']}`",
         f"- Mechanism labels enter training: `{summary['mechanism_labels_enter_training']}`",
+        f"- Local scientific gates: `{summary['local_scientific_gate_status']}`",
         "",
-        "This artifact implements the major-pivot pregate by generating same-vocabulary synthetic latent-rule episodes and the comparator/intervention schemas. It intentionally fails closed until the training/evaluation hooks are wired.",
+        "This artifact implements the major-pivot pregate by generating same-vocabulary synthetic latent-rule episodes and the comparator/intervention schemas. It intentionally separates artifact readiness from scientific gates; GPU validation remains blocked until local scientific gates pass.",
         "",
         "## Next Step",
         "",
         str(summary["selected_next_step"]),
     ]
+    if summary["local_scientific_failures"]:
+        lines.extend(["", "## Local Scientific Gate Failures"])
+        lines.extend(
+            f"- {row['criterion']}: {row['failure_reason']}"
+            for row in summary["local_scientific_failures"]
+        )
     if summary["missing_training_hooks"]:
         lines.extend(["", "## Missing Hooks"])
         lines.extend(f"- {hook}" for hook in summary["missing_training_hooks"])

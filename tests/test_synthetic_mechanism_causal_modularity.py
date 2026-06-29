@@ -93,6 +93,8 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
 
             self.assertEqual(summary["status"], "pass")
+            self.assertEqual(summary["decision"], "synthetic_mechanism_causal_modularity_local_gates_failed_closed")
+            self.assertEqual(summary["local_scientific_gate_status"], "fail")
             self.assertTrue(summary["training_smoke_ran"])
             self.assertFalse(summary["promotion_allowed"])
             self.assertFalse(summary["requires_gpu_now"])
@@ -104,6 +106,13 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertTrue(criteria["training_smoke_required_arms_present"]["passed"])
             self.assertTrue(criteria["training_smoke_intervention_metrics_present"]["passed"])
             self.assertTrue(criteria["training_smoke_commutator_metrics_present"]["passed"])
+            scientific = {row["criterion"]: row for row in summary["local_scientific_gates"]}
+            self.assertTrue(scientific["measured_training_smoke_metrics_present"]["passed"])
+            self.assertIn("stored_parameter_budget", scientific)
+            self.assertIn("forgetting_and_functional_churn_measured", scientific)
+            self.assertFalse(scientific["stored_parameter_budget"]["passed"])
+            self.assertFalse(scientific["forgetting_and_functional_churn_measured"]["passed"])
+            self.assertTrue((out_dir / "local_scientific_gates.csv").is_file())
 
             with (out_dir / "arm_metrics.csv").open(newline="", encoding="utf-8") as handle:
                 arms = {row["arm"] for row in csv.DictReader(handle)}
