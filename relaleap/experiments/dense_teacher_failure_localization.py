@@ -31,6 +31,10 @@ POST_EVALUATOR_NEXT_STEP = (
     "interpret dense_teacher_failure_localization rows and decide whether any "
     "local sparse composer recovery justifies GPU validation"
 )
+DECODER_EXPORTED_PREGATE_NEXT_STEP = (
+    "run local decoder-exported train/holdout pair-composer pregate with true "
+    "frozen-decoder CE before any GPU validation"
+)
 
 REQUIRED_ARMS = (
     "learned_support_sparse_student",
@@ -179,6 +183,12 @@ def run_dense_teacher_failure_localization_contract(
         "source_rows": source_rows,
         "tensor_inventory": tensor_inventory,
         "pregate_rows": pregate,
+        "no_gpu_pregate_rows": [],
+        "no_gpu_pregate_status": "not_evaluated_source_contract_failed",
+        "composer_train_holdout_split_recorded": False,
+        "composer_uses_true_frozen_decoder_for_ce": False,
+        "composer_ce_metric_path": "not_evaluated_source_contract_failed",
+        "composer_validation_blocker": "source contract failed before evaluator rows could run",
         "contract_rows": contract_rows,
         "required_arms": list(REQUIRED_ARMS),
         "metric_fields": list(METRIC_FIELDS),
@@ -199,6 +209,7 @@ def run_dense_teacher_failure_localization_contract(
             "source_rows_csv": str(out_dir / "source_rows.csv"),
             "tensor_inventory_csv": str(out_dir / "tensor_inventory.csv"),
             "pregate_rows_csv": str(out_dir / "pregate_rows.csv"),
+            "no_gpu_pregate_rows_csv": str(out_dir / "no_gpu_pregate_rows.csv"),
             "contract_rows_csv": str(out_dir / "contract_rows.csv"),
             "evaluator_rows_csv": str(out_dir / "evaluator_rows.csv"),
             "notes_md": str(out_dir / "notes.md"),
@@ -226,16 +237,42 @@ def run_dense_teacher_failure_localization_contract(
                 "when reporting CE/logit metrics."
             )
         else:
+            no_gpu_pregate_rows = _no_gpu_pregate_rows(summary["evaluator_rows"])
+            no_gpu_failures = [row for row in no_gpu_pregate_rows if not row["passed"]]
+            summary["no_gpu_pregate_rows"] = no_gpu_pregate_rows
+            summary["no_gpu_pregate_status"] = "fail" if no_gpu_failures else "pass"
+            summary["composer_train_holdout_split_recorded"] = not any(
+                row["criterion"] == "composer_train_holdout_split_recorded"
+                for row in no_gpu_failures
+            )
+            summary["composer_uses_true_frozen_decoder_for_ce"] = not any(
+                row["criterion"] == "composer_uses_true_frozen_decoder_for_ce"
+                for row in no_gpu_failures
+            )
+            summary["composer_ce_metric_path"] = (
+                "true_frozen_decoder"
+                if summary["composer_uses_true_frozen_decoder_for_ce"]
+                else "linearized_logit_surrogate"
+            )
             summary["decision"] = EVALUATOR_RECORDED
             summary["claim_status"] = "local_evaluator_complete_no_columnability_claim"
-            summary["selected_next_step"] = POST_EVALUATOR_NEXT_STEP
+            if no_gpu_failures:
+                summary["selected_next_step"] = DECODER_EXPORTED_PREGATE_NEXT_STEP
+                summary["composer_validation_blocker"] = (
+                    "pair-composer evidence is a same-artifact local upper-bound diagnostic: "
+                    "train/holdout split and true frozen-decoder CE are not both recorded"
+                )
+            else:
+                summary["selected_next_step"] = POST_EVALUATOR_NEXT_STEP
+                summary["composer_validation_blocker"] = ""
             summary["rationale"] = (
                 "This artifact fills all required dense-teacher failure-localization rows, including "
                 "learned support, oracle support over trained values, retrained oracle values, an "
                 "oracle-support gated pair composer, dense/rank/norm controls, and null rows. It "
-                "still makes no columnability or promotion claim because local retrained/composer "
-                "CE and logit metrics use linearized logit-value surrogates when the frozen decoder "
-                "is not exported."
+                "still makes no columnability, promotion, or GPU-validation claim because local "
+                "retrained/composer CE and logit metrics use linearized logit-value surrogates when "
+                "the frozen decoder is not exported, and the composer fit is not recorded as an "
+                "independent train/holdout evaluation."
             )
     else:
         summary["evaluator_rows"] = []
@@ -1046,6 +1083,38 @@ def _pregate(criterion: str, passed: bool, threshold: str, actual: Any) -> dict[
     }
 
 
+def _no_gpu_pregate_rows(evaluator_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    composer = next(
+        (
+            row
+            for row in evaluator_rows
+            if row.get("arm") == "oracle_support_gated_value_pair_composer"
+        ),
+        {},
+    )
+    notes = str(composer.get("notes", ""))
+    return [
+        _pregate(
+            "composer_train_holdout_split_recorded",
+            bool(composer.get("train_holdout_split_recorded")),
+            "pair-composer fit must be trained on one split and evaluated on heldout tokens/sequences",
+            composer.get("train_holdout_split_recorded", False),
+        ),
+        _pregate(
+            "composer_uses_true_frozen_decoder_for_ce",
+            bool(composer.get("uses_true_frozen_decoder_for_ce")),
+            "composer CE/logit evidence must run through the exported frozen decoder/LM head",
+            composer.get("uses_true_frozen_decoder_for_ce", False),
+        ),
+        _pregate(
+            "composer_surrogate_caveat_recorded",
+            "linearized logit" in notes and "frozen decoder is not exported" in notes,
+            "when decoder CE is absent, artifact must explicitly label CE/logit metrics as surrogate",
+            notes,
+        ),
+    ]
+
+
 def _source_row(source: str, path: Path, packet: dict[str, Any]) -> dict[str, Any]:
     return {
         "source": source,
@@ -1097,6 +1166,7 @@ def _write_artifacts(out_dir: Path, summary: dict[str, Any]) -> None:
     _write_csv(out_dir / "source_rows.csv", summary["source_rows"])
     _write_csv(out_dir / "tensor_inventory.csv", summary["tensor_inventory"])
     _write_csv(out_dir / "pregate_rows.csv", summary["pregate_rows"])
+    _write_csv(out_dir / "no_gpu_pregate_rows.csv", summary["no_gpu_pregate_rows"])
     _write_csv(out_dir / "contract_rows.csv", summary["contract_rows"])
     _write_csv(out_dir / "evaluator_rows.csv", summary["evaluator_rows"])
     _write_notes(out_dir / "notes.md", summary)
@@ -1110,6 +1180,10 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Decision: `{summary['decision']}`",
         f"- Requires GPU now: `{summary['requires_gpu_now']}`",
         f"- Promotion allowed: `{summary['promotion_allowed']}`",
+        f"- No-GPU pregate: `{summary['no_gpu_pregate_status']}`",
+        f"- Composer train/holdout split recorded: `{summary['composer_train_holdout_split_recorded']}`",
+        f"- Composer uses true frozen decoder for CE: `{summary['composer_uses_true_frozen_decoder_for_ce']}`",
+        f"- Composer CE metric path: `{summary['composer_ce_metric_path']}`",
         "",
         "## Required Arms",
         "",

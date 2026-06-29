@@ -12,6 +12,7 @@ from relaleap.experiments.dense_teacher_failure_localization import (
     PARTIAL_EVALUATOR_RECORDED,
     REQUIRED_ARMS,
     REQUIRED_TENSORS,
+    DECODER_EXPORTED_PREGATE_NEXT_STEP,
     run_dense_teacher_failure_localization_contract,
 )
 
@@ -36,6 +37,11 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             self.assertEqual(summary["decision"], EVALUATOR_RECORDED)
             self.assertFalse(summary["requires_gpu_now"])
             self.assertFalse(summary["promotion_allowed"])
+            self.assertEqual(summary["no_gpu_pregate_status"], "fail")
+            self.assertFalse(summary["composer_train_holdout_split_recorded"])
+            self.assertFalse(summary["composer_uses_true_frozen_decoder_for_ce"])
+            self.assertEqual(summary["composer_ce_metric_path"], "linearized_logit_surrogate")
+            self.assertEqual(summary["selected_next_step"], DECODER_EXPORTED_PREGATE_NEXT_STEP)
             self.assertEqual(summary["required_arms"], list(REQUIRED_ARMS))
             self.assertEqual(
                 [row["tensor"] for row in summary["tensor_inventory"]],
@@ -43,7 +49,6 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             )
             self.assertTrue(all(row["present"] for row in summary["tensor_inventory"]))
             self.assertIn("teacher_hidden_residual_mse", summary["metric_fields"])
-            self.assertIn("interpret", summary["selected_next_step"])
             self.assertEqual(
                 summary["filled_evaluator_arms"],
                 [
@@ -63,6 +68,16 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             self.assertNotIn("retrained_oracle_support_values", summary["pending_evaluator_arms"])
             self.assertNotIn("dense_teacher", summary["pending_evaluator_arms"])
             evaluator_by_arm = {row["arm"]: row for row in summary["evaluator_rows"]}
+            no_gpu_by_criterion = {
+                row["criterion"]: row for row in summary["no_gpu_pregate_rows"]
+            }
+            self.assertFalse(
+                no_gpu_by_criterion["composer_train_holdout_split_recorded"]["passed"]
+            )
+            self.assertFalse(
+                no_gpu_by_criterion["composer_uses_true_frozen_decoder_for_ce"]["passed"]
+            )
+            self.assertTrue(no_gpu_by_criterion["composer_surrogate_caveat_recorded"]["passed"])
             self.assertEqual(
                 evaluator_by_arm["learned_support_sparse_student"]["availability"],
                 "filled",
@@ -113,6 +128,7 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             self.assertTrue((root / "out" / "source_rows.csv").is_file())
             self.assertTrue((root / "out" / "tensor_inventory.csv").is_file())
             self.assertTrue((root / "out" / "pregate_rows.csv").is_file())
+            self.assertTrue((root / "out" / "no_gpu_pregate_rows.csv").is_file())
             self.assertTrue((root / "out" / "contract_rows.csv").is_file())
             self.assertTrue((root / "out" / "evaluator_rows.csv").is_file())
             self.assertTrue((root / "out" / "notes.md").is_file())
