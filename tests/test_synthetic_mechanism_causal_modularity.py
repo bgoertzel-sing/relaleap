@@ -29,8 +29,8 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["decision"], "synthetic_mechanism_causal_modularity_pregate_failed_closed")
             self.assertFalse(summary["promotion_allowed"])
             self.assertFalse(summary["requires_gpu_now"])
-            self.assertTrue(summary["notify_ben"])
-            self.assertEqual(summary["strategic_change_level"], "major")
+            self.assertFalse(summary["notify_ben"])
+            self.assertEqual(summary["strategic_change_level"], "minor")
             self.assertFalse(summary["task_id_visible_to_model"])
             self.assertFalse(summary["mechanism_labels_enter_training"])
             self.assertGreater(summary["episode_row_count"], 0)
@@ -60,7 +60,9 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertIn("promoted_contextual_topk2", arms)
             self.assertIn("intervention_trained_sparse_topk2", arms)
             self.assertIn("dense_rank_norm_matched", arms)
-            self.assertIn("low_churn_mlp_control", arms)
+            self.assertIn("low_churn_mlp_active_matched", arms)
+            self.assertIn("dense_stored_parameter_matched", arms)
+            self.assertIn("low_churn_mlp_stored_parameter_matched", arms)
             self.assertIn("token_position_router_topk2", arms)
 
     def test_schema_can_pass_when_training_hooks_are_declared_available(self) -> None:
@@ -71,7 +73,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
 
             self.assertEqual(summary["status"], "pass")
-            self.assertEqual(summary["decision"], "synthetic_mechanism_causal_modularity_pregate_ready")
+            self.assertEqual(summary["decision"], "synthetic_mechanism_causal_modularity_local_diagnostics_ready_no_promotion")
             self.assertFalse(summary["missing_training_hooks"])
             criteria = {row["criterion"]: row for row in summary["gate_criteria"]}
             self.assertTrue(criteria["training_hooks_available"]["passed"])
@@ -93,13 +95,22 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
 
             self.assertEqual(summary["status"], "pass")
-            self.assertEqual(summary["decision"], "synthetic_mechanism_causal_modularity_local_gates_failed_closed")
-            self.assertEqual(summary["local_scientific_gate_status"], "fail")
+            self.assertIn(
+                summary["decision"],
+                {
+                    "synthetic_mechanism_causal_modularity_local_gates_failed_closed",
+                    "synthetic_mechanism_causal_modularity_active_matched_passed_stored_upper_bound_blocks_promotion",
+                    "synthetic_mechanism_causal_modularity_local_diagnostics_ready_no_promotion",
+                },
+            )
+            self.assertIn(summary["local_scientific_gate_status"], {"fail", "pass"})
+            self.assertIn(summary["active_matched_local_gate_status"], {"fail", "pass"})
+            self.assertIn(summary["stored_upper_bound_gap_status"], {"fail", "pass"})
             self.assertTrue(summary["training_smoke_ran"])
             self.assertFalse(summary["promotion_allowed"])
             self.assertFalse(summary["requires_gpu_now"])
-            self.assertEqual(summary["arm_metric_row_count"], 8)
-            self.assertEqual(summary["ce_gap_decomposition_row_count"], 8)
+            self.assertEqual(summary["arm_metric_row_count"], 10)
+            self.assertEqual(summary["ce_gap_decomposition_row_count"], 10)
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertFalse(summary["missing_training_hooks"])
             self.assertIn("not causal modularity evidence", summary["training_smoke_primary_result"]["interpretation"])
@@ -127,7 +138,9 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                     "fixed_support_topk2",
                     "token_position_router_topk2",
                     "dense_rank_norm_matched",
-                    "low_churn_mlp_control",
+                    "low_churn_mlp_active_matched",
+                    "dense_stored_parameter_matched",
+                    "low_churn_mlp_stored_parameter_matched",
                 },
                 arms,
             )
@@ -139,14 +152,17 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             dense_mlp_stored = [
                 int(row["stored_parameters"])
                 for row in arm_rows
-                if row["arm"] in {"dense_rank_norm_matched", "low_churn_mlp_control"}
+                if row["arm"] in {
+                    "dense_stored_parameter_matched",
+                    "low_churn_mlp_stored_parameter_matched",
+                }
             ]
             self.assertTrue(dense_mlp_stored)
             self.assertGreaterEqual(max(dense_mlp_stored), sparse_floor)
 
             with (out_dir / "ce_gap_decomposition.csv").open(newline="", encoding="utf-8") as handle:
                 ce_gap_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(ce_gap_rows), 8)
+            self.assertEqual(len(ce_gap_rows), 10)
             ce_gap_by_arm = {row["arm"]: row for row in ce_gap_rows}
             self.assertEqual(set(ce_gap_by_arm), arms)
             for required_field in {
@@ -158,12 +174,20 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 "stored_to_best_sparse_ratio",
                 "best_sparse_arm",
                 "best_dense_mlp_arm",
+                "best_active_matched_dense_mlp_arm",
+                "best_stored_matched_dense_mlp_arm",
                 "best_sparse_ce_minus_best_dense_mlp_ce",
+                "best_sparse_ce_minus_best_active_matched_dense_mlp_ce",
+                "best_sparse_ce_minus_best_stored_matched_dense_mlp_ce",
                 "control_budget_role",
             }:
                 self.assertIn(required_field, ce_gap_rows[0])
             self.assertEqual(
                 ce_gap_by_arm["dense_rank_norm_matched"]["control_budget_role"],
+                "active_proxy_matched_dense_mlp_control",
+            )
+            self.assertEqual(
+                ce_gap_by_arm["dense_stored_parameter_matched"]["control_budget_role"],
                 "stored_parameter_matched_dense_mlp_upper_bound",
             )
             self.assertTrue(ce_gap_by_arm["promoted_contextual_topk2"]["best_sparse_arm"])

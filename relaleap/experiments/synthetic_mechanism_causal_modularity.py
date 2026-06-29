@@ -53,6 +53,7 @@ class _SyntheticArmSpec:
     intervention_loss_weight: float = 0.0
     anchor_kl_weight: float = 0.0
     stored_parameter_floor: int = 0
+    control_budget_role: str = "sparse_or_null_or_base_reference"
 
 
 def run_synthetic_mechanism_causal_modularity(
@@ -134,13 +135,16 @@ def run_synthetic_mechanism_causal_modularity(
     local_scientific_failures = [
         row for row in local_scientific_gate_rows if not row["passed"]
     ]
+    stored_upper_bound_gap_status = _stored_upper_bound_gap_status(training_smoke)
     status = "fail" if hard_failures else "pass"
     decision = (
         "synthetic_mechanism_causal_modularity_pregate_failed_closed"
         if hard_failures
         else "synthetic_mechanism_causal_modularity_local_gates_failed_closed"
         if local_scientific_failures
-        else "synthetic_mechanism_causal_modularity_pregate_ready"
+        else "synthetic_mechanism_causal_modularity_active_matched_passed_stored_upper_bound_blocks_promotion"
+        if stored_upper_bound_gap_status == "fail"
+        else "synthetic_mechanism_causal_modularity_local_diagnostics_ready_no_promotion"
     )
     summary = {
         "status": status,
@@ -150,11 +154,12 @@ def run_synthetic_mechanism_causal_modularity(
         "requires_gpu_now": False,
         "backend_policy": "local synthetic pregate only; RunPod and Colab remain blocked",
         "strategy_review_handling": (
-            "Accepted the urgent GPT-5.5-Pro major pivot to a synthetic causal-modularity pregate. "
-            "The review has notify_ben=true, so Ben should be notified before treating this as a durable direction shift."
+            "Accepted the latest urgent GPT-5.5-Pro review: treat the active/stored comparator split as a minor "
+            "local diagnostic reclassification, keep GPU and promotion blocked, and add oracle-support/value "
+            "decomposition before any modularity claim."
         ),
-        "strategic_change_level": "major",
-        "notify_ben": True,
+        "strategic_change_level": "minor",
+        "notify_ben": False,
         "rules": list(RULES),
         "hidden_rule_boundaries": True,
         "task_id_visible_to_model": False,
@@ -177,6 +182,14 @@ def run_synthetic_mechanism_causal_modularity(
             if local_scientific_failures
             else "pass"
         ),
+        "active_matched_local_gate_status": (
+            "not_run"
+            if training_smoke is None
+            else "fail"
+            if local_scientific_failures
+            else "pass"
+        ),
+        "stored_upper_bound_gap_status": stored_upper_bound_gap_status,
         "local_scientific_gates": local_scientific_gate_rows,
         "failures": hard_failures,
         "local_scientific_failures": local_scientific_failures,
@@ -388,6 +401,7 @@ def _run_training_smoke(
                 "stored_parameters": _stored_parameters(adapter),
                 "stored_parameter_floor": spec.stored_parameter_floor,
                 "active_parameters_proxy": _synthetic_active_parameters(spec, hidden_dim),
+                "control_budget_role": spec.control_budget_role,
             }
         )
         per_token_metrics.extend(
@@ -541,6 +555,9 @@ def _synthetic_arm_specs(
     sparse_stored_parameter_floor: int,
 ) -> list[_SyntheticArmSpec]:
     active_rank = support_width * atoms_per_column
+    sparse_active_proxy = active_rank * hidden_dim
+    active_matched_dense_rank = max(1, (sparse_active_proxy + (2 * hidden_dim) - 1) // (2 * hidden_dim))
+    active_matched_mlp_rank = active_matched_dense_rank
     stored_matched_dense_rank = max(
         active_rank,
         _dense_rank_for_parameter_floor(hidden_dim, sparse_stored_parameter_floor),
@@ -608,11 +625,35 @@ def _synthetic_arm_specs(
             0,
             0,
             "dense_rank_norm",
-            dense_rank=stored_matched_dense_rank,
+            dense_rank=active_matched_dense_rank,
             stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="active_proxy_matched_dense_mlp_control",
         ),
         _SyntheticArmSpec(
-            "low_churn_mlp_control",
+            "low_churn_mlp_active_matched",
+            "mlp_control",
+            0,
+            0,
+            0,
+            "low_churn_mlp",
+            dense_rank=active_matched_mlp_rank,
+            anchor_kl_weight=0.02,
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="active_proxy_matched_dense_mlp_control",
+        ),
+        _SyntheticArmSpec(
+            "dense_stored_parameter_matched",
+            "dense_control",
+            0,
+            0,
+            0,
+            "dense_rank_norm",
+            dense_rank=stored_matched_dense_rank,
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="stored_parameter_matched_dense_mlp_upper_bound",
+        ),
+        _SyntheticArmSpec(
+            "low_churn_mlp_stored_parameter_matched",
             "mlp_control",
             0,
             0,
@@ -621,6 +662,7 @@ def _synthetic_arm_specs(
             dense_rank=stored_matched_mlp_rank,
             anchor_kl_weight=0.02,
             stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="stored_parameter_matched_dense_mlp_upper_bound",
         ),
     ]
 
@@ -1193,12 +1235,30 @@ def _ce_gap_decomposition_rows(arm_metrics: list[dict[str, Any]]) -> list[dict[s
     dense_mlp_rows = [
         row
         for row in arm_metrics
-        if row.get("arm") in {"dense_rank_norm_matched", "low_churn_mlp_control"}
+        if row.get("family") in {"dense_control", "mlp_control"}
+    ]
+    active_dense_mlp_rows = [
+        row
+        for row in dense_mlp_rows
+        if row.get("control_budget_role") == "active_proxy_matched_dense_mlp_control"
+    ]
+    stored_dense_mlp_rows = [
+        row
+        for row in dense_mlp_rows
+        if row.get("control_budget_role") == "stored_parameter_matched_dense_mlp_upper_bound"
     ]
     best_sparse = _best_ce_row(sparse_rows)
     best_dense_mlp = _best_ce_row(dense_mlp_rows)
+    best_active_dense_mlp = _best_ce_row(active_dense_mlp_rows)
+    best_stored_dense_mlp = _best_ce_row(stored_dense_mlp_rows)
     best_sparse_ce = _metric_float(best_sparse.get("holdout_ce")) if best_sparse else None
     best_dense_mlp_ce = _metric_float(best_dense_mlp.get("holdout_ce")) if best_dense_mlp else None
+    best_active_dense_mlp_ce = (
+        _metric_float(best_active_dense_mlp.get("holdout_ce")) if best_active_dense_mlp else None
+    )
+    best_stored_dense_mlp_ce = (
+        _metric_float(best_stored_dense_mlp.get("holdout_ce")) if best_stored_dense_mlp else None
+    )
     best_sparse_active = _metric_float(best_sparse.get("active_parameters_proxy")) if best_sparse else None
     best_sparse_stored = _metric_float(best_sparse.get("stored_parameters")) if best_sparse else None
     rows: list[dict[str, Any]] = []
@@ -1208,6 +1268,7 @@ def _ce_gap_decomposition_rows(arm_metrics: list[dict[str, Any]]) -> list[dict[s
         stored_parameters = _metric_float(row.get("stored_parameters"))
         family = str(row.get("family", ""))
         is_dense_or_mlp = family in {"dense_control", "mlp_control"}
+        control_budget_role = str(row.get("control_budget_role") or "")
         rows.append(
             {
                 "arm": row.get("arm", ""),
@@ -1225,17 +1286,37 @@ def _ce_gap_decomposition_rows(arm_metrics: list[dict[str, Any]]) -> list[dict[s
                 "best_sparse_holdout_ce": best_sparse_ce,
                 "best_dense_mlp_arm": best_dense_mlp.get("arm", "") if best_dense_mlp else "",
                 "best_dense_mlp_holdout_ce": best_dense_mlp_ce,
+                "best_active_matched_dense_mlp_arm": (
+                    best_active_dense_mlp.get("arm", "") if best_active_dense_mlp else ""
+                ),
+                "best_active_matched_dense_mlp_holdout_ce": best_active_dense_mlp_ce,
+                "best_stored_matched_dense_mlp_arm": (
+                    best_stored_dense_mlp.get("arm", "") if best_stored_dense_mlp else ""
+                ),
+                "best_stored_matched_dense_mlp_holdout_ce": best_stored_dense_mlp_ce,
                 "holdout_ce_minus_best_sparse_ce": _delta_value(holdout_ce, best_sparse_ce),
                 "holdout_ce_minus_best_dense_mlp_ce": _delta_value(holdout_ce, best_dense_mlp_ce),
+                "holdout_ce_minus_best_active_matched_dense_mlp_ce": _delta_value(
+                    holdout_ce,
+                    best_active_dense_mlp_ce,
+                ),
+                "holdout_ce_minus_best_stored_matched_dense_mlp_ce": _delta_value(
+                    holdout_ce,
+                    best_stored_dense_mlp_ce,
+                ),
                 "best_sparse_ce_minus_this_dense_mlp_ce": (
                     _delta_value(best_sparse_ce, holdout_ce) if is_dense_or_mlp else None
                 ),
                 "best_sparse_ce_minus_best_dense_mlp_ce": _delta_value(best_sparse_ce, best_dense_mlp_ce),
-                "control_budget_role": (
-                    "stored_parameter_matched_dense_mlp_upper_bound"
-                    if is_dense_or_mlp
-                    else "sparse_or_null_or_base_reference"
+                "best_sparse_ce_minus_best_active_matched_dense_mlp_ce": _delta_value(
+                    best_sparse_ce,
+                    best_active_dense_mlp_ce,
                 ),
+                "best_sparse_ce_minus_best_stored_matched_dense_mlp_ce": _delta_value(
+                    best_sparse_ce,
+                    best_stored_dense_mlp_ce,
+                ),
+                "control_budget_role": control_budget_role or "sparse_or_null_or_base_reference",
             }
         )
     return rows
@@ -1336,8 +1417,10 @@ def _comparator_controls(*, support_width: int) -> list[dict[str, Any]]:
         _control("random_support_topk2", "sparse_null", support_width, "random_support", True, "same active support width random null"),
         _control("fixed_support_topk2", "sparse_null", support_width, "fixed_support", True, "same support every token null"),
         _control("token_position_router_topk2", "router_null", support_width, "token_position_only", True, "shortcut router control with no hidden mechanism evidence"),
-        _control("dense_rank_norm_matched", "dense_control", 0, "dense_rank_norm", True, "dense rank/norm/FLOP matched residual"),
-        _control("low_churn_mlp_control", "mlp_control", 0, "low_churn_mlp", True, "budgeted MLP residual control"),
+        _control("dense_rank_norm_matched", "dense_control", 0, "dense_rank_norm", True, "active-proxy matched dense low-rank residual"),
+        _control("low_churn_mlp_active_matched", "mlp_control", 0, "low_churn_mlp", True, "active-proxy matched low-churn MLP residual"),
+        _control("dense_stored_parameter_matched", "dense_control", 0, "dense_rank_norm", True, "stored-parameter matched dense upper-bound residual"),
+        _control("low_churn_mlp_stored_parameter_matched", "mlp_control", 0, "low_churn_mlp", True, "stored-parameter matched low-churn MLP upper-bound residual"),
         _control("random_initialized_same_params", "random_null", support_width, "random_initialized", True, "same stored parameter random residual null"),
         _control("shuffled_mechanism_label_null", "causal_null", support_width, "contextual_mlp", True, "evaluation scoring with shuffled latent mechanism labels"),
     ]
@@ -1480,17 +1563,23 @@ def _local_scientific_gate_rows(training_smoke: dict[str, Any] | None) -> list[d
     forgetting_rows = training_smoke["forgetting_rows"]
     by_arm = {row["arm"]: row for row in arm_metrics}
     sparse_arms = ["promoted_contextual_topk2", "intervention_trained_sparse_topk2"]
-    dense_mlp_arms = ["dense_rank_norm_matched", "low_churn_mlp_control"]
+    active_dense_mlp_arms = ["dense_rank_norm_matched", "low_churn_mlp_active_matched"]
+    stored_dense_mlp_arms = [
+        "dense_stored_parameter_matched",
+        "low_churn_mlp_stored_parameter_matched",
+    ]
+    dense_mlp_arms = active_dense_mlp_arms + stored_dense_mlp_arms
     router_null_arms = ["random_support_topk2", "fixed_support_topk2", "token_position_router_topk2"]
     base_ce = _metric_float(by_arm.get("base_no_residual", {}).get("holdout_ce"))
     sparse_ces = _arm_metric_values(by_arm, sparse_arms, "holdout_ce")
-    dense_mlp_ces = _arm_metric_values(by_arm, dense_mlp_arms, "holdout_ce")
+    active_dense_mlp_ces = _arm_metric_values(by_arm, active_dense_mlp_arms, "holdout_ce")
+    stored_dense_mlp_ces = _arm_metric_values(by_arm, stored_dense_mlp_arms, "holdout_ce")
     sparse_norms = _arm_metric_values(by_arm, sparse_arms, "residual_l2")
-    dense_mlp_norms = _arm_metric_values(by_arm, dense_mlp_arms, "residual_l2")
+    active_dense_mlp_norms = _arm_metric_values(by_arm, active_dense_mlp_arms, "residual_l2")
     sparse_stored = _arm_metric_values(by_arm, sparse_arms, "stored_parameters")
-    dense_mlp_stored = _arm_metric_values(by_arm, dense_mlp_arms, "stored_parameters")
+    stored_dense_mlp_stored = _arm_metric_values(by_arm, stored_dense_mlp_arms, "stored_parameters")
     sparse_active = _arm_metric_values(by_arm, sparse_arms, "active_parameters_proxy")
-    dense_mlp_active = _arm_metric_values(by_arm, dense_mlp_arms, "active_parameters_proxy")
+    active_dense_mlp_active = _arm_metric_values(by_arm, active_dense_mlp_arms, "active_parameters_proxy")
     sparse_selectivity = _mean_metric(intervention_rows, sparse_arms, "selectivity")
     sparse_necessity = _mean_metric(intervention_rows, sparse_arms, "necessity")
     sparse_leakage = _mean_metric(intervention_rows, sparse_arms, "off_target_leakage")
@@ -1524,10 +1613,19 @@ def _local_scientific_gate_rows(training_smoke: dict[str, Any] | None) -> list[d
         ),
         _scientific_gate(
             "ce_competitive_with_dense_or_mlp",
-            bool(sparse_ces and dense_mlp_ces and min(sparse_ces) <= min(dense_mlp_ces) + 0.02),
-            "best sparse arm must be within +0.02 CE of the best dense/MLP control",
-            {"best_sparse_ce": min(sparse_ces) if sparse_ces else None, "best_dense_mlp_ce": min(dense_mlp_ces) if dense_mlp_ces else None, "tolerance": 0.02},
-            "sparse arm is not CE-competitive with the best dense/MLP control",
+            bool(
+                sparse_ces
+                and active_dense_mlp_ces
+                and min(sparse_ces) <= min(active_dense_mlp_ces) + 0.02
+            ),
+            "best sparse arm must be within +0.02 CE of the best active-proxy matched dense/MLP control",
+            {
+                "best_sparse_ce": min(sparse_ces) if sparse_ces else None,
+                "best_active_matched_dense_mlp_ce": min(active_dense_mlp_ces) if active_dense_mlp_ces else None,
+                "best_stored_matched_dense_mlp_ce": min(stored_dense_mlp_ces) if stored_dense_mlp_ces else None,
+                "tolerance": 0.02,
+            },
+            "sparse arm is not CE-competitive with the best active-proxy matched dense/MLP control",
         ),
         _scientific_gate(
             "positive_sparse_intervention_selectivity",
@@ -1571,24 +1669,51 @@ def _local_scientific_gate_rows(training_smoke: dict[str, Any] | None) -> list[d
         ),
         _scientific_gate(
             "residual_norm_budget",
-            bool(sparse_norms and dense_mlp_norms and max(sparse_norms) <= max(dense_mlp_norms)),
-            "sparse residual norm must not exceed the larger dense/MLP residual norm",
-            {"max_sparse_residual_l2": max(sparse_norms) if sparse_norms else None, "max_dense_mlp_residual_l2": max(dense_mlp_norms) if dense_mlp_norms else None},
-            "sparse residual norm exceeds dense/MLP norm budget",
+            bool(
+                sparse_norms
+                and active_dense_mlp_norms
+                and max(sparse_norms) <= max(active_dense_mlp_norms)
+            ),
+            "sparse residual norm must not exceed the larger active-proxy matched dense/MLP residual norm",
+            {
+                "max_sparse_residual_l2": max(sparse_norms) if sparse_norms else None,
+                "max_active_matched_dense_mlp_residual_l2": (
+                    max(active_dense_mlp_norms) if active_dense_mlp_norms else None
+                ),
+            },
+            "sparse residual norm exceeds active-proxy matched dense/MLP norm budget",
         ),
         _scientific_gate(
             "stored_parameter_budget",
-            bool(sparse_stored and dense_mlp_stored and max(sparse_stored) <= max(dense_mlp_stored)),
-            "sparse stored parameters must not exceed the larger dense/MLP stored-parameter control",
-            {"max_sparse_stored_parameters": max(sparse_stored) if sparse_stored else None, "max_dense_mlp_stored_parameters": max(dense_mlp_stored) if dense_mlp_stored else None},
-            "sparse stored-parameter budget is not matched to dense/MLP controls",
+            bool(
+                sparse_stored
+                and stored_dense_mlp_stored
+                and max(sparse_stored) <= max(stored_dense_mlp_stored)
+            ),
+            "sparse stored parameters must not exceed the larger stored-parameter matched dense/MLP upper-bound control",
+            {
+                "max_sparse_stored_parameters": max(sparse_stored) if sparse_stored else None,
+                "max_stored_matched_dense_mlp_stored_parameters": (
+                    max(stored_dense_mlp_stored) if stored_dense_mlp_stored else None
+                ),
+            },
+            "sparse stored-parameter budget is not covered by stored-matched dense/MLP controls",
         ),
         _scientific_gate(
             "active_parameter_budget",
-            bool(sparse_active and dense_mlp_active and max(sparse_active) <= max(dense_mlp_active)),
-            "sparse active parameter proxy must not exceed the larger dense/MLP active proxy",
-            {"max_sparse_active_parameters": max(sparse_active) if sparse_active else None, "max_dense_mlp_active_parameters": max(dense_mlp_active) if dense_mlp_active else None},
-            "sparse active-parameter budget exceeds dense/MLP controls",
+            bool(
+                sparse_active
+                and active_dense_mlp_active
+                and max(sparse_active) <= max(active_dense_mlp_active)
+            ),
+            "sparse active parameter proxy must not exceed the larger active-proxy matched dense/MLP active proxy",
+            {
+                "max_sparse_active_parameters": max(sparse_active) if sparse_active else None,
+                "max_active_matched_dense_mlp_active_parameters": (
+                    max(active_dense_mlp_active) if active_dense_mlp_active else None
+                ),
+            },
+            "sparse active-parameter budget exceeds active-proxy matched dense/MLP controls",
         ),
         _scientific_gate(
             "forgetting_and_functional_churn_measured",
@@ -1653,7 +1778,9 @@ def _required_controls() -> set[str]:
         "fixed_support_topk2",
         "token_position_router_topk2",
         "dense_rank_norm_matched",
-        "low_churn_mlp_control",
+        "low_churn_mlp_active_matched",
+        "dense_stored_parameter_matched",
+        "low_churn_mlp_stored_parameter_matched",
     }
 
 
@@ -1683,9 +1810,26 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if _stored_upper_bound_gap_status(training_smoke) == "fail":
+        return (
+            "add oracle-support sparse diagnostics on the same local seed-17 pregate before any GPU validation or modularity claim"
+        )
     return (
-        "repair any failed local scientific gates over CE, selectivity/leakage, commutators, forgetting/churn, norm, and parameter budgets before any second seed or GPU validation"
+        "add oracle-support sparse diagnostics and per-rule CE decomposition before any second seed or GPU validation"
     )
+
+
+def _stored_upper_bound_gap_status(training_smoke: dict[str, Any] | None) -> str:
+    if training_smoke is None:
+        return "not_run"
+    rows = training_smoke.get("ce_gap_decomposition", [])
+    sparse_rows = [row for row in rows if row.get("arm") == "promoted_contextual_topk2"]
+    if not sparse_rows:
+        return "missing"
+    gap = _metric_float(sparse_rows[0].get("best_sparse_ce_minus_best_stored_matched_dense_mlp_ce"))
+    if gap is None:
+        return "missing"
+    return "fail" if gap > 0.02 else "pass"
 
 
 def _delta_value(left: Any, right: Any) -> float | None:
