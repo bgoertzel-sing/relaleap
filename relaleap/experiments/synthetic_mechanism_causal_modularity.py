@@ -39,6 +39,7 @@ REQUIRED_ARTIFACTS = (
     "router_value_regret_decomposition.csv",
     "router_regret_ceiling_budget.csv",
     "support_head_sequence_heldout_diagnostic.csv",
+    "router_only_branch_selection.csv",
     "teacher_distillation_closeout.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
@@ -249,6 +250,14 @@ def run_synthetic_mechanism_causal_modularity(
             _support_head_sequence_heldout_diagnostic_summary(
                 training_smoke["support_head_sequence_heldout_diagnostic"]
             )
+            if training_smoke is not None
+            else None
+        ),
+        "router_only_branch_selection_row_count": (
+            len(training_smoke["router_only_branch_selection"]) if training_smoke is not None else 0
+        ),
+        "router_only_branch_selection_primary_result": (
+            _router_only_branch_selection_summary(training_smoke["router_only_branch_selection"])
             if training_smoke is not None
             else None
         ),
@@ -643,6 +652,10 @@ def _run_training_smoke(
 
     primary = _synthetic_primary_result(arm_metrics, intervention_rows, commutator_rows)
     ce_by_rule_position = _ce_by_rule_position_rows(per_token_metrics)
+    router_regret_ceiling_budget = _router_regret_ceiling_budget_rows(
+        arm_metrics,
+        oracle_support_rows,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -650,11 +663,12 @@ def _run_training_smoke(
         "router_value_regret_decomposition": _router_value_regret_decomposition_rows(
             oracle_support_rows
         ),
-        "router_regret_ceiling_budget": _router_regret_ceiling_budget_rows(
-            arm_metrics,
-            oracle_support_rows,
-        ),
+        "router_regret_ceiling_budget": router_regret_ceiling_budget,
         "support_head_sequence_heldout_diagnostic": support_head_rows,
+        "router_only_branch_selection": _router_only_branch_selection_rows(
+            router_regret_ceiling_budget,
+            support_head_rows,
+        ),
         "teacher_distillation_closeout": _teacher_distillation_closeout_rows(
             arm_metrics,
             oracle_support_rows,
@@ -2309,6 +2323,80 @@ def _router_only_sufficiency_status(
     return "router_ceiling_insufficient"
 
 
+def _router_only_branch_selection_rows(
+    ceiling_rows: list[dict[str, Any]],
+    support_head_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not ceiling_rows:
+        return []
+    contextual_rows = [
+        row
+        for row in support_head_rows
+        if row.get("diagnostic") == "support_regret_trained_contextual_router_topk2"
+    ]
+    contextual_by_arm = {str(row.get("arm", "")): row for row in contextual_rows}
+    rows: list[dict[str, Any]] = []
+    for ceiling in ceiling_rows:
+        arm = str(ceiling.get("arm", ""))
+        support_head = contextual_by_arm.get(arm, {})
+        ceiling_closes_stored = ceiling.get("router_only_can_close_stored_matched_gap") is True
+        ceiling_beats_token_null = ceiling.get("oracle_ce_beats_token_position_null") is True
+        support_head_advances = support_head.get("advance_if_gain_gt_0p02_or_recovery_ge_0p5") is True
+        support_head_beats_token_null = support_head.get("beats_token_position_null") is True
+        support_head_gain = _metric_float(support_head.get("predicted_support_ce_gain_vs_learned"))
+        support_head_recovery = _metric_float(support_head.get("oracle_pair_regret_recovery_fraction"))
+        stored_gap = _metric_float(ceiling.get("learned_ce_gap_to_stored_matched_control"))
+        oracle_gain = _metric_float(ceiling.get("oracle_support_ce_gain"))
+        close_router_only_branch = not (
+            ceiling_closes_stored and ceiling_beats_token_null and support_head_advances
+        )
+        if not ceiling_closes_stored:
+            decision = "close_router_only_branch_stored_gap_not_closable"
+        elif not ceiling_beats_token_null:
+            decision = "close_router_only_branch_oracle_fails_token_position_null"
+        elif support_head and not support_head_advances:
+            decision = "close_router_only_branch_support_head_fails_null_or_gain_gate"
+        elif not support_head:
+            decision = "defer_router_only_branch_missing_support_head_diagnostic"
+        else:
+            decision = "continue_router_only_branch_needs_repeat"
+        rows.append(
+            {
+                "arm": arm,
+                "branch": "router_only_support_head",
+                "decision": decision,
+                "close_or_deprioritize_router_only_path": close_router_only_branch,
+                "recommend_next_path": (
+                    "value_capacity_or_core_periphery_residual_design"
+                    if close_router_only_branch
+                    else "repeat_sequence_heldout_support_head_before_any_gpu"
+                ),
+                "requires_gpu_now": False,
+                "promotion_allowed": False,
+                "oracle_support_ce_gain": oracle_gain,
+                "stored_matched_gap": stored_gap,
+                "router_only_can_close_stored_gap": ceiling_closes_stored,
+                "oracle_ce_beats_token_position_null": ceiling_beats_token_null,
+                "support_head_ce_gain_vs_learned": support_head_gain,
+                "support_head_regret_recovery_fraction": support_head_recovery,
+                "support_head_beats_shuffled_target_null": support_head.get("beats_shuffled_target_null"),
+                "support_head_beats_token_position_null": support_head.get("beats_token_position_null"),
+                "support_head_advances": support_head_advances,
+                "oracle_targets_enter_auxiliary_training": bool(
+                    support_head.get("oracle_targets_enter_auxiliary_training")
+                ),
+                "deployable_training_evidence": False,
+                "mechanism_labels_used_for_scoring_only": True,
+                "interpretation": (
+                    "Fail-closed branch selector: router/support-head evidence is diagnostic only. "
+                    "Close or deprioritize the router-only path unless its oracle ceiling can close the "
+                    "stored-control gap and its sequence-heldout support head beats strong nulls."
+                ),
+            }
+        )
+    return rows
+
+
 def _flop_proxy(row: dict[str, Any]) -> float | None:
     active_parameters = _metric_float(row.get("active_parameters_proxy"))
     if active_parameters is None:
@@ -2839,6 +2927,10 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("router_only_branch_selection"):
+        return (
+            "deprioritize the router-only/support-head path on this seed and design the next local non-GPU mechanism probe around value/capacity or core/periphery residual structure"
+        )
     if training_smoke.get("support_head_sequence_heldout_diagnostic"):
         return (
             "inspect the sequence-heldout support-head diagnostic against shuffled-target and token-position nulls; keep GPU and promotion blocked unless the diagnostic beats nulls and the stored upper-bound gap is separately addressed"
@@ -3269,6 +3361,44 @@ def _residual_budget_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _router_only_branch_selection_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "closed_or_deprioritized_arm_count": 0,
+            "recommended_next_path": "",
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "interpretation": "router-only branch selection was not run",
+        }
+    closed_rows = [
+        row for row in rows if row.get("close_or_deprioritize_router_only_path") is True
+    ]
+    recommended_paths = {
+        str(row.get("recommend_next_path", "")) for row in rows if row.get("recommend_next_path")
+    }
+    if "value_capacity_or_core_periphery_residual_design" in recommended_paths:
+        recommended_next_path = "value_capacity_or_core_periphery_residual_design"
+    else:
+        recommended_next_path = sorted(recommended_paths)[0] if recommended_paths else ""
+    return {
+        "row_count": len(rows),
+        "arm_count": len({str(row.get("arm", "")) for row in rows}),
+        "closed_or_deprioritized_arm_count": len(closed_rows),
+        "all_router_only_arms_closed_or_deprioritized": len(closed_rows) == len(rows),
+        "recommended_next_path": recommended_next_path,
+        "decisions": sorted({str(row.get("decision", "")) for row in rows}),
+        "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
+        "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
+        "deployable_training_evidence": False,
+        "interpretation": (
+            "Fail-closed local branch selector. A router-only/support-head path remains blocked unless "
+            "the oracle support ceiling can close the stored-control gap and the sequence-heldout "
+            "support head beats strong nulls."
+        ),
+    }
+
+
 def _teacher_distillation_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     teacher_rows = [
         row
@@ -3412,6 +3542,10 @@ def _write_artifacts(
         [] if training_smoke is None else training_smoke["support_head_sequence_heldout_diagnostic"],
     )
     _write_csv(
+        out_dir / "router_only_branch_selection.csv",
+        [] if training_smoke is None else training_smoke["router_only_branch_selection"],
+    )
+    _write_csv(
         out_dir / "teacher_distillation_closeout.csv",
         [] if training_smoke is None else training_smoke["teacher_distillation_closeout"],
     )
@@ -3446,6 +3580,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Router/value regret decomposition rows: `{summary['router_value_regret_decomposition_row_count']}`",
         f"- Router-regret ceiling budget rows: `{summary['router_regret_ceiling_budget_row_count']}`",
         f"- Support-head sequence-heldout diagnostic rows: `{summary['support_head_sequence_heldout_diagnostic_row_count']}`",
+        f"- Router-only branch-selection rows: `{summary['router_only_branch_selection_row_count']}`",
         f"- Teacher distillation closeout rows: `{summary['teacher_distillation_closeout_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
@@ -3461,6 +3596,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The router-regret ceiling budget compares the fixed-value oracle-support ceiling against token/position nulls, active-matched dense/MLP controls, and stored-matched dense/MLP upper bounds. It is the local fail-closed budget check before any support-head or GPU branch.",
         "",
         "The support-head sequence-heldout diagnostic trains only diagnostic support selectors from train-split oracle pair supports, then swaps hard top-k2 supports into fixed sparse values on heldout sequences. Oracle targets enter auxiliary diagnostic training, so the artifact can justify or close a branch but cannot support deployment or promotion claims.",
+        "",
+        "The router-only branch-selection artifact closes or deprioritizes the router/support-head path unless the fixed-value oracle ceiling can close the stored-control gap and the sequence-heldout support head beats strong nulls. It keeps GPU validation and promotion blocked.",
         "",
         "The CE by rule/position and residual budget accounting artifacts are local diagnostics. FLOP values are residual-path proxies only and exclude the frozen base and decoder.",
         "",
