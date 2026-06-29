@@ -47,6 +47,7 @@ REQUIRED_ARTIFACTS = (
     "core_periphery_branch_closeout.csv",
     "sparse_value_redesign_selector.csv",
     "budget_normalized_gated_value_mixture_pregate.csv",
+    "pc_core_periphery_residual_inference_pregate.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -339,6 +340,16 @@ def run_synthetic_mechanism_causal_modularity(
         "budget_normalized_gated_value_mixture_pregate_primary_result": (
             _budget_normalized_gated_value_mixture_pregate_summary(
                 training_smoke["budget_normalized_gated_value_mixture_pregate"]
+            )
+            if training_smoke is not None
+            else None
+        ),
+        "pc_core_periphery_residual_inference_pregate_row_count": (
+            len(training_smoke["pc_core_periphery_residual_inference_pregate"]) if training_smoke is not None else 0
+        ),
+        "pc_core_periphery_residual_inference_pregate_primary_result": (
+            _pc_core_periphery_residual_inference_pregate_summary(
+                training_smoke["pc_core_periphery_residual_inference_pregate"]
             )
             if training_smoke is not None
             else None
@@ -817,6 +828,13 @@ def _run_training_smoke(
         commutator_rows=commutator_rows,
         forgetting_rows=forgetting_rows,
     )
+    pc_core_periphery_residual_inference_pregate = _pc_core_periphery_residual_inference_pregate_rows(
+        gated_pregate_rows=budget_normalized_gated_value_mixture_pregate,
+        arm_metrics=arm_metrics,
+        residual_budget_rows=residual_budget_accounting,
+        commutator_rows=commutator_rows,
+        forgetting_rows=forgetting_rows,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -837,6 +855,7 @@ def _run_training_smoke(
         "core_periphery_branch_closeout": core_periphery_branch_closeout,
         "sparse_value_redesign_selector": sparse_value_redesign_selector,
         "budget_normalized_gated_value_mixture_pregate": budget_normalized_gated_value_mixture_pregate,
+        "pc_core_periphery_residual_inference_pregate": pc_core_periphery_residual_inference_pregate,
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": residual_budget_accounting,
@@ -3680,6 +3699,17 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("pc_core_periphery_residual_inference_pregate"):
+        summary = _pc_core_periphery_residual_inference_pregate_summary(
+            training_smoke["pc_core_periphery_residual_inference_pregate"]
+        )
+        if summary.get("selected_next_experiment"):
+            return (
+                "implement the local pc_core_periphery_residual_inference_pregate trainable arm with the "
+                "fixed contextual top-k2 router, two-step residual-error inference, anchor-KL, norm, "
+                "commutator, churn, flat same-router, norm-clipped dense/stored, token-position, random-support, "
+                "and shuffled-target null controls before any GPU validation"
+            )
     if training_smoke.get("budget_normalized_gated_value_mixture_pregate"):
         summary = _budget_normalized_gated_value_mixture_pregate_summary(
             training_smoke["budget_normalized_gated_value_mixture_pregate"]
@@ -5132,6 +5162,146 @@ def _budget_normalized_gated_value_mixture_pregate_summary(rows: list[dict[str, 
     }
 
 
+def _pc_core_periphery_residual_inference_pregate_rows(
+    *,
+    gated_pregate_rows: list[dict[str, Any]],
+    arm_metrics: list[dict[str, Any]],
+    residual_budget_rows: list[dict[str, Any]],
+    commutator_rows: list[dict[str, Any]],
+    forgetting_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    gated_summary = _budget_normalized_gated_value_mixture_pregate_summary(gated_pregate_rows)
+    if not gated_pregate_rows or gated_summary.get("pregate_passes") is True:
+        return []
+
+    by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
+    budget_by_arm = {str(row.get("arm", "")): row for row in residual_budget_rows}
+    reference = by_arm.get("promoted_contextual_topk2")
+    flat = by_arm.get("flat_column_value_mlp_topk2")
+    gated = by_arm.get("budget_normalized_gated_low_rank_value_mixture_topk2")
+    stored = _best_ce_row(
+        [row for row in arm_metrics if row.get("control_budget_role") == "stored_parameter_matched_dense_mlp_upper_bound"]
+    )
+    if reference is None or flat is None or gated is None:
+        return []
+
+    reference_ce = _metric_float(reference.get("holdout_ce"))
+    flat_ce = _metric_float(flat.get("holdout_ce"))
+    gated_ce = _metric_float(gated.get("holdout_ce"))
+    stored_ce = _metric_float(stored.get("holdout_ce")) if stored else None
+    stored_gap = _positive_gap(reference_ce, stored_ce)
+
+    rows: list[dict[str, Any]] = []
+    for role, source_arm, control_family, required in (
+        ("primary_pc_core_periphery_residual_inference_design", "not_yet_trained", "pc_core_periphery_sparse", True),
+        ("same_router_flat_mlp_control_required", "flat_column_value_mlp_topk2", "flat_same_router_value_capacity_control", True),
+        ("norm_clipped_stored_dense_control_required", "low_churn_mlp_stored_parameter_matched", "stored_parameter_matched_dense_mlp_upper_bound", True),
+        ("token_position_router_null_required", "token_position_router_topk2", "token_position_only_router_null", True),
+        ("random_support_histogram_null_required", "random_support_topk2", "random_support_null", True),
+        ("shuffled_teacher_target_null_required", "shuffled_teacher_distilled_sparse_topk2", "shuffled_target_null", False),
+    ):
+        source = by_arm.get(source_arm, {}) if source_arm != "not_yet_trained" else {}
+        source_ce = _metric_float(source.get("holdout_ce"))
+        arm_commutator = _mean_metric(commutator_rows, [source_arm], "finite_update_commutator_l2")
+        arm_churn = _mean_abs_metric(forgetting_rows, [source_arm], "functional_churn")
+        budget = budget_by_arm.get(source_arm, {})
+        rows.append(
+            {
+                "pregate_name": "pc_core_periphery_residual_inference_pregate",
+                "pregate_role": role,
+                "source_arm": source_arm,
+                "control_family": control_family,
+                "required_for_next_packet": required,
+                "implemented_in_current_packet": source_arm != "not_yet_trained" and bool(source),
+                "selected": role == "primary_pc_core_periphery_residual_inference_design",
+                "source_failed_branch": "budget_normalized_gated_low_rank_value_mixture",
+                "source_failed_branch_holdout_ce": gated_ce,
+                "source_failed_branch_pregate_passes": gated_summary.get("pregate_passes") is True,
+                "source_failed_branch_signal_gate_ok": gated_summary.get("signal_gate_ok") is True,
+                "source_failed_branch_flat_control_ok": gated_summary.get("flat_control_ok") is True,
+                "source_failed_branch_norm_budget_ok": gated_summary.get("norm_budget_ok") is True,
+                "source_failed_branch_commutator_budget_ok": gated_summary.get("commutator_budget_ok") is True,
+                "source_failed_branch_functional_churn_budget_ok": gated_summary.get("functional_churn_budget_ok") is True,
+                "reference_sparse_arm": "promoted_contextual_topk2",
+                "reference_sparse_ce": reference_ce,
+                "stored_control_arm": stored.get("arm", "") if stored else "",
+                "stored_control_ce": stored_ce,
+                "reference_sparse_gap_to_stored_control": stored_gap,
+                "flat_control_arm": "flat_column_value_mlp_topk2",
+                "flat_control_ce": flat_ce,
+                "source_holdout_ce": source_ce,
+                "source_ce_minus_reference_sparse_ce": _delta_value(source_ce, reference_ce),
+                "source_ce_minus_flat_control_ce": _delta_value(source_ce, flat_ce),
+                "source_residual_l2": _metric_float(source.get("residual_l2")),
+                "source_active_parameters_proxy": _metric_float(source.get("active_parameters_proxy")),
+                "source_stored_parameters": _metric_float(source.get("stored_parameters")),
+                "source_flop_proxy_per_token": _metric_float(budget.get("flop_proxy_per_token")),
+                "source_mean_commutator_l2": arm_commutator,
+                "source_mean_abs_functional_churn": arm_churn,
+                "mechanism": (
+                    "fixed contextual top-k2 router; protected shared predictive core; plastic peripheral "
+                    "residual-error units; two local inference steps; residual norm clamp"
+                ),
+                "training_objective": "supervised_ce_plus_anchor_kl_plus_local_residual_error_prediction_plus_commutator_churn_penalties",
+                "advance_gate": (
+                    "beat promoted sparse by >=0.05 CE or close >=10% of stored-control gap, while flat control is "
+                    "not stronger and norm, churn, commutator, pruning-selectivity, and anchor-KL budgets pass"
+                ),
+                "next_experiment": "implement_trainable_pc_core_periphery_residual_inference_pregate",
+                "requires_gpu_now": False,
+                "promotion_allowed": False,
+                "advance_to_gpu_validation": False,
+                "strategic_change_level": "major",
+                "notify_ben": True,
+                "mechanism_labels_used_for_scoring_only": True,
+                "interpretation": (
+                    "Major-pivot scaffold from the external GPT-5.5-Pro review. The current sparse value-capacity "
+                    "branch is closed locally; this row defines the next command-driven trainable PC-style "
+                    "residual-inference packet and required same-router/null controls. It is not evidence that the "
+                    "PC arm works yet."
+                ),
+            }
+        )
+    return rows
+
+
+def _pc_core_periphery_residual_inference_pregate_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "selected_next_experiment": "",
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "notify_ben": False,
+            "strategic_change_level": "minor",
+            "interpretation": "PC core/periphery residual-inference pregate scaffold was not emitted",
+        }
+    selected = next((row for row in rows if row.get("selected") is True), rows[0])
+    return {
+        "row_count": len(rows),
+        "selected_next_experiment": selected.get("next_experiment", ""),
+        "source_failed_branch": selected.get("source_failed_branch", ""),
+        "source_failed_branch_holdout_ce": _metric_float(selected.get("source_failed_branch_holdout_ce")),
+        "reference_sparse_ce": _metric_float(selected.get("reference_sparse_ce")),
+        "flat_control_ce": _metric_float(selected.get("flat_control_ce")),
+        "stored_control_ce": _metric_float(selected.get("stored_control_ce")),
+        "required_control_count": sum(1 for row in rows if row.get("required_for_next_packet") is True),
+        "current_packet_implemented_control_count": sum(
+            1 for row in rows if row.get("implemented_in_current_packet") is True
+        ),
+        "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
+        "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
+        "advance_to_gpu_validation": any(row.get("advance_to_gpu_validation") is True for row in rows),
+        "notify_ben": any(row.get("notify_ben") is True for row in rows),
+        "strategic_change_level": "major" if any(row.get("strategic_change_level") == "major" for row in rows) else "minor",
+        "interpretation": (
+            "Fail-closed scaffold for the major pivot to PC-style core/periphery residual inference. "
+            "It closes the current value-capacity branch as unsupported and defines the next local trainable "
+            "packet with required controls before any GPU validation."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -5240,6 +5410,10 @@ def _write_artifacts(
         out_dir / "budget_normalized_gated_value_mixture_pregate.csv",
         [] if training_smoke is None else training_smoke["budget_normalized_gated_value_mixture_pregate"],
     )
+    _write_csv(
+        out_dir / "pc_core_periphery_residual_inference_pregate.csv",
+        [] if training_smoke is None else training_smoke["pc_core_periphery_residual_inference_pregate"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -5279,6 +5453,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Core/periphery branch closeout rows: `{summary['core_periphery_branch_closeout_row_count']}`",
         f"- Sparse value redesign selector rows: `{summary['sparse_value_redesign_selector_row_count']}`",
         f"- Budget-normalized gated value-mixture pregate rows: `{summary['budget_normalized_gated_value_mixture_pregate_row_count']}`",
+        f"- PC core/periphery residual-inference pregate rows: `{summary['pc_core_periphery_residual_inference_pregate_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
@@ -5307,6 +5482,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The core/periphery branch closeout artifact is fail-closed. It closes or redirects the current clipped core/periphery value-capacity branch unless the primary arm clears CE or stored-gap thresholds, norm, commutator, and churn budgets, and is not explained by the flat same-router value-capacity control.",
         "",
         "The budget-normalized gated value-mixture pregate is the selected local sparse-value redesign. It keeps the promoted contextual top-k2 router, adds residual-budget clipping plus a learned low-rank value gate, compares against the flat same-router value MLP control, and remains fail-closed with no GPU or promotion request.",
+        "",
+        "The PC core/periphery residual-inference pregate is a major-pivot scaffold from the external strategy review. It closes the current sparse value-capacity branch as unsupported, records that Ben should be notified, and defines the next local trainable packet: fixed contextual top-k2 router, protected predictive core, plastic residual-error periphery, two local inference steps, anchor KL, norm clamp, commutator/churn penalties, and flat/dense/token-position/random/shuffled controls. It is not promotion evidence.",
         "",
         "## Next Step",
         "",

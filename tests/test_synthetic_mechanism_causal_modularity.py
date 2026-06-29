@@ -49,6 +49,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["core_periphery_branch_closeout_row_count"], 0)
             self.assertEqual(summary["sparse_value_redesign_selector_row_count"], 0)
             self.assertEqual(summary["budget_normalized_gated_value_mixture_pregate_row_count"], 0)
+            self.assertEqual(summary["pc_core_periphery_residual_inference_pregate_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -233,6 +234,21 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
             self.assertFalse(
                 summary["budget_normalized_gated_value_mixture_pregate_primary_result"]["promotion_allowed"]
+            )
+            self.assertEqual(summary["pc_core_periphery_residual_inference_pregate_row_count"], 6)
+            self.assertIsNotNone(summary["pc_core_periphery_residual_inference_pregate_primary_result"])
+            self.assertEqual(
+                summary["pc_core_periphery_residual_inference_pregate_primary_result"]["row_count"],
+                summary["pc_core_periphery_residual_inference_pregate_row_count"],
+            )
+            self.assertFalse(
+                summary["pc_core_periphery_residual_inference_pregate_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["pc_core_periphery_residual_inference_pregate_primary_result"]["promotion_allowed"]
+            )
+            self.assertTrue(
+                summary["pc_core_periphery_residual_inference_pregate_primary_result"]["notify_ben"]
             )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
@@ -503,6 +519,46 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(primary_pregate["requires_gpu_now"], "False")
             self.assertEqual(primary_pregate["promotion_allowed"], "False")
             self.assertEqual(primary_pregate["mechanism_labels_used_for_scoring_only"], "True")
+
+            with (out_dir / "pc_core_periphery_residual_inference_pregate.csv").open(newline="", encoding="utf-8") as handle:
+                pc_pregate_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(pc_pregate_rows), 6)
+            selected_pc_rows = [row for row in pc_pregate_rows if row["selected"] == "True"]
+            self.assertEqual(len(selected_pc_rows), 1)
+            selected_pc = selected_pc_rows[0]
+            self.assertEqual(
+                selected_pc["pregate_role"],
+                "primary_pc_core_periphery_residual_inference_design",
+            )
+            self.assertEqual(
+                selected_pc["next_experiment"],
+                "implement_trainable_pc_core_periphery_residual_inference_pregate",
+            )
+            for required_field in {
+                "source_failed_branch",
+                "source_failed_branch_pregate_passes",
+                "reference_sparse_gap_to_stored_control",
+                "mechanism",
+                "training_objective",
+                "advance_gate",
+                "required_for_next_packet",
+                "implemented_in_current_packet",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "advance_to_gpu_validation",
+                "strategic_change_level",
+                "notify_ben",
+                "mechanism_labels_used_for_scoring_only",
+            }:
+                self.assertIn(required_field, selected_pc)
+            self.assertEqual(selected_pc["source_failed_branch"], "budget_normalized_gated_low_rank_value_mixture")
+            self.assertEqual(selected_pc["source_failed_branch_pregate_passes"], "False")
+            self.assertEqual(selected_pc["requires_gpu_now"], "False")
+            self.assertEqual(selected_pc["promotion_allowed"], "False")
+            self.assertEqual(selected_pc["advance_to_gpu_validation"], "False")
+            self.assertEqual(selected_pc["strategic_change_level"], "major")
+            self.assertEqual(selected_pc["notify_ben"], "True")
+            self.assertEqual(selected_pc["mechanism_labels_used_for_scoring_only"], "True")
 
             with (out_dir / "ce_by_rule_position.csv").open(newline="", encoding="utf-8") as handle:
                 ce_rule_position_rows = list(csv.DictReader(handle))
