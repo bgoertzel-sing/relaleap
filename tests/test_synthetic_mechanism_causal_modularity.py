@@ -47,6 +47,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["core_periphery_sparse_value_capacity_probe_row_count"], 0)
             self.assertEqual(summary["core_periphery_update_stability_bracket_row_count"], 0)
             self.assertEqual(summary["core_periphery_branch_closeout_row_count"], 0)
+            self.assertEqual(summary["sparse_value_redesign_selector_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -203,6 +204,22 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
             self.assertFalse(
                 summary["core_periphery_branch_closeout_primary_result"]["promotion_allowed"]
+            )
+            self.assertEqual(summary["sparse_value_redesign_selector_row_count"], 3)
+            self.assertIsNotNone(summary["sparse_value_redesign_selector_primary_result"])
+            self.assertEqual(
+                summary["sparse_value_redesign_selector_primary_result"]["row_count"],
+                summary["sparse_value_redesign_selector_row_count"],
+            )
+            self.assertEqual(
+                summary["sparse_value_redesign_selector_primary_result"]["selected_candidate_path"],
+                "budget_normalized_gated_low_rank_value_mixture",
+            )
+            self.assertFalse(
+                summary["sparse_value_redesign_selector_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["sparse_value_redesign_selector_primary_result"]["promotion_allowed"]
             )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
@@ -398,6 +415,34 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(closeout["requires_gpu_now"], "False")
             self.assertEqual(closeout["promotion_allowed"], "False")
             self.assertEqual(closeout["mechanism_labels_used_for_scoring_only"], "True")
+
+            with (out_dir / "sparse_value_redesign_selector.csv").open(newline="", encoding="utf-8") as handle:
+                redesign_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(redesign_rows), 3)
+            selected_redesigns = [row for row in redesign_rows if row["selected"] == "True"]
+            self.assertEqual(len(selected_redesigns), 1)
+            selected_redesign = selected_redesigns[0]
+            self.assertEqual(
+                selected_redesign["candidate_path"],
+                "budget_normalized_gated_low_rank_value_mixture",
+            )
+            for required_field in {
+                "source_closeout_status",
+                "reference_to_stored_upper_bound_ce_gap",
+                "primary_residual_l2_ratio_vs_best_sparse",
+                "flat_control_stronger_by_gt_0p01",
+                "closed_branch_budget_failure",
+                "pregate_required",
+                "next_experiment",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "mechanism_labels_used_for_scoring_only",
+            }:
+                self.assertIn(required_field, selected_redesign)
+            self.assertEqual(selected_redesign["source_closeout_status"], "closed_redesign_required")
+            self.assertEqual(selected_redesign["requires_gpu_now"], "False")
+            self.assertEqual(selected_redesign["promotion_allowed"], "False")
+            self.assertEqual(selected_redesign["mechanism_labels_used_for_scoring_only"], "True")
 
             with (out_dir / "ce_by_rule_position.csv").open(newline="", encoding="utf-8") as handle:
                 ce_rule_position_rows = list(csv.DictReader(handle))

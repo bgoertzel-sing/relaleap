@@ -45,6 +45,7 @@ REQUIRED_ARTIFACTS = (
     "core_periphery_sparse_value_capacity_probe.csv",
     "core_periphery_update_stability_bracket.csv",
     "core_periphery_branch_closeout.csv",
+    "sparse_value_redesign_selector.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -316,6 +317,16 @@ def run_synthetic_mechanism_causal_modularity(
         "core_periphery_branch_closeout_primary_result": (
             _core_periphery_branch_closeout_summary(
                 training_smoke["core_periphery_branch_closeout"]
+            )
+            if training_smoke is not None
+            else None
+        ),
+        "sparse_value_redesign_selector_row_count": (
+            len(training_smoke["sparse_value_redesign_selector"]) if training_smoke is not None else 0
+        ),
+        "sparse_value_redesign_selector_primary_result": (
+            _sparse_value_redesign_selector_summary(
+                training_smoke["sparse_value_redesign_selector"]
             )
             if training_smoke is not None
             else None
@@ -768,6 +779,17 @@ def _run_training_smoke(
         commutator_rows=commutator_rows,
         forgetting_rows=forgetting_rows,
     )
+    core_periphery_branch_closeout = _core_periphery_branch_closeout_rows(
+        probe_rows=core_periphery_sparse_value_capacity_probe,
+        stability_rows=core_periphery_update_stability_bracket,
+    )
+    sparse_value_redesign_selector = _sparse_value_redesign_selector_rows(
+        closeout_rows=core_periphery_branch_closeout,
+        arm_metrics=arm_metrics,
+        residual_budget_rows=residual_budget_accounting,
+        commutator_rows=commutator_rows,
+        forgetting_rows=forgetting_rows,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -785,10 +807,8 @@ def _run_training_smoke(
         "value_capacity_core_periphery_diagnostic": value_capacity_core_periphery_diagnostic,
         "core_periphery_sparse_value_capacity_probe": core_periphery_sparse_value_capacity_probe,
         "core_periphery_update_stability_bracket": core_periphery_update_stability_bracket,
-        "core_periphery_branch_closeout": _core_periphery_branch_closeout_rows(
-            probe_rows=core_periphery_sparse_value_capacity_probe,
-            stability_rows=core_periphery_update_stability_bracket,
-        ),
+        "core_periphery_branch_closeout": core_periphery_branch_closeout,
+        "sparse_value_redesign_selector": sparse_value_redesign_selector,
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": residual_budget_accounting,
@@ -3586,6 +3606,16 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("sparse_value_redesign_selector"):
+        summary = _sparse_value_redesign_selector_summary(
+            training_smoke["sparse_value_redesign_selector"]
+        )
+        if summary.get("selected_next_experiment"):
+            return (
+                "implement the local budget-normalized gated low-rank value-mixture pregate selected by "
+                "the sparse value redesign selector; keep GPU validation blocked until flat-control, norm, "
+                "commutator, and churn gates pass"
+            )
     if training_smoke.get("core_periphery_branch_closeout"):
         summary = _core_periphery_branch_closeout_summary(
             training_smoke["core_periphery_branch_closeout"]
@@ -4673,6 +4703,159 @@ def _core_periphery_branch_closeout_summary(rows: list[dict[str, Any]]) -> dict[
     }
 
 
+def _sparse_value_redesign_selector_rows(
+    *,
+    closeout_rows: list[dict[str, Any]],
+    arm_metrics: list[dict[str, Any]],
+    residual_budget_rows: list[dict[str, Any]],
+    commutator_rows: list[dict[str, Any]],
+    forgetting_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not closeout_rows:
+        return []
+    closeout = closeout_rows[0]
+    if closeout.get("closeout_status") != "closed_redesign_required":
+        return []
+
+    by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
+    budget_by_arm = {str(row.get("arm", "")): row for row in residual_budget_rows}
+    primary_arm = str(closeout.get("primary_arm", ""))
+    flat_arm = str(closeout.get("flat_control_arm", ""))
+    reference_arm = str(closeout.get("reference_sparse_arm", "promoted_contextual_topk2"))
+
+    primary = by_arm.get(primary_arm, {})
+    flat = by_arm.get(flat_arm, {})
+    reference = by_arm.get(reference_arm, {})
+    stored = _best_ce_row(
+        [row for row in arm_metrics if row.get("control_budget_role") == "stored_parameter_matched_dense_mlp_upper_bound"]
+    )
+    active = _best_ce_row(
+        [row for row in arm_metrics if row.get("control_budget_role") == "active_proxy_matched_dense_mlp_control"]
+    )
+
+    primary_ce = _metric_float(primary.get("holdout_ce"))
+    flat_ce = _metric_float(flat.get("holdout_ce"))
+    reference_ce = _metric_float(reference.get("holdout_ce"))
+    stored_ce = _metric_float(stored.get("holdout_ce")) if stored else None
+    active_ce = _metric_float(active.get("holdout_ce")) if active else None
+    primary_commutator = _mean_metric(commutator_rows, [primary_arm], "finite_update_commutator_l2")
+    primary_churn = _mean_abs_metric(forgetting_rows, [primary_arm], "functional_churn")
+    flat_commutator = _mean_metric(commutator_rows, [flat_arm], "finite_update_commutator_l2")
+    flat_churn = _mean_abs_metric(forgetting_rows, [flat_arm], "functional_churn")
+
+    flat_beats_primary = bool(
+        primary_ce is not None and flat_ce is not None and primary_ce - flat_ce > 0.01
+    )
+    budgets_failed = not bool(closeout.get("primary_budget_passes") is True)
+    stored_gap = _delta_value(reference_ce, stored_ce)
+    active_gap = _delta_value(reference_ce, active_ce)
+    residual_ratio = _metric_float(
+        budget_by_arm.get(primary_arm, {}).get("residual_l2_ratio_vs_best_sparse")
+    )
+
+    common = {
+        "source_closeout_branch": closeout.get("branch", ""),
+        "source_closeout_status": closeout.get("closeout_status", ""),
+        "reference_sparse_arm": reference_arm,
+        "reference_sparse_ce": reference_ce,
+        "primary_closed_arm": primary_arm,
+        "primary_closed_ce": primary_ce,
+        "flat_control_arm": flat_arm,
+        "flat_control_ce": flat_ce,
+        "stored_upper_bound_arm": stored.get("arm", "") if stored else "",
+        "stored_upper_bound_ce": stored_ce,
+        "active_matched_control_arm": active.get("arm", "") if active else "",
+        "active_matched_control_ce": active_ce,
+        "reference_to_stored_upper_bound_ce_gap": stored_gap,
+        "reference_to_active_matched_ce_gap": active_gap,
+        "primary_residual_l2_ratio_vs_best_sparse": residual_ratio,
+        "primary_commutator_l2": primary_commutator,
+        "primary_functional_churn": primary_churn,
+        "flat_control_commutator_l2": flat_commutator,
+        "flat_control_functional_churn": flat_churn,
+        "flat_control_stronger_by_gt_0p01": flat_beats_primary,
+        "closed_branch_budget_failure": budgets_failed,
+        "requires_gpu_now": False,
+        "promotion_allowed": False,
+        "mechanism_labels_used_for_scoring_only": True,
+    }
+
+    candidates = [
+        {
+            "candidate_rank": 1,
+            "candidate_path": "budget_normalized_gated_low_rank_value_mixture",
+            "selected": True,
+            "next_experiment": "implement_local_budget_normalized_gated_value_mixture_pregate",
+            "pregate_required": (
+                "beat promoted sparse by >=0.05 CE or close >=10% of stored-control gap, "
+                "not lose to flat same-router control by >0.01 CE, and pass norm/commutator/churn budgets"
+            ),
+            "reason": (
+                "The clipped core/periphery split is closed, but the flat control shows value-capacity headroom; "
+                "the next local design should normalize residual scale and gate low-rank value capacity before GPU."
+            ),
+        },
+        {
+            "candidate_rank": 2,
+            "candidate_path": "soft_mixture_low_churn_dense_modular_residual",
+            "selected": False,
+            "next_experiment": "hold_as_pivot_if_sparse_value_pregate_fails",
+            "pregate_required": (
+                "only promote if sparse redesign again fails flat-control/interference gates and soft mixture keeps "
+                "lower churn or commutator than stored MLP controls"
+            ),
+            "reason": (
+                "Stored MLP controls remain much stronger on CE, but they carry larger interference costs; keep this "
+                "as the fallback architecture rather than the immediate sparse-column step."
+            ),
+        },
+        {
+            "candidate_rank": 3,
+            "candidate_path": "router_only_or_support_head_retry",
+            "selected": False,
+            "next_experiment": "defer_until_value_mechanism_changes",
+            "pregate_required": "requires new value mechanism evidence because router-only ceilings do not close the stored-control gap",
+            "reason": (
+                "Existing oracle-support and sequence-heldout support-head diagnostics already close the router-only "
+                "branch for this packet."
+            ),
+        },
+    ]
+    return [{**common, **candidate} for candidate in candidates]
+
+
+def _sparse_value_redesign_selector_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "selected_candidate_path": "",
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "interpretation": "sparse value redesign selector was not run",
+        }
+    selected = next((row for row in rows if row.get("selected") is True), rows[0])
+    return {
+        "row_count": len(rows),
+        "selected_candidate_path": selected.get("candidate_path", ""),
+        "selected_next_experiment": selected.get("next_experiment", ""),
+        "flat_control_stronger_by_gt_0p01": selected.get("flat_control_stronger_by_gt_0p01") is True,
+        "closed_branch_budget_failure": selected.get("closed_branch_budget_failure") is True,
+        "reference_to_stored_upper_bound_ce_gap": _metric_float(
+            selected.get("reference_to_stored_upper_bound_ce_gap")
+        ),
+        "primary_residual_l2_ratio_vs_best_sparse": _metric_float(
+            selected.get("primary_residual_l2_ratio_vs_best_sparse")
+        ),
+        "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
+        "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
+        "interpretation": (
+            "Fail-closed local redesign selector after clipped core/periphery closeout. It selects one "
+            "bounded sparse-value pregate and explicitly blocks GPU/promotion until flat-control, norm, "
+            "commutator, and churn gates pass."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -4773,6 +4956,10 @@ def _write_artifacts(
         out_dir / "core_periphery_branch_closeout.csv",
         [] if training_smoke is None else training_smoke["core_periphery_branch_closeout"],
     )
+    _write_csv(
+        out_dir / "sparse_value_redesign_selector.csv",
+        [] if training_smoke is None else training_smoke["sparse_value_redesign_selector"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -4810,6 +4997,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Core/periphery sparse value-capacity probe rows: `{summary['core_periphery_sparse_value_capacity_probe_row_count']}`",
         f"- Core/periphery update-stability bracket rows: `{summary['core_periphery_update_stability_bracket_row_count']}`",
         f"- Core/periphery branch closeout rows: `{summary['core_periphery_branch_closeout_row_count']}`",
+        f"- Sparse value redesign selector rows: `{summary['sparse_value_redesign_selector_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
