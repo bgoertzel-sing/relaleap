@@ -9,6 +9,7 @@ fails closed until concrete training hooks are wired in.
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import json
 import platform
@@ -262,7 +263,6 @@ def _run_training_smoke(
     intervention_rows: list[dict[str, Any]] = []
     commutator_rows: list[dict[str, Any]] = []
     forgetting_rows: list[dict[str, Any]] = []
-    holdout_logits_by_arm: dict[str, Any] = {}
     final_ce_by_arm: dict[str, float] = {}
 
     for arm_index, spec in enumerate(specs):
@@ -339,7 +339,6 @@ def _run_training_smoke(
                 .detach()
                 .item()
             )
-        holdout_logits_by_arm[spec.name] = holdout_logits
         final_ce_by_arm[spec.name] = holdout_ce
         arm_metrics.append(
             {
@@ -372,10 +371,33 @@ def _run_training_smoke(
         intervention_rows.extend(
             _actual_intervention_rows(
                 arm=spec.name,
+                adapter=adapter,
+                hidden=holdout_hidden,
+                inputs=holdout_inputs,
                 logits=holdout_logits,
                 base_logits=base_holdout_logits,
                 targets=holdout_targets,
                 rules=holdout_rules,
+                spec=spec,
+                decode=base.decode,
+                F=F,
+                torch=torch,
+            )
+        )
+        commutator_rows.extend(
+            _actual_commutator_rows(
+                arm=spec.name,
+                adapter=adapter,
+                spec=spec,
+                train_hidden=train_hidden,
+                train_inputs=train_inputs,
+                train_targets=train_targets,
+                train_rules=train_rules,
+                holdout_hidden=holdout_hidden,
+                holdout_inputs=holdout_inputs,
+                holdout_targets=holdout_targets,
+                decode=base.decode,
+                learning_rate=learning_rate,
                 F=F,
                 torch=torch,
             )
@@ -388,7 +410,6 @@ def _run_training_smoke(
             )
         )
 
-    commutator_rows = _actual_commutator_rows(holdout_logits_by_arm, torch=torch)
     primary = _synthetic_primary_result(arm_metrics, intervention_rows, commutator_rows)
     return {
         "arm_metrics": arm_metrics,
@@ -698,41 +719,99 @@ def _per_token_rows(
 def _actual_intervention_rows(
     *,
     arm: str,
+    adapter: Any,
+    hidden: Any,
+    inputs: Any,
     logits: Any,
     base_logits: Any,
     targets: Any,
     rules: list[str],
+    spec: _SyntheticArmSpec,
+    decode: Any,
     F: Any,
     torch: Any,
 ) -> list[dict[str, Any]]:
     rows = []
+    support = _synthetic_support(adapter, hidden, inputs, spec, torch)
     for rule in RULES:
         indices = [index for index, row_rule in enumerate(rules) if row_rule == rule]
         if not indices:
             continue
         index_tensor = torch.tensor(indices, dtype=torch.long, device=targets.device)
-        arm_ce = F.cross_entropy(
-            logits.index_select(0, index_tensor).reshape(-1, logits.shape[-1]),
-            targets.index_select(0, index_tensor).reshape(-1),
-        )
-        base_ce = F.cross_entropy(
-            base_logits.index_select(0, index_tensor).reshape(-1, base_logits.shape[-1]),
-            targets.index_select(0, index_tensor).reshape(-1),
-        )
-        gain = float((base_ce - arm_ce).detach().item())
+        arm_rule_logits = logits.index_select(0, index_tensor)
+        arm_ce = _ce_for_indices(logits, targets, index_tensor, F=F)
+        base_ce = _ce_for_indices(base_logits, targets, index_tensor, F=F)
+        if support is not None:
+            mechanism_columns = _modal_support_columns(support.index_select(0, index_tensor), spec.top_k, torch)
+            ablated_support = _replace_support_columns(support, mechanism_columns, spec.num_columns, torch)
+            ablated_logits = decode(adapter(hidden, support_indices=ablated_support))
+            dropin_support = torch.tensor(
+                mechanism_columns,
+                dtype=torch.long,
+                device=hidden.device,
+            ).view(1, 1, len(mechanism_columns)).expand_as(support)
+            dropin_logits = decode(adapter(hidden, support_indices=dropin_support))
+            ablated_ce = _ce_for_indices(ablated_logits, targets, index_tensor, F=F)
+            dropin_ce = _ce_for_indices(dropin_logits, targets, index_tensor, F=F)
+            other_indices = [index for index, row_rule in enumerate(rules) if row_rule != rule]
+            if other_indices:
+                other_index_tensor = torch.tensor(other_indices, dtype=torch.long, device=targets.device)
+                other_arm_ce = _ce_for_indices(logits, targets, other_index_tensor, F=F)
+                other_ablated_ce = _ce_for_indices(ablated_logits, targets, other_index_tensor, F=F)
+                off_target_leakage = float((other_ablated_ce - other_arm_ce).detach().abs().item())
+            else:
+                off_target_leakage = 0.0
+            necessity = float((ablated_ce - arm_ce).detach().item())
+            sufficiency = float((base_ce - dropin_ce).detach().item())
+            selectivity = necessity - off_target_leakage
+            intervention_name = "selected_column_ablation_dropin"
+            anchor_kl = float(
+                _kl_to_reference(
+                    ablated_logits.index_select(0, index_tensor),
+                    arm_rule_logits,
+                    F=F,
+                )
+                .detach()
+                .item()
+            )
+            selected_columns = ",".join(str(column) for column in mechanism_columns)
+        else:
+            ablated_logits = base_logits
+            ablated_ce = base_ce
+            dropin_ce = arm_ce
+            necessity = float((ablated_ce - arm_ce).detach().item())
+            sufficiency = float((base_ce - dropin_ce).detach().item())
+            selectivity = necessity
+            off_target_leakage = 0.0
+            intervention_name = "global_residual_ablation_control"
+            anchor_kl = float(
+                _kl_to_reference(
+                    ablated_logits.index_select(0, index_tensor),
+                    arm_rule_logits,
+                    F=F,
+                )
+                .detach()
+                .item()
+            )
+            selected_columns = ""
         rows.append(
             {
                 "arm": arm,
                 "latent_rule": rule,
-                "intervention": "base_residual_ablation_proxy",
+                "intervention": intervention_name,
+                "selected_columns": selected_columns,
                 "required_metrics": "ce_delta;necessity;sufficiency;selectivity;off_target_leakage;anchor_kl",
                 "metric_values_available": True,
-                "ce_delta_vs_base": -gain,
-                "necessity_proxy": gain,
-                "sufficiency_proxy": gain,
-                "selectivity_proxy": gain,
-                "off_target_leakage_proxy": 0.0,
-                "anchor_kl": float(_kl_to_reference(logits.index_select(0, index_tensor), base_logits.index_select(0, index_tensor), F=F).detach().item()),
+                "normal_ce": float(arm_ce.detach().item()),
+                "ablated_ce": float(ablated_ce.detach().item()),
+                "dropin_ce": float(dropin_ce.detach().item()),
+                "base_ce": float(base_ce.detach().item()),
+                "ce_delta_vs_base": float((arm_ce - base_ce).detach().item()),
+                "necessity": necessity,
+                "sufficiency": sufficiency,
+                "selectivity": selectivity,
+                "off_target_leakage": off_target_leakage,
+                "anchor_kl": anchor_kl,
                 "mechanism_labels_used_for_scoring_only": True,
             }
         )
@@ -773,28 +852,191 @@ def _actual_forgetting_rows(
     return rows
 
 
-def _actual_commutator_rows(holdout_logits_by_arm: dict[str, Any], *, torch: Any) -> list[dict[str, Any]]:
+def _actual_commutator_rows(
+    *,
+    arm: str,
+    adapter: Any,
+    spec: _SyntheticArmSpec,
+    train_hidden: Any,
+    train_inputs: Any,
+    train_targets: Any,
+    train_rules: list[str],
+    holdout_hidden: Any,
+    holdout_inputs: Any,
+    holdout_targets: Any,
+    decode: Any,
+    learning_rate: float,
+    F: Any,
+    torch: Any,
+) -> list[dict[str, Any]]:
     rows = []
-    for arm, logits in holdout_logits_by_arm.items():
-        centered = logits - logits.mean(dim=1, keepdim=True)
-        for left in RULES:
-            for right in RULES:
-                if left >= right:
-                    continue
-                gap = float(centered.pow(2).mean().sqrt().detach().item()) * 0.0
-                rows.append(
-                    {
-                        "arm": arm,
-                        "left_rule": left,
-                        "right_rule": right,
-                        "required_metrics": "finite_update_commutator_l2;ce_order_gap;anchor_kl_order_gap",
-                        "metric_values_available": True,
-                        "finite_update_commutator_l2": gap,
-                        "ce_order_gap": gap,
-                        "anchor_kl_order_gap": gap,
-                    }
+    base_logits = _synthetic_forward_logits(
+        adapter=adapter,
+        hidden=holdout_hidden,
+        inputs=holdout_inputs,
+        spec=spec,
+        decode=decode,
+        torch=torch,
+    ).detach()
+    for left in RULES:
+        for right in RULES:
+            if left >= right:
+                continue
+            if not list(adapter.parameters()):
+                ab_logits = base_logits
+                ba_logits = base_logits
+            else:
+                ab_adapter = copy.deepcopy(adapter)
+                ba_adapter = copy.deepcopy(adapter)
+                _single_rule_update(
+                    adapter=ab_adapter,
+                    rule=left,
+                    train_hidden=train_hidden,
+                    train_inputs=train_inputs,
+                    train_targets=train_targets,
+                    train_rules=train_rules,
+                    spec=spec,
+                    decode=decode,
+                    learning_rate=learning_rate,
+                    F=F,
+                    torch=torch,
                 )
+                _single_rule_update(
+                    adapter=ab_adapter,
+                    rule=right,
+                    train_hidden=train_hidden,
+                    train_inputs=train_inputs,
+                    train_targets=train_targets,
+                    train_rules=train_rules,
+                    spec=spec,
+                    decode=decode,
+                    learning_rate=learning_rate,
+                    F=F,
+                    torch=torch,
+                )
+                _single_rule_update(
+                    adapter=ba_adapter,
+                    rule=right,
+                    train_hidden=train_hidden,
+                    train_inputs=train_inputs,
+                    train_targets=train_targets,
+                    train_rules=train_rules,
+                    spec=spec,
+                    decode=decode,
+                    learning_rate=learning_rate,
+                    F=F,
+                    torch=torch,
+                )
+                _single_rule_update(
+                    adapter=ba_adapter,
+                    rule=left,
+                    train_hidden=train_hidden,
+                    train_inputs=train_inputs,
+                    train_targets=train_targets,
+                    train_rules=train_rules,
+                    spec=spec,
+                    decode=decode,
+                    learning_rate=learning_rate,
+                    F=F,
+                    torch=torch,
+                )
+                with torch.no_grad():
+                    ab_logits = _synthetic_forward_logits(
+                        adapter=ab_adapter,
+                        hidden=holdout_hidden,
+                        inputs=holdout_inputs,
+                        spec=spec,
+                        decode=decode,
+                        torch=torch,
+                    ).detach()
+                    ba_logits = _synthetic_forward_logits(
+                        adapter=ba_adapter,
+                        hidden=holdout_hidden,
+                        inputs=holdout_inputs,
+                        spec=spec,
+                        decode=decode,
+                        torch=torch,
+                    ).detach()
+            ab_ce = F.cross_entropy(ab_logits.reshape(-1, ab_logits.shape[-1]), holdout_targets.reshape(-1))
+            ba_ce = F.cross_entropy(ba_logits.reshape(-1, ba_logits.shape[-1]), holdout_targets.reshape(-1))
+            rows.append(
+                {
+                    "arm": arm,
+                    "left_rule": left,
+                    "right_rule": right,
+                    "required_metrics": "finite_update_commutator_l2;ce_order_gap;anchor_kl_order_gap",
+                    "metric_values_available": True,
+                    "finite_update_commutator_l2": float((ab_logits - ba_logits).pow(2).mean().sqrt().detach().item()),
+                    "ce_order_gap": float((ab_ce - ba_ce).detach().abs().item()),
+                    "anchor_kl_order_gap": float(_kl_to_reference(ab_logits, ba_logits, F=F).detach().item()),
+                }
+            )
     return rows
+
+
+def _single_rule_update(
+    *,
+    adapter: Any,
+    rule: str,
+    train_hidden: Any,
+    train_inputs: Any,
+    train_targets: Any,
+    train_rules: list[str],
+    spec: _SyntheticArmSpec,
+    decode: Any,
+    learning_rate: float,
+    F: Any,
+    torch: Any,
+) -> None:
+    parameters = [parameter for parameter in adapter.parameters() if parameter.requires_grad]
+    if not parameters:
+        return
+    indices = [index for index, train_rule in enumerate(train_rules) if train_rule == rule]
+    if not indices:
+        return
+    index_tensor = torch.tensor(indices, dtype=torch.long, device=train_targets.device)
+    optimizer = torch.optim.SGD(parameters, lr=learning_rate)
+    optimizer.zero_grad(set_to_none=True)
+    logits = _synthetic_forward_logits(
+        adapter=adapter,
+        hidden=train_hidden.index_select(0, index_tensor),
+        inputs=train_inputs.index_select(0, index_tensor),
+        spec=spec,
+        decode=decode,
+        torch=torch,
+    )
+    targets = train_targets.index_select(0, index_tensor)
+    loss = F.cross_entropy(logits.reshape(-1, logits.shape[-1]), targets.reshape(-1))
+    loss.backward()
+    optimizer.step()
+
+
+def _ce_for_indices(logits: Any, targets: Any, index_tensor: Any, *, F: Any) -> Any:
+    return F.cross_entropy(
+        logits.index_select(0, index_tensor).reshape(-1, logits.shape[-1]),
+        targets.index_select(0, index_tensor).reshape(-1),
+    )
+
+
+def _modal_support_columns(support: Any, top_k: int, torch: Any) -> list[int]:
+    flat = support.reshape(-1)
+    values, counts = torch.unique(flat, return_counts=True)
+    order = torch.argsort(counts, descending=True)
+    selected = [int(values[index].detach().item()) for index in order[:top_k]]
+    while len(selected) < top_k:
+        selected.append(selected[-1] if selected else 0)
+    return selected
+
+
+def _replace_support_columns(support: Any, mechanism_columns: list[int], num_columns: int, torch: Any) -> Any:
+    blocked = torch.tensor(mechanism_columns, dtype=torch.long, device=support.device)
+    replacement = torch.zeros_like(support)
+    for offset in range(num_columns):
+        candidate = (support + offset + 1) % num_columns
+        allowed = ~torch.isin(candidate, blocked)
+        replacement = torch.where((replacement == 0) & allowed, candidate, replacement)
+    mask = torch.isin(support, blocked)
+    return torch.where(mask, replacement, support)
 
 
 def _synthetic_primary_result(
@@ -817,7 +1059,7 @@ def _synthetic_primary_result(
         ),
         "intervention_rows_with_metrics": sum(1 for row in intervention_rows if row.get("metric_values_available") is True),
         "commutator_rows_with_metrics": sum(1 for row in commutator_rows if row.get("metric_values_available") is True),
-        "interpretation": "Tiny CPU smoke verifies hooks and artifact flow only; it is not causal modularity evidence without stronger intervention metrics and repeats.",
+        "interpretation": "Tiny CPU smoke verifies measured intervention and finite-update artifact flow only; it is not causal modularity evidence without stricter gates and repeats.",
     }
 
 
@@ -1048,7 +1290,7 @@ def _selected_next_step(
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
     return (
-        "tighten the synthetic intervention metrics beyond the current smoke proxies, then repeat the CPU smoke on a second seed before any GPU validation"
+        "add stricter local pass/fail gates over measured purity, off-target leakage, commutators, CE, norm, and parameter budgets before any second seed or GPU validation"
     )
 
 

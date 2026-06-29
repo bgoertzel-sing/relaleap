@@ -125,6 +125,29 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 intervention_rows = list(csv.DictReader(handle))
             self.assertTrue(intervention_rows)
             self.assertEqual({row["metric_values_available"] for row in intervention_rows}, {"True"})
+            self.assertIn(
+                "selected_column_ablation_dropin",
+                {row["intervention"] for row in intervention_rows},
+            )
+            sparse_rows = [
+                row
+                for row in intervention_rows
+                if row["arm"] == "intervention_trained_sparse_topk2"
+            ]
+            self.assertTrue(any(row["selected_columns"] for row in sparse_rows))
+            self.assertIn("necessity", intervention_rows[0])
+            self.assertIn("off_target_leakage", intervention_rows[0])
+
+            with (out_dir / "commutator_rows.csv").open(newline="", encoding="utf-8") as handle:
+                commutator_rows = list(csv.DictReader(handle))
+            self.assertTrue(commutator_rows)
+            self.assertTrue(
+                any(
+                    float(row["finite_update_commutator_l2"]) > 0.0
+                    for row in commutator_rows
+                    if row["arm"] != "base_no_residual"
+                )
+            )
 
 
 if __name__ == "__main__":
