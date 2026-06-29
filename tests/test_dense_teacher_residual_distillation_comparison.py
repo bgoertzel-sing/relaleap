@@ -97,14 +97,24 @@ class DenseTeacherResidualDistillationComparisonTest(unittest.TestCase):
             self.assertIn("parameter_matched_causal_mlp_control", arms)
             self.assertIn("promoted_contextual_topk2_ce_mse_distill", arms)
             self.assertIn("promoted_contextual_topk2_mse_only_distill", arms)
+            self.assertIn("norm_budgeted_promoted_contextual_topk2_ce_mse_distill", arms)
             self.assertIn("rank_matched_contextual_topk1", arms)
             self.assertIn("random_support_topk2", arms)
             self.assertIn("fixed_support_topk2", arms)
             self.assertIn("shuffled_teacher_target_topk2", arms)
             self.assertIn("acsr_predicted_future_support_teacher_scale_0p5", variants)
             self.assertIn("promoted_contextual_topk2_ce_mse_distill_teacher_scale_0p5", arms)
+            self.assertIn("norm_budgeted_promoted_contextual_topk2_ce_mse_distill_teacher_scale_0p5", arms)
             self.assertIn("dense_teacher_calibrated_scale_0p5", arms)
             self.assertTrue(summary["teacher_scale_summaries"])
+            norm_budgeted = next(
+                row
+                for row in summary["variant_rows"]
+                if row.get("arm") == "norm_budgeted_promoted_contextual_topk2_ce_mse_distill"
+            )
+            self.assertIn("residual_norm_budget", norm_budgeted)
+            self.assertIn("residual_norm_budget_error", norm_budgeted)
+            self.assertIn("residual_norm_budget_overuse", norm_budgeted)
             teacher = next(
                 row
                 for row in summary["variant_rows"]

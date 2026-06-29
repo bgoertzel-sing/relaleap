@@ -53,6 +53,7 @@ CONTROL_VARIANTS = (
 CONTRACT_VARIANTS = (
     "promoted_contextual_topk2_ce_mse_distill",
     "promoted_contextual_topk2_mse_only_distill",
+    "norm_budgeted_promoted_contextual_topk2_ce_mse_distill",
     "rank_matched_contextual_topk1",
     "random_support_topk2",
     "fixed_support_topk2",
@@ -218,6 +219,12 @@ def run_dense_teacher_residual_distillation_comparison(
             "top_k": top_k,
             "loss_mode": "mse_only",
         },
+        "norm_budgeted_promoted_contextual_topk2_ce_mse_distill": {
+            "kind": "native_contextual",
+            "features": _feature_tensor(torch, chunks, future_targets),
+            "top_k": top_k,
+            "loss_mode": "ce_mse_norm_budget",
+        },
         "rank_matched_contextual_topk1": {
             "kind": "native_contextual",
             "features": _feature_tensor(torch, chunks, future_targets),
@@ -311,6 +318,11 @@ def run_dense_teacher_residual_distillation_comparison(
             student_teacher_logits = scaled_teacher_logits
             if spec["loss_mode"] == "shuffled_target":
                 student_teacher_logits = _shuffle_tokens(torch, scaled_teacher_logits)
+            residual_norm_budget = None
+            if spec["loss_mode"] == "ce_mse_norm_budget":
+                residual_norm_budget = float(
+                    scaled_teacher_hidden_residual.norm(dim=-1).mean().detach().item()
+                )
             _train_student(
                 torch,
                 F,
@@ -324,6 +336,7 @@ def run_dense_teacher_residual_distillation_comparison(
                 features=spec["features"],
                 steps=student_step_budget,
                 loss_mode=str(spec["loss_mode"]),
+                residual_norm_budget=residual_norm_budget,
             )
             row, support = _student_metric_row(
                 torch,
@@ -344,12 +357,14 @@ def run_dense_teacher_residual_distillation_comparison(
                 atoms_per_column=atoms_per_column,
                 teacher_scale=teacher_scale,
                 teacher_ce=scaled_teacher_ce,
+                residual_norm_budget=residual_norm_budget,
             )
             row["arm"] = _scaled_arm_name(
                 {
                     CONTEXTUAL_VARIANT: "promoted_contextual_topk2_ce_mse_distill",
                     "promoted_contextual_topk2_ce_mse_distill": "promoted_contextual_topk2_ce_mse_distill",
                     "promoted_contextual_topk2_mse_only_distill": "promoted_contextual_topk2_mse_only_distill",
+                    "norm_budgeted_promoted_contextual_topk2_ce_mse_distill": "norm_budgeted_promoted_contextual_topk2_ce_mse_distill",
                     "rank_matched_contextual_topk1": "rank_matched_contextual_topk1",
                     "random_support_topk2": "random_support_topk2",
                     "fixed_support_topk2": "fixed_support_topk2",
@@ -503,11 +518,12 @@ def _train_student(
     features: Any,
     steps: int,
     loss_mode: str = "ce_mse",
+    residual_norm_budget: float | None = None,
 ) -> None:
     optimizer = torch.optim.AdamW(residual.parameters(), lr=3e-3)
     for _ in range(steps):
         optimizer.zero_grad(set_to_none=True)
-        logits, _, _ = _student_logits_and_support(
+        logits, _, student_hidden = _student_logits_and_support(
             torch,
             base,
             residual,
@@ -519,6 +535,14 @@ def _train_student(
         loss = F.mse_loss(logits, teacher_logits.detach())
         if loss_mode != "mse_only":
             loss = loss + 0.1 * _ce_loss(F, logits, targets, vocab_size)
+        if residual_norm_budget is not None:
+            update_l2 = (student_hidden - hidden).norm(dim=-1).mean()
+            budget = torch.as_tensor(
+                residual_norm_budget,
+                dtype=update_l2.dtype,
+                device=update_l2.device,
+            )
+            loss = loss + 2.0 * (update_l2 - budget).pow(2) + 4.0 * torch.relu(update_l2 - budget).pow(2)
         loss.backward()
         optimizer.step()
 
@@ -543,6 +567,7 @@ def _student_metric_row(
     atoms_per_column: int,
     teacher_scale: float,
     teacher_ce: float,
+    residual_norm_budget: float | None = None,
 ) -> tuple[dict[str, Any], Any]:
     with torch.no_grad():
         logits, support, student_hidden = _student_logits_and_support(
@@ -564,6 +589,8 @@ def _student_metric_row(
         teacher_l2 = float(teacher_hidden_residual.norm(dim=-1).mean().item())
         logit_mse = float(F.mse_loss(logits, base_logits).item())
         churn = float((logits.argmax(dim=-1) != teacher_logits.argmax(dim=-1)).to(dtype=torch.float32).mean().item())
+        budget = teacher_l2 if residual_norm_budget is None else float(residual_norm_budget)
+        budget_error = abs(residual_l2 - budget)
     return (
         {
             "variant": variant,
@@ -582,6 +609,9 @@ def _student_metric_row(
             "active_rank_or_topk": float(top_k),
             "residual_l2": residual_l2,
             "residual_norm_ratio": residual_l2 / max(teacher_l2, 1e-12),
+            "residual_norm_budget": budget,
+            "residual_norm_budget_error": budget_error,
+            "residual_norm_budget_overuse": max(0.0, residual_l2 - budget),
             "flops_estimate": float(hidden.numel() * max(top_k, 1)),
             "teacher_residual_mse": residual_mse,
             "teacher_residual_r2": residual_r2,

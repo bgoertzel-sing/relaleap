@@ -23,6 +23,7 @@ TEACHER_ARM = "parameter_matched_causal_mlp_control"
 REQUIRED_SPARSE_STUDENT_ARMS = (
     "promoted_contextual_topk2_ce_mse_distill",
     "promoted_contextual_topk2_mse_only_distill",
+    "norm_budgeted_promoted_contextual_topk2_ce_mse_distill",
 )
 REQUIRED_CONTROL_ARMS = (
     "dense_teacher_parameter_matched_mlp",

@@ -88,6 +88,7 @@ def _write_dense_primary(path: Path, *, complete: bool) -> None:
             for arm in (
                 "dense_teacher_parameter_matched_mlp",
                 "dense_rank_norm_control",
+                "norm_budgeted_promoted_contextual_topk2_ce_mse_distill",
                 "rank_matched_contextual_topk1",
                 "random_support_topk2",
                 "fixed_support_topk2",
