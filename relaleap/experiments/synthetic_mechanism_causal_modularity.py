@@ -37,6 +37,8 @@ REQUIRED_ARTIFACTS = (
     "ce_gap_decomposition.csv",
     "oracle_support_sparse_topk2.csv",
     "per_token_metrics.csv",
+    "ce_by_rule_position.csv",
+    "residual_budget_accounting.csv",
     "notes.md",
 )
 
@@ -215,6 +217,17 @@ def run_synthetic_mechanism_causal_modularity(
         ),
         "per_token_metric_row_count": (
             len(training_smoke["per_token_metrics"]) if training_smoke is not None else 0
+        ),
+        "ce_by_rule_position_row_count": (
+            len(training_smoke["ce_by_rule_position"]) if training_smoke is not None else 0
+        ),
+        "residual_budget_accounting_row_count": (
+            len(training_smoke["residual_budget_accounting"]) if training_smoke is not None else 0
+        ),
+        "residual_budget_primary_result": (
+            _residual_budget_summary(training_smoke["residual_budget_accounting"])
+            if training_smoke is not None
+            else None
         ),
         "first_generated_rows": episode_rows[: min(6, len(episode_rows))],
         "reusable_apis": [
@@ -494,11 +507,14 @@ def _run_training_smoke(
         )
 
     primary = _synthetic_primary_result(arm_metrics, intervention_rows, commutator_rows)
+    ce_by_rule_position = _ce_by_rule_position_rows(per_token_metrics)
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
         "oracle_support_sparse_topk2": oracle_support_rows,
         "per_token_metrics": per_token_metrics,
+        "ce_by_rule_position": ce_by_rule_position,
+        "residual_budget_accounting": _residual_budget_accounting_rows(arm_metrics),
         "per_mechanism_interventions": intervention_rows,
         "commutator_rows": commutator_rows,
         "forgetting_rows": forgetting_rows,
@@ -1474,6 +1490,120 @@ def _ce_gap_decomposition_rows(arm_metrics: list[dict[str, Any]]) -> list[dict[s
     return rows
 
 
+def _ce_by_rule_position_rows(per_token_metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
+    for row in per_token_metrics:
+        grouped.setdefault(
+            (
+                str(row.get("arm", "")),
+                str(row.get("latent_rule", "")),
+                int(row.get("position_index", 0)),
+            ),
+            [],
+        ).append(row)
+    rows: list[dict[str, Any]] = []
+    for (arm, latent_rule, position_index), group_rows in sorted(grouped.items()):
+        losses = [_metric_float(row.get("ce_loss")) for row in group_rows]
+        losses = [loss for loss in losses if loss is not None]
+        correct = [
+            int(row.get("predicted_token")) == int(row.get("target_token"))
+            for row in group_rows
+            if row.get("predicted_token") not in {None, ""} and row.get("target_token") not in {None, ""}
+        ]
+        rows.append(
+            {
+                "arm": arm,
+                "split": "holdout",
+                "latent_rule": latent_rule,
+                "position_index": position_index,
+                "token_count": len(losses),
+                "mean_ce_loss": (sum(losses) / float(len(losses))) if losses else None,
+                "min_ce_loss": min(losses) if losses else None,
+                "max_ce_loss": max(losses) if losses else None,
+                "accuracy": (sum(1 for value in correct if value) / float(len(correct))) if correct else None,
+                "mechanism_labels_used_for_scoring_only": True,
+            }
+        )
+    return rows
+
+
+def _residual_budget_accounting_rows(arm_metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sparse_rows = [
+        row
+        for row in arm_metrics
+        if row.get("arm") in {"promoted_contextual_topk2", "intervention_trained_sparse_topk2"}
+    ]
+    active_dense_mlp_rows = [
+        row
+        for row in arm_metrics
+        if row.get("control_budget_role") == "active_proxy_matched_dense_mlp_control"
+    ]
+    stored_dense_mlp_rows = [
+        row
+        for row in arm_metrics
+        if row.get("control_budget_role") == "stored_parameter_matched_dense_mlp_upper_bound"
+    ]
+    best_sparse = _best_ce_row(sparse_rows)
+    best_active_dense_mlp = _best_ce_row(active_dense_mlp_rows)
+    best_stored_dense_mlp = _best_ce_row(stored_dense_mlp_rows)
+    best_sparse_norm = _metric_float(best_sparse.get("residual_l2")) if best_sparse else None
+    best_sparse_active = _metric_float(best_sparse.get("active_parameters_proxy")) if best_sparse else None
+    best_sparse_stored = _metric_float(best_sparse.get("stored_parameters")) if best_sparse else None
+    best_active_flops = _flop_proxy(best_active_dense_mlp) if best_active_dense_mlp else None
+    best_stored_flops = _flop_proxy(best_stored_dense_mlp) if best_stored_dense_mlp else None
+    rows: list[dict[str, Any]] = []
+    for row in arm_metrics:
+        active_parameters = _metric_float(row.get("active_parameters_proxy"))
+        stored_parameters = _metric_float(row.get("stored_parameters"))
+        residual_l2 = _metric_float(row.get("residual_l2"))
+        flop_proxy = _flop_proxy(row)
+        rows.append(
+            {
+                "arm": row.get("arm", ""),
+                "family": row.get("family", ""),
+                "router": row.get("router", ""),
+                "support_mode": row.get("support_mode", ""),
+                "control_budget_role": row.get("control_budget_role", ""),
+                "holdout_ce": _metric_float(row.get("holdout_ce")),
+                "residual_l2": residual_l2,
+                "residual_l2_ratio_vs_best_sparse": _safe_ratio(residual_l2, best_sparse_norm),
+                "active_parameters_proxy": active_parameters,
+                "stored_parameters": stored_parameters,
+                "flop_proxy_per_token": flop_proxy,
+                "active_to_best_sparse_ratio": _safe_ratio(active_parameters, best_sparse_active),
+                "stored_to_best_sparse_ratio": _safe_ratio(stored_parameters, best_sparse_stored),
+                "flop_to_best_active_dense_mlp_ratio": _safe_ratio(flop_proxy, best_active_flops),
+                "flop_to_best_stored_dense_mlp_ratio": _safe_ratio(flop_proxy, best_stored_flops),
+                "best_sparse_arm": best_sparse.get("arm", "") if best_sparse else "",
+                "best_active_matched_dense_mlp_arm": (
+                    best_active_dense_mlp.get("arm", "") if best_active_dense_mlp else ""
+                ),
+                "best_stored_matched_dense_mlp_arm": (
+                    best_stored_dense_mlp.get("arm", "") if best_stored_dense_mlp else ""
+                ),
+                "accounting_is_proxy": True,
+                "flop_proxy_notes": (
+                    "Approximate per-token residual-path multiply-add proxy; excludes frozen base and decoder."
+                ),
+            }
+        )
+    return rows
+
+
+def _flop_proxy(row: dict[str, Any]) -> float | None:
+    active_parameters = _metric_float(row.get("active_parameters_proxy"))
+    if active_parameters is None:
+        return None
+    family = str(row.get("family", ""))
+    if family == "base":
+        return 0.0
+    if family == "mlp_control":
+        return float(active_parameters * 2.0)
+    if family in {"dense_control", "sparse", "sparse_null", "router_null"}:
+        return float(active_parameters * 2.0)
+    return float(active_parameters)
+
+
 def _best_ce_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     scored = [(row, _metric_float(row.get("holdout_ce"))) for row in rows]
     scored = [(row, ce) for row, ce in scored if ce is not None]
@@ -1698,6 +1828,8 @@ def _gate_rows(
             [
                 _criterion("training_smoke_arm_metrics_present", bool(training_smoke["arm_metrics"]), "hard", "CPU training smoke must emit arm metrics", len(training_smoke["arm_metrics"]), "missing arm metrics"),
                 _criterion("training_smoke_per_token_metrics_present", bool(training_smoke["per_token_metrics"]), "hard", "CPU training smoke must emit per-token holdout metrics", len(training_smoke["per_token_metrics"]), "missing per-token metrics"),
+                _criterion("training_smoke_ce_by_rule_position_present", bool(training_smoke["ce_by_rule_position"]), "hard", "CPU training smoke must emit per-rule/per-position CE decomposition", len(training_smoke["ce_by_rule_position"]), "missing CE decomposition by rule/position"),
+                _criterion("training_smoke_residual_budget_accounting_present", bool(training_smoke["residual_budget_accounting"]), "hard", "CPU training smoke must emit residual norm and FLOP proxy accounting", len(training_smoke["residual_budget_accounting"]), "missing residual budget accounting"),
                 _criterion("training_smoke_required_arms_present", _required_controls().issubset(arm_names), "hard", "CPU training smoke must cover required comparator arms", sorted(arm_names), "missing CPU smoke arm"),
                 _criterion("training_smoke_intervention_metrics_present", any(row.get("metric_values_available") is True for row in intervention_rows), "hard", "intervention rows must contain measured values", len(intervention_rows), "missing measured intervention metrics"),
                 _criterion("training_smoke_commutator_metrics_present", any(row.get("metric_values_available") is True for row in commutator_rows), "hard", "commutator rows must contain measured values", len(commutator_rows), "missing measured commutator metrics"),
@@ -1962,6 +2094,10 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("ce_by_rule_position") and training_smoke.get("residual_budget_accounting"):
+        return (
+            "add an opt-in soft-to-hard dense-teacher-distilled sparse arm with a shuffled-teacher null in the local synthetic pregate"
+        )
     if training_smoke.get("oracle_support_sparse_topk2"):
         return (
             "add per-rule/per-position CE decomposition and residual norm/FLOP accounting before any GPU validation or modularity claim"
@@ -2026,6 +2162,63 @@ def _oracle_support_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "interpretation": (
             "Diagnostic only: oracle supports use holdout labels for scoring and expose router/value regret; "
             "they are not deployable training evidence."
+        ),
+    }
+
+
+def _residual_budget_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "best_sparse_arm": "",
+            "best_active_matched_dense_mlp_arm": "",
+            "best_stored_matched_dense_mlp_arm": "",
+            "interpretation": "residual budget accounting was not run",
+        }
+    sparse_rows = [
+        row
+        for row in rows
+        if row.get("arm") in {"promoted_contextual_topk2", "intervention_trained_sparse_topk2"}
+    ]
+    active_dense_mlp_rows = [
+        row
+        for row in rows
+        if row.get("control_budget_role") == "active_proxy_matched_dense_mlp_control"
+    ]
+    stored_dense_mlp_rows = [
+        row
+        for row in rows
+        if row.get("control_budget_role") == "stored_parameter_matched_dense_mlp_upper_bound"
+    ]
+    best_sparse = _best_ce_row(sparse_rows)
+    best_active_dense_mlp = _best_ce_row(active_dense_mlp_rows)
+    best_stored_dense_mlp = _best_ce_row(stored_dense_mlp_rows)
+    return {
+        "row_count": len(rows),
+        "best_sparse_arm": best_sparse.get("arm", "") if best_sparse else "",
+        "best_sparse_residual_l2": _metric_float(best_sparse.get("residual_l2")) if best_sparse else None,
+        "best_sparse_flop_proxy_per_token": (
+            _metric_float(best_sparse.get("flop_proxy_per_token")) if best_sparse else None
+        ),
+        "best_active_matched_dense_mlp_arm": (
+            best_active_dense_mlp.get("arm", "") if best_active_dense_mlp else ""
+        ),
+        "best_active_matched_dense_mlp_flop_proxy_per_token": (
+            _metric_float(best_active_dense_mlp.get("flop_proxy_per_token"))
+            if best_active_dense_mlp
+            else None
+        ),
+        "best_stored_matched_dense_mlp_arm": (
+            best_stored_dense_mlp.get("arm", "") if best_stored_dense_mlp else ""
+        ),
+        "best_stored_matched_dense_mlp_flop_proxy_per_token": (
+            _metric_float(best_stored_dense_mlp.get("flop_proxy_per_token"))
+            if best_stored_dense_mlp
+            else None
+        ),
+        "interpretation": (
+            "Diagnostic only: residual norms and FLOP proxies expose budget confounds; "
+            "they are not causal-modularity evidence by themselves."
         ),
     }
 
@@ -2095,6 +2288,14 @@ def _write_artifacts(
         [] if training_smoke is None else training_smoke["oracle_support_sparse_topk2"],
     )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
+    _write_csv(
+        out_dir / "ce_by_rule_position.csv",
+        [] if training_smoke is None else training_smoke["ce_by_rule_position"],
+    )
+    _write_csv(
+        out_dir / "residual_budget_accounting.csv",
+        [] if training_smoke is None else training_smoke["residual_budget_accounting"],
+    )
     _write_notes(out_dir / "notes.md", summary)
 
 
@@ -2114,10 +2315,14 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Mechanism labels enter training: `{summary['mechanism_labels_enter_training']}`",
         f"- Local scientific gates: `{summary['local_scientific_gate_status']}`",
         f"- Oracle-support sparse top-k2 rows: `{summary['oracle_support_sparse_topk2_row_count']}`",
+        f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
+        f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         "",
         "This artifact implements the major-pivot pregate by generating same-vocabulary synthetic latent-rule episodes and the comparator/intervention schemas. It intentionally separates artifact readiness from scientific gates; GPU validation remains blocked until local scientific gates pass.",
         "",
         "The oracle-support sparse top-k2 artifact is diagnostic only: it uses holdout labels to score exhaustive singleton/pair supports for trained sparse values and must not be treated as deployable training evidence.",
+        "",
+        "The CE by rule/position and residual budget accounting artifacts are local diagnostics. FLOP values are residual-path proxies only and exclude the frozen base and decoder.",
         "",
         "## Next Step",
         "",

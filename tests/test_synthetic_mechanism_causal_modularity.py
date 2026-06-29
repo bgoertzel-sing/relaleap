@@ -119,10 +119,15 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 summary["oracle_support_sparse_topk2_row_count"],
             )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
+            self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
+            self.assertEqual(summary["residual_budget_accounting_row_count"], 10)
+            self.assertIsNotNone(summary["residual_budget_primary_result"])
             self.assertFalse(summary["missing_training_hooks"])
             self.assertIn("not causal modularity evidence", summary["training_smoke_primary_result"]["interpretation"])
             criteria = {row["criterion"]: row for row in summary["gate_criteria"]}
             self.assertTrue(criteria["training_smoke_required_arms_present"]["passed"])
+            self.assertTrue(criteria["training_smoke_ce_by_rule_position_present"]["passed"])
+            self.assertTrue(criteria["training_smoke_residual_budget_accounting_present"]["passed"])
             self.assertTrue(criteria["training_smoke_intervention_metrics_present"]["passed"])
             self.assertTrue(criteria["training_smoke_commutator_metrics_present"]["passed"])
             scientific = {row["criterion"]: row for row in summary["local_scientific_gates"]}
@@ -199,6 +204,53 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
             self.assertTrue(ce_gap_by_arm["promoted_contextual_topk2"]["best_sparse_arm"])
             self.assertTrue(ce_gap_by_arm["promoted_contextual_topk2"]["best_dense_mlp_arm"])
+
+            with (out_dir / "ce_by_rule_position.csv").open(newline="", encoding="utf-8") as handle:
+                ce_rule_position_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(ce_rule_position_rows), summary["ce_by_rule_position_row_count"])
+            self.assertEqual(
+                {row["latent_rule"] for row in ce_rule_position_rows},
+                {"copy_shift", "reverse_window", "xor_prev", "affine_jump"},
+            )
+            for required_field in {
+                "arm",
+                "latent_rule",
+                "position_index",
+                "token_count",
+                "mean_ce_loss",
+                "min_ce_loss",
+                "max_ce_loss",
+                "accuracy",
+                "mechanism_labels_used_for_scoring_only",
+            }:
+                self.assertIn(required_field, ce_rule_position_rows[0])
+            self.assertEqual(
+                {row["mechanism_labels_used_for_scoring_only"] for row in ce_rule_position_rows},
+                {"True"},
+            )
+
+            with (out_dir / "residual_budget_accounting.csv").open(newline="", encoding="utf-8") as handle:
+                budget_accounting_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(budget_accounting_rows), 10)
+            budget_by_arm = {row["arm"]: row for row in budget_accounting_rows}
+            self.assertEqual(set(budget_by_arm), arms)
+            for required_field in {
+                "residual_l2",
+                "residual_l2_ratio_vs_best_sparse",
+                "active_parameters_proxy",
+                "stored_parameters",
+                "flop_proxy_per_token",
+                "active_to_best_sparse_ratio",
+                "stored_to_best_sparse_ratio",
+                "flop_to_best_active_dense_mlp_ratio",
+                "flop_to_best_stored_dense_mlp_ratio",
+                "accounting_is_proxy",
+                "flop_proxy_notes",
+            }:
+                self.assertIn(required_field, budget_accounting_rows[0])
+            self.assertEqual(budget_by_arm["base_no_residual"]["flop_proxy_per_token"], "0.0")
+            self.assertEqual({row["accounting_is_proxy"] for row in budget_accounting_rows}, {"True"})
+            self.assertTrue(budget_by_arm["promoted_contextual_topk2"]["residual_l2_ratio_vs_best_sparse"])
 
             with (out_dir / "oracle_support_sparse_topk2.csv").open(newline="", encoding="utf-8") as handle:
                 oracle_rows = list(csv.DictReader(handle))
