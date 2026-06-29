@@ -35,6 +35,7 @@ REQUIRED_ARTIFACTS = (
     "local_scientific_gates.csv",
     "arm_metrics.csv",
     "ce_gap_decomposition.csv",
+    "oracle_support_sparse_topk2.csv",
     "per_token_metrics.csv",
     "notes.md",
 )
@@ -204,6 +205,14 @@ def run_synthetic_mechanism_causal_modularity(
         "ce_gap_decomposition_row_count": (
             len(training_smoke["ce_gap_decomposition"]) if training_smoke is not None else 0
         ),
+        "oracle_support_sparse_topk2_row_count": (
+            len(training_smoke["oracle_support_sparse_topk2"]) if training_smoke is not None else 0
+        ),
+        "oracle_support_primary_result": (
+            _oracle_support_summary(training_smoke["oracle_support_sparse_topk2"])
+            if training_smoke is not None
+            else None
+        ),
         "per_token_metric_row_count": (
             len(training_smoke["per_token_metrics"]) if training_smoke is not None else 0
         ),
@@ -304,6 +313,7 @@ def _run_training_smoke(
     )
     arm_metrics: list[dict[str, Any]] = []
     per_token_metrics: list[dict[str, Any]] = []
+    oracle_support_rows: list[dict[str, Any]] = []
     intervention_rows: list[dict[str, Any]] = []
     commutator_rows: list[dict[str, Any]] = []
     forgetting_rows: list[dict[str, Any]] = []
@@ -414,6 +424,21 @@ def _run_training_smoke(
                 torch=torch,
             )
         )
+        if spec.family == "sparse" and spec.support_mode == "learned" and spec.top_k == 2:
+            oracle_support_rows.extend(
+                _oracle_support_sparse_topk2_rows(
+                    arm=spec.name,
+                    adapter=adapter,
+                    hidden=holdout_hidden,
+                    inputs=holdout_inputs,
+                    targets=holdout_targets,
+                    rules=holdout_rules,
+                    spec=spec,
+                    decode=base.decode,
+                    F=F,
+                    torch=torch,
+                )
+            )
         intervention_rows.extend(
             _actual_intervention_rows(
                 arm=spec.name,
@@ -472,6 +497,7 @@ def _run_training_smoke(
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
+        "oracle_support_sparse_topk2": oracle_support_rows,
         "per_token_metrics": per_token_metrics,
         "per_mechanism_interventions": intervention_rows,
         "commutator_rows": commutator_rows,
@@ -818,6 +844,132 @@ def _per_token_rows(
                 }
             )
     return rows
+
+
+def _oracle_support_sparse_topk2_rows(
+    *,
+    arm: str,
+    adapter: Any,
+    hidden: Any,
+    inputs: Any,
+    targets: Any,
+    rules: list[str],
+    spec: _SyntheticArmSpec,
+    decode: Any,
+    F: Any,
+    torch: Any,
+) -> list[dict[str, Any]]:
+    learned_support = _synthetic_support(adapter, hidden, inputs, spec, torch)
+    if learned_support is None:
+        return []
+    singleton_supports = [(column,) for column in range(spec.num_columns)]
+    pair_supports = [
+        (left, right)
+        for left in range(spec.num_columns)
+        for right in range(left + 1, spec.num_columns)
+    ]
+    learned_logits = decode(adapter(hidden, support_indices=learned_support)).detach()
+    learned_losses = F.cross_entropy(
+        learned_logits.reshape(-1, learned_logits.shape[-1]),
+        targets.reshape(-1),
+        reduction="none",
+    ).reshape(targets.shape)
+    support_loss_rows: list[tuple[tuple[int, ...], Any]] = []
+    batch, seq_len = int(targets.shape[0]), int(targets.shape[1])
+    for support_tuple in singleton_supports + pair_supports:
+        support_tensor = torch.tensor(
+            support_tuple,
+            dtype=torch.long,
+            device=hidden.device,
+        ).view(1, 1, len(support_tuple)).expand(batch, seq_len, len(support_tuple))
+        logits = decode(adapter(hidden, support_indices=support_tensor)).detach()
+        losses = F.cross_entropy(
+            logits.reshape(-1, logits.shape[-1]),
+            targets.reshape(-1),
+            reduction="none",
+        ).reshape(targets.shape)
+        support_loss_rows.append((support_tuple, losses))
+
+    rows: list[dict[str, Any]] = []
+    for episode_index, rule in enumerate(rules):
+        for position_index in range(seq_len):
+            learned_tuple = tuple(
+                int(value.detach().item())
+                for value in learned_support[episode_index, position_index]
+            )
+            learned_loss = float(learned_losses[episode_index, position_index].detach().item())
+            best_singleton_tuple: tuple[int, ...] | None = None
+            best_singleton_loss: float | None = None
+            best_pair_tuple: tuple[int, ...] | None = None
+            best_pair_loss: float | None = None
+            best_one_swap_tuple: tuple[int, ...] | None = None
+            best_one_swap_loss: float | None = None
+            learned_set = set(learned_tuple)
+            for support_tuple, losses in support_loss_rows:
+                loss = float(losses[episode_index, position_index].detach().item())
+                if len(support_tuple) == 1:
+                    if best_singleton_loss is None or loss < best_singleton_loss:
+                        best_singleton_tuple = support_tuple
+                        best_singleton_loss = loss
+                    continue
+                if best_pair_loss is None or loss < best_pair_loss:
+                    best_pair_tuple = support_tuple
+                    best_pair_loss = loss
+                if len(learned_set.intersection(support_tuple)) == 1:
+                    if best_one_swap_loss is None or loss < best_one_swap_loss:
+                        best_one_swap_tuple = support_tuple
+                        best_one_swap_loss = loss
+            oracle_tuple = best_pair_tuple
+            oracle_loss = best_pair_loss
+            if best_singleton_loss is not None and (
+                oracle_loss is None or best_singleton_loss < oracle_loss
+            ):
+                oracle_tuple = best_singleton_tuple
+                oracle_loss = best_singleton_loss
+            regret = _delta_value(learned_loss, oracle_loss)
+            pair_regret = _delta_value(learned_loss, best_pair_loss)
+            one_swap_regret = _delta_value(learned_loss, best_one_swap_loss)
+            total_recoverable = regret if regret is not None and regret > 0.0 else None
+            one_swap_recovery = (
+                ((learned_loss - best_one_swap_loss) / total_recoverable)
+                if total_recoverable is not None and best_one_swap_loss is not None
+                else None
+            )
+            rows.append(
+                {
+                    "arm": arm,
+                    "split": "holdout",
+                    "episode_index": episode_index,
+                    "position_index": position_index,
+                    "latent_rule": rule,
+                    "target_token": int(targets[episode_index, position_index].item()),
+                    "learned_support": _support_key(learned_tuple),
+                    "learned_ce_loss": learned_loss,
+                    "best_singleton_support": _support_key(best_singleton_tuple),
+                    "best_singleton_ce_loss": best_singleton_loss,
+                    "best_pair_support": _support_key(best_pair_tuple),
+                    "best_pair_ce_loss": best_pair_loss,
+                    "oracle_support": _support_key(oracle_tuple),
+                    "oracle_support_size": len(oracle_tuple) if oracle_tuple is not None else None,
+                    "oracle_ce_loss": oracle_loss,
+                    "oracle_regret": regret,
+                    "pair_oracle_regret": pair_regret,
+                    "best_one_swap_support": _support_key(best_one_swap_tuple),
+                    "best_one_swap_ce_loss": best_one_swap_loss,
+                    "one_swap_regret": one_swap_regret,
+                    "one_swap_recovery_fraction": one_swap_recovery,
+                    "singleton_supports_evaluated": len(singleton_supports),
+                    "pair_supports_evaluated": len(pair_supports),
+                    "mechanism_labels_used_for_scoring_only": True,
+                }
+            )
+    return rows
+
+
+def _support_key(support: tuple[int, ...] | None) -> str:
+    if support is None:
+        return ""
+    return ",".join(str(column) for column in support)
 
 
 def _actual_intervention_rows(
@@ -1810,6 +1962,10 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("oracle_support_sparse_topk2"):
+        return (
+            "add per-rule/per-position CE decomposition and residual norm/FLOP accounting before any GPU validation or modularity claim"
+        )
     if _stored_upper_bound_gap_status(training_smoke) == "fail":
         return (
             "add oracle-support sparse diagnostics on the same local seed-17 pregate before any GPU validation or modularity claim"
@@ -1830,6 +1986,56 @@ def _stored_upper_bound_gap_status(training_smoke: dict[str, Any] | None) -> str
     if gap is None:
         return "missing"
     return "fail" if gap > 0.02 else "pass"
+
+
+def _oracle_support_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "mean_oracle_regret": None,
+            "mean_pair_oracle_regret": None,
+            "mean_one_swap_regret": None,
+            "mean_one_swap_recovery_fraction": None,
+            "interpretation": "oracle-support sparse top-k2 diagnostics were not run",
+        }
+    by_arm: dict[str, dict[str, Any]] = {}
+    for arm in sorted({str(row["arm"]) for row in rows}):
+        arm_rows = [row for row in rows if row.get("arm") == arm]
+        by_arm[arm] = {
+            "row_count": len(arm_rows),
+            "mean_learned_ce_loss": _mean_optional(arm_rows, "learned_ce_loss"),
+            "mean_oracle_ce_loss": _mean_optional(arm_rows, "oracle_ce_loss"),
+            "mean_oracle_regret": _mean_optional(arm_rows, "oracle_regret"),
+            "mean_pair_oracle_regret": _mean_optional(arm_rows, "pair_oracle_regret"),
+            "mean_one_swap_regret": _mean_optional(arm_rows, "one_swap_regret"),
+            "mean_one_swap_recovery_fraction": _mean_optional(
+                arm_rows,
+                "one_swap_recovery_fraction",
+            ),
+        }
+    return {
+        "row_count": len(rows),
+        "mean_oracle_regret": _mean_optional(rows, "oracle_regret"),
+        "mean_pair_oracle_regret": _mean_optional(rows, "pair_oracle_regret"),
+        "mean_one_swap_regret": _mean_optional(rows, "one_swap_regret"),
+        "mean_one_swap_recovery_fraction": _mean_optional(
+            rows,
+            "one_swap_recovery_fraction",
+        ),
+        "by_arm": by_arm,
+        "interpretation": (
+            "Diagnostic only: oracle supports use holdout labels for scoring and expose router/value regret; "
+            "they are not deployable training evidence."
+        ),
+    }
+
+
+def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
+    values = [_metric_float(row.get(field)) for row in rows]
+    values = [value for value in values if value is not None]
+    if not values:
+        return None
+    return sum(values) / float(len(values))
 
 
 def _delta_value(left: Any, right: Any) -> float | None:
@@ -1884,6 +2090,10 @@ def _write_artifacts(
         out_dir / "ce_gap_decomposition.csv",
         [] if training_smoke is None else training_smoke["ce_gap_decomposition"],
     )
+    _write_csv(
+        out_dir / "oracle_support_sparse_topk2.csv",
+        [] if training_smoke is None else training_smoke["oracle_support_sparse_topk2"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_notes(out_dir / "notes.md", summary)
 
@@ -1903,8 +2113,11 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Task id visible to model: `{summary['task_id_visible_to_model']}`",
         f"- Mechanism labels enter training: `{summary['mechanism_labels_enter_training']}`",
         f"- Local scientific gates: `{summary['local_scientific_gate_status']}`",
+        f"- Oracle-support sparse top-k2 rows: `{summary['oracle_support_sparse_topk2_row_count']}`",
         "",
         "This artifact implements the major-pivot pregate by generating same-vocabulary synthetic latent-rule episodes and the comparator/intervention schemas. It intentionally separates artifact readiness from scientific gates; GPU validation remains blocked until local scientific gates pass.",
+        "",
+        "The oracle-support sparse top-k2 artifact is diagnostic only: it uses holdout labels to score exhaustive singleton/pair supports for trained sparse values and must not be treated as deployable training evidence.",
         "",
         "## Next Step",
         "",

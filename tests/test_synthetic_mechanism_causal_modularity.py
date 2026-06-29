@@ -37,6 +37,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertGreater(summary["per_mechanism_intervention_row_count"], 0)
             self.assertGreater(summary["commutator_row_count"], 0)
             self.assertGreater(summary["forgetting_row_count"], 0)
+            self.assertEqual(summary["oracle_support_sparse_topk2_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -111,6 +112,12 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertFalse(summary["requires_gpu_now"])
             self.assertEqual(summary["arm_metric_row_count"], 10)
             self.assertEqual(summary["ce_gap_decomposition_row_count"], 10)
+            self.assertGreater(summary["oracle_support_sparse_topk2_row_count"], 0)
+            self.assertIsNotNone(summary["oracle_support_primary_result"])
+            self.assertEqual(
+                summary["oracle_support_primary_result"]["row_count"],
+                summary["oracle_support_sparse_topk2_row_count"],
+            )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertFalse(summary["missing_training_hooks"])
             self.assertIn("not causal modularity evidence", summary["training_smoke_primary_result"]["interpretation"])
@@ -192,6 +199,39 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
             self.assertTrue(ce_gap_by_arm["promoted_contextual_topk2"]["best_sparse_arm"])
             self.assertTrue(ce_gap_by_arm["promoted_contextual_topk2"]["best_dense_mlp_arm"])
+
+            with (out_dir / "oracle_support_sparse_topk2.csv").open(newline="", encoding="utf-8") as handle:
+                oracle_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(oracle_rows), summary["oracle_support_sparse_topk2_row_count"])
+            self.assertEqual(
+                {row["arm"] for row in oracle_rows},
+                {"promoted_contextual_topk2", "intervention_trained_sparse_topk2"},
+            )
+            for required_field in {
+                "learned_support",
+                "learned_ce_loss",
+                "best_singleton_support",
+                "best_singleton_ce_loss",
+                "best_pair_support",
+                "best_pair_ce_loss",
+                "oracle_support",
+                "oracle_support_size",
+                "oracle_ce_loss",
+                "oracle_regret",
+                "pair_oracle_regret",
+                "best_one_swap_support",
+                "best_one_swap_ce_loss",
+                "one_swap_regret",
+                "one_swap_recovery_fraction",
+                "singleton_supports_evaluated",
+                "pair_supports_evaluated",
+                "mechanism_labels_used_for_scoring_only",
+            }:
+                self.assertIn(required_field, oracle_rows[0])
+            self.assertEqual({row["mechanism_labels_used_for_scoring_only"] for row in oracle_rows}, {"True"})
+            self.assertTrue(any(float(row["oracle_regret"]) >= 0.0 for row in oracle_rows))
+            self.assertTrue(all(row["oracle_support"] for row in oracle_rows))
+            self.assertTrue(all(row["best_one_swap_support"] for row in oracle_rows))
 
             with (out_dir / "per_mechanism_interventions.csv").open(newline="", encoding="utf-8") as handle:
                 intervention_rows = list(csv.DictReader(handle))
