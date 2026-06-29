@@ -43,6 +43,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["support_head_sequence_heldout_diagnostic_row_count"], 0)
             self.assertEqual(summary["router_only_branch_selection_row_count"], 0)
             self.assertEqual(summary["teacher_distillation_closeout_row_count"], 0)
+            self.assertEqual(summary["value_capacity_core_periphery_diagnostic_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -149,6 +150,18 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
             self.assertFalse(summary["router_only_branch_selection_primary_result"]["requires_gpu_now"])
             self.assertFalse(summary["router_only_branch_selection_primary_result"]["promotion_allowed"])
+            self.assertEqual(summary["value_capacity_core_periphery_diagnostic_row_count"], 3)
+            self.assertIsNotNone(summary["value_capacity_core_periphery_diagnostic_primary_result"])
+            self.assertEqual(
+                summary["value_capacity_core_periphery_diagnostic_primary_result"]["row_count"],
+                summary["value_capacity_core_periphery_diagnostic_row_count"],
+            )
+            self.assertFalse(
+                summary["value_capacity_core_periphery_diagnostic_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["value_capacity_core_periphery_diagnostic_primary_result"]["promotion_allowed"]
+            )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
             self.assertEqual(summary["residual_budget_accounting_row_count"], 10)
@@ -450,6 +463,59 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual({row["deployable_training_evidence"] for row in branch_rows}, {"False"})
             self.assertEqual({row["mechanism_labels_used_for_scoring_only"] for row in branch_rows}, {"True"})
 
+            with (out_dir / "value_capacity_core_periphery_diagnostic.csv").open(newline="", encoding="utf-8") as handle:
+                value_capacity_rows = list(csv.DictReader(handle))
+            self.assertEqual(
+                len(value_capacity_rows),
+                summary["value_capacity_core_periphery_diagnostic_row_count"],
+            )
+            self.assertEqual(
+                {
+                    "active_value_capacity_control",
+                    "stored_value_capacity_upper_bound",
+                    "core_periphery_sparse_design_probe",
+                },
+                {row["branch"] for row in value_capacity_rows},
+            )
+            for required_field in {
+                "reference_sparse_arm",
+                "comparator_arm",
+                "reference_sparse_ce",
+                "comparator_ce",
+                "sparse_ce_gap_to_comparator",
+                "comparator_residual_l2_ratio_vs_sparse",
+                "comparator_active_ratio_vs_sparse",
+                "comparator_stored_ratio_vs_sparse",
+                "comparator_flop_ratio_vs_sparse",
+                "reference_sparse_mean_commutator_l2",
+                "comparator_mean_commutator_l2",
+                "reference_sparse_mean_abs_functional_churn",
+                "comparator_mean_abs_functional_churn",
+                "router_only_path_closed",
+                "candidate_status",
+                "recommend_next_path",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "mechanism_labels_used_for_scoring_only",
+            }:
+                self.assertIn(required_field, value_capacity_rows[0])
+            self.assertEqual({row["requires_gpu_now"] for row in value_capacity_rows}, {"False"})
+            self.assertEqual({row["promotion_allowed"] for row in value_capacity_rows}, {"False"})
+            self.assertEqual({row["mechanism_labels_used_for_scoring_only"] for row in value_capacity_rows}, {"True"})
+            design_rows = [
+                row
+                for row in value_capacity_rows
+                if row["branch"] == "core_periphery_sparse_design_probe"
+            ]
+            self.assertEqual(len(design_rows), 1)
+            self.assertIn(
+                design_rows[0]["recommend_next_path"],
+                {
+                    "core_periphery_sparse_value_capacity_probe",
+                    "repeat_or_repair_local_value_capacity_diagnostic",
+                },
+            )
+
             with (out_dir / "per_mechanism_interventions.csv").open(newline="", encoding="utf-8") as handle:
                 intervention_rows = list(csv.DictReader(handle))
             self.assertTrue(intervention_rows)
@@ -521,6 +587,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["support_head_sequence_heldout_diagnostic_row_count"], 12)
             self.assertEqual(summary["router_only_branch_selection_row_count"], 3)
             self.assertEqual(summary["teacher_distillation_closeout_row_count"], 1)
+            self.assertEqual(summary["value_capacity_core_periphery_diagnostic_row_count"], 3)
             teacher_summary = summary["teacher_distillation_primary_result"]
             self.assertEqual(teacher_summary["row_count"], 2)
             self.assertIsNotNone(teacher_summary["distilled_holdout_ce"])

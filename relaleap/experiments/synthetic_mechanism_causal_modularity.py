@@ -41,6 +41,7 @@ REQUIRED_ARTIFACTS = (
     "support_head_sequence_heldout_diagnostic.csv",
     "router_only_branch_selection.csv",
     "teacher_distillation_closeout.csv",
+    "value_capacity_core_periphery_diagnostic.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -266,6 +267,16 @@ def run_synthetic_mechanism_causal_modularity(
         ),
         "teacher_distillation_closeout_primary_result": (
             _teacher_distillation_closeout_summary(training_smoke["teacher_distillation_closeout"])
+            if training_smoke is not None
+            else None
+        ),
+        "value_capacity_core_periphery_diagnostic_row_count": (
+            len(training_smoke["value_capacity_core_periphery_diagnostic"]) if training_smoke is not None else 0
+        ),
+        "value_capacity_core_periphery_diagnostic_primary_result": (
+            _value_capacity_core_periphery_diagnostic_summary(
+                training_smoke["value_capacity_core_periphery_diagnostic"]
+            )
             if training_smoke is not None
             else None
         ),
@@ -656,6 +667,11 @@ def _run_training_smoke(
         arm_metrics,
         oracle_support_rows,
     )
+    router_only_branch_selection = _router_only_branch_selection_rows(
+        router_regret_ceiling_budget,
+        support_head_rows,
+    )
+    residual_budget_accounting = _residual_budget_accounting_rows(arm_metrics)
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -665,17 +681,21 @@ def _run_training_smoke(
         ),
         "router_regret_ceiling_budget": router_regret_ceiling_budget,
         "support_head_sequence_heldout_diagnostic": support_head_rows,
-        "router_only_branch_selection": _router_only_branch_selection_rows(
-            router_regret_ceiling_budget,
-            support_head_rows,
-        ),
+        "router_only_branch_selection": router_only_branch_selection,
         "teacher_distillation_closeout": _teacher_distillation_closeout_rows(
             arm_metrics,
             oracle_support_rows,
         ),
+        "value_capacity_core_periphery_diagnostic": _value_capacity_core_periphery_diagnostic_rows(
+            arm_metrics=arm_metrics,
+            residual_budget_rows=residual_budget_accounting,
+            commutator_rows=commutator_rows,
+            forgetting_rows=forgetting_rows,
+            router_only_branch_rows=router_only_branch_selection,
+        ),
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
-        "residual_budget_accounting": _residual_budget_accounting_rows(arm_metrics),
+        "residual_budget_accounting": residual_budget_accounting,
         "per_mechanism_interventions": intervention_rows,
         "commutator_rows": commutator_rows,
         "forgetting_rows": forgetting_rows,
@@ -2397,6 +2417,258 @@ def _router_only_branch_selection_rows(
     return rows
 
 
+def _value_capacity_core_periphery_diagnostic_rows(
+    *,
+    arm_metrics: list[dict[str, Any]],
+    residual_budget_rows: list[dict[str, Any]],
+    commutator_rows: list[dict[str, Any]],
+    forgetting_rows: list[dict[str, Any]],
+    router_only_branch_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not arm_metrics:
+        return []
+
+    by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
+    budget_by_arm = {str(row.get("arm", "")): row for row in residual_budget_rows}
+    sparse_candidates = [
+        by_arm[arm]
+        for arm in (
+            "promoted_contextual_topk2",
+            "intervention_trained_sparse_topk2",
+            "dense_teacher_distilled_sparse_topk2",
+        )
+        if arm in by_arm
+    ]
+    active_controls = [
+        row
+        for row in arm_metrics
+        if row.get("control_budget_role") == "active_proxy_matched_dense_mlp_control"
+    ]
+    stored_controls = [
+        row
+        for row in arm_metrics
+        if row.get("control_budget_role") == "stored_parameter_matched_dense_mlp_upper_bound"
+    ]
+    best_sparse = _best_ce_row(sparse_candidates)
+    best_active = _best_ce_row(active_controls)
+    best_stored = _best_ce_row(stored_controls)
+    if best_sparse is None:
+        return []
+
+    router_only_closed = bool(
+        router_only_branch_rows
+        and all(row.get("close_or_deprioritize_router_only_path") is True for row in router_only_branch_rows)
+    )
+    sparse_arm = str(best_sparse.get("arm", ""))
+    sparse_ce = _metric_float(best_sparse.get("holdout_ce"))
+    sparse_commutator = _mean_metric(commutator_rows, [sparse_arm], "finite_update_commutator_l2")
+    sparse_churn = _mean_abs_metric(forgetting_rows, [sparse_arm], "functional_churn")
+    sparse_budget = budget_by_arm.get(sparse_arm, {})
+
+    rows: list[dict[str, Any]] = []
+    for branch, comparator in (
+        ("active_value_capacity_control", best_active),
+        ("stored_value_capacity_upper_bound", best_stored),
+    ):
+        if comparator is None:
+            continue
+        comparator_arm = str(comparator.get("arm", ""))
+        comparator_ce = _metric_float(comparator.get("holdout_ce"))
+        ce_gap = _positive_gap(sparse_ce, comparator_ce)
+        comparator_commutator = _mean_metric(
+            commutator_rows,
+            [comparator_arm],
+            "finite_update_commutator_l2",
+        )
+        comparator_churn = _mean_abs_metric(
+            forgetting_rows,
+            [comparator_arm],
+            "functional_churn",
+        )
+        comparator_budget = budget_by_arm.get(comparator_arm, {})
+        rows.append(
+            {
+                "branch": branch,
+                "reference_sparse_arm": sparse_arm,
+                "comparator_arm": comparator_arm,
+                "reference_sparse_ce": sparse_ce,
+                "comparator_ce": comparator_ce,
+                "sparse_ce_gap_to_comparator": ce_gap,
+                "reference_sparse_residual_l2": _metric_float(best_sparse.get("residual_l2")),
+                "comparator_residual_l2": _metric_float(comparator.get("residual_l2")),
+                "comparator_residual_l2_ratio_vs_sparse": _safe_ratio(
+                    _metric_float(comparator.get("residual_l2")),
+                    _metric_float(best_sparse.get("residual_l2")),
+                ),
+                "reference_sparse_active_parameters_proxy": _metric_float(
+                    best_sparse.get("active_parameters_proxy")
+                ),
+                "comparator_active_parameters_proxy": _metric_float(
+                    comparator.get("active_parameters_proxy")
+                ),
+                "comparator_active_ratio_vs_sparse": _safe_ratio(
+                    _metric_float(comparator.get("active_parameters_proxy")),
+                    _metric_float(best_sparse.get("active_parameters_proxy")),
+                ),
+                "reference_sparse_stored_parameters": _metric_float(best_sparse.get("stored_parameters")),
+                "comparator_stored_parameters": _metric_float(comparator.get("stored_parameters")),
+                "comparator_stored_ratio_vs_sparse": _safe_ratio(
+                    _metric_float(comparator.get("stored_parameters")),
+                    _metric_float(best_sparse.get("stored_parameters")),
+                ),
+                "reference_sparse_flop_proxy_per_token": _metric_float(
+                    sparse_budget.get("flop_proxy_per_token")
+                ),
+                "comparator_flop_proxy_per_token": _metric_float(
+                    comparator_budget.get("flop_proxy_per_token")
+                ),
+                "comparator_flop_ratio_vs_sparse": _safe_ratio(
+                    _metric_float(comparator_budget.get("flop_proxy_per_token")),
+                    _metric_float(sparse_budget.get("flop_proxy_per_token")),
+                ),
+                "reference_sparse_mean_commutator_l2": sparse_commutator,
+                "comparator_mean_commutator_l2": comparator_commutator,
+                "comparator_commutator_ratio_vs_sparse": _safe_ratio(
+                    comparator_commutator,
+                    sparse_commutator,
+                ),
+                "reference_sparse_mean_abs_functional_churn": sparse_churn,
+                "comparator_mean_abs_functional_churn": comparator_churn,
+                "comparator_churn_ratio_vs_sparse": _safe_ratio(comparator_churn, sparse_churn),
+                "router_only_path_closed": router_only_closed,
+                "requires_gpu_now": False,
+                "promotion_allowed": False,
+                "candidate_status": (
+                    "stored_capacity_gap_demands_new_local_column_design"
+                    if branch == "stored_value_capacity_upper_bound" and ce_gap is not None and ce_gap > 0.02
+                    else "active_control_not_decisive_for_new_design"
+                    if branch == "active_value_capacity_control"
+                    else "stored_capacity_gap_not_material_on_this_seed"
+                ),
+                "recommend_next_path": (
+                    "core_periphery_sparse_value_capacity_probe"
+                    if router_only_closed and branch == "stored_value_capacity_upper_bound" and ce_gap is not None and ce_gap > 0.02
+                    else "repeat_or_repair_local_value_capacity_diagnostic"
+                ),
+                "mechanism_labels_used_for_scoring_only": True,
+                "interpretation": (
+                    "Diagnostic only: compares the best trained sparse arm with dense/MLP value-capacity "
+                    "controls using already-measured CE, budget, commutator, and functional-churn rows."
+                ),
+            }
+        )
+
+    if best_stored is not None:
+        stored_gap = _positive_gap(sparse_ce, _metric_float(best_stored.get("holdout_ce")))
+        rows.append(
+            {
+                "branch": "core_periphery_sparse_design_probe",
+                "reference_sparse_arm": sparse_arm,
+                "comparator_arm": str(best_stored.get("arm", "")),
+                "reference_sparse_ce": sparse_ce,
+                "comparator_ce": _metric_float(best_stored.get("holdout_ce")),
+                "sparse_ce_gap_to_comparator": stored_gap,
+                "reference_sparse_residual_l2": _metric_float(best_sparse.get("residual_l2")),
+                "comparator_residual_l2": _metric_float(best_stored.get("residual_l2")),
+                "comparator_residual_l2_ratio_vs_sparse": _safe_ratio(
+                    _metric_float(best_stored.get("residual_l2")),
+                    _metric_float(best_sparse.get("residual_l2")),
+                ),
+                "reference_sparse_active_parameters_proxy": _metric_float(
+                    best_sparse.get("active_parameters_proxy")
+                ),
+                "comparator_active_parameters_proxy": _metric_float(
+                    best_stored.get("active_parameters_proxy")
+                ),
+                "comparator_active_ratio_vs_sparse": _safe_ratio(
+                    _metric_float(best_stored.get("active_parameters_proxy")),
+                    _metric_float(best_sparse.get("active_parameters_proxy")),
+                ),
+                "reference_sparse_stored_parameters": _metric_float(best_sparse.get("stored_parameters")),
+                "comparator_stored_parameters": _metric_float(best_stored.get("stored_parameters")),
+                "comparator_stored_ratio_vs_sparse": _safe_ratio(
+                    _metric_float(best_stored.get("stored_parameters")),
+                    _metric_float(best_sparse.get("stored_parameters")),
+                ),
+                "reference_sparse_flop_proxy_per_token": _metric_float(
+                    sparse_budget.get("flop_proxy_per_token")
+                ),
+                "comparator_flop_proxy_per_token": _metric_float(
+                    budget_by_arm.get(str(best_stored.get("arm", "")), {}).get("flop_proxy_per_token")
+                ),
+                "comparator_flop_ratio_vs_sparse": _safe_ratio(
+                    _metric_float(
+                        budget_by_arm.get(str(best_stored.get("arm", "")), {}).get("flop_proxy_per_token")
+                    ),
+                    _metric_float(sparse_budget.get("flop_proxy_per_token")),
+                ),
+                "reference_sparse_mean_commutator_l2": sparse_commutator,
+                "comparator_mean_commutator_l2": _mean_metric(
+                    commutator_rows,
+                    [str(best_stored.get("arm", ""))],
+                    "finite_update_commutator_l2",
+                ),
+                "comparator_commutator_ratio_vs_sparse": _safe_ratio(
+                    _mean_metric(
+                        commutator_rows,
+                        [str(best_stored.get("arm", ""))],
+                        "finite_update_commutator_l2",
+                    ),
+                    sparse_commutator,
+                ),
+                "reference_sparse_mean_abs_functional_churn": sparse_churn,
+                "comparator_mean_abs_functional_churn": _mean_abs_metric(
+                    forgetting_rows,
+                    [str(best_stored.get("arm", ""))],
+                    "functional_churn",
+                ),
+                "comparator_churn_ratio_vs_sparse": _safe_ratio(
+                    _mean_abs_metric(
+                        forgetting_rows,
+                        [str(best_stored.get("arm", ""))],
+                        "functional_churn",
+                    ),
+                    sparse_churn,
+                ),
+                "router_only_path_closed": router_only_closed,
+                "requires_gpu_now": False,
+                "promotion_allowed": False,
+                "candidate_status": (
+                    "selected_next_local_probe"
+                    if router_only_closed and stored_gap is not None and stored_gap > 0.02
+                    else "blocked_until_router_or_stored_gap_evidence_is_clear"
+                ),
+                "recommend_next_path": (
+                    "core_periphery_sparse_value_capacity_probe"
+                    if router_only_closed and stored_gap is not None and stored_gap > 0.02
+                    else "repeat_or_repair_local_value_capacity_diagnostic"
+                ),
+                "mechanism_labels_used_for_scoring_only": True,
+                "interpretation": (
+                    "Design-selection row: the next bounded local probe should add within-column "
+                    "core/periphery value structure only if router-only is closed and the stored-control "
+                    "gap remains too large for support selection to explain."
+                ),
+            }
+        )
+    return rows
+
+
+def _mean_abs_metric(rows: list[dict[str, Any]], arms: list[str], metric: str) -> float | None:
+    values = [
+        abs(value)
+        for value in (
+            _metric_float(row.get(metric))
+            for row in rows
+            if row.get("arm") in arms and row.get("metric_values_available") is True
+        )
+        if value is not None
+    ]
+    if not values:
+        return None
+    return sum(values) / float(len(values))
+
+
 def _flop_proxy(row: dict[str, Any]) -> float | None:
     active_parameters = _metric_float(row.get("active_parameters_proxy"))
     if active_parameters is None:
@@ -2927,6 +3199,19 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("value_capacity_core_periphery_diagnostic"):
+        summary = _value_capacity_core_periphery_diagnostic_summary(
+            training_smoke["value_capacity_core_periphery_diagnostic"]
+        )
+        if summary.get("selected_next_path") == "core_periphery_sparse_value_capacity_probe":
+            return (
+                "implement the bounded local core/periphery sparse value-capacity probe selected by the "
+                "value/capacity diagnostic, preserving stored-matched dense/MLP, token/position-null, "
+                "residual-norm, functional-churn, and commutator controls before any GPU validation"
+            )
+        return (
+            "repair or repeat the local value/capacity diagnostic before designing a new residual mechanism"
+        )
     if training_smoke.get("router_only_branch_selection"):
         return (
             "deprioritize the router-only/support-head path on this seed and design the next local non-GPU mechanism probe around value/capacity or core/periphery residual structure"
@@ -3465,6 +3750,52 @@ def _teacher_distillation_closeout_summary(rows: list[dict[str, Any]]) -> dict[s
     }
 
 
+def _value_capacity_core_periphery_diagnostic_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "selected_next_path": "",
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "interpretation": "value/capacity and core/periphery diagnostic was not run",
+        }
+    selected_rows = [
+        row for row in rows if row.get("candidate_status") == "selected_next_local_probe"
+    ]
+    if selected_rows:
+        selected_next_path = str(selected_rows[0].get("recommend_next_path", ""))
+    else:
+        recommended = sorted(
+            {
+                str(row.get("recommend_next_path", ""))
+                for row in rows
+                if row.get("recommend_next_path")
+            }
+        )
+        selected_next_path = recommended[0] if recommended else ""
+    stored_rows = [row for row in rows if row.get("branch") == "stored_value_capacity_upper_bound"]
+    stored_gap = (
+        _metric_float(stored_rows[0].get("sparse_ce_gap_to_comparator"))
+        if stored_rows
+        else None
+    )
+    return {
+        "row_count": len(rows),
+        "branch_count": len({str(row.get("branch", "")) for row in rows}),
+        "selected_next_path": selected_next_path,
+        "stored_capacity_gap": stored_gap,
+        "router_only_path_closed": all(row.get("router_only_path_closed") is True for row in rows),
+        "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
+        "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
+        "candidate_statuses": sorted({str(row.get("candidate_status", "")) for row in rows}),
+        "interpretation": (
+            "Fail-closed local synthesis over measured CE, budget, commutator, and churn rows. "
+            "A core/periphery sparse value-capacity probe is a local next step only; it is not GPU "
+            "or promotion evidence."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -3549,6 +3880,10 @@ def _write_artifacts(
         out_dir / "teacher_distillation_closeout.csv",
         [] if training_smoke is None else training_smoke["teacher_distillation_closeout"],
     )
+    _write_csv(
+        out_dir / "value_capacity_core_periphery_diagnostic.csv",
+        [] if training_smoke is None else training_smoke["value_capacity_core_periphery_diagnostic"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -3582,6 +3917,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Support-head sequence-heldout diagnostic rows: `{summary['support_head_sequence_heldout_diagnostic_row_count']}`",
         f"- Router-only branch-selection rows: `{summary['router_only_branch_selection_row_count']}`",
         f"- Teacher distillation closeout rows: `{summary['teacher_distillation_closeout_row_count']}`",
+        f"- Value/capacity core-periphery diagnostic rows: `{summary['value_capacity_core_periphery_diagnostic_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
@@ -3604,6 +3940,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The opt-in dense-teacher distillation arms are diagnostics only. The dense teacher is trained on the synthetic training episodes, sparse students are evaluated with hard top-k2 supports, and the shuffled-teacher arm is a null for teacher residual target structure.",
         "",
         "The teacher-distillation closeout artifact compares the dense-teacher sparse student to the shuffled-teacher null, the best existing sparse arm, active-matched dense/MLP controls, stored-matched upper bounds, and oracle-support regret. It is a local branch triage artifact, not promotion evidence.",
+        "",
+        "The value/capacity core-periphery diagnostic synthesizes the measured CE, residual-budget, finite-update commutator, and functional-churn rows after the router-only branch is closed. It selects a local core/periphery sparse value-capacity probe only when the stored-control gap remains too large for support selection to explain; it does not request GPU validation or promotion.",
         "",
         "## Next Step",
         "",
