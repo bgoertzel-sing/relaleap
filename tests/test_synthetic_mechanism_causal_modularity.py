@@ -51,6 +51,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["budget_normalized_gated_value_mixture_pregate_row_count"], 0)
             self.assertEqual(summary["pc_core_periphery_residual_inference_pregate_row_count"], 0)
             self.assertEqual(summary["pc_residual_inference_mechanism_inspection_row_count"], 0)
+            self.assertEqual(summary["pc_error_target_inference_path_audit_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -274,6 +275,21 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
             self.assertTrue(
                 summary["pc_residual_inference_mechanism_inspection_primary_result"]["notify_ben"]
+            )
+            self.assertEqual(summary["pc_error_target_inference_path_audit_row_count"], 4)
+            self.assertIsNotNone(summary["pc_error_target_inference_path_audit_primary_result"])
+            self.assertEqual(
+                summary["pc_error_target_inference_path_audit_primary_result"]["row_count"],
+                summary["pc_error_target_inference_path_audit_row_count"],
+            )
+            self.assertFalse(
+                summary["pc_error_target_inference_path_audit_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["pc_error_target_inference_path_audit_primary_result"]["promotion_allowed"]
+            )
+            self.assertTrue(
+                summary["pc_error_target_inference_path_audit_primary_result"]["notify_ben"]
             )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
@@ -610,6 +626,36 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(selected_inspection["promotion_allowed"], "False")
             self.assertEqual(selected_inspection["advance_to_gpu_validation"], "False")
             self.assertEqual(selected_inspection["notify_ben"], "True")
+
+            with (out_dir / "pc_error_target_inference_path_audit.csv").open(newline="", encoding="utf-8") as handle:
+                pc_audit_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(pc_audit_rows), 4)
+            selected_audit_rows = [row for row in pc_audit_rows if row["selected"] == "True"]
+            self.assertEqual(len(selected_audit_rows), 1)
+            selected_audit = selected_audit_rows[0]
+            self.assertEqual(selected_audit["audit_role"], "primary_audit_decision")
+            self.assertEqual(selected_audit["primary_arm"], "pc_core_periphery_residual_inference_topk2")
+            for required_field in {
+                "target_alignment_ok",
+                "inference_path_signal_ok",
+                "flat_control_ok",
+                "commutator_budget_ok",
+                "retraining_ready",
+                "failure_reasons",
+                "selected_next_experiment",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "advance_to_gpu_validation",
+                "notify_ben",
+                "mechanism_labels_used_for_scoring_only",
+            }:
+                self.assertIn(required_field, selected_audit)
+            self.assertNotEqual(selected_audit["selected_next_experiment"], "")
+            self.assertEqual(selected_audit["requires_gpu_now"], "False")
+            self.assertEqual(selected_audit["promotion_allowed"], "False")
+            self.assertEqual(selected_audit["advance_to_gpu_validation"], "False")
+            self.assertEqual(selected_audit["notify_ben"], "True")
+            self.assertEqual(selected_audit["mechanism_labels_used_for_scoring_only"], "True")
             self.assertEqual(selected_pc["source_failed_branch"], "budget_normalized_gated_low_rank_value_mixture")
             self.assertEqual(selected_pc["source_failed_branch_pregate_passes"], "False")
             self.assertEqual(selected_pc["requires_gpu_now"], "False")
@@ -989,6 +1035,8 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["sparse_value_redesign_selector_row_count"], 3)
             self.assertEqual(summary["budget_normalized_gated_value_mixture_pregate_row_count"], 3)
             self.assertEqual(summary["pc_core_periphery_residual_inference_pregate_row_count"], 6)
+            self.assertEqual(summary["pc_residual_inference_mechanism_inspection_row_count"], 5)
+            self.assertEqual(summary["pc_error_target_inference_path_audit_row_count"], 4)
             teacher_summary = summary["teacher_distillation_primary_result"]
             self.assertEqual(teacher_summary["row_count"], 2)
             self.assertIsNotNone(teacher_summary["distilled_holdout_ce"])

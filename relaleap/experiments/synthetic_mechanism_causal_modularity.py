@@ -49,6 +49,7 @@ REQUIRED_ARTIFACTS = (
     "budget_normalized_gated_value_mixture_pregate.csv",
     "pc_core_periphery_residual_inference_pregate.csv",
     "pc_residual_inference_mechanism_inspection.csv",
+    "pc_error_target_inference_path_audit.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -363,6 +364,16 @@ def run_synthetic_mechanism_causal_modularity(
         "pc_residual_inference_mechanism_inspection_primary_result": (
             _pc_residual_inference_mechanism_inspection_summary(
                 training_smoke["pc_residual_inference_mechanism_inspection"]
+            )
+            if training_smoke is not None
+            else None
+        ),
+        "pc_error_target_inference_path_audit_row_count": (
+            len(training_smoke["pc_error_target_inference_path_audit"]) if training_smoke is not None else 0
+        ),
+        "pc_error_target_inference_path_audit_primary_result": (
+            _pc_error_target_inference_path_audit_summary(
+                training_smoke["pc_error_target_inference_path_audit"]
             )
             if training_smoke is not None
             else None
@@ -865,6 +876,13 @@ def _run_training_smoke(
         commutator_rows=commutator_rows,
         forgetting_rows=forgetting_rows,
     )
+    pc_error_target_inference_path_audit = _pc_error_target_inference_path_audit_rows(
+        pc_inspection_rows=pc_residual_inference_mechanism_inspection,
+        arm_metrics=arm_metrics,
+        residual_budget_rows=residual_budget_accounting,
+        commutator_rows=commutator_rows,
+        forgetting_rows=forgetting_rows,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -887,6 +905,7 @@ def _run_training_smoke(
         "budget_normalized_gated_value_mixture_pregate": budget_normalized_gated_value_mixture_pregate,
         "pc_core_periphery_residual_inference_pregate": pc_core_periphery_residual_inference_pregate,
         "pc_residual_inference_mechanism_inspection": pc_residual_inference_mechanism_inspection,
+        "pc_error_target_inference_path_audit": pc_error_target_inference_path_audit,
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": residual_budget_accounting,
@@ -3938,6 +3957,12 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("pc_error_target_inference_path_audit"):
+        summary = _pc_error_target_inference_path_audit_summary(
+            training_smoke["pc_error_target_inference_path_audit"]
+        )
+        if summary.get("selected_next_experiment"):
+            return str(summary["selected_next_experiment"]).replace("_", " ")
     if training_smoke.get("pc_residual_inference_mechanism_inspection"):
         summary = _pc_residual_inference_mechanism_inspection_summary(
             training_smoke["pc_residual_inference_mechanism_inspection"]
@@ -5807,6 +5832,184 @@ def _pc_residual_inference_mechanism_inspection_summary(rows: list[dict[str, Any
     }
 
 
+def _pc_error_target_inference_path_audit_rows(
+    *,
+    pc_inspection_rows: list[dict[str, Any]],
+    arm_metrics: list[dict[str, Any]],
+    residual_budget_rows: list[dict[str, Any]],
+    commutator_rows: list[dict[str, Any]],
+    forgetting_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    inspection_summary = _pc_residual_inference_mechanism_inspection_summary(pc_inspection_rows)
+    if inspection_summary.get("selected_next_experiment") != "audit_pc_error_target_and_inference_path_before_retraining":
+        return []
+
+    by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
+    budget_by_arm = {str(row.get("arm", "")): row for row in residual_budget_rows}
+    reference = by_arm.get("promoted_contextual_topk2")
+    primary = by_arm.get("pc_core_periphery_residual_inference_topk2")
+    flat = by_arm.get("pc_same_router_flat_mlp_control_topk2")
+    shuffled = by_arm.get("pc_shuffled_residual_error_target_null_topk2")
+    gated = by_arm.get("budget_normalized_gated_low_rank_value_mixture_topk2")
+    if reference is None or primary is None:
+        return []
+
+    reference_ce = _metric_float(reference.get("holdout_ce"))
+    primary_ce = _metric_float(primary.get("holdout_ce"))
+    flat_ce = _metric_float(flat.get("holdout_ce")) if flat else None
+    shuffled_ce = _metric_float(shuffled.get("holdout_ce")) if shuffled else None
+    gated_ce = _metric_float(gated.get("holdout_ce")) if gated else None
+    reference_commutator = _mean_metric(commutator_rows, ["promoted_contextual_topk2"], "finite_update_commutator_l2")
+    primary_commutator = _mean_metric(commutator_rows, ["pc_core_periphery_residual_inference_topk2"], "finite_update_commutator_l2")
+    primary_churn = _mean_abs_metric(forgetting_rows, ["pc_core_periphery_residual_inference_topk2"], "functional_churn")
+    reference_churn = _mean_abs_metric(forgetting_rows, ["promoted_contextual_topk2"], "functional_churn")
+    primary_budget = budget_by_arm.get("pc_core_periphery_residual_inference_topk2", {})
+
+    ce_gain = _delta_value(reference_ce, primary_ce)
+    flat_margin = _delta_value(primary_ce, flat_ce)
+    shuffled_margin = _delta_value(primary_ce, shuffled_ce)
+    gated_margin = _delta_value(primary_ce, gated_ce)
+    commutator_ratio = _safe_ratio(primary_commutator, reference_commutator)
+    churn_ratio = _safe_ratio(primary_churn, reference_churn)
+    target_alignment_ok = bool(shuffled_margin is not None and shuffled_margin <= -0.01)
+    inference_value_ok = bool(ce_gain is not None and ce_gain > 0.0)
+    flat_control_ok = bool(flat_margin is None or flat_margin <= 0.01)
+    commutator_ok = bool(commutator_ratio is not None and commutator_ratio <= 1.10)
+    retraining_ready = bool(target_alignment_ok and inference_value_ok and flat_control_ok and commutator_ok)
+    selected_next = (
+        "prototype_minimal_pc_inference_ablation_against_flat_control"
+        if retraining_ready
+        else "fix_pc_residual_error_target_alignment_before_retraining"
+    )
+    blockers = []
+    if not target_alignment_ok:
+        blockers.append("shuffled_target_null_competitive")
+    if not inference_value_ok:
+        blockers.append("pc_inference_no_ce_signal_vs_promoted_sparse")
+    if not flat_control_ok:
+        blockers.append("same_router_flat_control_stronger")
+    if not commutator_ok:
+        blockers.append("finite_update_commutator_budget_failed")
+
+    rows: list[dict[str, Any]] = []
+    for role, diagnostic, selected, pass_value, interpretation in (
+        (
+            "primary_audit_decision",
+            "pc_error_target_and_inference_path",
+            True,
+            retraining_ready,
+            "Fail-closed local audit before retraining the PC arm; GPU remains blocked until target alignment, inference signal, flat-control, and commutator checks pass.",
+        ),
+        (
+            "residual_error_target_alignment",
+            "pc_primary_vs_shuffled_residual_error_target_null",
+            False,
+            target_alignment_ok,
+            "The PC target is considered aligned only when the trained PC primary beats the shuffled residual-error target null by at least 0.01 CE.",
+        ),
+        (
+            "inference_path_signal",
+            "pc_primary_vs_promoted_sparse_and_closed_gated_branch",
+            False,
+            inference_value_ok,
+            "The current inference path must show positive CE signal versus promoted sparse before adding capacity or retraining variants.",
+        ),
+        (
+            "flat_control_and_update_stability",
+            "pc_primary_vs_same_router_flat_control_and_commutator",
+            False,
+            flat_control_ok and commutator_ok,
+            "The PC mechanism must not lose to the same-router flat MLP and must satisfy the finite-update commutator budget.",
+        ),
+    ):
+        rows.append(
+            {
+                "audit_name": "pc_error_target_inference_path_audit",
+                "audit_role": role,
+                "diagnostic": diagnostic,
+                "selected": selected,
+                "diagnostic_passes": pass_value,
+                "primary_arm": "pc_core_periphery_residual_inference_topk2",
+                "reference_sparse_arm": "promoted_contextual_topk2",
+                "flat_control_arm": "pc_same_router_flat_mlp_control_topk2" if flat else "",
+                "shuffled_target_null_arm": "pc_shuffled_residual_error_target_null_topk2" if shuffled else "",
+                "closed_gated_branch_arm": "budget_normalized_gated_low_rank_value_mixture_topk2" if gated else "",
+                "primary_holdout_ce": primary_ce,
+                "reference_sparse_ce": reference_ce,
+                "flat_control_ce": flat_ce,
+                "shuffled_target_null_ce": shuffled_ce,
+                "closed_gated_branch_ce": gated_ce,
+                "primary_ce_gain_vs_reference_sparse": ce_gain,
+                "primary_ce_minus_flat_control_ce": flat_margin,
+                "primary_ce_minus_shuffled_target_null_ce": shuffled_margin,
+                "primary_ce_minus_closed_gated_branch_ce": gated_margin,
+                "primary_residual_l2": _metric_float(primary.get("residual_l2")),
+                "primary_flop_proxy_per_token": _metric_float(primary_budget.get("flop_proxy_per_token")),
+                "primary_pc_inference_steps": _metric_float(primary.get("pc_inference_steps")),
+                "primary_pc_error_prediction_weight": _metric_float(primary.get("pc_error_prediction_weight")),
+                "primary_mean_gate_value": _metric_float(primary.get("mean_gate_value")),
+                "primary_commutator_ratio_vs_reference_sparse": commutator_ratio,
+                "primary_churn_ratio_vs_reference_sparse": churn_ratio,
+                "target_alignment_ok": target_alignment_ok,
+                "inference_path_signal_ok": inference_value_ok,
+                "flat_control_ok": flat_control_ok,
+                "commutator_budget_ok": commutator_ok,
+                "retraining_ready": retraining_ready,
+                "failure_reasons": ";".join(blockers),
+                "selected_next_experiment": selected_next,
+                "requires_gpu_now": False,
+                "promotion_allowed": False,
+                "advance_to_gpu_validation": False,
+                "strategic_change_level": "major",
+                "notify_ben": True,
+                "mechanism_labels_used_for_scoring_only": True,
+                "interpretation": interpretation,
+            }
+        )
+    return rows
+
+
+def _pc_error_target_inference_path_audit_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "selected_next_experiment": "",
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "notify_ben": False,
+            "strategic_change_level": "minor",
+        }
+    selected = next((row for row in rows if row.get("selected") is True), rows[0])
+    return {
+        "row_count": len(rows),
+        "selected_next_experiment": selected.get("selected_next_experiment", ""),
+        "target_alignment_ok": selected.get("target_alignment_ok") is True,
+        "inference_path_signal_ok": selected.get("inference_path_signal_ok") is True,
+        "flat_control_ok": selected.get("flat_control_ok") is True,
+        "commutator_budget_ok": selected.get("commutator_budget_ok") is True,
+        "retraining_ready": selected.get("retraining_ready") is True,
+        "failure_reasons": selected.get("failure_reasons", ""),
+        "primary_ce_gain_vs_reference_sparse": _metric_float(selected.get("primary_ce_gain_vs_reference_sparse")),
+        "primary_ce_minus_flat_control_ce": _metric_float(selected.get("primary_ce_minus_flat_control_ce")),
+        "primary_ce_minus_shuffled_target_null_ce": _metric_float(
+            selected.get("primary_ce_minus_shuffled_target_null_ce")
+        ),
+        "primary_commutator_ratio_vs_reference_sparse": _metric_float(
+            selected.get("primary_commutator_ratio_vs_reference_sparse")
+        ),
+        "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
+        "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
+        "advance_to_gpu_validation": any(row.get("advance_to_gpu_validation") is True for row in rows),
+        "notify_ben": any(row.get("notify_ben") is True for row in rows),
+        "strategic_change_level": "major" if any(row.get("strategic_change_level") == "major" for row in rows) else "minor",
+        "interpretation": (
+            "Fail-closed local audit of the PC residual-error target and inference path before any retraining. "
+            "It blocks GPU and promotion when the shuffled-target null, same-router flat control, or commutator "
+            "budget explains the PC result."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -5923,6 +6126,10 @@ def _write_artifacts(
         out_dir / "pc_residual_inference_mechanism_inspection.csv",
         [] if training_smoke is None else training_smoke["pc_residual_inference_mechanism_inspection"],
     )
+    _write_csv(
+        out_dir / "pc_error_target_inference_path_audit.csv",
+        [] if training_smoke is None else training_smoke["pc_error_target_inference_path_audit"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -5964,6 +6171,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Budget-normalized gated value-mixture pregate rows: `{summary['budget_normalized_gated_value_mixture_pregate_row_count']}`",
         f"- PC core/periphery residual-inference pregate rows: `{summary['pc_core_periphery_residual_inference_pregate_row_count']}`",
         f"- PC residual-inference mechanism inspection rows: `{summary['pc_residual_inference_mechanism_inspection_row_count']}`",
+        f"- PC error-target inference-path audit rows: `{summary['pc_error_target_inference_path_audit_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
@@ -5994,6 +6202,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The budget-normalized gated value-mixture pregate is the selected local sparse-value redesign. It keeps the promoted contextual top-k2 router, adds residual-budget clipping plus a learned low-rank value gate, compares against the flat same-router value MLP control, and remains fail-closed with no GPU or promotion request.",
         "",
         "The PC core/periphery residual-inference pregate is a major-pivot scaffold from the external strategy review. It closes the current sparse value-capacity branch as unsupported, records that Ben should be notified, and defines the next local trainable packet: fixed contextual top-k2 router, protected predictive core, plastic residual-error periphery, two local inference steps, anchor KL, norm clamp, commutator/churn penalties, and flat/dense/token-position/random/shuffled controls. It is not promotion evidence.",
+        "",
+        "The PC error-target inference-path audit is the local follow-up after the trainable PC pregate failed. It checks whether the shuffled residual-error target null is competitive, whether the inference path has CE signal versus promoted sparse, whether the same-router flat control explains the result, and whether the finite-update commutator budget remains failed. It blocks retraining/GPU until those local checks support a coherent PC mechanism.",
         "",
         "## Next Step",
         "",
