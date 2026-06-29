@@ -39,6 +39,69 @@ REQUIRED_ARMS = (
     "shuffled_teacher_target_null",
 )
 
+REQUIRED_TENSORS = (
+    {
+        "tensor": "inputs",
+        "filename": "inputs.pt",
+        "required_for": "fixed validation batch identity and token/position nulls",
+    },
+    {
+        "tensor": "targets",
+        "filename": "targets.pt",
+        "required_for": "CE guardrail and shuffled-target null checks",
+    },
+    {
+        "tensor": "base_hidden",
+        "filename": "base_hidden.pt",
+        "required_for": "oracle/retrained sparse value evaluation against frozen hidden states",
+    },
+    {
+        "tensor": "base_logits",
+        "filename": "base_logits.pt",
+        "required_for": "teacher logit residual and anchor/off-target leakage metrics",
+    },
+    {
+        "tensor": "teacher_logits",
+        "filename": "teacher_logits.pt",
+        "required_for": "dense-teacher CE, logit residual, and shuffled-target controls",
+    },
+    {
+        "tensor": "teacher_hidden_residual",
+        "filename": "teacher_hidden_residual.pt",
+        "required_for": "hidden residual MSE/cosine/R2 metrics",
+    },
+    {
+        "tensor": "teacher_logit_residual",
+        "filename": "teacher_logit_residual.pt",
+        "required_for": "logit residual MSE/cosine/R2 metrics",
+    },
+    {
+        "tensor": "learned_support_indices",
+        "filename": "learned_support_indices.pt",
+        "required_for": "learned-support baseline and oracle-support regret",
+    },
+    {
+        "tensor": "learned_support_scores",
+        "filename": "learned_support_scores.pt",
+        "required_for": "router margin, support confidence, and token-position null calibration",
+    },
+    {
+        "tensor": "per_column_hidden_contributions",
+        "filename": "per_column_hidden_contributions.pt",
+        "required_for": "exhaustive oracle support over trained values",
+    },
+    {
+        "tensor": "per_column_logit_contributions",
+        "filename": "per_column_logit_contributions.pt",
+        "required_for": "oracle support logit residual and CE evaluation",
+    },
+    {
+        "tensor": "sparse_column_value_state",
+        "filename": "sparse_column_value_state.pt",
+        "required_for": "retrained-oracle and gated pair-composer initialization/accounting",
+    },
+)
+
 METRIC_FIELDS = (
     "arm",
     "arm_family",
@@ -80,18 +143,19 @@ def run_dense_teacher_failure_localization_contract(
     start = time.time()
     closeout_path = closeout_dir / "summary.json"
     distillation_path = distillation_dir / "summary.json"
-    hidden_residual_path = distillation_dir / "teacher_hidden_residual.pt"
-    logit_residual_path = distillation_dir / "teacher_logit_residual.pt"
     closeout = _read_json(closeout_path)
     distillation = _read_json(distillation_path)
+    tensor_inventory = _tensor_inventory(distillation_dir)
     source_rows = [
         _source_row("dense_teacher_columnability_closeout", closeout_path, closeout),
         _source_row("dense_teacher_distillation_comparison", distillation_path, distillation),
-        _tensor_source_row("teacher_hidden_residual_tensor", hidden_residual_path),
-        _tensor_source_row("teacher_logit_residual_tensor", logit_residual_path),
     ]
+    source_rows.extend(
+        _tensor_source_row(row["tensor"], Path(row["path"]), bool(row["present"]))
+        for row in tensor_inventory
+    )
     contract_rows = _contract_rows()
-    pregate = _pregate_rows(closeout, distillation, source_rows)
+    pregate = _pregate_rows(closeout, distillation, source_rows, tensor_inventory)
     failures = [row for row in pregate if not row["passed"]]
     status = "fail" if failures else "pass"
     decision = INSUFFICIENT_EVIDENCE if failures else CONTRACT_RECORDED
@@ -107,6 +171,7 @@ def run_dense_teacher_failure_localization_contract(
         "selected_next_step": NEXT_STEP,
         "next_command": next_command,
         "source_rows": source_rows,
+        "tensor_inventory": tensor_inventory,
         "pregate_rows": pregate,
         "contract_rows": contract_rows,
         "required_arms": list(REQUIRED_ARMS),
@@ -126,6 +191,7 @@ def run_dense_teacher_failure_localization_contract(
         "artifacts": {
             "summary_json": str(out_dir / "summary.json"),
             "source_rows_csv": str(out_dir / "source_rows.csv"),
+            "tensor_inventory_csv": str(out_dir / "tensor_inventory.csv"),
             "pregate_rows_csv": str(out_dir / "pregate_rows.csv"),
             "contract_rows_csv": str(out_dir / "contract_rows.csv"),
             "notes_md": str(out_dir / "notes.md"),
@@ -259,8 +325,10 @@ def _pregate_rows(
     closeout: dict[str, Any],
     distillation: dict[str, Any],
     source_rows: list[dict[str, Any]],
+    tensor_inventory: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     present = {row["source"]: row["present"] for row in source_rows}
+    tensor_present = {row["tensor"]: bool(row["present"]) for row in tensor_inventory}
     variant_rows = distillation.get("variant_rows") if isinstance(distillation.get("variant_rows"), list) else []
     arms = {row.get("arm") for row in variant_rows if isinstance(row, dict)}
     return [
@@ -278,11 +346,22 @@ def _pregate_rows(
         ),
         _pregate(
             "teacher_residual_tensors_present",
-            bool(present.get("teacher_hidden_residual_tensor")) and bool(present.get("teacher_logit_residual_tensor")),
+            bool(tensor_present.get("teacher_hidden_residual"))
+            and bool(tensor_present.get("teacher_logit_residual")),
             "hidden and logit residual tensors are needed for residual-direction metrics",
             {
-                "hidden": present.get("teacher_hidden_residual_tensor"),
-                "logit": present.get("teacher_logit_residual_tensor"),
+                "hidden": tensor_present.get("teacher_hidden_residual"),
+                "logit": tensor_present.get("teacher_logit_residual"),
+            },
+        ),
+        _pregate(
+            "per_column_evaluator_tensors_present",
+            all(bool(row["present"]) for row in tensor_inventory),
+            "all required evaluator tensors must be exported before oracle/retrained/composer rows can run",
+            {
+                row["tensor"]: row["status"]
+                for row in tensor_inventory
+                if not row["present"]
             },
         ),
         _pregate(
@@ -328,14 +407,32 @@ def _source_row(source: str, path: Path, packet: dict[str, Any]) -> dict[str, An
     }
 
 
-def _tensor_source_row(source: str, path: Path) -> dict[str, Any]:
+def _tensor_inventory(distillation_dir: Path) -> list[dict[str, Any]]:
+    rows = []
+    for spec in REQUIRED_TENSORS:
+        path = distillation_dir / str(spec["filename"])
+        present = path.is_file()
+        rows.append(
+            {
+                "tensor": spec["tensor"],
+                "path": str(path),
+                "required_for": spec["required_for"],
+                "present": present,
+                "file_size_bytes": path.stat().st_size if present else 0,
+                "status": "present" if present else "missing_required_export",
+            }
+        )
+    return rows
+
+
+def _tensor_source_row(source: str, path: Path, present: bool) -> dict[str, Any]:
     return {
-        "source": source,
+        "source": f"{source}_tensor",
         "path": str(path),
-        "present": path.is_file(),
-        "status": "present" if path.is_file() else "missing",
+        "present": present,
+        "status": "present" if present else "missing",
         "decision": "",
-        "claim_status": "teacher_residual_metric_source",
+        "claim_status": "dense_teacher_failure_localization_tensor_source",
         "git_commit": "",
     }
 
@@ -347,6 +444,7 @@ def _write_artifacts(out_dir: Path, summary: dict[str, Any]) -> None:
         encoding="utf-8",
     )
     _write_csv(out_dir / "source_rows.csv", summary["source_rows"])
+    _write_csv(out_dir / "tensor_inventory.csv", summary["tensor_inventory"])
     _write_csv(out_dir / "pregate_rows.csv", summary["pregate_rows"])
     _write_csv(out_dir / "contract_rows.csv", summary["contract_rows"])
     _write_notes(out_dir / "notes.md", summary)

@@ -9,6 +9,7 @@ from relaleap.experiments.dense_teacher_failure_localization import (
     CONTRACT_RECORDED,
     INSUFFICIENT_EVIDENCE,
     REQUIRED_ARMS,
+    REQUIRED_TENSORS,
     run_dense_teacher_failure_localization_contract,
 )
 
@@ -21,8 +22,7 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             distillation = root / "distillation"
             _write_closeout(closeout)
             _write_distillation(distillation)
-            (distillation / "teacher_hidden_residual.pt").write_bytes(b"hidden")
-            (distillation / "teacher_logit_residual.pt").write_bytes(b"logit")
+            _write_required_tensors(distillation)
 
             summary = run_dense_teacher_failure_localization_contract(
                 closeout_dir=closeout,
@@ -35,6 +35,11 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             self.assertFalse(summary["requires_gpu_now"])
             self.assertFalse(summary["promotion_allowed"])
             self.assertEqual(summary["required_arms"], list(REQUIRED_ARMS))
+            self.assertEqual(
+                [row["tensor"] for row in summary["tensor_inventory"]],
+                [str(spec["tensor"]) for spec in REQUIRED_TENSORS],
+            )
+            self.assertTrue(all(row["present"] for row in summary["tensor_inventory"]))
             self.assertIn("teacher_hidden_residual_mse", summary["metric_fields"])
             self.assertIn("oracle_support_trained_values", summary["selected_next_step"])
             contract_by_arm = {row["arm"]: row for row in summary["contract_rows"]}
@@ -48,6 +53,7 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             )
             self.assertTrue((root / "out" / "summary.json").is_file())
             self.assertTrue((root / "out" / "source_rows.csv").is_file())
+            self.assertTrue((root / "out" / "tensor_inventory.csv").is_file())
             self.assertTrue((root / "out" / "pregate_rows.csv").is_file())
             self.assertTrue((root / "out" / "contract_rows.csv").is_file())
             self.assertTrue((root / "out" / "notes.md").is_file())
@@ -71,7 +77,40 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("closeout_branch_retired", failed)
             self.assertIn("teacher_residual_tensors_present", failed)
+            self.assertIn("per_column_evaluator_tensors_present", failed)
             self.assertTrue((root / "out" / "summary.json").is_file())
+
+    def test_fails_closed_when_per_column_exports_are_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            closeout = root / "closeout"
+            distillation = root / "distillation"
+            _write_closeout(closeout)
+            _write_distillation(distillation)
+            _write_required_tensors(
+                distillation,
+                skip={"per_column_hidden_contributions", "per_column_logit_contributions"},
+            )
+
+            summary = run_dense_teacher_failure_localization_contract(
+                closeout_dir=closeout,
+                distillation_dir=distillation,
+                out_dir=root / "out",
+            )
+
+            self.assertEqual(summary["status"], "fail")
+            self.assertEqual(summary["decision"], INSUFFICIENT_EVIDENCE)
+            failed = {row["criterion"] for row in summary["failures"]}
+            self.assertIn("per_column_evaluator_tensors_present", failed)
+            inventory = {row["tensor"]: row for row in summary["tensor_inventory"]}
+            self.assertEqual(
+                inventory["per_column_hidden_contributions"]["status"],
+                "missing_required_export",
+            )
+            self.assertEqual(
+                inventory["per_column_logit_contributions"]["status"],
+                "missing_required_export",
+            )
 
 
 def _write_closeout(path: Path, *, decision: str | None = None) -> None:
@@ -106,6 +145,14 @@ def _write_distillation(path: Path) -> None:
             ],
         },
     )
+
+
+def _write_required_tensors(path: Path, *, skip: set[str] | None = None) -> None:
+    skipped = skip or set()
+    for spec in REQUIRED_TENSORS:
+        if spec["tensor"] in skipped:
+            continue
+        (path / str(spec["filename"])).write_bytes(str(spec["tensor"]).encode("utf-8"))
 
 
 def _write_json(path: Path, value: dict[str, object]) -> None:
