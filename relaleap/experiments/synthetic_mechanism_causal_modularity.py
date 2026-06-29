@@ -79,6 +79,8 @@ class _SyntheticArmSpec:
     periphery_l1_weight: float = 0.0
     residual_norm_clip: float = 0.0
     gate_l1_weight: float = 0.0
+    pc_inference_steps: int = 0
+    pc_error_prediction_weight: float = 0.0
 
 
 def run_synthetic_mechanism_causal_modularity(
@@ -576,6 +578,14 @@ def _run_training_smoke(
                 loss = loss + spec.periphery_l1_weight * adapter.periphery_l1()
             if spec.gate_l1_weight > 0.0 and hasattr(adapter, "gate_l1"):
                 loss = loss + spec.gate_l1_weight * adapter.gate_l1(train_hidden)
+            if spec.pc_error_prediction_weight > 0.0 and hasattr(adapter, "residual_error_prediction_loss"):
+                loss = loss + spec.pc_error_prediction_weight * adapter.residual_error_prediction_loss(
+                    train_hidden,
+                    train_targets,
+                    base.lm_head.weight,
+                    shuffle_targets=spec.shuffled_teacher_null,
+                    F=F,
+                )
             loss.backward()
             optimizer.step()
 
@@ -653,6 +663,8 @@ def _run_training_smoke(
                 "gate_l1_weight": spec.gate_l1_weight,
                 "residual_norm_clip": spec.residual_norm_clip,
                 "residual_norm_clipped": spec.residual_norm_clip > 0.0,
+                "pc_inference_steps": spec.pc_inference_steps,
+                "pc_error_prediction_weight": spec.pc_error_prediction_weight,
                 "core_parameter_drift_l2": (
                     adapter.core_parameter_drift_l2(core_reference)
                     if hasattr(adapter, "core_parameter_drift_l2")
@@ -680,7 +692,7 @@ def _run_training_smoke(
                 torch=torch,
             )
         )
-        if spec.family in {"sparse", "core_periphery_sparse"} and spec.support_mode == "learned" and spec.top_k == 2:
+        if spec.family in {"sparse", "core_periphery_sparse", "pc_core_periphery_sparse"} and spec.support_mode == "learned" and spec.top_k == 2:
             train_oracle_rows = _oracle_support_sparse_topk2_rows(
                 arm=spec.name,
                 split="train",
@@ -1122,6 +1134,65 @@ def _synthetic_arm_specs(
             gate_l1_weight=1e-4,
         ),
         _SyntheticArmSpec(
+            "pc_core_periphery_residual_inference_topk2",
+            "pc_core_periphery_sparse",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            anchor_kl_weight=0.02,
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="primary_pc_core_periphery_residual_inference_pregate",
+            value_head_variant="pc_core_periphery_residual_inference",
+            core_rank=max(1, core_rank),
+            periphery_rank=max(1, periphery_rank),
+            core_lr_scale=0.10,
+            core_drift_penalty_weight=0.15,
+            periphery_l1_weight=1e-4,
+            residual_norm_clip=0.055,
+            gate_l1_weight=1e-4,
+            pc_inference_steps=2,
+            pc_error_prediction_weight=0.05,
+        ),
+        _SyntheticArmSpec(
+            "pc_same_router_flat_mlp_control_topk2",
+            "core_periphery_control",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            anchor_kl_weight=0.02,
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="pc_same_router_flat_mlp_control",
+            value_head_variant="flat_column_mlp",
+            core_rank=0,
+            periphery_rank=max(1, core_rank + periphery_rank),
+            periphery_l1_weight=1e-4,
+            residual_norm_clip=0.055,
+        ),
+        _SyntheticArmSpec(
+            "pc_shuffled_residual_error_target_null_topk2",
+            "pc_core_periphery_null",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            anchor_kl_weight=0.02,
+            shuffled_teacher_null=True,
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="pc_shuffled_residual_error_target_null",
+            value_head_variant="pc_core_periphery_residual_inference",
+            core_rank=max(1, core_rank),
+            periphery_rank=max(1, periphery_rank),
+            core_lr_scale=0.10,
+            core_drift_penalty_weight=0.15,
+            periphery_l1_weight=1e-4,
+            residual_norm_clip=0.055,
+            gate_l1_weight=1e-4,
+            pc_inference_steps=2,
+            pc_error_prediction_weight=0.05,
+        ),
+        _SyntheticArmSpec(
             "dense_rank_norm_matched",
             "dense_control",
             0,
@@ -1213,6 +1284,20 @@ def _build_synthetic_adapter(
         return _DenseLowRankAdapter(hidden_dim, max(1, spec.dense_rank), nn=nn)
     if spec.family == "mlp_control":
         return _LowChurnMLPAdapter(hidden_dim, max(2, spec.dense_rank * 2), nn=nn)
+    if spec.family in {"pc_core_periphery_sparse", "pc_core_periphery_null"}:
+        return _PCCorePeripheryResidualInferenceAdapter(
+            hidden_dim=hidden_dim,
+            num_columns=spec.num_columns,
+            top_k=spec.top_k,
+            core_rank=max(1, spec.core_rank),
+            periphery_rank=max(1, spec.periphery_rank),
+            contextual_router_hidden_dim=hidden_dim * 2,
+            core_lr_scale=spec.core_lr_scale,
+            residual_norm_clip=spec.residual_norm_clip,
+            inference_steps=max(1, spec.pc_inference_steps),
+            torch=torch,
+            nn=nn,
+        )
     if spec.family in {"core_periphery_sparse", "core_periphery_control"}:
         return _CorePeripherySparseAdapter(
             hidden_dim=hidden_dim,
@@ -1465,6 +1550,124 @@ class _CorePeripherySparseAdapter:
         return output
 
 
+class _PCCorePeripheryResidualInferenceAdapter(_CorePeripherySparseAdapter):
+    """Two-step predictive residual inference with slow core and plastic periphery."""
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_columns: int,
+        top_k: int,
+        core_rank: int,
+        periphery_rank: int,
+        contextual_router_hidden_dim: int,
+        core_lr_scale: float,
+        residual_norm_clip: float,
+        inference_steps: int,
+        *,
+        torch: Any,
+        nn: Any,
+    ) -> None:
+        super().__init__(
+            hidden_dim=hidden_dim,
+            num_columns=num_columns,
+            top_k=top_k,
+            core_rank=core_rank,
+            periphery_rank=periphery_rank,
+            variant="pc_core_periphery_residual_inference",
+            contextual_router_hidden_dim=contextual_router_hidden_dim,
+            core_lr_scale=core_lr_scale,
+            residual_norm_clip=residual_norm_clip,
+            torch=torch,
+            nn=nn,
+        )
+        self.inference_steps = max(1, int(inference_steps))
+        self.error_down = nn.Linear(hidden_dim, periphery_rank, bias=False)
+        self.error_up = nn.Linear(periphery_rank, hidden_dim, bias=False)
+        nn.init.normal_(self.error_down.weight, std=0.02)
+        nn.init.zeros_(self.error_up.weight)
+
+    def parameters(self) -> Any:
+        yield from super().parameters()
+        yield from self.error_down.parameters()
+        yield from self.error_up.parameters()
+
+    def optimizer_param_groups(self, learning_rate: float) -> list[dict[str, Any]]:
+        groups = super().optimizer_param_groups(learning_rate)
+        groups[0]["params"] = list(groups[0]["params"]) + list(self.error_down.parameters()) + list(self.error_up.parameters())
+        return groups
+
+    def _residual(
+        self,
+        hidden: Any,
+        support_indices: Any | None = None,
+    ) -> tuple[Any, Any]:
+        import torch
+        import torch.nn.functional as F
+
+        normalized = self.layer_norm(hidden)
+        scores = self.contextual_column_scores(self._contextual_features(hidden))
+        scores = scores + self.score_tie_breaker.to(device=hidden.device, dtype=hidden.dtype)
+        if support_indices is None:
+            top_values, top_indices = scores.topk(self.top_k, dim=-1)
+        else:
+            top_indices = support_indices
+            top_values = scores.gather(dim=-1, index=top_indices)
+        column_weights = F.softmax(top_values, dim=-1)
+        core_prediction = self.core_up(self.core_down(normalized))
+        column_error = torch.einsum("bsh,chr,crd->bscd", normalized, self.periphery_down, self.periphery_up)
+        selected_error = column_error.gather(
+            dim=2,
+            index=top_indices.unsqueeze(-1).expand(-1, -1, -1, column_error.shape[-1]),
+        )
+        peripheral_error = torch.einsum("bsk,bskh->bsh", column_weights, selected_error)
+        inferred = torch.zeros_like(core_prediction)
+        for _ in range(self.inference_steps):
+            prediction_error = peripheral_error - inferred
+            inferred = inferred + 0.5 * prediction_error + 0.25 * self.error_up(self.error_down(prediction_error))
+        residual = self._gate_values(hidden) * (core_prediction + inferred)
+        if self.residual_norm_clip > 0.0:
+            residual_rms = residual.pow(2).mean(dim=-1, keepdim=True).add(1e-12).sqrt()
+            residual = residual * torch.clamp(self.residual_norm_clip / residual_rms, max=1.0)
+        return residual, top_indices
+
+    def __call__(
+        self,
+        hidden: Any,
+        support_indices: Any | None = None,
+        return_support: bool = False,
+    ) -> Any:
+        residual, top_indices = self._residual(hidden, support_indices=support_indices)
+        output = hidden + residual
+        if return_support:
+            return output, top_indices.detach()
+        return output
+
+    def residual_error_prediction_loss(
+        self,
+        hidden: Any,
+        targets: Any,
+        decoder_weight: Any,
+        *,
+        shuffle_targets: bool,
+        F: Any,
+    ) -> Any:
+        import torch
+
+        residual, _ = self._residual(hidden)
+        target_vectors = decoder_weight.index_select(0, targets.reshape(-1)).reshape(
+            targets.shape[0],
+            targets.shape[1],
+            -1,
+        )
+        if shuffle_targets:
+            flat = target_vectors.reshape(-1, target_vectors.shape[-1])
+            order = torch.arange(flat.shape[0] - 1, -1, -1, device=flat.device)
+            target_vectors = flat.index_select(0, order).reshape_as(target_vectors)
+        target_error = self.layer_norm(target_vectors - hidden).detach()
+        return F.mse_loss(residual, target_error)
+
+
 def _train_dense_teacher_adapter(
     *,
     hidden_dim: int,
@@ -1542,7 +1745,15 @@ def _synthetic_support(
     spec: _SyntheticArmSpec,
     torch: Any,
 ) -> Any | None:
-    if spec.family not in {"sparse", "sparse_null", "router_null", "core_periphery_sparse", "core_periphery_control"}:
+    if spec.family not in {
+        "sparse",
+        "sparse_null",
+        "router_null",
+        "core_periphery_sparse",
+        "core_periphery_control",
+        "pc_core_periphery_sparse",
+        "pc_core_periphery_null",
+    }:
         return None
     batch, seq_len = int(hidden.shape[0]), int(hidden.shape[1])
     offsets = torch.arange(spec.top_k, device=hidden.device).view(1, 1, spec.top_k)
@@ -3159,7 +3370,16 @@ def _flop_proxy(row: dict[str, Any]) -> float | None:
         return 0.0
     if family == "mlp_control":
         return float(active_parameters * 2.0)
-    if family in {"dense_control", "sparse", "sparse_null", "router_null", "core_periphery_sparse", "core_periphery_control"}:
+    if family in {
+        "dense_control",
+        "sparse",
+        "sparse_null",
+        "router_null",
+        "core_periphery_sparse",
+        "core_periphery_control",
+        "pc_core_periphery_sparse",
+        "pc_core_periphery_null",
+    }:
         return float(active_parameters * 2.0)
     return float(active_parameters)
 
@@ -3216,7 +3436,7 @@ def _synthetic_active_parameters(spec: _SyntheticArmSpec, hidden_dim: int) -> in
         return 0
     if spec.family in {"dense_control", "mlp_control"}:
         return int(2 * hidden_dim * max(1, spec.dense_rank))
-    if spec.family in {"core_periphery_sparse", "core_periphery_control"}:
+    if spec.family in {"core_periphery_sparse", "core_periphery_control", "pc_core_periphery_sparse", "pc_core_periphery_null"}:
         core_active = (
             hidden_dim * max(1, spec.core_rank)
             if spec.value_head_variant not in {"periphery_only", "flat_column_mlp"}
@@ -3703,6 +3923,16 @@ def _selected_next_step(
         summary = _pc_core_periphery_residual_inference_pregate_summary(
             training_smoke["pc_core_periphery_residual_inference_pregate"]
         )
+        if summary.get("trainable_pc_packet_implemented"):
+            if summary.get("pregate_passes"):
+                return (
+                    "repeat the local pc_core_periphery_residual_inference_pregate on one adjacent seed "
+                    "before any RunPod validation or promotion"
+                )
+            return (
+                "inspect or redesign the local pc_core_periphery_residual_inference_pregate because the "
+                "first trainable packet did not clear signal, flat-control, norm, commutator, and churn gates"
+            )
         if summary.get("selected_next_experiment"):
             return (
                 "implement the local pc_core_periphery_residual_inference_pregate trainable arm with the "
@@ -5177,8 +5407,9 @@ def _pc_core_periphery_residual_inference_pregate_rows(
     by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
     budget_by_arm = {str(row.get("arm", "")): row for row in residual_budget_rows}
     reference = by_arm.get("promoted_contextual_topk2")
-    flat = by_arm.get("flat_column_value_mlp_topk2")
+    flat = by_arm.get("pc_same_router_flat_mlp_control_topk2") or by_arm.get("flat_column_value_mlp_topk2")
     gated = by_arm.get("budget_normalized_gated_low_rank_value_mixture_topk2")
+    pc_primary = by_arm.get("pc_core_periphery_residual_inference_topk2")
     stored = _best_ce_row(
         [row for row in arm_metrics if row.get("control_budget_role") == "stored_parameter_matched_dense_mlp_upper_bound"]
     )
@@ -5190,21 +5421,71 @@ def _pc_core_periphery_residual_inference_pregate_rows(
     gated_ce = _metric_float(gated.get("holdout_ce"))
     stored_ce = _metric_float(stored.get("holdout_ce")) if stored else None
     stored_gap = _positive_gap(reference_ce, stored_ce)
+    reference_norm = _metric_float(reference.get("residual_l2"))
+    reference_commutator = _mean_metric(commutator_rows, ["promoted_contextual_topk2"], "finite_update_commutator_l2")
+    reference_churn = _mean_abs_metric(forgetting_rows, ["promoted_contextual_topk2"], "functional_churn")
 
     rows: list[dict[str, Any]] = []
     for role, source_arm, control_family, required in (
-        ("primary_pc_core_periphery_residual_inference_design", "not_yet_trained", "pc_core_periphery_sparse", True),
-        ("same_router_flat_mlp_control_required", "flat_column_value_mlp_topk2", "flat_same_router_value_capacity_control", True),
+        (
+            "primary_pc_core_periphery_residual_inference_design",
+            "pc_core_periphery_residual_inference_topk2" if pc_primary is not None else "not_yet_trained",
+            "pc_core_periphery_sparse",
+            True,
+        ),
+        ("same_router_flat_mlp_control_required", "pc_same_router_flat_mlp_control_topk2", "flat_same_router_value_capacity_control", True),
         ("norm_clipped_stored_dense_control_required", "low_churn_mlp_stored_parameter_matched", "stored_parameter_matched_dense_mlp_upper_bound", True),
         ("token_position_router_null_required", "token_position_router_topk2", "token_position_only_router_null", True),
         ("random_support_histogram_null_required", "random_support_topk2", "random_support_null", True),
-        ("shuffled_teacher_target_null_required", "shuffled_teacher_distilled_sparse_topk2", "shuffled_target_null", False),
+        ("shuffled_target_null_required", "pc_shuffled_residual_error_target_null_topk2", "shuffled_target_null", True),
     ):
         source = by_arm.get(source_arm, {}) if source_arm != "not_yet_trained" else {}
         source_ce = _metric_float(source.get("holdout_ce"))
         arm_commutator = _mean_metric(commutator_rows, [source_arm], "finite_update_commutator_l2")
         arm_churn = _mean_abs_metric(forgetting_rows, [source_arm], "functional_churn")
         budget = budget_by_arm.get(source_arm, {})
+        is_primary = role == "primary_pc_core_periphery_residual_inference_design"
+        ce_gain = _delta_value(reference_ce, source_ce)
+        stored_gap_closed = _safe_ratio(ce_gain, stored_gap)
+        flat_margin = _delta_value(source_ce, flat_ce)
+        norm = _metric_float(source.get("residual_l2"))
+        signal_ok = bool(
+            is_primary
+            and (
+                (ce_gain is not None and ce_gain >= 0.05)
+                or (stored_gap_closed is not None and stored_gap_closed >= 0.10)
+            )
+        )
+        flat_control_ok = bool(not is_primary or flat_margin is None or flat_margin <= 0.01)
+        norm_ok = bool(
+            not is_primary
+            or (norm is not None and reference_norm is not None and norm <= reference_norm * 1.05)
+        )
+        commutator_ok = bool(
+            not is_primary
+            or (
+                arm_commutator is not None
+                and reference_commutator is not None
+                and arm_commutator <= reference_commutator * 1.10
+            )
+        )
+        churn_ok = bool(
+            not is_primary
+            or (
+                arm_churn is not None
+                and reference_churn is not None
+                and arm_churn <= reference_churn * 1.10
+            )
+        )
+        pregate_passes = bool(
+            is_primary
+            and bool(source)
+            and signal_ok
+            and flat_control_ok
+            and norm_ok
+            and commutator_ok
+            and churn_ok
+        )
         rows.append(
             {
                 "pregate_name": "pc_core_periphery_residual_inference_pregate",
@@ -5232,12 +5513,24 @@ def _pc_core_periphery_residual_inference_pregate_rows(
                 "source_holdout_ce": source_ce,
                 "source_ce_minus_reference_sparse_ce": _delta_value(source_ce, reference_ce),
                 "source_ce_minus_flat_control_ce": _delta_value(source_ce, flat_ce),
-                "source_residual_l2": _metric_float(source.get("residual_l2")),
+                "ce_gain_vs_reference_sparse": ce_gain,
+                "stored_gap_closed_fraction": stored_gap_closed,
+                "source_residual_l2": norm,
                 "source_active_parameters_proxy": _metric_float(source.get("active_parameters_proxy")),
                 "source_stored_parameters": _metric_float(source.get("stored_parameters")),
                 "source_flop_proxy_per_token": _metric_float(budget.get("flop_proxy_per_token")),
                 "source_mean_commutator_l2": arm_commutator,
                 "source_mean_abs_functional_churn": arm_churn,
+                "pc_inference_steps": _metric_float(source.get("pc_inference_steps")),
+                "pc_error_prediction_weight": _metric_float(source.get("pc_error_prediction_weight")),
+                "source_core_parameter_drift_l2": _metric_float(source.get("core_parameter_drift_l2")),
+                "source_mean_gate_value": _metric_float(source.get("mean_gate_value")),
+                "signal_gate_ok": signal_ok,
+                "flat_control_ok": flat_control_ok,
+                "norm_budget_ok": norm_ok,
+                "commutator_budget_ok": commutator_ok,
+                "functional_churn_budget_ok": churn_ok,
+                "pregate_passes": pregate_passes,
                 "mechanism": (
                     "fixed contextual top-k2 router; protected shared predictive core; plastic peripheral "
                     "residual-error units; two local inference steps; residual norm clamp"
@@ -5247,7 +5540,13 @@ def _pc_core_periphery_residual_inference_pregate_rows(
                     "beat promoted sparse by >=0.05 CE or close >=10% of stored-control gap, while flat control is "
                     "not stronger and norm, churn, commutator, pruning-selectivity, and anchor-KL budgets pass"
                 ),
-                "next_experiment": "implement_trainable_pc_core_periphery_residual_inference_pregate",
+                "next_experiment": (
+                    "repeat_trainable_pc_core_periphery_residual_inference_pregate_on_adjacent_seed"
+                    if pregate_passes
+                    else "inspect_or_redesign_local_pc_core_periphery_residual_inference_pregate"
+                    if is_primary and bool(source)
+                    else "implement_trainable_pc_core_periphery_residual_inference_pregate"
+                ),
                 "requires_gpu_now": False,
                 "promotion_allowed": False,
                 "advance_to_gpu_validation": False,
@@ -5285,6 +5584,17 @@ def _pc_core_periphery_residual_inference_pregate_summary(rows: list[dict[str, A
         "reference_sparse_ce": _metric_float(selected.get("reference_sparse_ce")),
         "flat_control_ce": _metric_float(selected.get("flat_control_ce")),
         "stored_control_ce": _metric_float(selected.get("stored_control_ce")),
+        "primary_arm": selected.get("source_arm", ""),
+        "primary_holdout_ce": _metric_float(selected.get("source_holdout_ce")),
+        "ce_gain_vs_reference_sparse": _metric_float(selected.get("ce_gain_vs_reference_sparse")),
+        "stored_gap_closed_fraction": _metric_float(selected.get("stored_gap_closed_fraction")),
+        "signal_gate_ok": selected.get("signal_gate_ok") is True,
+        "flat_control_ok": selected.get("flat_control_ok") is True,
+        "norm_budget_ok": selected.get("norm_budget_ok") is True,
+        "commutator_budget_ok": selected.get("commutator_budget_ok") is True,
+        "functional_churn_budget_ok": selected.get("functional_churn_budget_ok") is True,
+        "pregate_passes": selected.get("pregate_passes") is True,
+        "trainable_pc_packet_implemented": selected.get("implemented_in_current_packet") is True,
         "required_control_count": sum(1 for row in rows if row.get("required_for_next_packet") is True),
         "current_packet_implemented_control_count": sum(
             1 for row in rows if row.get("implemented_in_current_packet") is True

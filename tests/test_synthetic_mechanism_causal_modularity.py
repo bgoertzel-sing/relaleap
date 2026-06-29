@@ -122,8 +122,8 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertTrue(summary["training_smoke_ran"])
             self.assertFalse(summary["promotion_allowed"])
             self.assertFalse(summary["requires_gpu_now"])
-            self.assertEqual(summary["arm_metric_row_count"], 17)
-            self.assertEqual(summary["ce_gap_decomposition_row_count"], 17)
+            self.assertEqual(summary["arm_metric_row_count"], 20)
+            self.assertEqual(summary["ce_gap_decomposition_row_count"], 20)
             self.assertGreater(summary["oracle_support_sparse_topk2_row_count"], 0)
             self.assertIsNotNone(summary["oracle_support_primary_result"])
             self.assertEqual(
@@ -136,19 +136,19 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 summary["router_value_regret_primary_result"]["row_count"],
                 summary["router_value_regret_decomposition_row_count"],
             )
-            self.assertEqual(summary["router_regret_ceiling_budget_row_count"], 3)
+            self.assertEqual(summary["router_regret_ceiling_budget_row_count"], 4)
             self.assertIsNotNone(summary["router_regret_ceiling_budget_primary_result"])
             self.assertEqual(
                 summary["router_regret_ceiling_budget_primary_result"]["row_count"],
                 summary["router_regret_ceiling_budget_row_count"],
             )
-            self.assertEqual(summary["support_head_sequence_heldout_diagnostic_row_count"], 12)
+            self.assertEqual(summary["support_head_sequence_heldout_diagnostic_row_count"], 16)
             self.assertIsNotNone(summary["support_head_sequence_heldout_diagnostic_primary_result"])
             self.assertEqual(
                 summary["support_head_sequence_heldout_diagnostic_primary_result"]["row_count"],
                 summary["support_head_sequence_heldout_diagnostic_row_count"],
             )
-            self.assertEqual(summary["router_only_branch_selection_row_count"], 3)
+            self.assertEqual(summary["router_only_branch_selection_row_count"], 4)
             self.assertIsNotNone(summary["router_only_branch_selection_primary_result"])
             self.assertEqual(
                 summary["router_only_branch_selection_primary_result"]["row_count"],
@@ -250,9 +250,18 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertTrue(
                 summary["pc_core_periphery_residual_inference_pregate_primary_result"]["notify_ben"]
             )
+            self.assertTrue(
+                summary["pc_core_periphery_residual_inference_pregate_primary_result"][
+                    "trainable_pc_packet_implemented"
+                ]
+            )
+            self.assertEqual(
+                summary["pc_core_periphery_residual_inference_pregate_primary_result"]["primary_arm"],
+                "pc_core_periphery_residual_inference_topk2",
+            )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
-            self.assertEqual(summary["residual_budget_accounting_row_count"], 17)
+            self.assertEqual(summary["residual_budget_accounting_row_count"], 20)
             self.assertIsNotNone(summary["residual_budget_primary_result"])
             self.assertFalse(summary["missing_training_hooks"])
             self.assertIn("not causal modularity evidence", summary["training_smoke_primary_result"]["interpretation"])
@@ -288,6 +297,9 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                     "core_periphery_stability_slow_core_topk2",
                     "flat_column_value_mlp_anchor_topk2",
                     "budget_normalized_gated_low_rank_value_mixture_topk2",
+                    "pc_core_periphery_residual_inference_topk2",
+                    "pc_same_router_flat_mlp_control_topk2",
+                    "pc_shuffled_residual_error_target_null_topk2",
                     "dense_rank_norm_matched",
                     "low_churn_mlp_active_matched",
                     "dense_stored_parameter_matched",
@@ -313,7 +325,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
 
             with (out_dir / "ce_gap_decomposition.csv").open(newline="", encoding="utf-8") as handle:
                 ce_gap_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(ce_gap_rows), 17)
+            self.assertEqual(len(ce_gap_rows), 20)
             ce_gap_by_arm = {row["arm"]: row for row in ce_gap_rows}
             self.assertEqual(set(ce_gap_by_arm), arms)
             for required_field in {
@@ -532,7 +544,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
             self.assertEqual(
                 selected_pc["next_experiment"],
-                "implement_trainable_pc_core_periphery_residual_inference_pregate",
+                "inspect_or_redesign_local_pc_core_periphery_residual_inference_pregate",
             )
             for required_field in {
                 "source_failed_branch",
@@ -586,7 +598,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
 
             with (out_dir / "residual_budget_accounting.csv").open(newline="", encoding="utf-8") as handle:
                 budget_accounting_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(budget_accounting_rows), 17)
+            self.assertEqual(len(budget_accounting_rows), 20)
             budget_by_arm = {row["arm"]: row for row in budget_accounting_rows}
             self.assertEqual(set(budget_by_arm), arms)
             for required_field in {
@@ -616,6 +628,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                     "promoted_contextual_topk2",
                     "intervention_trained_sparse_topk2",
                     "core_periphery_sparse_topk2",
+                    "pc_core_periphery_residual_inference_topk2",
                 },
             )
             for required_field in {
@@ -653,6 +666,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                     "promoted_contextual_topk2",
                     "intervention_trained_sparse_topk2",
                     "core_periphery_sparse_topk2",
+                    "pc_core_periphery_residual_inference_topk2",
                 },
             )
             self.assertIn("all", {row["latent_rule"] for row in regret_rows})
@@ -686,6 +700,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                     "promoted_contextual_topk2",
                     "intervention_trained_sparse_topk2",
                     "core_periphery_sparse_topk2",
+                    "pc_core_periphery_residual_inference_topk2",
                 },
             )
             for required_field in {
@@ -723,6 +738,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                     "promoted_contextual_topk2",
                     "intervention_trained_sparse_topk2",
                     "core_periphery_sparse_topk2",
+                    "pc_core_periphery_residual_inference_topk2",
                 },
             )
             self.assertEqual(
@@ -774,6 +790,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                     "promoted_contextual_topk2",
                     "intervention_trained_sparse_topk2",
                     "core_periphery_sparse_topk2",
+                    "pc_core_periphery_residual_inference_topk2",
                 },
             )
             for required_field in {
@@ -910,13 +927,13 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["status"], "pass")
             self.assertTrue(summary["teacher_distillation_included"])
             self.assertEqual(summary["teacher_distillation_arm_count"], 2)
-            self.assertEqual(summary["arm_metric_row_count"], 19)
-            self.assertEqual(summary["ce_gap_decomposition_row_count"], 19)
-            self.assertEqual(summary["residual_budget_accounting_row_count"], 19)
-            self.assertEqual(summary["router_value_regret_decomposition_row_count"], 20)
-            self.assertEqual(summary["router_regret_ceiling_budget_row_count"], 4)
-            self.assertEqual(summary["support_head_sequence_heldout_diagnostic_row_count"], 16)
-            self.assertEqual(summary["router_only_branch_selection_row_count"], 4)
+            self.assertEqual(summary["arm_metric_row_count"], 22)
+            self.assertEqual(summary["ce_gap_decomposition_row_count"], 22)
+            self.assertEqual(summary["residual_budget_accounting_row_count"], 22)
+            self.assertEqual(summary["router_value_regret_decomposition_row_count"], 25)
+            self.assertEqual(summary["router_regret_ceiling_budget_row_count"], 5)
+            self.assertEqual(summary["support_head_sequence_heldout_diagnostic_row_count"], 20)
+            self.assertEqual(summary["router_only_branch_selection_row_count"], 5)
             self.assertEqual(summary["teacher_distillation_closeout_row_count"], 1)
             self.assertEqual(summary["value_capacity_core_periphery_diagnostic_row_count"], 3)
             self.assertEqual(summary["core_periphery_sparse_value_capacity_probe_row_count"], 4)
@@ -924,6 +941,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["core_periphery_branch_closeout_row_count"], 1)
             self.assertEqual(summary["sparse_value_redesign_selector_row_count"], 3)
             self.assertEqual(summary["budget_normalized_gated_value_mixture_pregate_row_count"], 3)
+            self.assertEqual(summary["pc_core_periphery_residual_inference_pregate_row_count"], 6)
             teacher_summary = summary["teacher_distillation_primary_result"]
             self.assertEqual(teacher_summary["row_count"], 2)
             self.assertIsNotNone(teacher_summary["distilled_holdout_ce"])
@@ -962,7 +980,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
 
             with (out_dir / "ce_gap_decomposition.csv").open(newline="", encoding="utf-8") as handle:
                 ce_gap_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(ce_gap_rows), 19)
+            self.assertEqual(len(ce_gap_rows), 22)
             self.assertIn(
                 "dense_teacher_distilled_sparse_topk2",
                 {row["arm"] for row in ce_gap_rows},
