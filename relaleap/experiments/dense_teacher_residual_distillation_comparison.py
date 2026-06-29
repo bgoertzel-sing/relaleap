@@ -68,6 +68,20 @@ REQUIRED_ARTIFACTS = (
     "gate_criteria.csv",
     "notes.md",
 )
+REQUIRED_EVALUATOR_TENSORS = (
+    "inputs.pt",
+    "targets.pt",
+    "base_hidden.pt",
+    "base_logits.pt",
+    "teacher_logits.pt",
+    "teacher_hidden_residual.pt",
+    "teacher_logit_residual.pt",
+    "learned_support_indices.pt",
+    "learned_support_scores.pt",
+    "per_column_hidden_contributions.pt",
+    "per_column_logit_contributions.pt",
+    "sparse_column_value_state.pt",
+)
 
 
 def run_dense_teacher_residual_distillation_comparison(
@@ -159,10 +173,19 @@ def run_dense_teacher_residual_distillation_comparison(
         teacher_logit_residual = teacher_logits - base_logits
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    teacher_hidden_residual_export = out_dir / "teacher_hidden_residual.pt"
-    teacher_logit_residual_export = out_dir / "teacher_logit_residual.pt"
-    torch.save(teacher_hidden_residual.detach().cpu(), teacher_hidden_residual_export)
-    torch.save(teacher_logit_residual.detach().cpu(), teacher_logit_residual_export)
+    tensor_exports = _export_base_teacher_tensors(
+        torch,
+        out_dir=out_dir,
+        inputs=inputs,
+        targets=targets,
+        hidden=hidden,
+        base_logits=base_logits,
+        teacher_logits=teacher_logits,
+        teacher_hidden_residual=teacher_hidden_residual,
+        teacher_logit_residual=teacher_logit_residual,
+    )
+    teacher_hidden_residual_export = Path(tensor_exports["teacher_hidden_residual"])
+    teacher_logit_residual_export = Path(tensor_exports["teacher_logit_residual"])
 
     chunks = _contextual_chunks(torch, hidden)
     causal_inputs = _causal_predictor_inputs(torch, chunks)
@@ -385,6 +408,22 @@ def run_dense_teacher_residual_distillation_comparison(
                     "support_entropy": _support_entropy(torch, support, num_columns),
                 }
             )
+            if (
+                abs(teacher_scale - 1.0) <= 1e-12
+                and row["arm"] == "promoted_contextual_topk2_ce_mse_distill"
+            ):
+                tensor_exports.update(
+                    _export_sparse_evaluator_tensors(
+                        torch,
+                        out_dir=out_dir,
+                        base=base,
+                        residual=residual,
+                        hidden=hidden,
+                        support=support,
+                        features=spec["features"],
+                        top_k=int(spec["top_k"]),
+                    )
+                )
         scale_summaries.append(
             _scale_summary(
                 variant_rows=variant_rows,
@@ -448,6 +487,7 @@ def run_dense_teacher_residual_distillation_comparison(
             "criteria": criteria,
         },
         "failures": failures,
+        "evaluator_tensor_exports": _evaluator_tensor_export_rows(out_dir, tensor_exports),
         "claim_statuses": {
             PRIMARY_VARIANT: claim_status if status == "pass" else "not_supported",
             CONTEXTUAL_VARIANT: "promoted_contextual_router_comparison_baseline",
@@ -660,6 +700,113 @@ def _student_logits_and_support(
     top_values, support = scores.topk(top_k or residual.top_k, dim=-1)
     student_hidden = _hidden_for_support(torch, residual, hidden, support, top_values)
     return base.decode(student_hidden), support.detach(), student_hidden
+
+
+def _export_base_teacher_tensors(
+    torch: Any,
+    *,
+    out_dir: Path,
+    inputs: Any,
+    targets: Any,
+    hidden: Any,
+    base_logits: Any,
+    teacher_logits: Any,
+    teacher_hidden_residual: Any,
+    teacher_logit_residual: Any,
+) -> dict[str, str]:
+    exports = {
+        "inputs": out_dir / "inputs.pt",
+        "targets": out_dir / "targets.pt",
+        "base_hidden": out_dir / "base_hidden.pt",
+        "base_logits": out_dir / "base_logits.pt",
+        "teacher_logits": out_dir / "teacher_logits.pt",
+        "teacher_hidden_residual": out_dir / "teacher_hidden_residual.pt",
+        "teacher_logit_residual": out_dir / "teacher_logit_residual.pt",
+    }
+    values = {
+        "inputs": inputs,
+        "targets": targets,
+        "base_hidden": hidden,
+        "base_logits": base_logits,
+        "teacher_logits": teacher_logits,
+        "teacher_hidden_residual": teacher_hidden_residual,
+        "teacher_logit_residual": teacher_logit_residual,
+    }
+    for name, path in exports.items():
+        torch.save(values[name].detach().cpu(), path)
+    return {name: str(path) for name, path in exports.items()}
+
+
+def _export_sparse_evaluator_tensors(
+    torch: Any,
+    *,
+    out_dir: Path,
+    base: Any,
+    residual: Any,
+    hidden: Any,
+    support: Any,
+    features: Any,
+    top_k: int,
+) -> dict[str, str]:
+    with torch.no_grad():
+        scores = _score_from_features(residual, features) + residual.score_tie_breaker.to(
+            device=hidden.device,
+            dtype=hidden.dtype,
+        )
+        learned_scores = scores.gather(dim=-1, index=support)
+        atom_weights = torch.softmax(residual.atom_logits, dim=-1)
+        column_values = torch.einsum("ca,cah->ch", atom_weights, residual.atom_values)
+        per_column_hidden = column_values.view(1, 1, residual.num_columns, hidden.shape[-1])
+        per_column_hidden = per_column_hidden.expand(
+            hidden.shape[0],
+            hidden.shape[1],
+            residual.num_columns,
+            hidden.shape[-1],
+        )
+        per_column_logits = base.decode(hidden.unsqueeze(2) + per_column_hidden) - base.decode(
+            hidden
+        ).unsqueeze(2)
+        sparse_state = {
+            "top_k": int(top_k),
+            "num_columns": int(residual.num_columns),
+            "atoms_per_column": int(residual.atom_logits.shape[-1]),
+            "atom_logits": residual.atom_logits.detach().cpu(),
+            "atom_values": residual.atom_values.detach().cpu(),
+            "column_values": column_values.detach().cpu(),
+            "support_router": str(getattr(residual, "support_router", "")),
+        }
+
+    exports = {
+        "learned_support_indices": out_dir / "learned_support_indices.pt",
+        "learned_support_scores": out_dir / "learned_support_scores.pt",
+        "per_column_hidden_contributions": out_dir / "per_column_hidden_contributions.pt",
+        "per_column_logit_contributions": out_dir / "per_column_logit_contributions.pt",
+        "sparse_column_value_state": out_dir / "sparse_column_value_state.pt",
+    }
+    torch.save(support.detach().cpu(), exports["learned_support_indices"])
+    torch.save(learned_scores.detach().cpu(), exports["learned_support_scores"])
+    torch.save(per_column_hidden.detach().cpu(), exports["per_column_hidden_contributions"])
+    torch.save(per_column_logits.detach().cpu(), exports["per_column_logit_contributions"])
+    torch.save(sparse_state, exports["sparse_column_value_state"])
+    return {name: str(path) for name, path in exports.items()}
+
+
+def _evaluator_tensor_export_rows(out_dir: Path, exports: dict[str, str]) -> list[dict[str, Any]]:
+    rows = []
+    for filename in REQUIRED_EVALUATOR_TENSORS:
+        tensor = filename.removesuffix(".pt")
+        path = Path(exports.get(tensor, str(out_dir / filename)))
+        present = path.is_file()
+        rows.append(
+            {
+                "tensor": tensor,
+                "path": str(path),
+                "present": present,
+                "file_size_bytes": path.stat().st_size if present else 0,
+                "status": "present" if present else "missing_required_export",
+            }
+        )
+    return rows
 
 
 def _hidden_for_support(torch: Any, residual: Any, hidden: Any, support: Any, top_values: Any) -> Any:

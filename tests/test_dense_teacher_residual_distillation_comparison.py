@@ -7,6 +7,7 @@ from pathlib import Path
 
 from relaleap.experiments.dense_teacher_residual_distillation_comparison import (
     PRIMARY_VARIANT,
+    REQUIRED_EVALUATOR_TENSORS,
     run_dense_teacher_residual_distillation_comparison,
 )
 
@@ -89,6 +90,14 @@ class DenseTeacherResidualDistillationComparisonTest(unittest.TestCase):
             self.assertTrue((root / "out" / "support_metrics.csv").is_file())
             self.assertTrue((root / "out" / "gate_criteria.csv").is_file())
             self.assertTrue((root / "out" / "notes.md").is_file())
+            exported = {row["tensor"]: row for row in summary["evaluator_tensor_exports"]}
+            self.assertEqual(
+                set(exported),
+                {name.removesuffix(".pt") for name in REQUIRED_EVALUATOR_TENSORS},
+            )
+            self.assertTrue(all(row["present"] for row in exported.values()))
+            for filename in REQUIRED_EVALUATOR_TENSORS:
+                self.assertTrue((root / "out" / filename).is_file())
             variants = {row["variant"] for row in summary["variant_rows"]}
             arms = {row.get("arm") for row in summary["variant_rows"]}
             self.assertIn(PRIMARY_VARIANT, variants)
