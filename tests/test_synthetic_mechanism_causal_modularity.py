@@ -56,6 +56,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["pc_decoder_adjoint_target_alignment_probe_row_count"], 0)
             self.assertEqual(summary["pc_decoder_adjoint_minimal_retrain_probe_row_count"], 0)
             self.assertEqual(summary["pc_decoder_adjoint_closeout_row_count"], 0)
+            self.assertEqual(summary["pc_amortized_error_pregate_design_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -339,6 +340,30 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 summary["pc_decoder_adjoint_closeout_primary_result"][
                     "amortized_label_free_pc_pregate_allowed"
                 ]
+            )
+            self.assertEqual(summary["pc_amortized_error_pregate_design_row_count"], 6)
+            self.assertIsNotNone(summary["pc_amortized_error_pregate_design_primary_result"])
+            self.assertEqual(
+                summary["pc_amortized_error_pregate_design_primary_result"]["row_count"],
+                summary["pc_amortized_error_pregate_design_row_count"],
+            )
+            self.assertFalse(
+                summary["pc_amortized_error_pregate_design_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["pc_amortized_error_pregate_design_primary_result"]["promotion_allowed"]
+            )
+            self.assertFalse(
+                summary["pc_amortized_error_pregate_design_primary_result"][
+                    "implemented_in_current_packet"
+                ]
+            )
+            self.assertTrue(
+                summary["pc_amortized_error_pregate_design_primary_result"]["label_free_eval_required"]
+            )
+            self.assertIn(
+                "token_position_error_predictor",
+                summary["pc_amortized_error_pregate_design_primary_result"]["required_controls"],
             )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
@@ -817,6 +842,52 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(closeout["notify_ben"], "True")
             self.assertEqual(closeout["one_site_decoder_adjoint_path_closed"], "True")
             self.assertEqual(closeout["amortized_label_free_pc_pregate_allowed"], "True")
+
+            with (out_dir / "pc_amortized_error_pregate_design.csv").open(newline="", encoding="utf-8") as handle:
+                amortized_design_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(amortized_design_rows), 6)
+            design_by_role = {row["design_role"]: row for row in amortized_design_rows}
+            self.assertEqual(
+                set(design_by_role),
+                {
+                    "primary_label_free_amortized_multi_site_pc_micrograph",
+                    "same_router_flat_control",
+                    "dense_rank_norm_control",
+                    "shuffled_error_target_null",
+                    "sign_flipped_error_target_null",
+                    "token_position_error_predictor_null",
+                },
+            )
+            primary_design = design_by_role["primary_label_free_amortized_multi_site_pc_micrograph"]
+            for required_field in {
+                "source_closeout_status",
+                "source_one_site_decoder_adjoint_path_closed",
+                "label_free_eval_required",
+                "deploy_time_labels_required",
+                "residual_update_sites",
+                "proximal_norm_clamp_required",
+                "required_controls",
+                "implemented_in_current_packet",
+                "selected_next_experiment",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "advance_to_gpu_validation",
+                "notify_ben",
+                "strategic_change_level",
+            }:
+                self.assertIn(required_field, primary_design)
+            self.assertEqual(primary_design["selected"], "True")
+            self.assertEqual(primary_design["source_one_site_decoder_adjoint_path_closed"], "True")
+            self.assertEqual(primary_design["label_free_eval_required"], "True")
+            self.assertEqual(primary_design["deploy_time_labels_required"], "False")
+            self.assertEqual(primary_design["implemented_in_current_packet"], "False")
+            self.assertEqual(primary_design["requires_gpu_now"], "False")
+            self.assertEqual(primary_design["promotion_allowed"], "False")
+            self.assertEqual(primary_design["advance_to_gpu_validation"], "False")
+            self.assertEqual(primary_design["notify_ben"], "True")
+            self.assertIn("shuffled_error_target", primary_design["required_controls"])
+            self.assertIn("sign_flipped_error_target", primary_design["required_controls"])
+            self.assertIn("token_position_error_predictor", primary_design["required_controls"])
             self.assertEqual(selected_pc["source_failed_branch"], "budget_normalized_gated_low_rank_value_mixture")
             self.assertEqual(selected_pc["source_failed_branch_pregate_passes"], "False")
             self.assertEqual(selected_pc["requires_gpu_now"], "False")

@@ -53,6 +53,7 @@ REQUIRED_ARTIFACTS = (
     "pc_decoder_adjoint_target_alignment_probe.csv",
     "pc_decoder_adjoint_minimal_retrain_probe.csv",
     "pc_decoder_adjoint_closeout.csv",
+    "pc_amortized_error_pregate_design.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -412,6 +413,16 @@ def run_synthetic_mechanism_causal_modularity(
         "pc_decoder_adjoint_closeout_primary_result": (
             _pc_decoder_adjoint_closeout_summary(
                 training_smoke["pc_decoder_adjoint_closeout"]
+            )
+            if training_smoke is not None
+            else None
+        ),
+        "pc_amortized_error_pregate_design_row_count": (
+            len(training_smoke["pc_amortized_error_pregate_design"]) if training_smoke is not None else 0
+        ),
+        "pc_amortized_error_pregate_design_primary_result": (
+            _pc_amortized_error_pregate_design_summary(
+                training_smoke["pc_amortized_error_pregate_design"]
             )
             if training_smoke is not None
             else None
@@ -954,6 +965,10 @@ def _run_training_smoke(
         commutator_rows=commutator_rows,
         forgetting_rows=forgetting_rows,
     )
+    pc_amortized_error_pregate_design = _pc_amortized_error_pregate_design_rows(
+        closeout_rows=pc_decoder_adjoint_closeout,
+        arm_metrics=arm_metrics,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -980,6 +995,7 @@ def _run_training_smoke(
         "pc_decoder_adjoint_target_alignment_probe": pc_decoder_adjoint_target_alignment_probe,
         "pc_decoder_adjoint_minimal_retrain_probe": pc_decoder_adjoint_minimal_retrain_probe,
         "pc_decoder_adjoint_closeout": pc_decoder_adjoint_closeout,
+        "pc_amortized_error_pregate_design": pc_amortized_error_pregate_design,
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": residual_budget_accounting,
@@ -4056,6 +4072,12 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("pc_amortized_error_pregate_design"):
+        summary = _pc_amortized_error_pregate_design_summary(
+            training_smoke["pc_amortized_error_pregate_design"]
+        )
+        if summary.get("selected_next_experiment"):
+            return str(summary["selected_next_experiment"]).replace("_", " ")
     if training_smoke.get("pc_decoder_adjoint_closeout"):
         summary = _pc_decoder_adjoint_closeout_summary(
             training_smoke["pc_decoder_adjoint_closeout"]
@@ -6823,6 +6845,167 @@ def _pc_decoder_adjoint_closeout_summary(rows: list[dict[str, Any]]) -> dict[str
     }
 
 
+def _pc_amortized_error_pregate_design_rows(
+    *,
+    closeout_rows: list[dict[str, Any]],
+    arm_metrics: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    closeout_summary = _pc_decoder_adjoint_closeout_summary(closeout_rows)
+    if closeout_summary.get("amortized_label_free_pc_pregate_allowed") is not True:
+        return []
+
+    by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
+    promoted = by_arm.get("promoted_contextual_topk2", {})
+    flat = by_arm.get("pc_same_router_flat_mlp_control_topk2", {})
+    dense = by_arm.get("dense_rank_norm_matched", {})
+    promoted_ce = _metric_float(promoted.get("holdout_ce"))
+    flat_ce = _metric_float(flat.get("holdout_ce"))
+    dense_ce = _metric_float(dense.get("holdout_ce"))
+
+    base = {
+        "design_name": "pc_amortized_error_pregate",
+        "source_closeout_status": closeout_summary.get("closeout_status", ""),
+        "source_one_site_decoder_adjoint_path_closed": closeout_summary.get(
+            "one_site_decoder_adjoint_path_closed"
+        )
+        is True,
+        "label_free_eval_required": True,
+        "mechanism_labels_used_for_scoring_only": True,
+        "requires_gpu_now": False,
+        "promotion_allowed": False,
+        "advance_to_gpu_validation": False,
+        "implemented_in_current_packet": False,
+        "strategic_change_level": "major",
+        "notify_ben": True,
+    }
+    rows = [
+        {
+            **base,
+            "design_role": "primary_label_free_amortized_multi_site_pc_micrograph",
+            "selected": True,
+            "error_predictor": "causal_feature_decoder_adjoint_hidden_error_predictor",
+            "training_target": "decoder_adjoint_hidden_ce_error_training_only",
+            "deploy_time_labels_required": False,
+            "residual_update_sites": "2-4",
+            "inference_steps": 2,
+            "proximal_norm_clamp_required": True,
+            "anchor_kl_required": True,
+            "promoted_sparse_reference_ce": promoted_ce,
+            "same_router_flat_control_ce": flat_ce,
+            "dense_rank_norm_control_ce": dense_ce,
+            "required_signal_gate": "ce_guardrail_plus_commutator_churn_fingerprint_gain_vs_controls",
+            "required_controls": "same_router_flat;dense_rank_norm;shuffled_error_target;sign_flipped_error_target;token_position_error_predictor;promoted_sparse_reference",
+            "selected_next_experiment": "implement_local_tiny_label_free_amortized_multi_site_pc_pregate",
+            "interpretation": (
+                "Design-only scaffold after decoder-adjoint closeout. It permits only a tiny label-free "
+                "amortized multi-site PC pregate with explicit flat/dense/shuffled/sign-flipped/token-position nulls."
+            ),
+        },
+        {
+            **base,
+            "design_role": "same_router_flat_control",
+            "selected": False,
+            "error_predictor": "same_router_flat_mlp_value_control",
+            "training_target": "supervised_ce_or_matched_error_aux_control",
+            "deploy_time_labels_required": False,
+            "residual_update_sites": "matched",
+            "inference_steps": 0,
+            "proximal_norm_clamp_required": True,
+            "anchor_kl_required": True,
+            "selected_next_experiment": "",
+        },
+        {
+            **base,
+            "design_role": "dense_rank_norm_control",
+            "selected": False,
+            "error_predictor": "rank_norm_matched_dense_residual_control",
+            "training_target": "matched_supervised_ce_control",
+            "deploy_time_labels_required": False,
+            "residual_update_sites": "dense",
+            "inference_steps": 0,
+            "proximal_norm_clamp_required": True,
+            "anchor_kl_required": True,
+            "selected_next_experiment": "",
+        },
+        {
+            **base,
+            "design_role": "shuffled_error_target_null",
+            "selected": False,
+            "error_predictor": "causal_feature_error_predictor_shuffled_target",
+            "training_target": "shuffled_decoder_adjoint_hidden_error",
+            "deploy_time_labels_required": False,
+            "residual_update_sites": "2-4",
+            "inference_steps": 2,
+            "proximal_norm_clamp_required": True,
+            "anchor_kl_required": True,
+            "selected_next_experiment": "",
+        },
+        {
+            **base,
+            "design_role": "sign_flipped_error_target_null",
+            "selected": False,
+            "error_predictor": "causal_feature_error_predictor_sign_flipped_target",
+            "training_target": "sign_flipped_decoder_adjoint_hidden_error",
+            "deploy_time_labels_required": False,
+            "residual_update_sites": "2-4",
+            "inference_steps": 2,
+            "proximal_norm_clamp_required": True,
+            "anchor_kl_required": True,
+            "selected_next_experiment": "",
+        },
+        {
+            **base,
+            "design_role": "token_position_error_predictor_null",
+            "selected": False,
+            "error_predictor": "token_position_only_error_predictor",
+            "training_target": "decoder_adjoint_hidden_error_training_only",
+            "deploy_time_labels_required": False,
+            "residual_update_sites": "2-4",
+            "inference_steps": 2,
+            "proximal_norm_clamp_required": True,
+            "anchor_kl_required": True,
+            "selected_next_experiment": "",
+        },
+    ]
+    return rows
+
+
+def _pc_amortized_error_pregate_design_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "selected_next_experiment": "",
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "notify_ben": False,
+            "strategic_change_level": "minor",
+        }
+    selected = next((row for row in rows if row.get("selected") is True), rows[0])
+    return {
+        "row_count": len(rows),
+        "selected_design_role": selected.get("design_role", ""),
+        "source_closeout_status": selected.get("source_closeout_status", ""),
+        "source_one_site_decoder_adjoint_path_closed": selected.get(
+            "source_one_site_decoder_adjoint_path_closed"
+        )
+        is True,
+        "label_free_eval_required": selected.get("label_free_eval_required") is True,
+        "deploy_time_labels_required": selected.get("deploy_time_labels_required") is True,
+        "implemented_in_current_packet": selected.get("implemented_in_current_packet") is True,
+        "required_controls": selected.get("required_controls", ""),
+        "selected_next_experiment": selected.get("selected_next_experiment", ""),
+        "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
+        "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
+        "advance_to_gpu_validation": any(row.get("advance_to_gpu_validation") is True for row in rows),
+        "notify_ben": any(row.get("notify_ben") is True for row in rows),
+        "strategic_change_level": "major" if any(row.get("strategic_change_level") == "major" for row in rows) else "minor",
+        "interpretation": (
+            "Design-only local scaffold for the next label-free amortized multi-site PC pregate. "
+            "It is not evidence and keeps GPU blocked until implemented local metrics beat controls."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -6955,6 +7138,10 @@ def _write_artifacts(
         out_dir / "pc_decoder_adjoint_closeout.csv",
         [] if training_smoke is None else training_smoke["pc_decoder_adjoint_closeout"],
     )
+    _write_csv(
+        out_dir / "pc_amortized_error_pregate_design.csv",
+        [] if training_smoke is None else training_smoke["pc_amortized_error_pregate_design"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -6999,6 +7186,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- PC error-target inference-path audit rows: `{summary['pc_error_target_inference_path_audit_row_count']}`",
         f"- PC decoder-adjoint target-alignment probe rows: `{summary['pc_decoder_adjoint_target_alignment_probe_row_count']}`",
         f"- PC decoder-adjoint minimal retrain probe rows: `{summary['pc_decoder_adjoint_minimal_retrain_probe_row_count']}`",
+        f"- PC decoder-adjoint closeout rows: `{summary['pc_decoder_adjoint_closeout_row_count']}`",
+        f"- PC amortized error pregate design rows: `{summary['pc_amortized_error_pregate_design_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
@@ -7035,6 +7224,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The PC decoder-adjoint target-alignment probe compares the current decoder-embedding-minus-hidden target with a hidden-space CE descent target, finite-difference descent proxy, shuffled target, and sign-flipped null under matched injection norm. It is label-derived and training-time diagnostic only.",
         "",
         "The PC decoder-adjoint minimal retrain probe is a local fail-closed target-semantics gate. It trains tiny matched dense residual probes with decoder-adjoint, current, shuffled, sign-flipped, and no auxiliary targets, then blocks GPU unless the decoder-adjoint target survives those controls plus promoted sparse and same-router flat references.",
+        "",
+        "The PC amortized error pregate design is a design-only scaffold after the decoder-adjoint closeout. It defines the only allowed next PC path: a tiny label-free amortized multi-site error predictor with same-router flat, dense/rank/norm, shuffled-error, sign-flipped-error, token-position-only, and promoted sparse controls. It does not train a model or request GPU validation.",
         "",
         "## Next Step",
         "",
