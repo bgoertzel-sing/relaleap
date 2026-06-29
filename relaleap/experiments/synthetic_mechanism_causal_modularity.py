@@ -42,6 +42,7 @@ REQUIRED_ARTIFACTS = (
     "router_only_branch_selection.csv",
     "teacher_distillation_closeout.csv",
     "value_capacity_core_periphery_diagnostic.csv",
+    "core_periphery_sparse_value_capacity_probe.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -65,6 +66,12 @@ class _SyntheticArmSpec:
     shuffled_teacher_null: bool = False
     stored_parameter_floor: int = 0
     control_budget_role: str = "sparse_or_null_or_base_reference"
+    value_head_variant: str = "none"
+    core_rank: int = 0
+    periphery_rank: int = 0
+    core_lr_scale: float = 1.0
+    core_drift_penalty_weight: float = 0.0
+    periphery_l1_weight: float = 0.0
 
 
 def run_synthetic_mechanism_causal_modularity(
@@ -280,6 +287,16 @@ def run_synthetic_mechanism_causal_modularity(
             if training_smoke is not None
             else None
         ),
+        "core_periphery_sparse_value_capacity_probe_row_count": (
+            len(training_smoke["core_periphery_sparse_value_capacity_probe"]) if training_smoke is not None else 0
+        ),
+        "core_periphery_sparse_value_capacity_probe_primary_result": (
+            _core_periphery_sparse_value_capacity_probe_summary(
+                training_smoke["core_periphery_sparse_value_capacity_probe"]
+            )
+            if training_smoke is not None
+            else None
+        ),
         "per_token_metric_row_count": (
             len(training_smoke["per_token_metrics"]) if training_smoke is not None else 0
         ),
@@ -439,7 +456,21 @@ def _run_training_smoke(
             ResidualColumns=ResidualColumns,
         )
         trainable = [parameter for parameter in adapter.parameters() if parameter.requires_grad]
-        optimizer = torch.optim.AdamW(trainable, lr=learning_rate) if trainable else None
+        optimizer = (
+            torch.optim.AdamW(
+                adapter.optimizer_param_groups(learning_rate)
+                if hasattr(adapter, "optimizer_param_groups")
+                else trainable,
+                lr=learning_rate,
+            )
+            if trainable
+            else None
+        )
+        core_reference = (
+            adapter.core_parameter_snapshot()
+            if hasattr(adapter, "core_parameter_snapshot")
+            else []
+        )
         initial_logits = _synthetic_forward_logits(
             adapter=adapter,
             hidden=train_hidden,
@@ -482,6 +513,10 @@ def _run_training_smoke(
                     torch=torch,
                 )
                 loss = loss + spec.teacher_distillation_weight * F.mse_loss(student_delta, teacher_delta)
+            if spec.core_drift_penalty_weight > 0.0 and hasattr(adapter, "core_drift_penalty"):
+                loss = loss + spec.core_drift_penalty_weight * adapter.core_drift_penalty(core_reference)
+            if spec.periphery_l1_weight > 0.0 and hasattr(adapter, "periphery_l1"):
+                loss = loss + spec.periphery_l1_weight * adapter.periphery_l1()
             loss.backward()
             optimizer.step()
 
@@ -549,6 +584,22 @@ def _run_training_smoke(
                 "stored_parameter_floor": spec.stored_parameter_floor,
                 "active_parameters_proxy": _synthetic_active_parameters(spec, hidden_dim),
                 "control_budget_role": spec.control_budget_role,
+                "value_head_variant": spec.value_head_variant,
+                "core_rank": spec.core_rank,
+                "periphery_rank": spec.periphery_rank,
+                "core_lr_scale": spec.core_lr_scale,
+                "core_drift_penalty_weight": spec.core_drift_penalty_weight,
+                "periphery_l1_weight": spec.periphery_l1_weight,
+                "core_parameter_drift_l2": (
+                    adapter.core_parameter_drift_l2(core_reference)
+                    if hasattr(adapter, "core_parameter_drift_l2")
+                    else None
+                ),
+                "periphery_l1": (
+                    float(adapter.periphery_l1().detach().item())
+                    if hasattr(adapter, "periphery_l1")
+                    else None
+                ),
             }
         )
         per_token_metrics.extend(
@@ -561,7 +612,7 @@ def _run_training_smoke(
                 torch=torch,
             )
         )
-        if spec.family == "sparse" and spec.support_mode == "learned" and spec.top_k == 2:
+        if spec.family in {"sparse", "core_periphery_sparse"} and spec.support_mode == "learned" and spec.top_k == 2:
             train_oracle_rows = _oracle_support_sparse_topk2_rows(
                 arm=spec.name,
                 split="train",
@@ -693,6 +744,13 @@ def _run_training_smoke(
             forgetting_rows=forgetting_rows,
             router_only_branch_rows=router_only_branch_selection,
         ),
+        "core_periphery_sparse_value_capacity_probe": _core_periphery_sparse_value_capacity_probe_rows(
+            arm_metrics=arm_metrics,
+            residual_budget_rows=residual_budget_accounting,
+            commutator_rows=commutator_rows,
+            forgetting_rows=forgetting_rows,
+            router_only_branch_rows=router_only_branch_selection,
+        ),
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": residual_budget_accounting,
@@ -790,6 +848,8 @@ def _synthetic_arm_specs(
         active_rank,
         _mlp_rank_for_parameter_floor(hidden_dim, sparse_stored_parameter_floor),
     )
+    core_rank = max(1, hidden_dim // 6)
+    periphery_rank = max(1, atoms_per_column)
     specs = [
         _SyntheticArmSpec("base_no_residual", "base", 0, 0, 0, "none"),
         _SyntheticArmSpec(
@@ -841,6 +901,64 @@ def _synthetic_arm_specs(
             "token_position_only",
             support_mode="token_position",
             stored_parameter_floor=sparse_stored_parameter_floor,
+        ),
+        _SyntheticArmSpec(
+            "core_periphery_sparse_topk2",
+            "core_periphery_sparse",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            value_head_variant="core_periphery_both",
+            core_rank=core_rank,
+            periphery_rank=periphery_rank,
+            core_lr_scale=0.25,
+            core_drift_penalty_weight=0.05,
+            periphery_l1_weight=1e-4,
+        ),
+        _SyntheticArmSpec(
+            "flat_column_value_mlp_topk2",
+            "core_periphery_control",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="flat_same_router_value_capacity_control",
+            value_head_variant="flat_column_mlp",
+            core_rank=0,
+            periphery_rank=max(1, core_rank + periphery_rank),
+            periphery_l1_weight=1e-4,
+        ),
+        _SyntheticArmSpec(
+            "core_only_sparse_topk2",
+            "core_periphery_control",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="core_only_value_capacity_control",
+            value_head_variant="core_only",
+            core_rank=core_rank,
+            periphery_rank=periphery_rank,
+            core_lr_scale=0.25,
+            core_drift_penalty_weight=0.05,
+        ),
+        _SyntheticArmSpec(
+            "periphery_only_sparse_topk2",
+            "core_periphery_control",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="periphery_only_value_capacity_control",
+            value_head_variant="periphery_only",
+            core_rank=core_rank,
+            periphery_rank=periphery_rank,
+            periphery_l1_weight=1e-4,
         ),
         _SyntheticArmSpec(
             "dense_rank_norm_matched",
@@ -934,6 +1052,19 @@ def _build_synthetic_adapter(
         return _DenseLowRankAdapter(hidden_dim, max(1, spec.dense_rank), nn=nn)
     if spec.family == "mlp_control":
         return _LowChurnMLPAdapter(hidden_dim, max(2, spec.dense_rank * 2), nn=nn)
+    if spec.family in {"core_periphery_sparse", "core_periphery_control"}:
+        return _CorePeripherySparseAdapter(
+            hidden_dim=hidden_dim,
+            num_columns=spec.num_columns,
+            top_k=spec.top_k,
+            core_rank=max(1, spec.core_rank),
+            periphery_rank=max(1, spec.periphery_rank),
+            variant=spec.value_head_variant,
+            contextual_router_hidden_dim=hidden_dim * 2,
+            core_lr_scale=spec.core_lr_scale,
+            torch=torch,
+            nn=nn,
+        )
     return ResidualColumns(
         hidden_dim=hidden_dim,
         num_columns=spec.num_columns,
@@ -983,6 +1114,162 @@ class _LowChurnMLPAdapter:
 
     def __call__(self, hidden: Any) -> Any:
         return hidden + 0.5 * self.net(hidden)
+
+
+class _CorePeripherySparseAdapter:
+    """Sparse top-k adapter with protected shared core and plastic per-column value paths."""
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_columns: int,
+        top_k: int,
+        core_rank: int,
+        periphery_rank: int,
+        variant: str,
+        contextual_router_hidden_dim: int,
+        core_lr_scale: float,
+        *,
+        torch: Any,
+        nn: Any,
+    ) -> None:
+        if top_k < 1 or top_k > num_columns:
+            raise ValueError("top_k must be between 1 and num_columns")
+        self.hidden_dim = hidden_dim
+        self.num_columns = num_columns
+        self.top_k = top_k
+        self.variant = variant
+        self.core_lr_scale = core_lr_scale
+        self.layer_norm = nn.LayerNorm(hidden_dim)
+        contextual_feature_dim = hidden_dim * 5 + 3
+        self.contextual_column_scores = nn.Sequential(
+            nn.LayerNorm(contextual_feature_dim),
+            nn.Linear(contextual_feature_dim, contextual_router_hidden_dim),
+            nn.GELU(),
+            nn.Linear(contextual_router_hidden_dim, num_columns, bias=False),
+        )
+        self.core_down = nn.Linear(hidden_dim, core_rank, bias=False)
+        self.core_up = nn.Linear(core_rank, hidden_dim, bias=False)
+        self.periphery_down = nn.Parameter(torch.empty(num_columns, hidden_dim, periphery_rank))
+        self.periphery_up = nn.Parameter(torch.zeros(num_columns, periphery_rank, hidden_dim))
+        self.score_tie_breaker = torch.arange(num_columns, 0, -1, dtype=self.periphery_down.dtype) * 1e-6
+        nn.init.normal_(self.core_down.weight, std=0.02)
+        nn.init.zeros_(self.core_up.weight)
+        nn.init.normal_(self.periphery_down, std=0.02)
+
+    def parameters(self) -> Any:
+        yield from self.layer_norm.parameters()
+        yield from self.contextual_column_scores.parameters()
+        yield from self.core_down.parameters()
+        yield from self.core_up.parameters()
+        yield self.periphery_down
+        yield self.periphery_up
+
+    def optimizer_param_groups(self, learning_rate: float) -> list[dict[str, Any]]:
+        core_params = list(self.core_down.parameters()) + list(self.core_up.parameters())
+        other_params = (
+            list(self.layer_norm.parameters())
+            + list(self.contextual_column_scores.parameters())
+            + [self.periphery_down, self.periphery_up]
+        )
+        return [
+            {"params": other_params, "lr": learning_rate},
+            {"params": core_params, "lr": learning_rate * self.core_lr_scale},
+        ]
+
+    def core_parameter_snapshot(self) -> list[Any]:
+        return [parameter.detach().clone() for parameter in list(self.core_down.parameters()) + list(self.core_up.parameters())]
+
+    def core_drift_penalty(self, reference: list[Any]) -> Any:
+        penalty = None
+        for parameter, start in zip(list(self.core_down.parameters()) + list(self.core_up.parameters()), reference, strict=True):
+            value = (parameter - start).pow(2).mean()
+            penalty = value if penalty is None else penalty + value
+        return penalty if penalty is not None else self.periphery_up.sum() * 0.0
+
+    def core_parameter_drift_l2(self, reference: list[Any]) -> float:
+        values = [
+            (parameter.detach() - start).pow(2).mean().sqrt().item()
+            for parameter, start in zip(list(self.core_down.parameters()) + list(self.core_up.parameters()), reference, strict=True)
+        ]
+        return float(sum(values) / len(values)) if values else 0.0
+
+    def periphery_l1(self) -> Any:
+        return self.periphery_up.abs().mean()
+
+    def _contextual_features(self, hidden: Any) -> Any:
+        import torch
+
+        current = hidden
+        previous = torch.cat([current[:, :1, :], current[:, :-1, :]], dim=1)
+        next_hidden = torch.cat([current[:, 1:, :], current[:, -1:, :]], dim=1)
+        seq_len = int(current.shape[1])
+        if seq_len <= 1:
+            normalized_position = torch.zeros(
+                current.shape[0],
+                seq_len,
+                1,
+                dtype=current.dtype,
+                device=current.device,
+            )
+        else:
+            normalized_position = torch.linspace(
+                0.0,
+                1.0,
+                seq_len,
+                dtype=current.dtype,
+                device=current.device,
+            ).view(1, seq_len, 1).expand(current.shape[0], seq_len, 1)
+        angle = normalized_position * (2.0 * torch.pi)
+        return torch.cat(
+            [
+                current,
+                previous,
+                next_hidden,
+                current - previous,
+                next_hidden - current,
+                normalized_position,
+                torch.sin(angle),
+                torch.cos(angle),
+            ],
+            dim=-1,
+        )
+
+    def __call__(
+        self,
+        hidden: Any,
+        support_indices: Any | None = None,
+        return_support: bool = False,
+    ) -> Any:
+        import torch
+        import torch.nn.functional as F
+
+        normalized = self.layer_norm(hidden)
+        scores = self.contextual_column_scores(self._contextual_features(hidden))
+        scores = scores + self.score_tie_breaker.to(device=hidden.device, dtype=hidden.dtype)
+        if support_indices is None:
+            top_values, top_indices = scores.topk(self.top_k, dim=-1)
+        else:
+            top_indices = support_indices
+            top_values = scores.gather(dim=-1, index=top_indices)
+        column_weights = F.softmax(top_values, dim=-1)
+        core_delta = self.core_up(self.core_down(normalized))
+        flat_delta = torch.einsum("bsh,chr,crd->bscd", normalized, self.periphery_down, self.periphery_up)
+        selected_periphery = flat_delta.gather(
+            dim=2,
+            index=top_indices.unsqueeze(-1).expand(-1, -1, -1, flat_delta.shape[-1]),
+        )
+        periphery_delta = torch.einsum("bsk,bskh->bsh", column_weights, selected_periphery)
+        if self.variant == "core_only":
+            residual = core_delta
+        elif self.variant in {"periphery_only", "flat_column_mlp"}:
+            residual = periphery_delta
+        else:
+            residual = core_delta + periphery_delta
+        output = hidden + residual
+        if return_support:
+            return output, top_indices.detach()
+        return output
 
 
 def _train_dense_teacher_adapter(
@@ -1062,7 +1349,7 @@ def _synthetic_support(
     spec: _SyntheticArmSpec,
     torch: Any,
 ) -> Any | None:
-    if spec.family not in {"sparse", "sparse_null", "router_null"}:
+    if spec.family not in {"sparse", "sparse_null", "router_null", "core_periphery_sparse", "core_periphery_control"}:
         return None
     batch, seq_len = int(hidden.shape[0]), int(hidden.shape[1])
     offsets = torch.arange(spec.top_k, device=hidden.device).view(1, 1, spec.top_k)
@@ -2678,7 +2965,7 @@ def _flop_proxy(row: dict[str, Any]) -> float | None:
         return 0.0
     if family == "mlp_control":
         return float(active_parameters * 2.0)
-    if family in {"dense_control", "sparse", "sparse_null", "router_null"}:
+    if family in {"dense_control", "sparse", "sparse_null", "router_null", "core_periphery_sparse", "core_periphery_control"}:
         return float(active_parameters * 2.0)
     return float(active_parameters)
 
@@ -2735,6 +3022,18 @@ def _synthetic_active_parameters(spec: _SyntheticArmSpec, hidden_dim: int) -> in
         return 0
     if spec.family in {"dense_control", "mlp_control"}:
         return int(2 * hidden_dim * max(1, spec.dense_rank))
+    if spec.family in {"core_periphery_sparse", "core_periphery_control"}:
+        core_active = (
+            hidden_dim * max(1, spec.core_rank)
+            if spec.value_head_variant not in {"periphery_only", "flat_column_mlp"}
+            else 0
+        )
+        periphery_active = (
+            spec.top_k * hidden_dim * max(1, spec.periphery_rank)
+            if spec.value_head_variant != "core_only"
+            else 0
+        )
+        return int(core_active + periphery_active)
     return int(spec.top_k * spec.atoms_per_column * hidden_dim)
 
 
@@ -2782,6 +3081,10 @@ def _comparator_controls(
         _control("random_support_topk2", "sparse_null", support_width, "random_support", True, "same active support width random null"),
         _control("fixed_support_topk2", "sparse_null", support_width, "fixed_support", True, "same support every token null"),
         _control("token_position_router_topk2", "router_null", support_width, "token_position_only", True, "shortcut router control with no hidden mechanism evidence"),
+        _control("core_periphery_sparse_topk2", "core_periphery_sparse", support_width, "contextual_mlp_core_periphery", True, "protected shared core plus plastic per-column periphery sparse value-capacity probe"),
+        _control("flat_column_value_mlp_topk2", "core_periphery_control", support_width, "contextual_mlp_flat_column_value", True, "same-router flat per-column value MLP control"),
+        _control("core_only_sparse_topk2", "core_periphery_control", support_width, "contextual_mlp_core_only", True, "core-only value-capacity ablation control"),
+        _control("periphery_only_sparse_topk2", "core_periphery_control", support_width, "contextual_mlp_periphery_only", True, "periphery-only value-capacity ablation control"),
         _control("dense_rank_norm_matched", "dense_control", 0, "dense_rank_norm", True, "active-proxy matched dense low-rank residual"),
         _control("low_churn_mlp_active_matched", "mlp_control", 0, "low_churn_mlp", True, "active-proxy matched low-churn MLP residual"),
         _control("dense_stored_parameter_matched", "dense_control", 0, "dense_rank_norm", True, "stored-parameter matched dense upper-bound residual"),
@@ -3796,6 +4099,184 @@ def _value_capacity_core_periphery_diagnostic_summary(rows: list[dict[str, Any]]
     }
 
 
+def _core_periphery_sparse_value_capacity_probe_rows(
+    *,
+    arm_metrics: list[dict[str, Any]],
+    residual_budget_rows: list[dict[str, Any]],
+    commutator_rows: list[dict[str, Any]],
+    forgetting_rows: list[dict[str, Any]],
+    router_only_branch_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not arm_metrics:
+        return []
+    by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
+    budget_by_arm = {str(row.get("arm", "")): row for row in residual_budget_rows}
+    reference = by_arm.get("promoted_contextual_topk2")
+    core_periphery = by_arm.get("core_periphery_sparse_topk2")
+    stored_controls = [
+        row
+        for row in arm_metrics
+        if row.get("control_budget_role") == "stored_parameter_matched_dense_mlp_upper_bound"
+    ]
+    stored = _best_ce_row(stored_controls)
+    if reference is None or core_periphery is None:
+        return []
+
+    router_only_closed = bool(
+        router_only_branch_rows
+        and all(row.get("close_or_deprioritize_router_only_path") is True for row in router_only_branch_rows)
+    )
+    reference_ce = _metric_float(reference.get("holdout_ce"))
+    probe_ce = _metric_float(core_periphery.get("holdout_ce"))
+    stored_ce = _metric_float(stored.get("holdout_ce")) if stored else None
+    stored_gap = _positive_gap(reference_ce, stored_ce)
+    ce_gain = _delta_value(reference_ce, probe_ce)
+    stored_gap_closed_fraction = _safe_ratio(ce_gain, stored_gap)
+    reference_norm = _metric_float(reference.get("residual_l2"))
+    reference_commutator = _mean_metric(
+        commutator_rows,
+        ["promoted_contextual_topk2"],
+        "finite_update_commutator_l2",
+    )
+    reference_churn = _mean_abs_metric(
+        forgetting_rows,
+        ["promoted_contextual_topk2"],
+        "functional_churn",
+    )
+
+    rows: list[dict[str, Any]] = []
+    for arm in (
+        "core_periphery_sparse_topk2",
+        "flat_column_value_mlp_topk2",
+        "core_only_sparse_topk2",
+        "periphery_only_sparse_topk2",
+    ):
+        row = by_arm.get(arm)
+        if row is None:
+            continue
+        arm_ce = _metric_float(row.get("holdout_ce"))
+        arm_norm = _metric_float(row.get("residual_l2"))
+        arm_commutator = _mean_metric(commutator_rows, [arm], "finite_update_commutator_l2")
+        arm_churn = _mean_abs_metric(forgetting_rows, [arm], "functional_churn")
+        arm_budget = budget_by_arm.get(arm, {})
+        is_primary = arm == "core_periphery_sparse_topk2"
+        beats_reference = ce_gain is not None and ce_gain >= 0.05 if is_primary else (
+            reference_ce is not None and arm_ce is not None and arm_ce <= reference_ce - 0.01
+        )
+        closes_stored_gap = (
+            stored_gap_closed_fraction is not None and stored_gap_closed_fraction >= 0.10
+            if is_primary
+            else False
+        )
+        norm_ok = arm_norm is not None and reference_norm is not None and arm_norm <= reference_norm * 1.05
+        commutator_ok = (
+            arm_commutator is not None
+            and reference_commutator is not None
+            and arm_commutator <= reference_commutator * 1.10
+        )
+        churn_ok = (
+            arm_churn is not None
+            and reference_churn is not None
+            and arm_churn <= reference_churn * 1.10
+        )
+        advance = bool(
+            is_primary
+            and router_only_closed
+            and (beats_reference or closes_stored_gap)
+            and norm_ok
+            and commutator_ok
+            and churn_ok
+        )
+        rows.append(
+            {
+                "arm": arm,
+                "probe_role": "primary_core_periphery_probe" if is_primary else str(row.get("control_budget_role", "")),
+                "value_head_variant": row.get("value_head_variant", ""),
+                "reference_sparse_arm": "promoted_contextual_topk2",
+                "reference_sparse_ce": reference_ce,
+                "holdout_ce": arm_ce,
+                "ce_gain_vs_reference_sparse": _delta_value(reference_ce, arm_ce),
+                "stored_control_arm": stored.get("arm", "") if stored else "",
+                "stored_control_ce": stored_ce,
+                "reference_sparse_gap_to_stored_control": stored_gap,
+                "stored_gap_closed_fraction": _safe_ratio(_delta_value(reference_ce, arm_ce), stored_gap),
+                "residual_l2": arm_norm,
+                "reference_sparse_residual_l2": reference_norm,
+                "residual_l2_ratio_vs_reference_sparse": _safe_ratio(arm_norm, reference_norm),
+                "active_parameters_proxy": _metric_float(row.get("active_parameters_proxy")),
+                "stored_parameters": _metric_float(row.get("stored_parameters")),
+                "flop_proxy_per_token": _metric_float(arm_budget.get("flop_proxy_per_token")),
+                "core_rank": _metric_float(row.get("core_rank")),
+                "periphery_rank": _metric_float(row.get("periphery_rank")),
+                "core_lr_scale": _metric_float(row.get("core_lr_scale")),
+                "core_drift_penalty_weight": _metric_float(row.get("core_drift_penalty_weight")),
+                "core_parameter_drift_l2": _metric_float(row.get("core_parameter_drift_l2")),
+                "periphery_l1_weight": _metric_float(row.get("periphery_l1_weight")),
+                "periphery_l1": _metric_float(row.get("periphery_l1")),
+                "mean_commutator_l2": arm_commutator,
+                "reference_sparse_mean_commutator_l2": reference_commutator,
+                "commutator_ratio_vs_reference_sparse": _safe_ratio(arm_commutator, reference_commutator),
+                "mean_abs_functional_churn": arm_churn,
+                "reference_sparse_mean_abs_functional_churn": reference_churn,
+                "functional_churn_ratio_vs_reference_sparse": _safe_ratio(arm_churn, reference_churn),
+                "router_only_path_closed": router_only_closed,
+                "beats_reference_by_0p05_ce": bool(beats_reference) if is_primary else False,
+                "closes_at_least_10pct_stored_gap": bool(closes_stored_gap) if is_primary else False,
+                "norm_budget_ok": bool(norm_ok),
+                "commutator_budget_ok": bool(commutator_ok),
+                "functional_churn_budget_ok": bool(churn_ok),
+                "advance_to_gpu_validation": advance,
+                "requires_gpu_now": False,
+                "promotion_allowed": False,
+                "mechanism_labels_used_for_scoring_only": True,
+                "interpretation": (
+                    "Local trainable value-capacity probe only: labels are used for CE scoring, the router "
+                    "is the same contextual top-k2 mechanism, and advancement requires CE/gap improvement "
+                    "without worsening norm, commutator, or churn budgets."
+                ),
+            }
+        )
+    return rows
+
+
+def _core_periphery_sparse_value_capacity_probe_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "advance_to_gpu_validation": False,
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "interpretation": "core/periphery sparse value-capacity probe was not run",
+        }
+    primary = next((row for row in rows if row.get("probe_role") == "primary_core_periphery_probe"), {})
+    return {
+        "row_count": len(rows),
+        "primary_arm": primary.get("arm", ""),
+        "primary_holdout_ce": _metric_float(primary.get("holdout_ce")),
+        "ce_gain_vs_reference_sparse": _metric_float(primary.get("ce_gain_vs_reference_sparse")),
+        "stored_gap_closed_fraction": _metric_float(primary.get("stored_gap_closed_fraction")),
+        "core_parameter_drift_l2": _metric_float(primary.get("core_parameter_drift_l2")),
+        "periphery_l1": _metric_float(primary.get("periphery_l1")),
+        "norm_budget_ok": primary.get("norm_budget_ok") is True,
+        "commutator_budget_ok": primary.get("commutator_budget_ok") is True,
+        "functional_churn_budget_ok": primary.get("functional_churn_budget_ok") is True,
+        "router_only_path_closed": primary.get("router_only_path_closed") is True,
+        "advance_to_gpu_validation": any(row.get("advance_to_gpu_validation") is True for row in rows),
+        "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
+        "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
+        "control_arms": [
+            str(row.get("arm", ""))
+            for row in rows
+            if row.get("probe_role") != "primary_core_periphery_probe"
+        ],
+        "interpretation": (
+            "Fail-closed local probe. A core/periphery arm is only worth GPU validation if it improves "
+            "the promoted sparse reference or closes at least 10% of the stored-control gap while keeping "
+            "norm, commutator, and churn budgets intact."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -3884,6 +4365,10 @@ def _write_artifacts(
         out_dir / "value_capacity_core_periphery_diagnostic.csv",
         [] if training_smoke is None else training_smoke["value_capacity_core_periphery_diagnostic"],
     )
+    _write_csv(
+        out_dir / "core_periphery_sparse_value_capacity_probe.csv",
+        [] if training_smoke is None else training_smoke["core_periphery_sparse_value_capacity_probe"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -3918,6 +4403,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Router-only branch-selection rows: `{summary['router_only_branch_selection_row_count']}`",
         f"- Teacher distillation closeout rows: `{summary['teacher_distillation_closeout_row_count']}`",
         f"- Value/capacity core-periphery diagnostic rows: `{summary['value_capacity_core_periphery_diagnostic_row_count']}`",
+        f"- Core/periphery sparse value-capacity probe rows: `{summary['core_periphery_sparse_value_capacity_probe_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
