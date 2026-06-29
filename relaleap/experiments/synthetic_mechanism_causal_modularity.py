@@ -55,6 +55,8 @@ class _SyntheticArmSpec:
     support_mode: str = "learned"
     intervention_loss_weight: float = 0.0
     anchor_kl_weight: float = 0.0
+    teacher_distillation_weight: float = 0.0
+    shuffled_teacher_null: bool = False
     stored_parameter_floor: int = 0
     control_budget_role: str = "sparse_or_null_or_base_reference"
 
@@ -73,6 +75,7 @@ def run_synthetic_mechanism_causal_modularity(
     training_steps: int = 12,
     hidden_dim: int = 24,
     learning_rate: float = 8e-3,
+    include_teacher_distillation: bool = False,
 ) -> dict[str, Any]:
     """Generate the local synthetic pregate packet and fail closed if hooks are absent."""
 
@@ -101,12 +104,16 @@ def run_synthetic_mechanism_causal_modularity(
             training_steps=training_steps,
             hidden_dim=hidden_dim,
             learning_rate=learning_rate,
+            include_teacher_distillation=include_teacher_distillation,
         )
         if run_training_smoke
         else None
     )
     hooks_available = training_hooks_available or training_smoke is not None
-    controls = _comparator_controls(support_width=support_width)
+    controls = _comparator_controls(
+        support_width=support_width,
+        include_teacher_distillation=include_teacher_distillation,
+    )
     intervention_rows = (
         training_smoke["per_mechanism_interventions"]
         if training_smoke is not None
@@ -224,6 +231,17 @@ def run_synthetic_mechanism_causal_modularity(
         "residual_budget_accounting_row_count": (
             len(training_smoke["residual_budget_accounting"]) if training_smoke is not None else 0
         ),
+        "teacher_distillation_included": bool(include_teacher_distillation and training_smoke is not None),
+        "teacher_distillation_arm_count": (
+            sum(1 for row in training_smoke["arm_metrics"] if row.get("teacher_distillation_enabled") is True)
+            if training_smoke is not None
+            else 0
+        ),
+        "teacher_distillation_primary_result": (
+            _teacher_distillation_summary(training_smoke["arm_metrics"])
+            if training_smoke is not None
+            else None
+        ),
         "residual_budget_primary_result": (
             _residual_budget_summary(training_smoke["residual_budget_accounting"])
             if training_smoke is not None
@@ -274,6 +292,7 @@ def _run_training_smoke(
     training_steps: int,
     hidden_dim: int,
     learning_rate: float,
+    include_teacher_distillation: bool,
 ) -> dict[str, Any]:
     try:
         import torch
@@ -323,6 +342,25 @@ def _run_training_smoke(
         atoms_per_column=2,
         hidden_dim=hidden_dim,
         sparse_stored_parameter_floor=sparse_stored_parameter_floor,
+        include_teacher_distillation=include_teacher_distillation,
+    )
+    dense_teacher = (
+        _train_dense_teacher_adapter(
+            hidden_dim=hidden_dim,
+            dense_rank=_dense_rank_for_parameter_floor(hidden_dim, sparse_stored_parameter_floor),
+            train_hidden=train_hidden,
+            train_targets=train_targets,
+            vocab_size=vocab_size,
+            training_steps=training_steps,
+            learning_rate=learning_rate,
+            decode=base.decode,
+            seed=seed,
+            torch=torch,
+            nn=nn,
+            F=F,
+        )
+        if include_teacher_distillation
+        else None
     )
     arm_metrics: list[dict[str, Any]] = []
     per_token_metrics: list[dict[str, Any]] = []
@@ -376,10 +414,20 @@ def _run_training_smoke(
                 loss = loss + spec.intervention_loss_weight * torch.relu(margin + 0.01)
             if spec.anchor_kl_weight > 0.0:
                 loss = loss + spec.anchor_kl_weight * _kl_to_reference(logits, initial_logits.detach(), F=F)
+            if spec.teacher_distillation_weight > 0.0 and dense_teacher is not None:
+                student_delta = _synthetic_adapt_hidden(adapter, train_hidden, train_inputs, spec, torch) - train_hidden
+                teacher_delta = _teacher_residual_delta(
+                    dense_teacher,
+                    train_hidden,
+                    shuffle=spec.shuffled_teacher_null,
+                    torch=torch,
+                )
+                loss = loss + spec.teacher_distillation_weight * F.mse_loss(student_delta, teacher_delta)
             loss.backward()
             optimizer.step()
 
         with torch.no_grad():
+            adapted_holdout_hidden = _synthetic_adapt_hidden(adapter, holdout_hidden, holdout_inputs, spec, torch)
             holdout_logits = _synthetic_forward_logits(
                 adapter=adapter,
                 hidden=holdout_hidden,
@@ -399,13 +447,26 @@ def _run_training_smoke(
                 else 0
             )
             residual_l2 = float(
-                (_synthetic_adapt_hidden(adapter, holdout_hidden, holdout_inputs, spec, torch) - holdout_hidden)
+                (adapted_holdout_hidden - holdout_hidden)
                 .pow(2)
                 .mean()
                 .sqrt()
                 .detach()
                 .item()
             )
+            teacher_residual_mse = None
+            if spec.teacher_distillation_weight > 0.0 and dense_teacher is not None:
+                teacher_delta = _teacher_residual_delta(
+                    dense_teacher,
+                    holdout_hidden,
+                    shuffle=spec.shuffled_teacher_null,
+                    torch=torch,
+                )
+                teacher_residual_mse = float(
+                    F.mse_loss(adapted_holdout_hidden - holdout_hidden, teacher_delta)
+                    .detach()
+                    .item()
+                )
         final_ce_by_arm[spec.name] = holdout_ce
         arm_metrics.append(
             {
@@ -421,6 +482,10 @@ def _run_training_smoke(
                 "residual_l2": residual_l2,
                 "used_columns": used_columns,
                 "unique_support_sets": unique_support_sets,
+                "teacher_distillation_enabled": spec.teacher_distillation_weight > 0.0,
+                "teacher_distillation_weight": spec.teacher_distillation_weight,
+                "shuffled_teacher_null": spec.shuffled_teacher_null,
+                "teacher_residual_mse": teacher_residual_mse,
                 "stored_parameters": _stored_parameters(adapter),
                 "stored_parameter_floor": spec.stored_parameter_floor,
                 "active_parameters_proxy": _synthetic_active_parameters(spec, hidden_dim),
@@ -595,6 +660,7 @@ def _synthetic_arm_specs(
     atoms_per_column: int,
     hidden_dim: int,
     sparse_stored_parameter_floor: int,
+    include_teacher_distillation: bool = False,
 ) -> list[_SyntheticArmSpec]:
     active_rank = support_width * atoms_per_column
     sparse_active_proxy = active_rank * hidden_dim
@@ -608,7 +674,7 @@ def _synthetic_arm_specs(
         active_rank,
         _mlp_rank_for_parameter_floor(hidden_dim, sparse_stored_parameter_floor),
     )
-    return [
+    specs = [
         _SyntheticArmSpec("base_no_residual", "base", 0, 0, 0, "none"),
         _SyntheticArmSpec(
             "promoted_contextual_topk2",
@@ -707,6 +773,35 @@ def _synthetic_arm_specs(
             control_budget_role="stored_parameter_matched_dense_mlp_upper_bound",
         ),
     ]
+    if include_teacher_distillation:
+        specs.extend(
+            [
+                _SyntheticArmSpec(
+                    "dense_teacher_distilled_sparse_topk2",
+                    "sparse",
+                    support_width,
+                    num_columns,
+                    atoms_per_column,
+                    "contextual_mlp",
+                    teacher_distillation_weight=1.0,
+                    anchor_kl_weight=0.01,
+                    stored_parameter_floor=sparse_stored_parameter_floor,
+                ),
+                _SyntheticArmSpec(
+                    "shuffled_teacher_distilled_sparse_topk2",
+                    "sparse_null",
+                    support_width,
+                    num_columns,
+                    atoms_per_column,
+                    "contextual_mlp",
+                    teacher_distillation_weight=1.0,
+                    shuffled_teacher_null=True,
+                    anchor_kl_weight=0.01,
+                    stored_parameter_floor=sparse_stored_parameter_floor,
+                ),
+            ]
+        )
+    return specs
 
 
 def _build_synthetic_adapter(
@@ -772,6 +867,51 @@ class _LowChurnMLPAdapter:
 
     def __call__(self, hidden: Any) -> Any:
         return hidden + 0.5 * self.net(hidden)
+
+
+def _train_dense_teacher_adapter(
+    *,
+    hidden_dim: int,
+    dense_rank: int,
+    train_hidden: Any,
+    train_targets: Any,
+    vocab_size: int,
+    training_steps: int,
+    learning_rate: float,
+    decode: Any,
+    seed: int,
+    torch: Any,
+    nn: Any,
+    F: Any,
+) -> Any:
+    torch.manual_seed(seed + 707)
+    teacher = _DenseLowRankAdapter(hidden_dim, max(1, dense_rank), nn=nn)
+    optimizer = torch.optim.AdamW(list(teacher.parameters()), lr=learning_rate)
+    for _ in range(training_steps):
+        optimizer.zero_grad(set_to_none=True)
+        logits = decode(teacher(train_hidden))
+        loss = F.cross_entropy(logits.reshape(-1, vocab_size), train_targets.reshape(-1))
+        loss.backward()
+        optimizer.step()
+    for parameter in teacher.parameters():
+        parameter.requires_grad_(False)
+    return teacher
+
+
+def _teacher_residual_delta(
+    teacher: Any,
+    hidden: Any,
+    *,
+    shuffle: bool,
+    torch: Any,
+) -> Any:
+    with torch.no_grad():
+        delta = teacher(hidden).detach() - hidden
+        if not shuffle:
+            return delta
+        flat = delta.reshape(-1, delta.shape[-1])
+        order = torch.arange(flat.shape[0] - 1, -1, -1, device=flat.device)
+        return flat.index_select(0, order).reshape_as(delta)
 
 
 def _synthetic_forward_logits(
@@ -1691,8 +1831,12 @@ def _apply_rule(tokens: list[int], rule: str, vocab_size: int) -> list[int]:
     raise ValueError(f"unknown rule: {rule}")
 
 
-def _comparator_controls(*, support_width: int) -> list[dict[str, Any]]:
-    return [
+def _comparator_controls(
+    *,
+    support_width: int,
+    include_teacher_distillation: bool = False,
+) -> list[dict[str, Any]]:
+    controls = [
         _control("base_no_residual", "base", 0, "none", False, "shared frozen decoder reference"),
         _control("promoted_contextual_topk2", "sparse", support_width, "contextual_mlp", True, "current promoted sparse routing comparator"),
         _control("intervention_trained_sparse_topk2", "sparse", support_width, "contextual_mlp_with_intervention_loss", True, "new opt-in sparse arm with necessity/selectivity loss"),
@@ -1706,6 +1850,28 @@ def _comparator_controls(*, support_width: int) -> list[dict[str, Any]]:
         _control("random_initialized_same_params", "random_null", support_width, "random_initialized", True, "same stored parameter random residual null"),
         _control("shuffled_mechanism_label_null", "causal_null", support_width, "contextual_mlp", True, "evaluation scoring with shuffled latent mechanism labels"),
     ]
+    if include_teacher_distillation:
+        controls.extend(
+            [
+                _control(
+                    "dense_teacher_distilled_sparse_topk2",
+                    "sparse",
+                    support_width,
+                    "contextual_mlp_dense_teacher_residual_distillation",
+                    True,
+                    "opt-in sparse student trained with dense-teacher residual MSE and evaluated as hard top-k2",
+                ),
+                _control(
+                    "shuffled_teacher_distilled_sparse_topk2",
+                    "teacher_null",
+                    support_width,
+                    "contextual_mlp_shuffled_teacher_residual_distillation",
+                    True,
+                    "same sparse student objective with shuffled dense-teacher residual targets as a null",
+                ),
+            ]
+        )
+    return controls
 
 
 def _control(
@@ -2094,6 +2260,10 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if any(row.get("teacher_distillation_enabled") is True for row in training_smoke.get("arm_metrics", [])):
+        return (
+            "inspect dense-teacher sparse student versus shuffled-teacher null, then add oracle-support regret decomposition for the teacher-distilled arm if it clears CE guardrails"
+        )
     if training_smoke.get("ce_by_rule_position") and training_smoke.get("residual_budget_accounting"):
         return (
             "add an opt-in soft-to-hard dense-teacher-distilled sparse arm with a shuffled-teacher null in the local synthetic pregate"
@@ -2223,6 +2393,45 @@ def _residual_budget_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _teacher_distillation_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    teacher_rows = [
+        row
+        for row in rows
+        if row.get("arm")
+        in {
+            "dense_teacher_distilled_sparse_topk2",
+            "shuffled_teacher_distilled_sparse_topk2",
+        }
+    ]
+    if not teacher_rows:
+        return {
+            "row_count": 0,
+            "distilled_holdout_ce": None,
+            "shuffled_null_holdout_ce": None,
+            "distilled_minus_shuffled_holdout_ce": None,
+            "distilled_teacher_residual_mse": None,
+            "shuffled_teacher_residual_mse": None,
+            "interpretation": "dense-teacher sparse distillation was not included in this run",
+        }
+    by_arm = {str(row.get("arm")): row for row in teacher_rows}
+    distilled = by_arm.get("dense_teacher_distilled_sparse_topk2", {})
+    shuffled = by_arm.get("shuffled_teacher_distilled_sparse_topk2", {})
+    distilled_ce = _metric_float(distilled.get("holdout_ce"))
+    shuffled_ce = _metric_float(shuffled.get("holdout_ce"))
+    return {
+        "row_count": len(teacher_rows),
+        "distilled_holdout_ce": distilled_ce,
+        "shuffled_null_holdout_ce": shuffled_ce,
+        "distilled_minus_shuffled_holdout_ce": _delta_value(distilled_ce, shuffled_ce),
+        "distilled_teacher_residual_mse": _metric_float(distilled.get("teacher_residual_mse")),
+        "shuffled_teacher_residual_mse": _metric_float(shuffled.get("teacher_residual_mse")),
+        "interpretation": (
+            "Diagnostic only: the teacher is trained locally from the same synthetic episodes; "
+            "teacher labels do not enter mechanism scoring, and final sparse evaluation uses hard top-k2 support."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -2317,12 +2526,16 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Oracle-support sparse top-k2 rows: `{summary['oracle_support_sparse_topk2_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
+        f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
+        f"- Teacher distillation arm count: `{summary['teacher_distillation_arm_count']}`",
         "",
         "This artifact implements the major-pivot pregate by generating same-vocabulary synthetic latent-rule episodes and the comparator/intervention schemas. It intentionally separates artifact readiness from scientific gates; GPU validation remains blocked until local scientific gates pass.",
         "",
         "The oracle-support sparse top-k2 artifact is diagnostic only: it uses holdout labels to score exhaustive singleton/pair supports for trained sparse values and must not be treated as deployable training evidence.",
         "",
         "The CE by rule/position and residual budget accounting artifacts are local diagnostics. FLOP values are residual-path proxies only and exclude the frozen base and decoder.",
+        "",
+        "The opt-in dense-teacher distillation arms are diagnostics only. The dense teacher is trained on the synthetic training episodes, sparse students are evaluated with hard top-k2 supports, and the shuffled-teacher arm is a null for teacher residual target structure.",
         "",
         "## Next Step",
         "",
@@ -2373,6 +2586,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--training-steps", type=int, default=12)
     parser.add_argument("--hidden-dim", type=int, default=24)
     parser.add_argument("--learning-rate", type=float, default=8e-3)
+    parser.add_argument("--include-teacher-distillation", action="store_true")
     args = parser.parse_args(argv)
     summary = run_synthetic_mechanism_causal_modularity(
         out_dir=args.out,
@@ -2387,6 +2601,7 @@ def main(argv: list[str] | None = None) -> int:
         training_steps=args.training_steps,
         hidden_dim=args.hidden_dim,
         learning_rate=args.learning_rate,
+        include_teacher_distillation=args.include_teacher_distillation,
     )
     print(json.dumps({"status": summary["status"], "decision": summary["decision"]}, sort_keys=True))
     return 0 if summary["status"] == "pass" else 1

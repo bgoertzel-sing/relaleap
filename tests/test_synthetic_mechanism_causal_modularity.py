@@ -328,6 +328,61 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertTrue(all(row["ce_before"] for row in forgetting_rows))
             self.assertTrue(all(row["residual_l2"] for row in forgetting_rows))
 
+    def test_teacher_distillation_opt_in_adds_sparse_student_and_shuffled_null(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_dir = Path(tmpdir) / "out"
+
+            summary = run_synthetic_mechanism_causal_modularity(
+                out_dir=out_dir,
+                seed=7,
+                vocab_size=12,
+                seq_len=5,
+                train_episodes_per_rule=1,
+                holdout_episodes_per_rule=1,
+                run_training_smoke=True,
+                training_steps=2,
+                hidden_dim=16,
+                include_teacher_distillation=True,
+            )
+
+            self.assertEqual(summary["status"], "pass")
+            self.assertTrue(summary["teacher_distillation_included"])
+            self.assertEqual(summary["teacher_distillation_arm_count"], 2)
+            self.assertEqual(summary["arm_metric_row_count"], 12)
+            self.assertEqual(summary["ce_gap_decomposition_row_count"], 12)
+            self.assertEqual(summary["residual_budget_accounting_row_count"], 12)
+            teacher_summary = summary["teacher_distillation_primary_result"]
+            self.assertEqual(teacher_summary["row_count"], 2)
+            self.assertIsNotNone(teacher_summary["distilled_holdout_ce"])
+            self.assertIsNotNone(teacher_summary["shuffled_null_holdout_ce"])
+            self.assertIn("hard top-k2", teacher_summary["interpretation"])
+
+            required_criteria = {row["criterion"]: row for row in summary["gate_criteria"]}
+            self.assertTrue(required_criteria["training_smoke_required_arms_present"]["passed"])
+
+            with (out_dir / "comparator_controls.csv").open(newline="", encoding="utf-8") as handle:
+                controls = list(csv.DictReader(handle))
+            control_arms = {row["arm"] for row in controls}
+            self.assertIn("dense_teacher_distilled_sparse_topk2", control_arms)
+            self.assertIn("shuffled_teacher_distilled_sparse_topk2", control_arms)
+
+            with (out_dir / "arm_metrics.csv").open(newline="", encoding="utf-8") as handle:
+                arm_rows = list(csv.DictReader(handle))
+            by_arm = {row["arm"]: row for row in arm_rows}
+            self.assertEqual(by_arm["dense_teacher_distilled_sparse_topk2"]["teacher_distillation_enabled"], "True")
+            self.assertEqual(by_arm["dense_teacher_distilled_sparse_topk2"]["shuffled_teacher_null"], "False")
+            self.assertEqual(by_arm["shuffled_teacher_distilled_sparse_topk2"]["shuffled_teacher_null"], "True")
+            self.assertTrue(by_arm["dense_teacher_distilled_sparse_topk2"]["teacher_residual_mse"])
+            self.assertTrue(by_arm["shuffled_teacher_distilled_sparse_topk2"]["teacher_residual_mse"])
+
+            with (out_dir / "ce_gap_decomposition.csv").open(newline="", encoding="utf-8") as handle:
+                ce_gap_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(ce_gap_rows), 12)
+            self.assertIn(
+                "dense_teacher_distilled_sparse_topk2",
+                {row["arm"] for row in ce_gap_rows},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
