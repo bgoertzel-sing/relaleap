@@ -54,6 +54,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["pc_residual_inference_mechanism_inspection_row_count"], 0)
             self.assertEqual(summary["pc_error_target_inference_path_audit_row_count"], 0)
             self.assertEqual(summary["pc_decoder_adjoint_target_alignment_probe_row_count"], 0)
+            self.assertEqual(summary["pc_decoder_adjoint_minimal_retrain_probe_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -304,6 +305,18 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
             self.assertFalse(
                 summary["pc_decoder_adjoint_target_alignment_probe_primary_result"]["promotion_allowed"]
+            )
+            self.assertEqual(summary["pc_decoder_adjoint_minimal_retrain_probe_row_count"], 5)
+            self.assertIsNotNone(summary["pc_decoder_adjoint_minimal_retrain_probe_primary_result"])
+            self.assertEqual(
+                summary["pc_decoder_adjoint_minimal_retrain_probe_primary_result"]["row_count"],
+                summary["pc_decoder_adjoint_minimal_retrain_probe_row_count"],
+            )
+            self.assertFalse(
+                summary["pc_decoder_adjoint_minimal_retrain_probe_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["pc_decoder_adjoint_minimal_retrain_probe_primary_result"]["promotion_allowed"]
             )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
@@ -707,6 +720,45 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(selected_target["label_derived_training_only_target"], "True")
             self.assertEqual(selected_target["requires_gpu_now"], "False")
             self.assertEqual(selected_target["promotion_allowed"], "False")
+
+            with (out_dir / "pc_decoder_adjoint_minimal_retrain_probe.csv").open(newline="", encoding="utf-8") as handle:
+                retrain_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(retrain_rows), 5)
+            retrain_by_variant = {row["target_variant"]: row for row in retrain_rows}
+            self.assertEqual(
+                set(retrain_by_variant),
+                {
+                    "decoder_adjoint_aux_target",
+                    "current_embedding_minus_hidden_aux_target",
+                    "shuffled_decoder_adjoint_aux_target_null",
+                    "sign_flipped_decoder_adjoint_aux_target_null",
+                    "ce_only_low_rank_dense_control",
+                },
+            )
+            selected_retrain = retrain_by_variant["decoder_adjoint_aux_target"]
+            for required_field in {
+                "holdout_ce",
+                "residual_l2",
+                "target_cosine",
+                "promoted_sparse_ce",
+                "same_router_flat_control_ce",
+                "decoder_beats_current_target",
+                "decoder_beats_shuffled_target",
+                "decoder_beats_sign_flip",
+                "decoder_beats_ce_only_control",
+                "flat_control_ok",
+                "promoted_signal_ok",
+                "retrain_gate_passes",
+                "failure_reasons",
+                "selected_next_experiment",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "advance_to_gpu_validation",
+            }:
+                self.assertIn(required_field, selected_retrain)
+            self.assertEqual(selected_retrain["selected"], "True")
+            self.assertEqual(selected_retrain["requires_gpu_now"], "False")
+            self.assertEqual(selected_retrain["promotion_allowed"], "False")
             self.assertEqual(selected_pc["source_failed_branch"], "budget_normalized_gated_low_rank_value_mixture")
             self.assertEqual(selected_pc["source_failed_branch_pregate_passes"], "False")
             self.assertEqual(selected_pc["requires_gpu_now"], "False")

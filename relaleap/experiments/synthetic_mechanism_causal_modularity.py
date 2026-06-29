@@ -51,6 +51,7 @@ REQUIRED_ARTIFACTS = (
     "pc_residual_inference_mechanism_inspection.csv",
     "pc_error_target_inference_path_audit.csv",
     "pc_decoder_adjoint_target_alignment_probe.csv",
+    "pc_decoder_adjoint_minimal_retrain_probe.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -385,6 +386,16 @@ def run_synthetic_mechanism_causal_modularity(
         "pc_decoder_adjoint_target_alignment_probe_primary_result": (
             _pc_decoder_adjoint_target_alignment_probe_summary(
                 training_smoke["pc_decoder_adjoint_target_alignment_probe"]
+            )
+            if training_smoke is not None
+            else None
+        ),
+        "pc_decoder_adjoint_minimal_retrain_probe_row_count": (
+            len(training_smoke["pc_decoder_adjoint_minimal_retrain_probe"]) if training_smoke is not None else 0
+        ),
+        "pc_decoder_adjoint_minimal_retrain_probe_primary_result": (
+            _pc_decoder_adjoint_minimal_retrain_probe_summary(
+                training_smoke["pc_decoder_adjoint_minimal_retrain_probe"]
             )
             if training_smoke is not None
             else None
@@ -903,6 +914,22 @@ def _run_training_smoke(
         F=F,
         torch=torch,
     )
+    pc_decoder_adjoint_minimal_retrain_probe = _pc_decoder_adjoint_minimal_retrain_probe_rows(
+        target_probe_rows=pc_decoder_adjoint_target_alignment_probe,
+        arm_metrics=arm_metrics,
+        train_hidden=train_hidden,
+        train_targets=train_targets,
+        holdout_hidden=holdout_hidden,
+        holdout_targets=holdout_targets,
+        decode=base.decode,
+        decoder_weight=base.lm_head.weight,
+        training_steps=max(4, training_steps),
+        learning_rate=learning_rate,
+        seed=seed,
+        torch=torch,
+        nn=nn,
+        F=F,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -927,6 +954,7 @@ def _run_training_smoke(
         "pc_residual_inference_mechanism_inspection": pc_residual_inference_mechanism_inspection,
         "pc_error_target_inference_path_audit": pc_error_target_inference_path_audit,
         "pc_decoder_adjoint_target_alignment_probe": pc_decoder_adjoint_target_alignment_probe,
+        "pc_decoder_adjoint_minimal_retrain_probe": pc_decoder_adjoint_minimal_retrain_probe,
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": residual_budget_accounting,
@@ -4003,6 +4031,12 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("pc_decoder_adjoint_minimal_retrain_probe"):
+        summary = _pc_decoder_adjoint_minimal_retrain_probe_summary(
+            training_smoke["pc_decoder_adjoint_minimal_retrain_probe"]
+        )
+        if summary.get("selected_next_experiment"):
+            return str(summary["selected_next_experiment"]).replace("_", " ")
     if training_smoke.get("pc_decoder_adjoint_target_alignment_probe"):
         summary = _pc_decoder_adjoint_target_alignment_probe_summary(
             training_smoke["pc_decoder_adjoint_target_alignment_probe"]
@@ -6295,6 +6329,263 @@ def _pc_decoder_adjoint_target_alignment_probe_summary(rows: list[dict[str, Any]
     }
 
 
+def _pc_decoder_adjoint_minimal_retrain_probe_rows(
+    *,
+    target_probe_rows: list[dict[str, Any]],
+    arm_metrics: list[dict[str, Any]],
+    train_hidden: Any,
+    train_targets: Any,
+    holdout_hidden: Any,
+    holdout_targets: Any,
+    decode: Any,
+    decoder_weight: Any,
+    training_steps: int,
+    learning_rate: float,
+    seed: int,
+    torch: Any,
+    nn: Any,
+    F: Any,
+) -> list[dict[str, Any]]:
+    target_summary = _pc_decoder_adjoint_target_alignment_probe_summary(target_probe_rows)
+    if target_summary.get("selected_next_experiment") != "wire_decoder_adjoint_pc_target_into_minimal_retrain_probe":
+        return []
+
+    by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
+    promoted = by_arm.get("promoted_contextual_topk2")
+    flat = by_arm.get("pc_same_router_flat_mlp_control_topk2") or by_arm.get("flat_column_value_mlp_topk2")
+    promoted_ce = _metric_float(promoted.get("holdout_ce")) if promoted else None
+    flat_ce = _metric_float(flat.get("holdout_ce")) if flat else None
+    vocab_size = int(decoder_weight.shape[0])
+    hidden_dim = int(train_hidden.shape[-1])
+    rank = max(1, hidden_dim // 4)
+    target_weight = 0.25
+
+    def current_target(hidden: Any, targets: Any) -> Any:
+        return F.layer_norm(
+            decoder_weight.index_select(0, targets.reshape(-1)).reshape(
+                targets.shape[0],
+                targets.shape[1],
+                -1,
+            )
+            - hidden,
+            (hidden.shape[-1],),
+        ).detach()
+
+    def shuffled_targets(targets: Any) -> Any:
+        return targets.reshape(-1).index_select(
+            0,
+            torch.arange(targets.numel() - 1, -1, -1, device=targets.device),
+        ).reshape_as(targets)
+
+    train_decoder = _decoder_adjoint_hidden_ce_error(
+        train_hidden,
+        train_targets,
+        decoder_weight,
+        decode=decode,
+        F=F,
+        normalize=True,
+    ).detach()
+    holdout_decoder = _decoder_adjoint_hidden_ce_error(
+        holdout_hidden,
+        holdout_targets,
+        decoder_weight,
+        decode=decode,
+        F=F,
+        normalize=True,
+    ).detach()
+    train_shuffled = _decoder_adjoint_hidden_ce_error(
+        train_hidden,
+        shuffled_targets(train_targets),
+        decoder_weight,
+        decode=decode,
+        F=F,
+        normalize=True,
+    ).detach()
+    holdout_shuffled = _decoder_adjoint_hidden_ce_error(
+        holdout_hidden,
+        shuffled_targets(holdout_targets),
+        decoder_weight,
+        decode=decode,
+        F=F,
+        normalize=True,
+    ).detach()
+    target_specs = [
+        ("decoder_adjoint_aux_target", "primary_decoder_adjoint_retrain", train_decoder, holdout_decoder, True),
+        ("current_embedding_minus_hidden_aux_target", "current_pc_target_retrain_control", current_target(train_hidden, train_targets), current_target(holdout_hidden, holdout_targets), False),
+        ("shuffled_decoder_adjoint_aux_target_null", "shuffled_target_retrain_null", train_shuffled, holdout_shuffled, False),
+        ("sign_flipped_decoder_adjoint_aux_target_null", "sign_flipped_target_retrain_null", -train_decoder, -holdout_decoder, False),
+        ("ce_only_low_rank_dense_control", "no_aux_target_ce_control", None, None, False),
+    ]
+
+    metrics: dict[str, dict[str, Any]] = {}
+    for offset, (variant, _, train_target, holdout_target, _) in enumerate(target_specs):
+        torch.manual_seed(seed + 1400 + offset)
+        adapter = _DenseLowRankAdapter(hidden_dim, rank, nn=nn)
+        optimizer = torch.optim.AdamW(list(adapter.parameters()), lr=learning_rate)
+        for _ in range(training_steps):
+            optimizer.zero_grad(set_to_none=True)
+            adapted = adapter(train_hidden)
+            logits = decode(adapted)
+            loss = F.cross_entropy(logits.reshape(-1, vocab_size), train_targets.reshape(-1))
+            if train_target is not None:
+                residual = adapted - train_hidden
+                loss = loss + target_weight * F.mse_loss(
+                    F.layer_norm(residual, (hidden_dim,)),
+                    train_target,
+                )
+            loss.backward()
+            optimizer.step()
+        with torch.no_grad():
+            adapted_train = adapter(train_hidden)
+            train_logits = decode(adapted_train)
+            train_ce = float(F.cross_entropy(train_logits.reshape(-1, vocab_size), train_targets.reshape(-1)).item())
+            adapted_holdout = adapter(holdout_hidden)
+            holdout_logits = decode(adapted_holdout)
+            holdout_ce = float(F.cross_entropy(holdout_logits.reshape(-1, vocab_size), holdout_targets.reshape(-1)).item())
+            residual = adapted_holdout - holdout_hidden
+            residual_l2 = float(residual.pow(2).mean().sqrt().item())
+            target_cosine = (
+                _target_cosine(residual, holdout_target, F=F)
+                if holdout_target is not None
+                else None
+            )
+        metrics[variant] = {
+            "train_ce": train_ce,
+            "holdout_ce": holdout_ce,
+            "residual_l2": residual_l2,
+            "target_cosine": target_cosine,
+        }
+
+    primary = metrics["decoder_adjoint_aux_target"]
+    current = metrics["current_embedding_minus_hidden_aux_target"]
+    shuffled = metrics["shuffled_decoder_adjoint_aux_target_null"]
+    sign_flipped = metrics["sign_flipped_decoder_adjoint_aux_target_null"]
+    ce_only = metrics["ce_only_low_rank_dense_control"]
+    decoder_beats_current = primary["holdout_ce"] <= current["holdout_ce"] - 0.005
+    decoder_beats_shuffled = primary["holdout_ce"] <= shuffled["holdout_ce"] - 0.005
+    decoder_beats_sign_flip = primary["holdout_ce"] <= sign_flipped["holdout_ce"] - 0.005
+    decoder_beats_ce_only = primary["holdout_ce"] <= ce_only["holdout_ce"] + 0.005
+    flat_control_ok = bool(flat_ce is None or primary["holdout_ce"] <= flat_ce + 0.01)
+    promoted_signal_ok = bool(promoted_ce is None or primary["holdout_ce"] <= promoted_ce)
+    retrain_gate_passes = bool(
+        decoder_beats_current
+        and decoder_beats_shuffled
+        and decoder_beats_sign_flip
+        and decoder_beats_ce_only
+        and flat_control_ok
+        and promoted_signal_ok
+    )
+    selected_next = (
+        "prototype_decoder_adjoint_pc_sparse_retrain_with_flat_and_commutator_controls"
+        if retrain_gate_passes
+        else "close_or_redesign_decoder_adjoint_pc_retrain_path_before_gpu"
+    )
+    blockers = []
+    if not decoder_beats_current:
+        blockers.append("current_pc_target_control_not_beaten")
+    if not decoder_beats_shuffled:
+        blockers.append("shuffled_target_retrain_null_not_beaten")
+    if not decoder_beats_sign_flip:
+        blockers.append("sign_flipped_target_retrain_null_not_beaten")
+    if not decoder_beats_ce_only:
+        blockers.append("ce_only_dense_control_not_beaten")
+    if not flat_control_ok:
+        blockers.append("same_router_flat_control_still_stronger")
+    if not promoted_signal_ok:
+        blockers.append("no_ce_signal_vs_promoted_sparse")
+
+    rows: list[dict[str, Any]] = []
+    for variant, role, _, _, selected in target_specs:
+        row = metrics[variant]
+        rows.append(
+            {
+                "probe_name": "pc_decoder_adjoint_minimal_retrain_probe",
+                "target_variant": variant,
+                "probe_role": role,
+                "selected": selected,
+                "rank": rank,
+                "training_steps": training_steps,
+                "target_mse_weight": target_weight if variant != "ce_only_low_rank_dense_control" else 0.0,
+                "train_ce": row["train_ce"],
+                "holdout_ce": row["holdout_ce"],
+                "residual_l2": row["residual_l2"],
+                "target_cosine": row["target_cosine"],
+                "promoted_sparse_ce": promoted_ce,
+                "same_router_flat_control_ce": flat_ce,
+                "holdout_ce_minus_promoted_sparse_ce": _delta_value(row["holdout_ce"], promoted_ce),
+                "holdout_ce_minus_flat_control_ce": _delta_value(row["holdout_ce"], flat_ce),
+                "decoder_adjoint_holdout_ce": primary["holdout_ce"],
+                "current_target_holdout_ce": current["holdout_ce"],
+                "shuffled_target_holdout_ce": shuffled["holdout_ce"],
+                "sign_flipped_target_holdout_ce": sign_flipped["holdout_ce"],
+                "ce_only_holdout_ce": ce_only["holdout_ce"],
+                "decoder_beats_current_target": decoder_beats_current,
+                "decoder_beats_shuffled_target": decoder_beats_shuffled,
+                "decoder_beats_sign_flip": decoder_beats_sign_flip,
+                "decoder_beats_ce_only_control": decoder_beats_ce_only,
+                "flat_control_ok": flat_control_ok,
+                "promoted_signal_ok": promoted_signal_ok,
+                "retrain_gate_passes": retrain_gate_passes,
+                "failure_reasons": ";".join(blockers),
+                "selected_next_experiment": selected_next,
+                "requires_gpu_now": False,
+                "promotion_allowed": False,
+                "advance_to_gpu_validation": False,
+                "strategic_change_level": "minor",
+                "notify_ben": False,
+                "label_derived_training_only_target": variant != "ce_only_low_rank_dense_control",
+                "mechanism_labels_used_for_scoring_only": True,
+                "interpretation": (
+                    "Minimal local retrain probe for decoder-adjoint PC target semantics. It uses label-derived "
+                    "CE targets for training-time diagnosis only and blocks GPU unless the target beats matched "
+                    "current, shuffled, sign-flipped, no-target, promoted sparse, and flat-control references."
+                ),
+            }
+        )
+    return rows
+
+
+def _pc_decoder_adjoint_minimal_retrain_probe_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "selected_next_experiment": "",
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "notify_ben": False,
+            "strategic_change_level": "minor",
+        }
+    selected = next((row for row in rows if row.get("selected") is True), rows[0])
+    return {
+        "row_count": len(rows),
+        "selected_next_experiment": selected.get("selected_next_experiment", ""),
+        "decoder_adjoint_holdout_ce": _metric_float(selected.get("decoder_adjoint_holdout_ce")),
+        "current_target_holdout_ce": _metric_float(selected.get("current_target_holdout_ce")),
+        "shuffled_target_holdout_ce": _metric_float(selected.get("shuffled_target_holdout_ce")),
+        "sign_flipped_target_holdout_ce": _metric_float(selected.get("sign_flipped_target_holdout_ce")),
+        "ce_only_holdout_ce": _metric_float(selected.get("ce_only_holdout_ce")),
+        "holdout_ce_minus_promoted_sparse_ce": _metric_float(selected.get("holdout_ce_minus_promoted_sparse_ce")),
+        "holdout_ce_minus_flat_control_ce": _metric_float(selected.get("holdout_ce_minus_flat_control_ce")),
+        "decoder_beats_current_target": selected.get("decoder_beats_current_target") is True,
+        "decoder_beats_shuffled_target": selected.get("decoder_beats_shuffled_target") is True,
+        "decoder_beats_sign_flip": selected.get("decoder_beats_sign_flip") is True,
+        "decoder_beats_ce_only_control": selected.get("decoder_beats_ce_only_control") is True,
+        "flat_control_ok": selected.get("flat_control_ok") is True,
+        "promoted_signal_ok": selected.get("promoted_signal_ok") is True,
+        "retrain_gate_passes": selected.get("retrain_gate_passes") is True,
+        "failure_reasons": selected.get("failure_reasons", ""),
+        "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
+        "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
+        "advance_to_gpu_validation": any(row.get("advance_to_gpu_validation") is True for row in rows),
+        "notify_ben": any(row.get("notify_ben") is True for row in rows),
+        "strategic_change_level": "major" if any(row.get("strategic_change_level") == "major" for row in rows) else "minor",
+        "interpretation": (
+            "Fail-closed local minimal retrain probe for decoder-adjoint PC target semantics. "
+            "It does not request GPU or promotion."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -6419,6 +6710,10 @@ def _write_artifacts(
         out_dir / "pc_decoder_adjoint_target_alignment_probe.csv",
         [] if training_smoke is None else training_smoke["pc_decoder_adjoint_target_alignment_probe"],
     )
+    _write_csv(
+        out_dir / "pc_decoder_adjoint_minimal_retrain_probe.csv",
+        [] if training_smoke is None else training_smoke["pc_decoder_adjoint_minimal_retrain_probe"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -6462,6 +6757,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- PC residual-inference mechanism inspection rows: `{summary['pc_residual_inference_mechanism_inspection_row_count']}`",
         f"- PC error-target inference-path audit rows: `{summary['pc_error_target_inference_path_audit_row_count']}`",
         f"- PC decoder-adjoint target-alignment probe rows: `{summary['pc_decoder_adjoint_target_alignment_probe_row_count']}`",
+        f"- PC decoder-adjoint minimal retrain probe rows: `{summary['pc_decoder_adjoint_minimal_retrain_probe_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
@@ -6496,6 +6792,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The PC error-target inference-path audit is the local follow-up after the trainable PC pregate failed. It checks whether the shuffled residual-error target null is competitive, whether the inference path has CE signal versus promoted sparse, whether the same-router flat control explains the result, and whether the finite-update commutator budget remains failed. It blocks retraining/GPU until those local checks support a coherent PC mechanism.",
         "",
         "The PC decoder-adjoint target-alignment probe compares the current decoder-embedding-minus-hidden target with a hidden-space CE descent target, finite-difference descent proxy, shuffled target, and sign-flipped null under matched injection norm. It is label-derived and training-time diagnostic only.",
+        "",
+        "The PC decoder-adjoint minimal retrain probe is a local fail-closed target-semantics gate. It trains tiny matched dense residual probes with decoder-adjoint, current, shuffled, sign-flipped, and no auxiliary targets, then blocks GPU unless the decoder-adjoint target survives those controls plus promoted sparse and same-router flat references.",
         "",
         "## Next Step",
         "",
