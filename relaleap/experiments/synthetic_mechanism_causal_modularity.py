@@ -37,6 +37,7 @@ REQUIRED_ARTIFACTS = (
     "ce_gap_decomposition.csv",
     "oracle_support_sparse_topk2.csv",
     "router_value_regret_decomposition.csv",
+    "teacher_distillation_closeout.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -228,6 +229,14 @@ def run_synthetic_mechanism_causal_modularity(
         ),
         "router_value_regret_primary_result": (
             _router_value_regret_summary(training_smoke["router_value_regret_decomposition"])
+            if training_smoke is not None
+            else None
+        ),
+        "teacher_distillation_closeout_row_count": (
+            len(training_smoke["teacher_distillation_closeout"]) if training_smoke is not None else 0
+        ),
+        "teacher_distillation_closeout_primary_result": (
+            _teacher_distillation_closeout_summary(training_smoke["teacher_distillation_closeout"])
             if training_smoke is not None
             else None
         ),
@@ -588,6 +597,10 @@ def _run_training_smoke(
         "oracle_support_sparse_topk2": oracle_support_rows,
         "router_value_regret_decomposition": _router_value_regret_decomposition_rows(
             oracle_support_rows
+        ),
+        "teacher_distillation_closeout": _teacher_distillation_closeout_rows(
+            arm_metrics,
+            oracle_support_rows,
         ),
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
@@ -2356,6 +2369,10 @@ def _selected_next_step(
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
     if any(row.get("teacher_distillation_enabled") is True for row in training_smoke.get("arm_metrics", [])):
+        if training_smoke.get("teacher_distillation_closeout"):
+            return (
+                "test whether reducing learned support/router regret, rather than value distillation, closes the remaining sparse gap"
+            )
         if training_smoke.get("router_value_regret_decomposition"):
             return (
                 "close the teacher-distillation branch as non-improving on this local seed and test whether lower router regret, not value distillation, explains the remaining sparse gap"
@@ -2475,6 +2492,148 @@ def _router_value_regret_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _teacher_distillation_closeout_rows(
+    arm_metrics: list[dict[str, Any]],
+    oracle_support_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_arm = {str(row.get("arm")): row for row in arm_metrics}
+    distilled = by_arm.get("dense_teacher_distilled_sparse_topk2")
+    shuffled = by_arm.get("shuffled_teacher_distilled_sparse_topk2")
+    if distilled is None or shuffled is None:
+        return []
+
+    sparse_arms = [
+        "promoted_contextual_topk2",
+        "intervention_trained_sparse_topk2",
+    ]
+    best_sparse = _best_ce_row([by_arm[arm] for arm in sparse_arms if arm in by_arm])
+    active_controls = [
+        row
+        for row in arm_metrics
+        if row.get("control_budget_role") == "active_proxy_matched_dense_mlp_control"
+    ]
+    stored_controls = [
+        row
+        for row in arm_metrics
+        if row.get("control_budget_role") == "stored_parameter_matched_dense_mlp_upper_bound"
+    ]
+    best_active = _best_ce_row(active_controls)
+    best_stored = _best_ce_row(stored_controls)
+
+    regret_rows = _router_value_regret_decomposition_rows(oracle_support_rows)
+    regret_all = {
+        str(row.get("arm")): row
+        for row in regret_rows
+        if row.get("latent_rule") == "all"
+    }
+    distilled_ce = _metric_float(distilled.get("holdout_ce"))
+    shuffled_ce = _metric_float(shuffled.get("holdout_ce"))
+    best_sparse_ce = _metric_float(best_sparse.get("holdout_ce")) if best_sparse else None
+    best_active_ce = _metric_float(best_active.get("holdout_ce")) if best_active else None
+    best_stored_ce = _metric_float(best_stored.get("holdout_ce")) if best_stored else None
+    distilled_regret = _metric_float(
+        regret_all.get("dense_teacher_distilled_sparse_topk2", {}).get("mean_oracle_regret")
+    )
+    promoted_regret = _metric_float(
+        regret_all.get("promoted_contextual_topk2", {}).get("mean_oracle_regret")
+    )
+    intervention_regret = _metric_float(
+        regret_all.get("intervention_trained_sparse_topk2", {}).get("mean_oracle_regret")
+    )
+    best_sparse_regret = min(
+        [
+            value
+            for value in (promoted_regret, intervention_regret)
+            if value is not None
+        ],
+        default=None,
+    )
+    distilled_improves_best_sparse = (
+        distilled_ce is not None
+        and best_sparse_ce is not None
+        and distilled_ce < best_sparse_ce - 0.01
+    )
+    distilled_beats_shuffled = (
+        distilled_ce is not None
+        and shuffled_ce is not None
+        and distilled_ce < shuffled_ce - 0.01
+    )
+    active_guardrail_ok = (
+        distilled_ce is not None
+        and best_active_ce is not None
+        and distilled_ce <= best_active_ce + 0.02
+    )
+    stored_guardrail_ok = (
+        distilled_ce is not None
+        and best_stored_ce is not None
+        and distilled_ce <= best_stored_ce + 0.02
+    )
+    router_regret_remains = distilled_regret is not None and distilled_regret > 0.02
+    if not distilled_improves_best_sparse:
+        closeout_status = "closed_non_improving"
+        interpretation = (
+            "dense-teacher sparse distillation does not improve best trained sparse CE on this seed"
+        )
+    elif not distilled_beats_shuffled:
+        closeout_status = "closed_teacher_target_not_specific"
+        interpretation = (
+            "dense-teacher sparse distillation does not beat the shuffled-teacher null by the CE guardrail"
+        )
+    elif router_regret_remains:
+        closeout_status = "router_regret_explains_remaining_gap"
+        interpretation = (
+            "teacher target helps CE guardrails, but oracle-support regret remains above threshold"
+        )
+    elif not (active_guardrail_ok and stored_guardrail_ok):
+        closeout_status = "value_distillation_insufficient_vs_dense_controls"
+        interpretation = (
+            "teacher target is structured but still fails active or stored dense/MLP CE guardrails"
+        )
+    else:
+        closeout_status = "needs_repeat_before_branch_reopen"
+        interpretation = (
+            "teacher distillation clears local guardrails once; repeat before reopening the branch"
+        )
+
+    return [
+        {
+            "branch": "dense_teacher_distilled_sparse_topk2",
+            "closeout_status": closeout_status,
+            "distilled_holdout_ce": distilled_ce,
+            "shuffled_null_holdout_ce": shuffled_ce,
+            "distilled_minus_shuffled_holdout_ce": _delta_value(distilled_ce, shuffled_ce),
+            "best_sparse_arm": best_sparse.get("arm", "") if best_sparse else "",
+            "best_sparse_holdout_ce": best_sparse_ce,
+            "distilled_minus_best_sparse_ce": _delta_value(distilled_ce, best_sparse_ce),
+            "best_active_matched_dense_mlp_arm": best_active.get("arm", "") if best_active else "",
+            "best_active_matched_dense_mlp_ce": best_active_ce,
+            "distilled_minus_best_active_matched_dense_mlp_ce": _delta_value(
+                distilled_ce,
+                best_active_ce,
+            ),
+            "best_stored_matched_dense_mlp_arm": best_stored.get("arm", "") if best_stored else "",
+            "best_stored_matched_dense_mlp_ce": best_stored_ce,
+            "distilled_minus_best_stored_matched_dense_mlp_ce": _delta_value(
+                distilled_ce,
+                best_stored_ce,
+            ),
+            "distilled_mean_oracle_regret": distilled_regret,
+            "best_existing_sparse_mean_oracle_regret": best_sparse_regret,
+            "distilled_minus_best_existing_sparse_oracle_regret": _delta_value(
+                distilled_regret,
+                best_sparse_regret,
+            ),
+            "distilled_improves_best_sparse_by_0p01": distilled_improves_best_sparse,
+            "distilled_beats_shuffled_by_0p01": distilled_beats_shuffled,
+            "active_guardrail_ok_0p02": active_guardrail_ok,
+            "stored_guardrail_ok_0p02": stored_guardrail_ok,
+            "router_regret_remains_above_0p02": router_regret_remains,
+            "mechanism_labels_used_for_scoring_only": True,
+            "interpretation": interpretation,
+        }
+    ]
+
+
 def _residual_budget_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if not rows:
         return {
@@ -2571,6 +2730,33 @@ def _teacher_distillation_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _teacher_distillation_closeout_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "closeout_status": "not_run",
+            "interpretation": "teacher-distillation closeout was not run",
+        }
+    row = rows[0]
+    return {
+        "row_count": len(rows),
+        "closeout_status": row.get("closeout_status", ""),
+        "distilled_minus_best_sparse_ce": _metric_float(
+            row.get("distilled_minus_best_sparse_ce")
+        ),
+        "distilled_minus_shuffled_holdout_ce": _metric_float(
+            row.get("distilled_minus_shuffled_holdout_ce")
+        ),
+        "distilled_mean_oracle_regret": _metric_float(
+            row.get("distilled_mean_oracle_regret")
+        ),
+        "router_regret_remains_above_0p02": bool(
+            row.get("router_regret_remains_above_0p02")
+        ),
+        "interpretation": row.get("interpretation", ""),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -2639,6 +2825,10 @@ def _write_artifacts(
         out_dir / "router_value_regret_decomposition.csv",
         [] if training_smoke is None else training_smoke["router_value_regret_decomposition"],
     )
+    _write_csv(
+        out_dir / "teacher_distillation_closeout.csv",
+        [] if training_smoke is None else training_smoke["teacher_distillation_closeout"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -2668,6 +2858,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Local scientific gates: `{summary['local_scientific_gate_status']}`",
         f"- Oracle-support sparse top-k2 rows: `{summary['oracle_support_sparse_topk2_row_count']}`",
         f"- Router/value regret decomposition rows: `{summary['router_value_regret_decomposition_row_count']}`",
+        f"- Teacher distillation closeout rows: `{summary['teacher_distillation_closeout_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
@@ -2682,6 +2873,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The CE by rule/position and residual budget accounting artifacts are local diagnostics. FLOP values are residual-path proxies only and exclude the frozen base and decoder.",
         "",
         "The opt-in dense-teacher distillation arms are diagnostics only. The dense teacher is trained on the synthetic training episodes, sparse students are evaluated with hard top-k2 supports, and the shuffled-teacher arm is a null for teacher residual target structure.",
+        "",
+        "The teacher-distillation closeout artifact compares the dense-teacher sparse student to the shuffled-teacher null, the best existing sparse arm, active-matched dense/MLP controls, stored-matched upper bounds, and oracle-support regret. It is a local branch triage artifact, not promotion evidence.",
         "",
         "## Next Step",
         "",

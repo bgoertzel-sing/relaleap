@@ -39,6 +39,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertGreater(summary["forgetting_row_count"], 0)
             self.assertEqual(summary["oracle_support_sparse_topk2_row_count"], 0)
             self.assertEqual(summary["router_value_regret_decomposition_row_count"], 0)
+            self.assertEqual(summary["teacher_distillation_closeout_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -388,11 +389,24 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["ce_gap_decomposition_row_count"], 12)
             self.assertEqual(summary["residual_budget_accounting_row_count"], 12)
             self.assertEqual(summary["router_value_regret_decomposition_row_count"], 15)
+            self.assertEqual(summary["teacher_distillation_closeout_row_count"], 1)
             teacher_summary = summary["teacher_distillation_primary_result"]
             self.assertEqual(teacher_summary["row_count"], 2)
             self.assertIsNotNone(teacher_summary["distilled_holdout_ce"])
             self.assertIsNotNone(teacher_summary["shuffled_null_holdout_ce"])
             self.assertIn("hard top-k2", teacher_summary["interpretation"])
+            closeout_summary = summary["teacher_distillation_closeout_primary_result"]
+            self.assertEqual(closeout_summary["row_count"], 1)
+            self.assertIn(
+                closeout_summary["closeout_status"],
+                {
+                    "closed_non_improving",
+                    "closed_teacher_target_not_specific",
+                    "router_regret_explains_remaining_gap",
+                    "value_distillation_insufficient_vs_dense_controls",
+                    "needs_repeat_before_branch_reopen",
+                },
+            )
 
             required_criteria = {row["criterion"]: row for row in summary["gate_criteria"]}
             self.assertTrue(required_criteria["training_smoke_required_arms_present"]["passed"])
@@ -419,6 +433,22 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 "dense_teacher_distilled_sparse_topk2",
                 {row["arm"] for row in ce_gap_rows},
             )
+
+            with (out_dir / "teacher_distillation_closeout.csv").open(newline="", encoding="utf-8") as handle:
+                closeout_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(closeout_rows), 1)
+            for required_field in {
+                "closeout_status",
+                "distilled_holdout_ce",
+                "shuffled_null_holdout_ce",
+                "distilled_minus_best_sparse_ce",
+                "distilled_mean_oracle_regret",
+                "router_regret_remains_above_0p02",
+                "mechanism_labels_used_for_scoring_only",
+                "interpretation",
+            }:
+                self.assertIn(required_field, closeout_rows[0])
+            self.assertEqual(closeout_rows[0]["mechanism_labels_used_for_scoring_only"], "True")
 
 
 if __name__ == "__main__":
