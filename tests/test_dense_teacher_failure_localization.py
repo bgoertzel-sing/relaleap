@@ -7,6 +7,7 @@ from pathlib import Path
 
 from relaleap.experiments.dense_teacher_failure_localization import (
     CONTRACT_RECORDED,
+    EVALUATOR_RECORDED,
     INSUFFICIENT_EVIDENCE,
     PARTIAL_EVALUATOR_RECORDED,
     REQUIRED_ARMS,
@@ -32,7 +33,7 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             )
 
             self.assertEqual(summary["status"], "pass")
-            self.assertEqual(summary["decision"], PARTIAL_EVALUATOR_RECORDED)
+            self.assertEqual(summary["decision"], EVALUATOR_RECORDED)
             self.assertFalse(summary["requires_gpu_now"])
             self.assertFalse(summary["promotion_allowed"])
             self.assertEqual(summary["required_arms"], list(REQUIRED_ARMS))
@@ -42,13 +43,14 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             )
             self.assertTrue(all(row["present"] for row in summary["tensor_inventory"]))
             self.assertIn("teacher_hidden_residual_mse", summary["metric_fields"])
-            self.assertIn("pair-composer", summary["selected_next_step"])
+            self.assertIn("interpret", summary["selected_next_step"])
             self.assertEqual(
                 summary["filled_evaluator_arms"],
                 [
                     "learned_support_sparse_student",
                     "oracle_support_trained_values",
                     "retrained_oracle_support_values",
+                    "oracle_support_gated_value_pair_composer",
                     "dense_teacher",
                     "dense_rank_norm_control",
                     "random_support_null",
@@ -57,11 +59,8 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
                     "shuffled_teacher_target_null",
                 ],
             )
+            self.assertEqual(summary["pending_evaluator_arms"], [])
             self.assertNotIn("retrained_oracle_support_values", summary["pending_evaluator_arms"])
-            self.assertIn(
-                "oracle_support_gated_value_pair_composer",
-                summary["pending_evaluator_arms"],
-            )
             self.assertNotIn("dense_teacher", summary["pending_evaluator_arms"])
             evaluator_by_arm = {row["arm"]: row for row in summary["evaluator_rows"]}
             self.assertEqual(
@@ -76,6 +75,10 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
                 evaluator_by_arm["retrained_oracle_support_values"]["availability"],
                 "filled",
             )
+            self.assertEqual(
+                evaluator_by_arm["oracle_support_gated_value_pair_composer"]["availability"],
+                "filled",
+            )
             self.assertLessEqual(
                 evaluator_by_arm["oracle_support_trained_values"]["teacher_logit_residual_mse"],
                 evaluator_by_arm["learned_support_sparse_student"]["teacher_logit_residual_mse"],
@@ -84,13 +87,19 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
                 evaluator_by_arm["retrained_oracle_support_values"]["teacher_hidden_residual_mse"],
                 evaluator_by_arm["learned_support_sparse_student"]["teacher_hidden_residual_mse"],
             )
+            self.assertLessEqual(
+                evaluator_by_arm["oracle_support_gated_value_pair_composer"][
+                    "teacher_logit_residual_mse"
+                ],
+                evaluator_by_arm["retrained_oracle_support_values"]["teacher_logit_residual_mse"],
+            )
             self.assertEqual(evaluator_by_arm["random_support_null"]["availability"], "filled")
             self.assertEqual(evaluator_by_arm["random_support_null"]["ce_loss"], 4.0)
             self.assertEqual(evaluator_by_arm["dense_teacher"]["ce_loss"], 0.25)
             contract_by_arm = {row["arm"]: row for row in summary["contract_rows"]}
             self.assertEqual(
                 contract_by_arm["oracle_support_gated_value_pair_composer"]["availability"],
-                "required_pending",
+                "implemented_local_evaluator",
             )
             self.assertEqual(
                 contract_by_arm["retrained_oracle_support_values"]["availability"],

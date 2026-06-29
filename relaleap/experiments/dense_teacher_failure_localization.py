@@ -22,9 +22,14 @@ DEFAULT_OUT_DIR = Path("results/reports/dense_teacher_failure_localization")
 CONTRACT_RECORDED = "dense_teacher_failure_localization_contract_recorded"
 INSUFFICIENT_EVIDENCE = "dense_teacher_failure_localization_contract_failed_closed"
 PARTIAL_EVALUATOR_RECORDED = "dense_teacher_failure_localization_partial_evaluator_recorded"
+EVALUATOR_RECORDED = "dense_teacher_failure_localization_evaluator_recorded"
 NEXT_STEP = (
     "implement oracle-support gated pair-composer row for "
     "dense_teacher_failure_localization"
+)
+POST_EVALUATOR_NEXT_STEP = (
+    "interpret dense_teacher_failure_localization rows and decide whether any "
+    "local sparse composer recovery justifies GPU validation"
 )
 
 REQUIRED_ARMS = (
@@ -208,17 +213,30 @@ def run_dense_teacher_failure_localization_contract(
         summary["pending_evaluator_arms"] = [
             arm for arm in REQUIRED_ARMS if arm not in set(summary["filled_evaluator_arms"])
         ]
-        summary["decision"] = PARTIAL_EVALUATOR_RECORDED
-        summary["claim_status"] = "partial_local_evaluator_no_columnability_claim"
-        summary["selected_next_step"] = NEXT_STEP
-        summary["rationale"] = (
-            "This artifact now fills learned-support, exhaustive oracle-support-trained-values, "
-            "and fixed-oracle-support retrained-value rows from exported dense-teacher tensors, "
-            "and records dense/rank/norm plus null rows from the source distillation summary. "
-            "It still makes no columnability claim because the pair-composer row remains pending "
-            "and the retrained row uses a local linearized logit-value surrogate when reporting "
-            "CE/logit metrics."
-        )
+        if summary["pending_evaluator_arms"]:
+            summary["decision"] = PARTIAL_EVALUATOR_RECORDED
+            summary["claim_status"] = "partial_local_evaluator_no_columnability_claim"
+            summary["selected_next_step"] = NEXT_STEP
+            summary["rationale"] = (
+                "This artifact now fills learned-support, exhaustive oracle-support-trained-values, "
+                "and fixed-oracle-support retrained-value rows from exported dense-teacher tensors, "
+                "and records dense/rank/norm plus null rows from the source distillation summary. "
+                "It still makes no columnability claim because at least one required evaluator row "
+                "remains pending and local retrained rows use a linearized logit-value surrogate "
+                "when reporting CE/logit metrics."
+            )
+        else:
+            summary["decision"] = EVALUATOR_RECORDED
+            summary["claim_status"] = "local_evaluator_complete_no_columnability_claim"
+            summary["selected_next_step"] = POST_EVALUATOR_NEXT_STEP
+            summary["rationale"] = (
+                "This artifact fills all required dense-teacher failure-localization rows, including "
+                "learned support, oracle support over trained values, retrained oracle values, an "
+                "oracle-support gated pair composer, dense/rank/norm controls, and null rows. It "
+                "still makes no columnability or promotion claim because local retrained/composer "
+                "CE and logit metrics use linearized logit-value surrogates when the frozen decoder "
+                "is not exported."
+            )
     else:
         summary["evaluator_rows"] = []
         summary["filled_evaluator_arms"] = []
@@ -284,9 +302,23 @@ def _evaluator_rows(distillation_dir: Path, distillation: dict[str, Any]) -> lis
         num_columns=num_columns,
     )
     retrained_logits = base_logits + retrained_logit_update
+    (
+        composer_hidden_update,
+        composer_logit_update,
+        composer_stored_params,
+        composer_feature_count,
+    ) = _gated_pair_composer_for_fixed_support(
+        torch,
+        oracle_support,
+        teacher_hidden_residual,
+        teacher_logit_residual,
+        num_columns=num_columns,
+    )
+    composer_logits = base_logits + composer_logit_update
     learned_logit_mse = float(F.mse_loss(learned_logit_update, teacher_logit_residual).item())
     oracle_logit_mse = float(F.mse_loss(oracle_logit_update, teacher_logit_residual).item())
     retrained_logit_mse = float(F.mse_loss(retrained_logit_update, teacher_logit_residual).item())
+    composer_logit_mse = float(F.mse_loss(composer_logit_update, teacher_logit_residual).item())
     learned_minus_oracle_logit_mse = learned_logit_mse - oracle_logit_mse
 
     learned_row = _metrics_from_prediction(
@@ -375,8 +407,44 @@ def _evaluator_rows(distillation_dir: Path, distillation: dict[str, Any]) -> lis
     retrained_row["retrained_minus_oracle_trained_value_ce"] = (
         retrained_row["ce_loss"] - oracle_row["ce_loss"]
     )
+    composer_row = _metrics_from_prediction(
+        torch,
+        F,
+        arm="oracle_support_gated_value_pair_composer",
+        arm_family="composition",
+        availability="filled",
+        support_source=f"fixed exhaustive per-token best {top_k}-of-{num_columns} support",
+        value_source="ridge least-squares singleton gates plus support-pair interaction values",
+        composer="oracle-support singleton gates with explicit pair interaction feature",
+        logits=composer_logits,
+        hidden_update=composer_hidden_update,
+        targets=targets,
+        teacher_logits=teacher_logits,
+        teacher_hidden_residual=teacher_hidden_residual,
+        teacher_logit_residual=teacher_logit_residual,
+        base_logits=base_logits,
+        teacher_ce=teacher_ce,
+        stored_params=composer_stored_params,
+        active_params=float((top_k + 1) * teacher_hidden_residual.shape[-1]),
+        flops_proxy=float(base_logits.numel() * max(top_k + 1, 1)),
+        oracle_support_regret=composer_logit_mse - oracle_logit_mse,
+        notes=(
+            "filled by ridge least-squares support-conditioned singleton gates plus an explicit "
+            "support-pair interaction feature under fixed oracle supports; hidden metrics use "
+            "composer hidden values, while CE/logit metrics use separate linearized logit values "
+            "because the frozen decoder is not exported"
+        ),
+    )
+    composer_row["oracle_selected_support_sets"] = oracle_row["oracle_selected_support_sets"]
+    composer_row["composer_feature_count"] = composer_feature_count
+    composer_row["composer_minus_retrained_logit_mse"] = composer_logit_mse - retrained_logit_mse
+    composer_row["composer_minus_oracle_trained_value_logit_mse"] = (
+        composer_logit_mse - oracle_logit_mse
+    )
+    composer_row["composer_minus_retrained_ce"] = composer_row["ce_loss"] - retrained_row["ce_loss"]
+    composer_row["pair_synergy"] = retrained_logit_mse - composer_logit_mse
     source_rows = _source_summary_evaluator_rows(distillation)
-    return [learned_row, oracle_row, retrained_row, *source_rows]
+    return [learned_row, oracle_row, retrained_row, composer_row, *source_rows]
 
 
 def _source_summary_evaluator_rows(distillation: dict[str, Any]) -> list[dict[str, Any]]:
@@ -627,6 +695,51 @@ def _retrained_values_for_fixed_support(
     return hidden_update, logit_update, stored_params
 
 
+def _gated_pair_composer_for_fixed_support(
+    torch: Any,
+    support: Any,
+    teacher_hidden_residual: Any,
+    teacher_logit_residual: Any,
+    *,
+    num_columns: int,
+    ridge: float = 1e-4,
+) -> tuple[Any, Any, float, int]:
+    batch, seq_len, top_k = support.shape
+    token_count = batch * seq_len
+    flat_support = support.reshape(token_count, top_k)
+    feature_tuples: list[tuple[int, ...]] = [(column,) for column in range(num_columns)]
+    pair_tuples = sorted({tuple(sorted(int(item) for item in row.tolist())) for row in flat_support})
+    feature_tuples.extend(pair_tuples)
+    feature_lookup = {feature: index for index, feature in enumerate(feature_tuples)}
+    design = torch.zeros(
+        token_count,
+        len(feature_tuples),
+        dtype=teacher_hidden_residual.dtype,
+        device=teacher_hidden_residual.device,
+    )
+    singleton_weights = torch.full_like(flat_support, 1.0 / max(top_k, 1), dtype=design.dtype)
+    design.scatter_add_(dim=1, index=flat_support, src=singleton_weights)
+    pair_indices = torch.as_tensor(
+        [
+            feature_lookup[tuple(sorted(int(item) for item in row.tolist()))]
+            for row in flat_support
+        ],
+        dtype=torch.long,
+        device=design.device,
+    )
+    design[torch.arange(token_count, device=design.device), pair_indices] = 1.0
+    hidden_target = teacher_hidden_residual.reshape(token_count, teacher_hidden_residual.shape[-1])
+    logit_target = teacher_logit_residual.reshape(token_count, teacher_logit_residual.shape[-1])
+    eye = torch.eye(design.shape[1], dtype=design.dtype, device=design.device)
+    gram = design.transpose(0, 1).matmul(design) + float(ridge) * eye
+    hidden_values = torch.linalg.solve(gram, design.transpose(0, 1).matmul(hidden_target))
+    logit_values = torch.linalg.solve(gram, design.transpose(0, 1).matmul(logit_target))
+    hidden_update = design.matmul(hidden_values).reshape(batch, seq_len, hidden_target.shape[-1])
+    logit_update = design.matmul(logit_values).reshape(batch, seq_len, logit_target.shape[-1])
+    stored_params = float(hidden_values.numel())
+    return hidden_update, logit_update, stored_params, len(feature_tuples)
+
+
 def _compose_selected(per_column: Any, support: Any, weights: Any) -> Any:
     gather_index = support.unsqueeze(-1).expand(*support.shape, per_column.shape[-1])
     selected = per_column.gather(dim=2, index=gather_index)
@@ -771,7 +884,7 @@ def _contract_rows() -> list[dict[str, Any]]:
         _contract(
             "oracle_support_gated_value_pair_composer",
             "composition",
-            "required_pending",
+            "implemented_local_evaluator",
             "oracle support",
             "support-conditioned gates plus pair interaction",
             "gated values plus pair composer",
@@ -917,8 +1030,8 @@ def _pregate_rows(
         _pregate(
             "retrained_oracle_and_composer_rows_pending",
             True,
-            "this evaluator records, but does not yet execute, retrained-oracle and composer rows",
-            "pending evaluator implementation",
+            "this evaluator records local retrained-oracle and composer rows",
+            "local evaluator implemented",
         ),
     ]
 
