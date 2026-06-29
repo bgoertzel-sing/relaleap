@@ -76,6 +76,56 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             criteria = {row["criterion"]: row for row in summary["gate_criteria"]}
             self.assertTrue(criteria["training_hooks_available"]["passed"])
 
+    def test_tiny_cpu_training_smoke_wires_required_arms_and_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_dir = Path(tmpdir) / "out"
+
+            summary = run_synthetic_mechanism_causal_modularity(
+                out_dir=out_dir,
+                seed=5,
+                vocab_size=12,
+                seq_len=5,
+                train_episodes_per_rule=1,
+                holdout_episodes_per_rule=1,
+                run_training_smoke=True,
+                training_steps=2,
+                hidden_dim=16,
+            )
+
+            self.assertEqual(summary["status"], "pass")
+            self.assertTrue(summary["training_smoke_ran"])
+            self.assertFalse(summary["promotion_allowed"])
+            self.assertFalse(summary["requires_gpu_now"])
+            self.assertEqual(summary["arm_metric_row_count"], 8)
+            self.assertGreater(summary["per_token_metric_row_count"], 0)
+            self.assertFalse(summary["missing_training_hooks"])
+            self.assertIn("not causal modularity evidence", summary["training_smoke_primary_result"]["interpretation"])
+            criteria = {row["criterion"]: row for row in summary["gate_criteria"]}
+            self.assertTrue(criteria["training_smoke_required_arms_present"]["passed"])
+            self.assertTrue(criteria["training_smoke_intervention_metrics_present"]["passed"])
+            self.assertTrue(criteria["training_smoke_commutator_metrics_present"]["passed"])
+
+            with (out_dir / "arm_metrics.csv").open(newline="", encoding="utf-8") as handle:
+                arms = {row["arm"] for row in csv.DictReader(handle)}
+            self.assertEqual(
+                {
+                    "base_no_residual",
+                    "promoted_contextual_topk2",
+                    "intervention_trained_sparse_topk2",
+                    "random_support_topk2",
+                    "fixed_support_topk2",
+                    "token_position_router_topk2",
+                    "dense_rank_norm_matched",
+                    "low_churn_mlp_control",
+                },
+                arms,
+            )
+
+            with (out_dir / "per_mechanism_interventions.csv").open(newline="", encoding="utf-8") as handle:
+                intervention_rows = list(csv.DictReader(handle))
+            self.assertTrue(intervention_rows)
+            self.assertEqual({row["metric_values_available"] for row in intervention_rows}, {"True"})
+
 
 if __name__ == "__main__":
     unittest.main()
