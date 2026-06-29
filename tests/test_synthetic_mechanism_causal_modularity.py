@@ -110,12 +110,13 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertTrue(scientific["measured_training_smoke_metrics_present"]["passed"])
             self.assertIn("stored_parameter_budget", scientific)
             self.assertIn("forgetting_and_functional_churn_measured", scientific)
-            self.assertFalse(scientific["stored_parameter_budget"]["passed"])
+            self.assertTrue(scientific["stored_parameter_budget"]["passed"])
             self.assertTrue(scientific["forgetting_and_functional_churn_measured"]["passed"])
             self.assertTrue((out_dir / "local_scientific_gates.csv").is_file())
 
             with (out_dir / "arm_metrics.csv").open(newline="", encoding="utf-8") as handle:
-                arms = {row["arm"] for row in csv.DictReader(handle)}
+                arm_rows = list(csv.DictReader(handle))
+            arms = {row["arm"] for row in arm_rows}
             self.assertEqual(
                 {
                     "base_no_residual",
@@ -129,6 +130,18 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 },
                 arms,
             )
+            sparse_floor = max(
+                int(row["stored_parameter_floor"])
+                for row in arm_rows
+                if row["arm"] == "promoted_contextual_topk2"
+            )
+            dense_mlp_stored = [
+                int(row["stored_parameters"])
+                for row in arm_rows
+                if row["arm"] in {"dense_rank_norm_matched", "low_churn_mlp_control"}
+            ]
+            self.assertTrue(dense_mlp_stored)
+            self.assertGreaterEqual(max(dense_mlp_stored), sparse_floor)
 
             with (out_dir / "per_mechanism_interventions.csv").open(newline="", encoding="utf-8") as handle:
                 intervention_rows = list(csv.DictReader(handle))

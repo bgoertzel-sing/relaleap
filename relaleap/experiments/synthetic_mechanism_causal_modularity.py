@@ -51,6 +51,7 @@ class _SyntheticArmSpec:
     support_mode: str = "learned"
     intervention_loss_weight: float = 0.0
     anchor_kl_weight: float = 0.0
+    stored_parameter_floor: int = 0
 
 
 def run_synthetic_mechanism_causal_modularity(
@@ -271,10 +272,18 @@ def _run_training_smoke(
         holdout_hidden = base.encode(holdout_inputs).detach()
         base_holdout_logits = base.decode(holdout_hidden).detach()
 
+    sparse_stored_parameter_floor = _sparse_contextual_stored_parameter_count(
+        hidden_dim=hidden_dim,
+        num_columns=max(4, support_width * 4),
+        atoms_per_column=2,
+        contextual_router_hidden_dim=hidden_dim * 2,
+    )
     specs = _synthetic_arm_specs(
         support_width=support_width,
         num_columns=max(4, support_width * 4),
         atoms_per_column=2,
+        hidden_dim=hidden_dim,
+        sparse_stored_parameter_floor=sparse_stored_parameter_floor,
     )
     arm_metrics: list[dict[str, Any]] = []
     per_token_metrics: list[dict[str, Any]] = []
@@ -373,6 +382,7 @@ def _run_training_smoke(
                 "used_columns": used_columns,
                 "unique_support_sets": unique_support_sets,
                 "stored_parameters": _stored_parameters(adapter),
+                "stored_parameter_floor": spec.stored_parameter_floor,
                 "active_parameters_proxy": _synthetic_active_parameters(spec, hidden_dim),
             }
         )
@@ -522,8 +532,18 @@ def _synthetic_arm_specs(
     support_width: int,
     num_columns: int,
     atoms_per_column: int,
+    hidden_dim: int,
+    sparse_stored_parameter_floor: int,
 ) -> list[_SyntheticArmSpec]:
     active_rank = support_width * atoms_per_column
+    stored_matched_dense_rank = max(
+        active_rank,
+        _dense_rank_for_parameter_floor(hidden_dim, sparse_stored_parameter_floor),
+    )
+    stored_matched_mlp_rank = max(
+        active_rank,
+        _mlp_rank_for_parameter_floor(hidden_dim, sparse_stored_parameter_floor),
+    )
     return [
         _SyntheticArmSpec("base_no_residual", "base", 0, 0, 0, "none"),
         _SyntheticArmSpec(
@@ -533,6 +553,7 @@ def _synthetic_arm_specs(
             num_columns,
             atoms_per_column,
             "contextual_mlp",
+            stored_parameter_floor=sparse_stored_parameter_floor,
         ),
         _SyntheticArmSpec(
             "intervention_trained_sparse_topk2",
@@ -543,6 +564,7 @@ def _synthetic_arm_specs(
             "contextual_mlp",
             intervention_loss_weight=0.05,
             anchor_kl_weight=0.01,
+            stored_parameter_floor=sparse_stored_parameter_floor,
         ),
         _SyntheticArmSpec(
             "random_support_topk2",
@@ -552,6 +574,7 @@ def _synthetic_arm_specs(
             atoms_per_column,
             "random_support",
             support_mode="random",
+            stored_parameter_floor=sparse_stored_parameter_floor,
         ),
         _SyntheticArmSpec(
             "fixed_support_topk2",
@@ -561,6 +584,7 @@ def _synthetic_arm_specs(
             atoms_per_column,
             "fixed_support",
             support_mode="fixed",
+            stored_parameter_floor=sparse_stored_parameter_floor,
         ),
         _SyntheticArmSpec(
             "token_position_router_topk2",
@@ -570,6 +594,7 @@ def _synthetic_arm_specs(
             atoms_per_column,
             "token_position_only",
             support_mode="token_position",
+            stored_parameter_floor=sparse_stored_parameter_floor,
         ),
         _SyntheticArmSpec(
             "dense_rank_norm_matched",
@@ -578,7 +603,8 @@ def _synthetic_arm_specs(
             0,
             0,
             "dense_rank_norm",
-            dense_rank=active_rank,
+            dense_rank=stored_matched_dense_rank,
+            stored_parameter_floor=sparse_stored_parameter_floor,
         ),
         _SyntheticArmSpec(
             "low_churn_mlp_control",
@@ -587,8 +613,9 @@ def _synthetic_arm_specs(
             0,
             0,
             "low_churn_mlp",
-            dense_rank=active_rank,
+            dense_rank=stored_matched_mlp_rank,
             anchor_kl_weight=0.02,
+            stored_parameter_floor=sparse_stored_parameter_floor,
         ),
     ]
 
@@ -1152,6 +1179,41 @@ def _synthetic_primary_result(
 
 def _stored_parameters(adapter: Any) -> int:
     return int(sum(parameter.numel() for parameter in adapter.parameters()))
+
+
+def _sparse_contextual_stored_parameter_count(
+    *,
+    hidden_dim: int,
+    num_columns: int,
+    atoms_per_column: int,
+    contextual_router_hidden_dim: int,
+) -> int:
+    contextual_feature_dim = hidden_dim * 5 + 3
+    linear_router = hidden_dim * num_columns
+    contextual_router = (
+        2 * contextual_feature_dim
+        + contextual_feature_dim * contextual_router_hidden_dim
+        + contextual_router_hidden_dim
+        + contextual_router_hidden_dim * num_columns
+    )
+    atom_logits = num_columns * atoms_per_column
+    atom_values = num_columns * atoms_per_column * hidden_dim
+    return int(linear_router + contextual_router + atom_logits + atom_values)
+
+
+def _dense_rank_for_parameter_floor(hidden_dim: int, parameter_floor: int) -> int:
+    if parameter_floor <= 0:
+        return 1
+    return max(1, (parameter_floor + (2 * hidden_dim) - 1) // (2 * hidden_dim))
+
+
+def _mlp_rank_for_parameter_floor(hidden_dim: int, parameter_floor: int) -> int:
+    if parameter_floor <= 0:
+        return 1
+    fixed_parameters = (3 * hidden_dim)
+    per_width_parameters = (2 * hidden_dim) + 1
+    remaining = max(0, parameter_floor - fixed_parameters)
+    return max(1, (remaining + per_width_parameters - 1) // per_width_parameters)
 
 
 def _synthetic_active_parameters(spec: _SyntheticArmSpec, hidden_dim: int) -> int:
