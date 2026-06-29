@@ -8,6 +8,7 @@ from pathlib import Path
 from relaleap.experiments.dense_teacher_failure_localization import (
     CONTRACT_RECORDED,
     INSUFFICIENT_EVIDENCE,
+    PARTIAL_EVALUATOR_RECORDED,
     REQUIRED_ARMS,
     REQUIRED_TENSORS,
     run_dense_teacher_failure_localization_contract,
@@ -31,7 +32,7 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             )
 
             self.assertEqual(summary["status"], "pass")
-            self.assertEqual(summary["decision"], CONTRACT_RECORDED)
+            self.assertEqual(summary["decision"], PARTIAL_EVALUATOR_RECORDED)
             self.assertFalse(summary["requires_gpu_now"])
             self.assertFalse(summary["promotion_allowed"])
             self.assertEqual(summary["required_arms"], list(REQUIRED_ARMS))
@@ -41,7 +42,25 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             )
             self.assertTrue(all(row["present"] for row in summary["tensor_inventory"]))
             self.assertIn("teacher_hidden_residual_mse", summary["metric_fields"])
-            self.assertIn("oracle_support_trained_values", summary["selected_next_step"])
+            self.assertIn("retrained-oracle", summary["selected_next_step"])
+            self.assertEqual(
+                summary["filled_evaluator_arms"],
+                ["learned_support_sparse_student", "oracle_support_trained_values"],
+            )
+            self.assertIn("retrained_oracle_support_values", summary["pending_evaluator_arms"])
+            evaluator_by_arm = {row["arm"]: row for row in summary["evaluator_rows"]}
+            self.assertEqual(
+                evaluator_by_arm["learned_support_sparse_student"]["availability"],
+                "filled",
+            )
+            self.assertEqual(
+                evaluator_by_arm["oracle_support_trained_values"]["availability"],
+                "filled",
+            )
+            self.assertLessEqual(
+                evaluator_by_arm["oracle_support_trained_values"]["teacher_logit_residual_mse"],
+                evaluator_by_arm["learned_support_sparse_student"]["teacher_logit_residual_mse"],
+            )
             contract_by_arm = {row["arm"]: row for row in summary["contract_rows"]}
             self.assertEqual(
                 contract_by_arm["oracle_support_gated_value_pair_composer"]["availability"],
@@ -56,6 +75,7 @@ class DenseTeacherFailureLocalizationContractTest(unittest.TestCase):
             self.assertTrue((root / "out" / "tensor_inventory.csv").is_file())
             self.assertTrue((root / "out" / "pregate_rows.csv").is_file())
             self.assertTrue((root / "out" / "contract_rows.csv").is_file())
+            self.assertTrue((root / "out" / "evaluator_rows.csv").is_file())
             self.assertTrue((root / "out" / "notes.md").is_file())
 
     def test_fails_closed_without_retired_closeout_and_tensors(self) -> None:
@@ -148,11 +168,57 @@ def _write_distillation(path: Path) -> None:
 
 
 def _write_required_tensors(path: Path, *, skip: set[str] | None = None) -> None:
+    try:
+        import torch
+    except Exception as exc:  # pragma: no cover - environment dependent
+        raise unittest.SkipTest(f"torch unavailable: {exc}") from exc
+
     skipped = skip or set()
+    inputs = torch.tensor([[0, 1, 2, 0]], dtype=torch.long)
+    targets = torch.tensor([[1, 2, 0, 1]], dtype=torch.long)
+    base_hidden = torch.zeros(1, 4, 2)
+    base_logits = torch.zeros(1, 4, 3)
+    teacher_logit_residual = torch.zeros(1, 4, 3)
+    teacher_logit_residual[:, :, 0] = 1.0
+    teacher_hidden_residual = torch.zeros(1, 4, 2)
+    teacher_hidden_residual[:, :, 0] = 1.0
+    teacher_logits = base_logits + teacher_logit_residual
+    learned_support = torch.tensor([[[1, 2], [1, 2], [1, 2], [1, 2]]], dtype=torch.long)
+    learned_scores = torch.zeros(1, 4, 2)
+    per_column_hidden = torch.zeros(1, 4, 3, 2)
+    per_column_hidden[:, :, 0, 0] = 2.0
+    per_column_hidden[:, :, 1, 0] = 0.5
+    per_column_hidden[:, :, 2, 1] = 0.5
+    per_column_logits = torch.zeros(1, 4, 3, 3)
+    per_column_logits[:, :, 0, 0] = 2.0
+    per_column_logits[:, :, 1, 0] = 0.25
+    per_column_logits[:, :, 2, 1] = 0.25
+    values = {
+        "inputs": inputs,
+        "targets": targets,
+        "base_hidden": base_hidden,
+        "base_logits": base_logits,
+        "teacher_logits": teacher_logits,
+        "teacher_hidden_residual": teacher_hidden_residual,
+        "teacher_logit_residual": teacher_logit_residual,
+        "learned_support_indices": learned_support,
+        "learned_support_scores": learned_scores,
+        "per_column_hidden_contributions": per_column_hidden,
+        "per_column_logit_contributions": per_column_logits,
+        "sparse_column_value_state": {
+            "top_k": 2,
+            "num_columns": 3,
+            "atoms_per_column": 1,
+            "atom_logits": torch.zeros(3, 1),
+            "atom_values": torch.zeros(3, 1, 2),
+            "column_values": torch.zeros(3, 2),
+            "support_router": "contextual_mlp",
+        },
+    }
     for spec in REQUIRED_TENSORS:
         if spec["tensor"] in skipped:
             continue
-        (path / str(spec["filename"])).write_bytes(str(spec["tensor"]).encode("utf-8"))
+        torch.save(values[str(spec["tensor"])], path / str(spec["filename"]))
 
 
 def _write_json(path: Path, value: dict[str, object]) -> None:

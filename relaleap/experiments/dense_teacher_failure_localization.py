@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import json
 import platform
 import subprocess
@@ -20,10 +21,10 @@ DEFAULT_OUT_DIR = Path("results/reports/dense_teacher_failure_localization")
 
 CONTRACT_RECORDED = "dense_teacher_failure_localization_contract_recorded"
 INSUFFICIENT_EVIDENCE = "dense_teacher_failure_localization_contract_failed_closed"
+PARTIAL_EVALUATOR_RECORDED = "dense_teacher_failure_localization_partial_evaluator_recorded"
 NEXT_STEP = (
-    "implement tiny local dense_teacher_failure_localization evaluator that fills "
-    "oracle_support_trained_values, retrained_oracle_support, gated_value_pair_composer, "
-    "dense/rank/norm controls, and shuffled/random/token-position null rows"
+    "implement retrained-oracle, gated pair-composer, dense/rank/norm control, "
+    "and shuffled/random/token-position null rows for dense_teacher_failure_localization"
 )
 
 REQUIRED_ARMS = (
@@ -194,11 +195,302 @@ def run_dense_teacher_failure_localization_contract(
             "tensor_inventory_csv": str(out_dir / "tensor_inventory.csv"),
             "pregate_rows_csv": str(out_dir / "pregate_rows.csv"),
             "contract_rows_csv": str(out_dir / "contract_rows.csv"),
+            "evaluator_rows_csv": str(out_dir / "evaluator_rows.csv"),
             "notes_md": str(out_dir / "notes.md"),
         },
     }
+    if not failures:
+        evaluator_rows = _evaluator_rows(distillation_dir, distillation)
+        summary["evaluator_rows"] = evaluator_rows
+        summary["filled_evaluator_arms"] = [
+            row["arm"] for row in evaluator_rows if row.get("availability") == "filled"
+        ]
+        summary["pending_evaluator_arms"] = [
+            arm for arm in REQUIRED_ARMS if arm not in set(summary["filled_evaluator_arms"])
+        ]
+        summary["decision"] = PARTIAL_EVALUATOR_RECORDED
+        summary["claim_status"] = "partial_local_evaluator_no_columnability_claim"
+        summary["selected_next_step"] = NEXT_STEP
+        summary["rationale"] = (
+            "This artifact now fills learned-support and exhaustive oracle-support-trained-values "
+            "rows from the exported dense-teacher tensors. It still makes no columnability claim "
+            "because retrained-oracle, pair-composer, dense/rank/norm, and null rows remain pending."
+        )
+    else:
+        summary["evaluator_rows"] = []
+        summary["filled_evaluator_arms"] = []
+        summary["pending_evaluator_arms"] = list(REQUIRED_ARMS)
     _write_artifacts(out_dir, summary)
     return summary
+
+
+def _evaluator_rows(distillation_dir: Path, distillation: dict[str, Any]) -> list[dict[str, Any]]:
+    try:
+        import torch
+        import torch.nn.functional as F
+    except Exception as exc:  # pragma: no cover - environment dependent
+        return [
+            _metric_row(
+                arm="runtime_import_failure",
+                arm_family="runtime",
+                availability="failed",
+                notes=f"torch import failed: {exc}",
+            )
+        ]
+
+    tensors = _load_evaluator_tensors(torch, distillation_dir)
+    targets = tensors["targets"]
+    base_logits = tensors["base_logits"]
+    teacher_logits = tensors["teacher_logits"]
+    teacher_hidden_residual = tensors["teacher_hidden_residual"]
+    teacher_logit_residual = tensors["teacher_logit_residual"]
+    learned_support = tensors["learned_support_indices"].to(dtype=torch.long)
+    learned_scores = tensors["learned_support_scores"]
+    per_column_hidden = tensors["per_column_hidden_contributions"]
+    per_column_logits = tensors["per_column_logit_contributions"]
+    sparse_state = tensors["sparse_column_value_state"]
+    top_k = int(sparse_state.get("top_k", learned_support.shape[-1]))
+    num_columns = int(sparse_state.get("num_columns", per_column_hidden.shape[2]))
+    atoms_per_column = int(sparse_state.get("atoms_per_column", 1))
+    stored_params = _state_param_count(sparse_state)
+    active_params = float(top_k * atoms_per_column * teacher_hidden_residual.shape[-1])
+    teacher_ce = _safe_number(distillation.get("dense_teacher_ce_loss"))
+
+    learned_weights = torch.softmax(learned_scores, dim=-1)
+    learned_hidden_update = _compose_selected(per_column_hidden, learned_support, learned_weights)
+    learned_logit_update = _compose_selected(per_column_logits, learned_support, learned_weights)
+    learned_logits = base_logits + learned_logit_update
+
+    oracle_support, oracle_hidden_update, oracle_logit_update = _oracle_support_trained_values(
+        torch,
+        per_column_hidden,
+        per_column_logits,
+        teacher_logit_residual,
+        top_k=top_k,
+    )
+    oracle_logits = base_logits + oracle_logit_update
+    learned_logit_mse = float(F.mse_loss(learned_logit_update, teacher_logit_residual).item())
+    oracle_logit_mse = float(F.mse_loss(oracle_logit_update, teacher_logit_residual).item())
+    learned_minus_oracle_logit_mse = learned_logit_mse - oracle_logit_mse
+
+    learned_row = _metrics_from_prediction(
+        torch,
+        F,
+        arm="learned_support_sparse_student",
+        arm_family="baseline",
+        availability="filled",
+        support_source="learned contextual top-k support",
+        value_source="trained sparse values",
+        composer="router-score softmax weighted independent column sum",
+        logits=learned_logits,
+        hidden_update=learned_hidden_update,
+        targets=targets,
+        teacher_logits=teacher_logits,
+        teacher_hidden_residual=teacher_hidden_residual,
+        teacher_logit_residual=teacher_logit_residual,
+        base_logits=base_logits,
+        teacher_ce=teacher_ce,
+        stored_params=stored_params,
+        active_params=active_params,
+        flops_proxy=float(base_logits.numel() * max(top_k, 1)),
+        oracle_support_regret=learned_minus_oracle_logit_mse,
+        notes="filled from exported learned support and per-column trained values",
+    )
+    oracle_row = _metrics_from_prediction(
+        torch,
+        F,
+        arm="oracle_support_trained_values",
+        arm_family="oracle_support",
+        availability="filled",
+        support_source=f"exhaustive per-token best {top_k}-of-{num_columns} support",
+        value_source="trained sparse values",
+        composer="per-token least-squares weighted independent column sum",
+        logits=oracle_logits,
+        hidden_update=oracle_hidden_update,
+        targets=targets,
+        teacher_logits=teacher_logits,
+        teacher_hidden_residual=teacher_hidden_residual,
+        teacher_logit_residual=teacher_logit_residual,
+        base_logits=base_logits,
+        teacher_ce=teacher_ce,
+        stored_params=stored_params,
+        active_params=active_params,
+        flops_proxy=float(base_logits.numel() * max(num_columns, 1)),
+        oracle_support_regret=0.0,
+        notes=(
+            "filled by exhaustive trained-value support plus oracle least-squares support weights; "
+            "CE/logit metrics use exported single-column logit deltas because the frozen decoder is not exported"
+        ),
+    )
+    oracle_row["oracle_selected_support_sets"] = _unique_support_count(torch, oracle_support)
+    oracle_row["learned_minus_oracle_logit_mse"] = learned_minus_oracle_logit_mse
+    oracle_row["learned_minus_oracle_ce"] = learned_row["ce_loss"] - oracle_row["ce_loss"]
+    return [learned_row, oracle_row]
+
+
+def _load_evaluator_tensors(torch: Any, distillation_dir: Path) -> dict[str, Any]:
+    tensors: dict[str, Any] = {}
+    for spec in REQUIRED_TENSORS:
+        path = distillation_dir / str(spec["filename"])
+        tensors[str(spec["tensor"])] = torch.load(path, map_location="cpu")
+    return tensors
+
+
+def _oracle_support_trained_values(
+    torch: Any,
+    per_column_hidden: Any,
+    per_column_logits: Any,
+    teacher_logit_residual: Any,
+    *,
+    top_k: int,
+) -> tuple[Any, Any, Any]:
+    num_columns = int(per_column_logits.shape[2])
+    combos = list(itertools.combinations(range(num_columns), top_k))
+    if not combos:
+        raise ValueError("top_k must produce at least one oracle support combination")
+    combo_tensor = torch.as_tensor(combos, dtype=torch.long)
+    batch, seq_len, _, vocab_size = per_column_logits.shape
+    token_count = batch * seq_len
+    logit_columns = per_column_logits.reshape(token_count, num_columns, vocab_size)
+    hidden_columns = per_column_hidden.reshape(token_count, num_columns, per_column_hidden.shape[-1])
+    target = teacher_logit_residual.reshape(token_count, vocab_size)
+    combo_updates: list[Any] = []
+    combo_hidden_updates: list[Any] = []
+    combo_mses: list[Any] = []
+    for combo in combos:
+        chosen_logits = logit_columns[:, list(combo), :].transpose(1, 2)
+        solution = torch.linalg.lstsq(chosen_logits, target.unsqueeze(-1)).solution.squeeze(-1)
+        logit_update = torch.einsum("tk,tkv->tv", solution, logit_columns[:, list(combo), :])
+        hidden_update = torch.einsum("tk,tkh->th", solution, hidden_columns[:, list(combo), :])
+        combo_updates.append(logit_update)
+        combo_hidden_updates.append(hidden_update)
+        combo_mses.append(((logit_update - target) ** 2).mean(dim=-1))
+    all_updates = torch.stack(combo_updates, dim=1)
+    all_hidden_updates = torch.stack(combo_hidden_updates, dim=1)
+    all_mses = torch.stack(combo_mses, dim=1)
+    best = all_mses.argmin(dim=-1)
+    oracle_support = combo_tensor[best].reshape(batch, seq_len, top_k)
+    update_index = best.view(token_count, 1, 1).expand(-1, 1, vocab_size)
+    oracle_logit_update = all_updates.gather(dim=1, index=update_index).squeeze(1)
+    hidden_index = best.view(token_count, 1, 1).expand(-1, 1, per_column_hidden.shape[-1])
+    oracle_hidden_update = all_hidden_updates.gather(dim=1, index=hidden_index).squeeze(1)
+    return (
+        oracle_support,
+        oracle_hidden_update.reshape(batch, seq_len, per_column_hidden.shape[-1]),
+        oracle_logit_update.reshape(batch, seq_len, vocab_size),
+    )
+
+
+def _compose_selected(per_column: Any, support: Any, weights: Any) -> Any:
+    gather_index = support.unsqueeze(-1).expand(*support.shape, per_column.shape[-1])
+    selected = per_column.gather(dim=2, index=gather_index)
+    return (selected * weights.unsqueeze(-1)).sum(dim=2)
+
+
+def _metrics_from_prediction(
+    torch: Any,
+    F: Any,
+    *,
+    arm: str,
+    arm_family: str,
+    availability: str,
+    support_source: str,
+    value_source: str,
+    composer: str,
+    logits: Any,
+    hidden_update: Any,
+    targets: Any,
+    teacher_logits: Any,
+    teacher_hidden_residual: Any,
+    teacher_logit_residual: Any,
+    base_logits: Any,
+    teacher_ce: float | None,
+    stored_params: float,
+    active_params: float,
+    flops_proxy: float,
+    oracle_support_regret: float,
+    notes: str,
+) -> dict[str, Any]:
+    vocab_size = int(logits.shape[-1])
+    logit_update = logits - base_logits
+    teacher_ce_loss = teacher_ce if teacher_ce is not None else _ce_loss_value(F, teacher_logits, targets, vocab_size)
+    ce_loss = _ce_loss_value(F, logits, targets, vocab_size)
+    hidden_mse = float(F.mse_loss(hidden_update, teacher_hidden_residual).item())
+    logit_mse = float(F.mse_loss(logit_update, teacher_logit_residual).item())
+    residual_l2 = float(hidden_update.norm(dim=-1).mean().item())
+    teacher_l2 = float(teacher_hidden_residual.norm(dim=-1).mean().item())
+    return _metric_row(
+        arm=arm,
+        arm_family=arm_family,
+        availability=availability,
+        support_source=support_source,
+        value_source=value_source,
+        composer=composer,
+        train_steps=0,
+        active_params=active_params,
+        stored_params=stored_params,
+        flops_proxy=flops_proxy,
+        ce_loss=ce_loss,
+        teacher_hidden_residual_mse=hidden_mse,
+        teacher_hidden_residual_r2=_r2(torch, hidden_update, teacher_hidden_residual),
+        teacher_hidden_residual_cosine=_cosine(F, hidden_update, teacher_hidden_residual),
+        teacher_logit_residual_mse=logit_mse,
+        teacher_logit_residual_r2=_r2(torch, logit_update, teacher_logit_residual),
+        teacher_logit_residual_cosine=_cosine(F, logit_update, teacher_logit_residual),
+        oracle_support_regret=oracle_support_regret,
+        functional_churn=float((logits.argmax(dim=-1) != teacher_logits.argmax(dim=-1)).float().mean().item()),
+        anchor_kl=float(F.mse_loss(logits, base_logits).item()),
+        offtarget_logit_leakage=max(0.0, ce_loss - teacher_ce_loss),
+        residual_norm_ratio=residual_l2 / max(teacher_l2, 1e-12),
+        residual_direction_error=1.0 - _cosine(F, hidden_update, teacher_hidden_residual),
+        pair_synergy="not_measured",
+        passes_no_gpu_pregate=False,
+        notes=notes,
+    )
+
+
+def _metric_row(**values: Any) -> dict[str, Any]:
+    row = {field: "" for field in METRIC_FIELDS}
+    row.update(values)
+    return row
+
+
+def _ce_loss_value(F: Any, logits: Any, targets: Any, vocab_size: int) -> float:
+    loss = F.cross_entropy(logits[:, :-1, :].reshape(-1, vocab_size), targets[:, :-1].reshape(-1))
+    return float(loss.detach().item())
+
+
+def _r2(torch: Any, prediction: Any, target: Any) -> float:
+    residual = ((prediction - target) ** 2).sum()
+    centered = ((target - target.mean()) ** 2).sum()
+    if float(centered.item()) <= 1e-12:
+        return 1.0 if float(residual.item()) <= 1e-12 else 0.0
+    return float((1.0 - residual / centered).item())
+
+
+def _cosine(F: Any, prediction: Any, target: Any) -> float:
+    return float(F.cosine_similarity(prediction.reshape(1, -1), target.reshape(1, -1), dim=-1).item())
+
+
+def _state_param_count(state: dict[str, Any]) -> float:
+    total = 0
+    for key in ("atom_logits", "atom_values"):
+        value = state.get(key)
+        if hasattr(value, "numel"):
+            total += int(value.numel())
+    return float(total)
+
+
+def _safe_number(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _unique_support_count(torch: Any, support: Any) -> int:
+    flat = support.reshape(-1, support.shape[-1])
+    return int(torch.unique(flat, dim=0).shape[0])
 
 
 def _contract_rows() -> list[dict[str, Any]]:
@@ -447,6 +739,7 @@ def _write_artifacts(out_dir: Path, summary: dict[str, Any]) -> None:
     _write_csv(out_dir / "tensor_inventory.csv", summary["tensor_inventory"])
     _write_csv(out_dir / "pregate_rows.csv", summary["pregate_rows"])
     _write_csv(out_dir / "contract_rows.csv", summary["contract_rows"])
+    _write_csv(out_dir / "evaluator_rows.csv", summary["evaluator_rows"])
     _write_notes(out_dir / "notes.md", summary)
 
 
