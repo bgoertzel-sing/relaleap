@@ -72,6 +72,7 @@ class _SyntheticArmSpec:
     core_lr_scale: float = 1.0
     core_drift_penalty_weight: float = 0.0
     periphery_l1_weight: float = 0.0
+    residual_norm_clip: float = 0.0
 
 
 def run_synthetic_mechanism_causal_modularity(
@@ -590,6 +591,8 @@ def _run_training_smoke(
                 "core_lr_scale": spec.core_lr_scale,
                 "core_drift_penalty_weight": spec.core_drift_penalty_weight,
                 "periphery_l1_weight": spec.periphery_l1_weight,
+                "residual_norm_clip": spec.residual_norm_clip,
+                "residual_norm_clipped": spec.residual_norm_clip > 0.0,
                 "core_parameter_drift_l2": (
                     adapter.core_parameter_drift_l2(core_reference)
                     if hasattr(adapter, "core_parameter_drift_l2")
@@ -916,6 +919,7 @@ def _synthetic_arm_specs(
             core_lr_scale=0.25,
             core_drift_penalty_weight=0.05,
             periphery_l1_weight=1e-4,
+            residual_norm_clip=0.075,
         ),
         _SyntheticArmSpec(
             "flat_column_value_mlp_topk2",
@@ -930,6 +934,7 @@ def _synthetic_arm_specs(
             core_rank=0,
             periphery_rank=max(1, core_rank + periphery_rank),
             periphery_l1_weight=1e-4,
+            residual_norm_clip=0.075,
         ),
         _SyntheticArmSpec(
             "core_only_sparse_topk2",
@@ -959,6 +964,7 @@ def _synthetic_arm_specs(
             core_rank=core_rank,
             periphery_rank=periphery_rank,
             periphery_l1_weight=1e-4,
+            residual_norm_clip=0.075,
         ),
         _SyntheticArmSpec(
             "dense_rank_norm_matched",
@@ -1062,6 +1068,7 @@ def _build_synthetic_adapter(
             variant=spec.value_head_variant,
             contextual_router_hidden_dim=hidden_dim * 2,
             core_lr_scale=spec.core_lr_scale,
+            residual_norm_clip=spec.residual_norm_clip,
             torch=torch,
             nn=nn,
         )
@@ -1129,6 +1136,7 @@ class _CorePeripherySparseAdapter:
         variant: str,
         contextual_router_hidden_dim: int,
         core_lr_scale: float,
+        residual_norm_clip: float,
         *,
         torch: Any,
         nn: Any,
@@ -1140,6 +1148,7 @@ class _CorePeripherySparseAdapter:
         self.top_k = top_k
         self.variant = variant
         self.core_lr_scale = core_lr_scale
+        self.residual_norm_clip = float(residual_norm_clip)
         self.layer_norm = nn.LayerNorm(hidden_dim)
         contextual_feature_dim = hidden_dim * 5 + 3
         self.contextual_column_scores = nn.Sequential(
@@ -1266,6 +1275,9 @@ class _CorePeripherySparseAdapter:
             residual = periphery_delta
         else:
             residual = core_delta + periphery_delta
+        if self.residual_norm_clip > 0.0:
+            residual_rms = residual.pow(2).mean(dim=-1, keepdim=True).add(1e-12).sqrt()
+            residual = residual * torch.clamp(self.residual_norm_clip / residual_rms, max=1.0)
         output = hidden + residual
         if return_support:
             return output, top_indices.detach()
@@ -1426,7 +1438,8 @@ def _oracle_support_sparse_topk2_rows(
     pair_supports = [
         (left, right)
         for left in range(spec.num_columns)
-        for right in range(left + 1, spec.num_columns)
+        for right in range(spec.num_columns)
+        if right != left
     ]
     learned_logits = decode(adapter(hidden, support_indices=learned_support)).detach()
     learned_losses = F.cross_entropy(
@@ -4213,6 +4226,8 @@ def _core_periphery_sparse_value_capacity_probe_rows(
                 "core_parameter_drift_l2": _metric_float(row.get("core_parameter_drift_l2")),
                 "periphery_l1_weight": _metric_float(row.get("periphery_l1_weight")),
                 "periphery_l1": _metric_float(row.get("periphery_l1")),
+                "residual_norm_clip": _metric_float(row.get("residual_norm_clip")),
+                "residual_norm_clipped": row.get("residual_norm_clipped") is True,
                 "mean_commutator_l2": arm_commutator,
                 "reference_sparse_mean_commutator_l2": reference_commutator,
                 "commutator_ratio_vs_reference_sparse": _safe_ratio(arm_commutator, reference_commutator),

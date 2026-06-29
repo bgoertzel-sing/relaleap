@@ -289,6 +289,8 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 "stored_gap_closed_fraction",
                 "core_parameter_drift_l2",
                 "periphery_l1",
+                "residual_norm_clip",
+                "residual_norm_clipped",
                 "norm_budget_ok",
                 "commutator_budget_ok",
                 "functional_churn_budget_ok",
@@ -298,6 +300,8 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             }:
                 self.assertIn(required_field, primary_probe)
             self.assertEqual(primary_probe["probe_role"], "primary_core_periphery_probe")
+            self.assertEqual(primary_probe["residual_norm_clipped"], "True")
+            self.assertGreater(float(primary_probe["residual_norm_clip"]), 0.0)
             self.assertEqual(primary_probe["requires_gpu_now"], "False")
             self.assertEqual(primary_probe["promotion_allowed"], "False")
 
