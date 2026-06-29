@@ -46,6 +46,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["value_capacity_core_periphery_diagnostic_row_count"], 0)
             self.assertEqual(summary["core_periphery_sparse_value_capacity_probe_row_count"], 0)
             self.assertEqual(summary["core_periphery_update_stability_bracket_row_count"], 0)
+            self.assertEqual(summary["core_periphery_branch_closeout_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -190,6 +191,18 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
             self.assertFalse(
                 summary["core_periphery_update_stability_bracket_primary_result"]["promotion_allowed"]
+            )
+            self.assertEqual(summary["core_periphery_branch_closeout_row_count"], 1)
+            self.assertIsNotNone(summary["core_periphery_branch_closeout_primary_result"])
+            self.assertEqual(
+                summary["core_periphery_branch_closeout_primary_result"]["row_count"],
+                summary["core_periphery_branch_closeout_row_count"],
+            )
+            self.assertFalse(
+                summary["core_periphery_branch_closeout_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["core_periphery_branch_closeout_primary_result"]["promotion_allowed"]
             )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
@@ -348,6 +361,43 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 self.assertIn(required_field, stability_rows[0])
             self.assertEqual({row["requires_gpu_now"] for row in stability_rows}, {"False"})
             self.assertEqual({row["promotion_allowed"] for row in stability_rows}, {"False"})
+
+            with (out_dir / "core_periphery_branch_closeout.csv").open(newline="", encoding="utf-8") as handle:
+                closeout_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(closeout_rows), 1)
+            closeout = closeout_rows[0]
+            for required_field in {
+                "closeout_status",
+                "primary_arm",
+                "primary_ce_gain_vs_reference_sparse",
+                "primary_stored_gap_closed_fraction",
+                "flat_control_arm",
+                "primary_ce_minus_flat_control_ce",
+                "flat_control_stronger_by_gt_0p01",
+                "primary_budget_passes",
+                "primary_signal_passes",
+                "update_stability_candidate_count",
+                "advance_to_gpu_validation",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "recommend_next_path",
+                "mechanism_labels_used_for_scoring_only",
+            }:
+                self.assertIn(required_field, closeout)
+            self.assertEqual(closeout["primary_arm"], "core_periphery_sparse_topk2")
+            self.assertEqual(closeout["flat_control_arm"], "flat_column_value_mlp_topk2")
+            self.assertIn(
+                closeout["closeout_status"],
+                {
+                    "closed_redesign_required",
+                    "repeat_before_closeout",
+                    "continue_local_branch",
+                },
+            )
+            self.assertEqual(closeout["advance_to_gpu_validation"], "False")
+            self.assertEqual(closeout["requires_gpu_now"], "False")
+            self.assertEqual(closeout["promotion_allowed"], "False")
+            self.assertEqual(closeout["mechanism_labels_used_for_scoring_only"], "True")
 
             with (out_dir / "ce_by_rule_position.csv").open(newline="", encoding="utf-8") as handle:
                 ce_rule_position_rows = list(csv.DictReader(handle))
@@ -710,6 +760,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["value_capacity_core_periphery_diagnostic_row_count"], 3)
             self.assertEqual(summary["core_periphery_sparse_value_capacity_probe_row_count"], 4)
             self.assertEqual(summary["core_periphery_update_stability_bracket_row_count"], 2)
+            self.assertEqual(summary["core_periphery_branch_closeout_row_count"], 1)
             teacher_summary = summary["teacher_distillation_primary_result"]
             self.assertEqual(teacher_summary["row_count"], 2)
             self.assertIsNotNone(teacher_summary["distilled_holdout_ce"])

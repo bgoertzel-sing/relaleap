@@ -44,6 +44,7 @@ REQUIRED_ARTIFACTS = (
     "value_capacity_core_periphery_diagnostic.csv",
     "core_periphery_sparse_value_capacity_probe.csv",
     "core_periphery_update_stability_bracket.csv",
+    "core_periphery_branch_closeout.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -305,6 +306,16 @@ def run_synthetic_mechanism_causal_modularity(
         "core_periphery_update_stability_bracket_primary_result": (
             _core_periphery_update_stability_bracket_summary(
                 training_smoke["core_periphery_update_stability_bracket"]
+            )
+            if training_smoke is not None
+            else None
+        ),
+        "core_periphery_branch_closeout_row_count": (
+            len(training_smoke["core_periphery_branch_closeout"]) if training_smoke is not None else 0
+        ),
+        "core_periphery_branch_closeout_primary_result": (
+            _core_periphery_branch_closeout_summary(
+                training_smoke["core_periphery_branch_closeout"]
             )
             if training_smoke is not None
             else None
@@ -738,6 +749,25 @@ def _run_training_smoke(
         support_head_rows,
     )
     residual_budget_accounting = _residual_budget_accounting_rows(arm_metrics)
+    value_capacity_core_periphery_diagnostic = _value_capacity_core_periphery_diagnostic_rows(
+        arm_metrics=arm_metrics,
+        residual_budget_rows=residual_budget_accounting,
+        commutator_rows=commutator_rows,
+        forgetting_rows=forgetting_rows,
+        router_only_branch_rows=router_only_branch_selection,
+    )
+    core_periphery_sparse_value_capacity_probe = _core_periphery_sparse_value_capacity_probe_rows(
+        arm_metrics=arm_metrics,
+        residual_budget_rows=residual_budget_accounting,
+        commutator_rows=commutator_rows,
+        forgetting_rows=forgetting_rows,
+        router_only_branch_rows=router_only_branch_selection,
+    )
+    core_periphery_update_stability_bracket = _core_periphery_update_stability_bracket_rows(
+        arm_metrics=arm_metrics,
+        commutator_rows=commutator_rows,
+        forgetting_rows=forgetting_rows,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -752,24 +782,12 @@ def _run_training_smoke(
             arm_metrics,
             oracle_support_rows,
         ),
-        "value_capacity_core_periphery_diagnostic": _value_capacity_core_periphery_diagnostic_rows(
-            arm_metrics=arm_metrics,
-            residual_budget_rows=residual_budget_accounting,
-            commutator_rows=commutator_rows,
-            forgetting_rows=forgetting_rows,
-            router_only_branch_rows=router_only_branch_selection,
-        ),
-        "core_periphery_sparse_value_capacity_probe": _core_periphery_sparse_value_capacity_probe_rows(
-            arm_metrics=arm_metrics,
-            residual_budget_rows=residual_budget_accounting,
-            commutator_rows=commutator_rows,
-            forgetting_rows=forgetting_rows,
-            router_only_branch_rows=router_only_branch_selection,
-        ),
-        "core_periphery_update_stability_bracket": _core_periphery_update_stability_bracket_rows(
-            arm_metrics=arm_metrics,
-            commutator_rows=commutator_rows,
-            forgetting_rows=forgetting_rows,
+        "value_capacity_core_periphery_diagnostic": value_capacity_core_periphery_diagnostic,
+        "core_periphery_sparse_value_capacity_probe": core_periphery_sparse_value_capacity_probe,
+        "core_periphery_update_stability_bracket": core_periphery_update_stability_bracket,
+        "core_periphery_branch_closeout": _core_periphery_branch_closeout_rows(
+            probe_rows=core_periphery_sparse_value_capacity_probe,
+            stability_rows=core_periphery_update_stability_bracket,
         ),
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
@@ -3568,6 +3586,19 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("core_periphery_branch_closeout"):
+        summary = _core_periphery_branch_closeout_summary(
+            training_smoke["core_periphery_branch_closeout"]
+        )
+        if summary.get("closeout_status") == "closed_redesign_required":
+            return (
+                "redesign the local sparse value mechanism away from the current clipped core/periphery "
+                "split; require a flat-control and interference-budget pregate before any GPU validation"
+            )
+        if summary.get("closeout_status") == "repeat_before_closeout":
+            return (
+                "repeat the local core/periphery branch on one adjacent seed before deciding closeout or redesign"
+            )
     if training_smoke.get("core_periphery_update_stability_bracket"):
         summary = _core_periphery_update_stability_bracket_summary(
             training_smoke["core_periphery_update_stability_bracket"]
@@ -4534,6 +4565,114 @@ def _core_periphery_update_stability_bracket_summary(rows: list[dict[str, Any]])
     }
 
 
+def _core_periphery_branch_closeout_rows(
+    *,
+    probe_rows: list[dict[str, Any]],
+    stability_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not probe_rows:
+        return []
+    primary = next((row for row in probe_rows if row.get("probe_role") == "primary_core_periphery_probe"), {})
+    flat = next((row for row in probe_rows if row.get("arm") == "flat_column_value_mlp_topk2"), {})
+    stability_candidates = [row for row in stability_rows if row.get("stability_candidate") is True]
+
+    primary_ce = _metric_float(primary.get("holdout_ce"))
+    flat_ce = _metric_float(flat.get("holdout_ce"))
+    ce_gain = _metric_float(primary.get("ce_gain_vs_reference_sparse"))
+    stored_gap_closed = _metric_float(primary.get("stored_gap_closed_fraction"))
+    flat_ce_advantage = _delta_value(primary_ce, flat_ce)
+    primary_budget_passes = bool(
+        primary.get("norm_budget_ok") is True
+        and primary.get("commutator_budget_ok") is True
+        and primary.get("functional_churn_budget_ok") is True
+    )
+    primary_signal_passes = bool(
+        (ce_gain is not None and ce_gain >= 0.05)
+        or (stored_gap_closed is not None and stored_gap_closed >= 0.10)
+    )
+    flat_control_concern = bool(flat_ce_advantage is not None and flat_ce_advantage > 0.01)
+    closeout_status = (
+        "continue_local_branch"
+        if primary_signal_passes and primary_budget_passes and not flat_control_concern
+        else "repeat_before_closeout"
+        if stability_candidates
+        else "closed_redesign_required"
+    )
+    return [
+        {
+            "branch": "clipped_core_periphery_sparse_value_capacity",
+            "closeout_status": closeout_status,
+            "primary_arm": primary.get("arm", ""),
+            "reference_sparse_arm": primary.get("reference_sparse_arm", ""),
+            "primary_holdout_ce": primary_ce,
+            "reference_sparse_ce": _metric_float(primary.get("reference_sparse_ce")),
+            "primary_ce_gain_vs_reference_sparse": ce_gain,
+            "primary_stored_gap_closed_fraction": stored_gap_closed,
+            "flat_control_arm": flat.get("arm", ""),
+            "flat_control_holdout_ce": flat_ce,
+            "primary_ce_minus_flat_control_ce": flat_ce_advantage,
+            "flat_control_stronger_by_gt_0p01": flat_control_concern,
+            "norm_budget_ok": primary.get("norm_budget_ok") is True,
+            "commutator_budget_ok": primary.get("commutator_budget_ok") is True,
+            "functional_churn_budget_ok": primary.get("functional_churn_budget_ok") is True,
+            "primary_budget_passes": primary_budget_passes,
+            "primary_signal_passes": primary_signal_passes,
+            "update_stability_candidate_count": len(stability_candidates),
+            "update_stability_candidate_arms": ";".join(
+                str(row.get("arm", "")) for row in stability_candidates
+            ),
+            "advance_to_gpu_validation": False,
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "recommend_next_path": (
+                "redesign_sparse_value_mechanism_with_flat_control_and_interference_pregate"
+                if closeout_status == "closed_redesign_required"
+                else "repeat_or_extend_local_core_periphery_branch"
+            ),
+            "mechanism_labels_used_for_scoring_only": True,
+            "interpretation": (
+                "Fail-closed branch closeout. The current clipped protected-core/plastic-periphery "
+                "implementation should not advance unless its primary arm clears CE or stored-gap "
+                "thresholds, norm, commutator, and churn budgets, and is not explained by the flat "
+                "same-router value-capacity control."
+            ),
+        }
+    ]
+
+
+def _core_periphery_branch_closeout_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "closeout_status": "not_run",
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "interpretation": "core/periphery branch closeout was not run",
+        }
+    row = rows[0]
+    return {
+        "row_count": len(rows),
+        "closeout_status": row.get("closeout_status", ""),
+        "primary_ce_gain_vs_reference_sparse": _metric_float(
+            row.get("primary_ce_gain_vs_reference_sparse")
+        ),
+        "primary_stored_gap_closed_fraction": _metric_float(
+            row.get("primary_stored_gap_closed_fraction")
+        ),
+        "primary_ce_minus_flat_control_ce": _metric_float(
+            row.get("primary_ce_minus_flat_control_ce")
+        ),
+        "primary_budget_passes": row.get("primary_budget_passes") is True,
+        "primary_signal_passes": row.get("primary_signal_passes") is True,
+        "flat_control_stronger_by_gt_0p01": row.get("flat_control_stronger_by_gt_0p01") is True,
+        "update_stability_candidate_count": int(row.get("update_stability_candidate_count") or 0),
+        "recommended_next_path": row.get("recommend_next_path", ""),
+        "requires_gpu_now": any(item.get("requires_gpu_now") is True for item in rows),
+        "promotion_allowed": any(item.get("promotion_allowed") is True for item in rows),
+        "interpretation": row.get("interpretation", ""),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -4630,6 +4769,10 @@ def _write_artifacts(
         out_dir / "core_periphery_update_stability_bracket.csv",
         [] if training_smoke is None else training_smoke["core_periphery_update_stability_bracket"],
     )
+    _write_csv(
+        out_dir / "core_periphery_branch_closeout.csv",
+        [] if training_smoke is None else training_smoke["core_periphery_branch_closeout"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -4665,6 +4808,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Teacher distillation closeout rows: `{summary['teacher_distillation_closeout_row_count']}`",
         f"- Value/capacity core-periphery diagnostic rows: `{summary['value_capacity_core_periphery_diagnostic_row_count']}`",
         f"- Core/periphery sparse value-capacity probe rows: `{summary['core_periphery_sparse_value_capacity_probe_row_count']}`",
+        f"- Core/periphery update-stability bracket rows: `{summary['core_periphery_update_stability_bracket_row_count']}`",
+        f"- Core/periphery branch closeout rows: `{summary['core_periphery_branch_closeout_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
@@ -4689,6 +4834,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The teacher-distillation closeout artifact compares the dense-teacher sparse student to the shuffled-teacher null, the best existing sparse arm, active-matched dense/MLP controls, stored-matched upper bounds, and oracle-support regret. It is a local branch triage artifact, not promotion evidence.",
         "",
         "The value/capacity core-periphery diagnostic synthesizes the measured CE, residual-budget, finite-update commutator, and functional-churn rows after the router-only branch is closed. It selects a local core/periphery sparse value-capacity probe only when the stored-control gap remains too large for support selection to explain; it does not request GPU validation or promotion.",
+        "",
+        "The core/periphery branch closeout artifact is fail-closed. It closes or redirects the current clipped core/periphery value-capacity branch unless the primary arm clears CE or stored-gap thresholds, norm, commutator, and churn budgets, and is not explained by the flat same-router value-capacity control.",
         "",
         "## Next Step",
         "",
