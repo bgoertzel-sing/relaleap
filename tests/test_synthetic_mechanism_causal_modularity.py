@@ -157,12 +157,32 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 summary["router_regret_ceiling_budget_primary_result"]["row_count"],
                 summary["router_regret_ceiling_budget_row_count"],
             )
-            self.assertEqual(summary["support_head_sequence_heldout_diagnostic_row_count"], 20)
+            self.assertEqual(summary["support_head_sequence_heldout_diagnostic_row_count"], 30)
             self.assertIsNotNone(summary["support_head_sequence_heldout_diagnostic_primary_result"])
             self.assertEqual(
                 summary["support_head_sequence_heldout_diagnostic_primary_result"]["row_count"],
                 summary["support_head_sequence_heldout_diagnostic_row_count"],
             )
+            with (out_dir / "support_head_sequence_heldout_diagnostic.csv").open(
+                newline="",
+                encoding="utf-8",
+            ) as handle:
+                support_head_rows = list(csv.DictReader(handle))
+            direct_diagnostics = {row["diagnostic"] for row in support_head_rows}
+            self.assertIn("regret_soft_utility_head_topk2", direct_diagnostics)
+            self.assertIn("margin_conditioned_utility_fallback_topk2", direct_diagnostics)
+            direct_rows = [
+                row
+                for row in support_head_rows
+                if row["diagnostic"]
+                in {
+                    "regret_soft_utility_head_topk2",
+                    "margin_conditioned_utility_fallback_topk2",
+                }
+            ]
+            self.assertEqual(len(direct_rows), 10)
+            self.assertEqual({row["uses_hidden_features"] for row in direct_rows}, {"True"})
+            self.assertEqual({row["deployable_training_evidence"] for row in direct_rows}, {"True"})
             self.assertEqual(summary["router_only_branch_selection_row_count"], 5)
             self.assertIsNotNone(summary["router_only_branch_selection_primary_result"])
             self.assertEqual(
@@ -1549,6 +1569,8 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                     "shuffled_oracle_target_null_topk2",
                     "token_position_only_support_head_topk2",
                     "global_modal_support_null_topk2",
+                    "regret_soft_utility_head_topk2",
+                    "margin_conditioned_utility_fallback_topk2",
                 },
                 {row["diagnostic"] for row in support_head_rows},
             )
@@ -1572,7 +1594,30 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             }:
                 self.assertIn(required_field, support_head_rows[0])
             self.assertEqual({row["split"] for row in support_head_rows}, {"sequence_heldout"})
-            self.assertEqual({row["deployable_training_evidence"] for row in support_head_rows}, {"False"})
+            self.assertEqual(
+                {
+                    row["deployable_training_evidence"]
+                    for row in support_head_rows
+                    if row["diagnostic"]
+                    not in {
+                        "regret_soft_utility_head_topk2",
+                        "margin_conditioned_utility_fallback_topk2",
+                    }
+                },
+                {"False"},
+            )
+            self.assertEqual(
+                {
+                    row["deployable_training_evidence"]
+                    for row in support_head_rows
+                    if row["diagnostic"]
+                    in {
+                        "regret_soft_utility_head_topk2",
+                        "margin_conditioned_utility_fallback_topk2",
+                    }
+                },
+                {"True"},
+            )
             self.assertEqual({row["mechanism_labels_used_for_scoring_only"] for row in support_head_rows}, {"True"})
             contextual_rows = [
                 row
@@ -1735,7 +1780,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["residual_budget_accounting_row_count"], 26)
             self.assertEqual(summary["router_value_regret_decomposition_row_count"], 30)
             self.assertEqual(summary["router_regret_ceiling_budget_row_count"], 6)
-            self.assertEqual(summary["support_head_sequence_heldout_diagnostic_row_count"], 24)
+            self.assertEqual(summary["support_head_sequence_heldout_diagnostic_row_count"], 36)
             self.assertEqual(summary["router_only_branch_selection_row_count"], 6)
             self.assertEqual(summary["teacher_distillation_closeout_row_count"], 1)
             self.assertEqual(summary["value_capacity_core_periphery_diagnostic_row_count"], 3)

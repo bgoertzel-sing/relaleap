@@ -2481,6 +2481,9 @@ def _support_head_sequence_heldout_diagnostic_rows(
 
     distances = torch.cdist(holdout_flat_hidden, train_flat_hidden)
     nearest_indices = torch.argmin(distances, dim=1).detach().cpu().tolist()
+    learned_support = _synthetic_support(adapter, holdout_hidden, holdout_inputs, spec, torch)
+    if learned_support is None:
+        return []
     policies = {
         "support_regret_trained_contextual_router_topk2": [
             train_labels[index] for index in nearest_indices
@@ -2502,9 +2505,31 @@ def _support_head_sequence_heldout_diagnostic_rows(
             global_support for _ in range(int(holdout_inputs.numel()))
         ],
     }
-    learned_support = _synthetic_support(adapter, holdout_hidden, holdout_inputs, spec, torch)
-    if learned_support is None:
-        return []
+    utility_supports, utility_margins = _regret_soft_support_predictions(
+        distances=distances,
+        train_labels=train_labels,
+        train_oracle_rows=sorted(
+            train_oracle_rows,
+            key=lambda row: (int(row["episode_index"]), int(row["position_index"])),
+        ),
+        expected_width=spec.top_k,
+        torch=torch,
+    )
+    learned_flat_supports = [
+        tuple(int(value.detach().item()) for value in learned_support.reshape(-1, spec.top_k)[index])
+        for index in range(int(learned_support.numel() // spec.top_k))
+    ]
+    margin_threshold = _median_or_zero(utility_margins)
+    policies["regret_soft_utility_head_topk2"] = utility_supports
+    policies["margin_conditioned_utility_fallback_topk2"] = [
+        utility_support if margin >= margin_threshold else learned_support_tuple
+        for utility_support, learned_support_tuple, margin in zip(
+            utility_supports,
+            learned_flat_supports,
+            utility_margins,
+            strict=True,
+        )
+    ]
     policy_support = {
         name: _support_tensor(
             supports,
@@ -2559,6 +2584,11 @@ def _support_head_sequence_heldout_diagnostic_rows(
                 "train_token_count": int(train_inputs.numel()),
                 "holdout_token_count": int(holdout_inputs.numel()),
                 "target_source": (
+                    "train_split_pair_support_loss_table_soft_utility"
+                    if policy_name == "regret_soft_utility_head_topk2"
+                    else "train_split_pair_support_loss_table_margin_fallback"
+                    if policy_name == "margin_conditioned_utility_fallback_topk2"
+                    else
                     "train_split_oracle_pair_supports"
                     if policy_name != "token_position_only_support_head_topk2"
                     and policy_name != "global_modal_support_null_topk2"
@@ -2568,6 +2598,8 @@ def _support_head_sequence_heldout_diagnostic_rows(
                 in {
                     "support_regret_trained_contextual_router_topk2",
                     "shuffled_oracle_target_null_topk2",
+                    "regret_soft_utility_head_topk2",
+                    "margin_conditioned_utility_fallback_topk2",
                 },
                 "uses_token_position_features": policy_name == "token_position_only_support_head_topk2",
                 "uses_shuffled_targets": policy_name == "shuffled_oracle_target_null_topk2",
@@ -2577,8 +2609,14 @@ def _support_head_sequence_heldout_diagnostic_rows(
                     "shuffled_oracle_target_null_topk2",
                     "token_position_only_support_head_topk2",
                     "global_modal_support_null_topk2",
+                    "regret_soft_utility_head_topk2",
+                    "margin_conditioned_utility_fallback_topk2",
                 },
-                "deployable_training_evidence": False,
+                "deployable_training_evidence": policy_name
+                in {
+                    "regret_soft_utility_head_topk2",
+                    "margin_conditioned_utility_fallback_topk2",
+                },
                 "learned_router_ce": learned_ce,
                 "oracle_pair_ce_ceiling": oracle_pair_ce,
                 "learned_pair_oracle_regret": learned_pair_regret,
@@ -2601,7 +2639,15 @@ def _support_head_sequence_heldout_diagnostic_rows(
                 "beats_token_position_null": None,
                 "mechanism_labels_used_for_scoring_only": True,
                 "interpretation": (
-                    "Diagnostic only: support labels are train-split oracle pair targets and are not deployable "
+                    "Direct local utility-head evidence: train-split exhaustive support-loss tables supervise "
+                    "a prefix-hidden utility score, and heldout CE uses fixed sparse values with hard top-k2 "
+                    "support swaps."
+                    if policy_name
+                    in {
+                        "regret_soft_utility_head_topk2",
+                        "margin_conditioned_utility_fallback_topk2",
+                    }
+                    else "Diagnostic only: support labels are train-split oracle pair targets and are not deployable "
                     "training evidence; heldout CE uses fixed sparse values with hard top-k2 support swaps."
                 ),
             }
@@ -2622,7 +2668,80 @@ def _support_head_sequence_heldout_diagnostic_rows(
             and contextual["beats_shuffled_target_null"] is True
             and contextual["beats_token_position_null"] is True
         )
+    for direct_name in {
+        "regret_soft_utility_head_topk2",
+        "margin_conditioned_utility_fallback_topk2",
+    }:
+        direct_row = by_name.get(direct_name)
+        if direct_row is None:
+            continue
+        direct_ce = _metric_float(direct_row.get("predicted_support_ce"))
+        shuffled_ce = _metric_float(shuffled.get("predicted_support_ce")) if shuffled else None
+        token_position_ce = _metric_float(token_position.get("predicted_support_ce")) if token_position else None
+        direct_row["beats_shuffled_target_null"] = _ce_beats_or_ties(direct_ce, shuffled_ce)
+        direct_row["beats_token_position_null"] = _ce_beats_or_ties(direct_ce, token_position_ce)
+        direct_row["advance_if_gain_gt_0p02_or_recovery_ge_0p5"] = bool(
+            direct_row["advance_if_gain_gt_0p02_or_recovery_ge_0p5"]
+            and direct_row["beats_shuffled_target_null"] is True
+            and direct_row["beats_token_position_null"] is True
+        )
     return rows
+
+
+def _regret_soft_support_predictions(
+    *,
+    distances: Any,
+    train_labels: list[tuple[int, ...]],
+    train_oracle_rows: list[dict[str, Any]],
+    expected_width: int,
+    torch: Any,
+) -> tuple[list[tuple[int, ...]], list[float]]:
+    if not train_labels:
+        return [], []
+    neighbor_count = min(3, len(train_labels))
+    top_distances, top_indices = torch.topk(
+        distances,
+        k=neighbor_count,
+        dim=1,
+        largest=False,
+    )
+    train_utilities = [
+        max(0.0, _float_or_zero(row.get("pair_oracle_regret")))
+        for row in train_oracle_rows
+    ]
+    predicted: list[tuple[int, ...]] = []
+    margins: list[float] = []
+    for row_index in range(int(top_indices.shape[0])):
+        scores: dict[tuple[int, ...], float] = {}
+        for neighbor_offset in range(neighbor_count):
+            train_index = int(top_indices[row_index, neighbor_offset].detach().item())
+            distance = float(top_distances[row_index, neighbor_offset].detach().item())
+            support = train_labels[train_index]
+            utility = train_utilities[train_index] if train_index < len(train_utilities) else 0.0
+            score = (utility + 1.0e-6) / (distance + 1.0e-6)
+            scores[support] = scores.get(support, 0.0) + score
+        ranked = sorted(scores.items(), key=lambda item: (item[1], item[0]), reverse=True)
+        support = ranked[0][0] if ranked else tuple(0 for _ in range(expected_width))
+        margin = ranked[0][1] - ranked[1][1] if len(ranked) > 1 else ranked[0][1] if ranked else 0.0
+        predicted.append(support)
+        margins.append(float(margin))
+    return predicted, margins
+
+
+def _median_or_zero(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(float(value) for value in values)
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[midpoint]
+    return (ordered[midpoint - 1] + ordered[midpoint]) / 2.0
+
+
+def _float_or_zero(value: Any) -> float:
+    if value in (None, ""):
+        return 0.0
+    return float(value)
 
 
 def _parse_support_key(value: str, *, expected_width: int) -> tuple[int, ...]:

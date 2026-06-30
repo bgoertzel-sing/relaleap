@@ -131,6 +131,73 @@ class RegretSoftUtilityHeadProbeTests(unittest.TestCase):
             notes = (root / "out" / "notes.md").read_text(encoding="utf-8")
             self.assertIn("GPU validation remains blocked", notes)
 
+    def test_direct_rows_fail_closed_when_they_lose_to_router_and_nulls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hidden = root / "hidden"
+            synthetic = root / "synthetic"
+            hidden.mkdir()
+            synthetic.mkdir()
+            _write_json(
+                root / "design.json",
+                {
+                    "status": "pass",
+                    "decision": "regret_soft_utility_head_design_recorded",
+                    "claim_status": "design_only_regret_soft_utility_head_not_yet_evidence",
+                    "selected_next_action": "implement_regret_soft_utility_head_probe_locally",
+                },
+            )
+            _write_json(hidden / "summary.json", {"status": "pass"})
+            (hidden / "audit_rows.csv").write_text("split,diagnostic\nsequence_heldout,hidden\n", encoding="utf-8")
+            (hidden / "budget_rows.csv").write_text("budget,gate_passes\nresidual_norm,False\n", encoding="utf-8")
+            (synthetic / "support_head_sequence_heldout_diagnostic.csv").write_text(
+                "\n".join(
+                    [
+                        "arm,diagnostic,split,target_source,uses_hidden_features,uses_token_position_features,uses_shuffled_targets,deployable_training_evidence,learned_router_ce,oracle_pair_ce_ceiling,predicted_support_ce,support_accuracy_vs_oracle_pair,support_change_fraction,residual_l2,beats_shuffled_target_null,beats_token_position_null",
+                        "promoted_contextual_topk2,regret_soft_utility_head_topk2,sequence_heldout,train_split_pair_support_loss_table_soft_utility,True,False,False,True,2.70,2.60,2.72,0.50,1.0,0.07,True,False",
+                        "promoted_contextual_topk2,margin_conditioned_utility_fallback_topk2,sequence_heldout,train_split_pair_support_loss_table_margin_fallback,True,False,False,True,2.70,2.60,2.71,0.40,0.8,0.07,True,False",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (synthetic / "arm_metrics.csv").write_text(
+                "arm,holdout_ce,residual_l2\npromoted_contextual_topk2,2.70,0.07\n",
+                encoding="utf-8",
+            )
+            (synthetic / "forgetting_rows.csv").write_text(
+                "arm,functional_churn\npromoted_contextual_topk2,0.00003\n",
+                encoding="utf-8",
+            )
+            (synthetic / "commutator_rows.csv").write_text(
+                "arm,finite_update_commutator_l2\npromoted_contextual_topk2,0.00000003\n",
+                encoding="utf-8",
+            )
+            (root / "latest-review.md").write_text(
+                "strategic_change_level: minor\nnotify_ben: false\nverdict: FIX\n",
+                encoding="utf-8",
+            )
+
+            summary = run_regret_soft_utility_head_probe(
+                design_path=root / "design.json",
+                hidden_audit_dir=hidden,
+                synthetic_dir=synthetic,
+                strategy_review_path=root / "latest-review.md",
+                out_dir=root / "out",
+            )
+
+            self.assertEqual(summary["status"], "pass")
+            self.assertEqual(summary["decision"], "regret_soft_utility_head_probe_gpu_blocked")
+            self.assertEqual(summary["direct_regret_soft_row_count"], 2)
+            self.assertEqual(summary["passing_direct_row_count"], 0)
+            self.assertFalse(summary["advance_to_gpu_validation"])
+            router_gate = next(
+                row for row in summary["gate_rows"] if row["gate"] == "beats_learned_router_or_recovers_regret"
+            )
+            null_gate = next(row for row in summary["gate_rows"] if row["gate"] == "null_controls_pass")
+            self.assertFalse(router_gate["passes"])
+            self.assertFalse(null_gate["passes"])
+
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
