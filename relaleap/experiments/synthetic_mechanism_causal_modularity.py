@@ -8285,6 +8285,30 @@ def _support_intervention_ce_from_predicted_delta(
     return ce, support_churn, support.detach()
 
 
+def _support_intervention_ce_from_support_tensor(
+    *,
+    hidden: Any,
+    support: Any | None,
+    targets: Any,
+    decode: Any,
+    trained_support_values: Any | None,
+    torch: Any,
+    F: Any,
+) -> tuple[float | None, float | None]:
+    if support is None or trained_support_values is None:
+        return None, None
+    values = trained_support_values.to(device=hidden.device, dtype=hidden.dtype)
+    selected = values[support].mean(dim=-2)
+    logits = decode(hidden + selected)
+    ce = float(F.cross_entropy(logits.reshape(-1, int(logits.shape[-1])), targets.reshape(-1)).detach().item())
+    support_churn = (
+        float((support[:, 1:, :] != support[:, :-1, :]).float().mean().detach().item())
+        if support.shape[1] > 1
+        else 0.0
+    )
+    return ce, support_churn
+
+
 def _support_intervention_ce_oracle(
     *,
     hidden: Any,
@@ -8344,6 +8368,135 @@ def _support_overlap(left: Any, right: Any) -> float:
     if left.shape != right.shape:
         return 0.0
     return float((left == right).float().mean().detach().item())
+
+
+def _support_exact_match(left: Any, right: Any) -> float:
+    if left is None or right is None or left.shape != right.shape:
+        return 0.0
+    return float((left == right).all(dim=-1).float().mean().detach().item())
+
+
+def _train_hidden_support_classifier(
+    *,
+    train_hidden: Any,
+    train_inputs: Any,
+    train_oracle_support: Any,
+    holdout_hidden: Any,
+    holdout_inputs: Any,
+    support_width: int,
+    num_columns: int,
+    feature_mode: str,
+    target_mode: str,
+    training_steps: int,
+    learning_rate: float,
+    seed: int,
+    torch: Any,
+    nn: Any,
+    F: Any,
+) -> tuple[Any | None, float | None]:
+    if train_oracle_support is None or num_columns < support_width:
+        return None, None
+    support_sets = list(itertools.combinations(range(num_columns), support_width))
+    if not support_sets:
+        return None, None
+    label_to_index = {support: index for index, support in enumerate(support_sets)}
+    support_tensor = torch.tensor(support_sets, dtype=torch.long, device=train_hidden.device)
+
+    def support_labels(raw_support: Any) -> Any:
+        labels: list[list[int]] = []
+        for episode in range(int(raw_support.shape[0])):
+            row: list[int] = []
+            for position in range(int(raw_support.shape[1])):
+                support = tuple(sorted(int(value.detach().item()) for value in raw_support[episode, position]))
+                row.append(label_to_index.get(support, 0))
+            labels.append(row)
+        target = torch.tensor(labels, dtype=torch.long, device=train_hidden.device)
+        if target_mode == "shuffled":
+            target = target.reshape(-1).flip(0).reshape_as(target)
+        elif target_mode == "delayed":
+            target = torch.cat([target[:, -1:], target[:, :-1]], dim=1)
+        return target
+
+    def token_position_features(inputs: Any, like_hidden: Any) -> Any:
+        features = torch.zeros_like(like_hidden)
+        features[..., 0] = inputs.float() / max(1.0, float(inputs.max().item()))
+        if features.shape[-1] > 1:
+            features[..., 1] = torch.linspace(
+                0.0,
+                1.0,
+                steps=int(inputs.shape[1]),
+                dtype=like_hidden.dtype,
+                device=like_hidden.device,
+            ).unsqueeze(0)
+        return features
+
+    train_features = (
+        token_position_features(train_inputs, train_hidden)
+        if feature_mode == "token_position_only"
+        else train_hidden.detach()
+    )
+    holdout_features = (
+        token_position_features(holdout_inputs, holdout_hidden)
+        if feature_mode == "token_position_only"
+        else holdout_hidden.detach()
+    )
+    torch.manual_seed(seed)
+    hidden_dim = int(train_features.shape[-1])
+    predictor_dim = max(8, min(32, hidden_dim * 2))
+    num_heads = next(candidate for candidate in (4, 2, 1) if predictor_dim % candidate == 0)
+    input_projection = nn.Linear(hidden_dim, predictor_dim)
+    position_embedding = nn.Parameter(torch.zeros(1, int(train_features.shape[1]), predictor_dim))
+    layer = nn.TransformerEncoderLayer(
+        d_model=predictor_dim,
+        nhead=num_heads,
+        dim_feedforward=predictor_dim * 2,
+        dropout=0.0,
+        batch_first=True,
+        activation="gelu",
+    )
+    encoder = nn.TransformerEncoder(layer, num_layers=1)
+    output_projection = nn.Linear(predictor_dim, len(support_sets))
+    parameters = (
+        list(input_projection.parameters())
+        + [position_embedding]
+        + list(encoder.parameters())
+        + list(output_projection.parameters())
+    )
+    optimizer = torch.optim.AdamW(parameters, lr=learning_rate)
+    labels = support_labels(train_oracle_support)
+    seq_len = int(train_features.shape[1])
+    mask = torch.triu(torch.ones(seq_len, seq_len, dtype=torch.bool, device=train_features.device), diagonal=1)
+    for _ in range(max(2, min(8, training_steps))):
+        optimizer.zero_grad(set_to_none=True)
+        encoded = input_projection(train_features) + position_embedding[:, :seq_len, :]
+        logits = output_projection(encoder(encoded, mask=mask))
+        loss = F.cross_entropy(logits.reshape(-1, len(support_sets)), labels.reshape(-1))
+        loss.backward()
+        optimizer.step()
+    with torch.no_grad():
+        encoded = input_projection(holdout_features) + position_embedding[:, : int(holdout_features.shape[1]), :]
+        holdout_mask = torch.triu(
+            torch.ones(
+                int(holdout_features.shape[1]),
+                int(holdout_features.shape[1]),
+                dtype=torch.bool,
+                device=holdout_features.device,
+            ),
+            diagonal=1,
+        )
+        logits = output_projection(encoder(encoded, mask=holdout_mask))
+        predicted_indices = torch.argmax(logits, dim=-1)
+        support = support_tensor[predicted_indices].detach()
+        perturbed = holdout_features.clone()
+        perturb_from_position = max(1, int(holdout_features.shape[1]) // 2)
+        perturbed[:, perturb_from_position:, :] = perturbed[:, perturb_from_position:, :] + 0.25
+        perturbed_encoded = input_projection(perturbed) + position_embedding[:, : int(holdout_features.shape[1]), :]
+        perturbed_logits = output_projection(encoder(perturbed_encoded, mask=holdout_mask))
+        prefix_delta = (
+            perturbed_logits[:, :perturb_from_position, :] - logits[:, :perturb_from_position, :]
+        ).abs().max()
+        leakage_delta = float(prefix_delta.detach().item())
+    return support, leakage_delta
 
 
 def _trained_column_value_vectors(*, adapter: Any, torch: Any) -> Any | None:
@@ -8513,6 +8666,73 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         torch=torch,
         F=F,
     )
+    num_support_columns = (
+        int(trained_support_values.shape[0]) if trained_support_values is not None else 0
+    )
+    direct_classifier_specs = (
+        (
+            "oracle_overlap_hidden_transformer_support_classifier",
+            "causal_transformer_hidden_support_classifier",
+            "hidden",
+            "oracle",
+        ),
+        (
+            "oracle_overlap_token_position_transformer_null",
+            "causal_transformer_token_position_support_classifier",
+            "token_position_only",
+            "oracle",
+        ),
+        (
+            "oracle_overlap_shuffled_target_null",
+            "causal_transformer_hidden_support_classifier_shuffled_targets",
+            "hidden",
+            "shuffled",
+        ),
+        (
+            "oracle_overlap_delayed_target_null",
+            "causal_transformer_hidden_support_classifier_delayed_targets",
+            "hidden",
+            "delayed",
+        ),
+    )
+    direct_classifier_supports: dict[str, Any] = {}
+    direct_classifier_leakage: dict[str, float | None] = {}
+    if train_oracle_support is not None and trained_support_values is not None:
+        for row_role, predictor_family, feature_mode, target_mode in direct_classifier_specs:
+            support, classifier_leakage_delta = _train_hidden_support_classifier(
+                train_hidden=train_hidden,
+                train_inputs=train_inputs,
+                train_oracle_support=train_oracle_support,
+                holdout_hidden=holdout_hidden,
+                holdout_inputs=holdout_inputs,
+                support_width=support_width,
+                num_columns=num_support_columns,
+                feature_mode=feature_mode,
+                target_mode=target_mode,
+                training_steps=training_steps,
+                learning_rate=learning_rate,
+                seed=seed + 720 + len(direct_classifier_supports),
+                torch=torch,
+                nn=nn,
+                F=F,
+            )
+            direct_classifier_supports[row_role] = support
+            direct_classifier_leakage[row_role] = classifier_leakage_delta
+        if train_oracle_support is not None:
+            flat_train_supports = train_oracle_support.reshape(-1, support_width)
+            support_counts: dict[tuple[int, ...], int] = {}
+            for item in flat_train_supports:
+                key = tuple(sorted(int(value.detach().item()) for value in item))
+                support_counts[key] = support_counts.get(key, 0) + 1
+            modal_support = min(support_counts, key=lambda key: (-support_counts[key], key))
+            direct_classifier_supports["oracle_overlap_global_frequency_null"] = torch.tensor(
+                modal_support,
+                dtype=torch.long,
+                device=holdout_hidden.device,
+            ).view(1, 1, support_width).expand(
+                int(holdout_hidden.shape[0]), int(holdout_hidden.shape[1]), support_width
+            )
+            direct_classifier_leakage["oracle_overlap_global_frequency_null"] = None
     train_oracle_value_target = _support_value_target_from_support(
         support=train_oracle_support,
         trained_support_values=trained_support_values,
@@ -8613,6 +8833,48 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         and value_aware_leakage_delta is not None
         and value_aware_leakage_delta <= 1e-5
     )
+    direct_classifier_metrics: dict[str, dict[str, Any]] = {}
+    for row_role, support in direct_classifier_supports.items():
+        ce, churn = _support_intervention_ce_from_support_tensor(
+            hidden=holdout_hidden,
+            support=support,
+            targets=holdout_targets,
+            decode=decode,
+            trained_support_values=trained_support_values,
+            torch=torch,
+            F=F,
+        )
+        direct_classifier_metrics[row_role] = {
+            "support_intervention_ce": ce,
+            "support_churn": churn,
+            "support_overlap_with_oracle": _support_overlap(support, oracle_support),
+            "support_exact_match_with_oracle": _support_exact_match(support, oracle_support),
+            "future_perturbation_max_prefix_delta": direct_classifier_leakage.get(row_role),
+        }
+    direct_primary = direct_classifier_metrics.get(
+        "oracle_overlap_hidden_transformer_support_classifier", {}
+    )
+    direct_token_position = direct_classifier_metrics.get(
+        "oracle_overlap_token_position_transformer_null", {}
+    )
+    direct_shuffled = direct_classifier_metrics.get("oracle_overlap_shuffled_target_null", {})
+    direct_delayed = direct_classifier_metrics.get("oracle_overlap_delayed_target_null", {})
+    direct_frequency = direct_classifier_metrics.get("oracle_overlap_global_frequency_null", {})
+    direct_primary_ce = direct_primary.get("support_intervention_ce")
+    direct_classifier_gate_pass = (
+        bool(trained_value_assay_available)
+        and direct_primary_ce is not None
+        and direct_primary_ce <= token_position_ce
+        and direct_primary_ce <= (direct_shuffled.get("support_intervention_ce") or float("inf"))
+        and direct_primary_ce <= (direct_delayed.get("support_intervention_ce") or float("inf"))
+        and direct_primary_ce <= (direct_frequency.get("support_intervention_ce") or float("inf"))
+        and direct_primary_ce <= primary_ce
+        and direct_primary.get("support_overlap_with_oracle", 0.0) >= direct_token_position.get(
+            "support_overlap_with_oracle", 1.0
+        )
+        and direct_primary.get("future_perturbation_max_prefix_delta") is not None
+        and direct_primary["future_perturbation_max_prefix_delta"] <= 1e-5
+    )
     gates_pass = (
         leakage_delta <= 1e-5
         and primary_mse < token_position_mse
@@ -8626,13 +8888,15 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         else (
             "replace_support_intervention_assay_with_trained_same_student_residual_values"
             if not trained_value_assay_available
+            else "repeat_hidden_support_classifier_transformer_acsr_null_gate_locally"
+            if direct_classifier_gate_pass
             else "repeat_value_aware_transformer_acsr_cpu_smoke_across_seeds_before_gpu"
             if value_aware_gate_pass
             else "close_or_redesign_value_aware_transformer_acsr_support_router_locally"
             if value_aware_ce is not None
             else "train_value_aware_transformer_acsr_support_router"
             if not support_assay_valid or not primary_beats_token_position_support
-            else "tighten_transformer_acsr_pilot_against_null_controls_before_gpu"
+            else "tighten_hidden_support_classifier_against_null_controls_before_gpu"
         )
     )
     primary_oracle_overlap = _support_overlap(primary_support, oracle_support)
@@ -8693,6 +8957,36 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         "value_aware_beats_token_position_support_ce": value_aware_beats_token_position_support,
         "value_aware_beats_primary_support_ce": value_aware_beats_primary_support,
         "value_aware_gate_passes": value_aware_gate_pass,
+        "direct_hidden_support_classifier_ce": direct_primary_ce,
+        "direct_hidden_support_classifier_churn": direct_primary.get("support_churn"),
+        "direct_hidden_support_classifier_overlap_with_oracle": direct_primary.get(
+            "support_overlap_with_oracle"
+        ),
+        "direct_hidden_support_classifier_exact_match_with_oracle": direct_primary.get(
+            "support_exact_match_with_oracle"
+        ),
+        "direct_hidden_support_classifier_future_perturbation_max_prefix_delta": direct_primary.get(
+            "future_perturbation_max_prefix_delta"
+        ),
+        "direct_hidden_support_classifier_ce_gain_vs_token_position_null": (
+            direct_token_position.get("support_intervention_ce") - direct_primary_ce
+            if direct_primary_ce is not None
+            and direct_token_position.get("support_intervention_ce") is not None
+            else None
+        ),
+        "direct_hidden_support_classifier_ce_gain_vs_shuffled_null": (
+            direct_shuffled.get("support_intervention_ce") - direct_primary_ce
+            if direct_primary_ce is not None
+            and direct_shuffled.get("support_intervention_ce") is not None
+            else None
+        ),
+        "direct_hidden_support_classifier_ce_gain_vs_frequency_null": (
+            direct_frequency.get("support_intervention_ce") - direct_primary_ce
+            if direct_primary_ce is not None
+            and direct_frequency.get("support_intervention_ce") is not None
+            else None
+        ),
+        "direct_hidden_support_classifier_gate_passes": direct_classifier_gate_pass,
         "requires_gpu_now": False,
         "promotion_allowed": False,
         "advance_to_gpu_validation": False,
@@ -8794,6 +9088,82 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
             "interpretation": "Evaluator-only same-student support ceiling; not deployable evidence.",
         },
     ]
+    for row_role, predictor_family, _, target_mode in direct_classifier_specs:
+        metrics = direct_classifier_metrics.get(row_role, {})
+        rows.append(
+            {
+                **common,
+                "row_role": row_role,
+                "predictor_family": predictor_family,
+                "target_alignment": (
+                    "train_split_same_student_oracle_support"
+                    if target_mode == "oracle"
+                    else f"{target_mode}_train_split_same_student_oracle_support"
+                ),
+                "target_mse": None,
+                "target_cosine": None,
+                "support_intervention_ce": metrics.get("support_intervention_ce"),
+                "support_churn": metrics.get("support_churn"),
+                "support_overlap_with_oracle": metrics.get("support_overlap_with_oracle"),
+                "support_exact_match_with_oracle": metrics.get("support_exact_match_with_oracle"),
+                "future_perturbation_max_prefix_delta": metrics.get(
+                    "future_perturbation_max_prefix_delta"
+                ),
+                "uses_hidden_features": row_role
+                != "oracle_overlap_token_position_transformer_null",
+                "uses_token_position_features": row_role
+                == "oracle_overlap_token_position_transformer_null",
+                "uses_target_token_as_predictor_feature": False,
+                "uses_oracle_loss_as_predictor_feature": False,
+                "oracle_targets_enter_auxiliary_training": True,
+                "deployable_training_evidence": False,
+                "beats_token_position_mse": False,
+                "beats_shuffled_target_mse": False,
+                "beats_mlp_mse": False,
+                "primary_beats_token_position_support_ce": row_role
+                == "oracle_overlap_hidden_transformer_support_classifier"
+                and direct_classifier_gate_pass,
+                "pilot_gates_pass": row_role
+                == "oracle_overlap_hidden_transformer_support_classifier"
+                and direct_classifier_gate_pass,
+                "selected_next_experiment": (
+                    selected_next_experiment
+                    if row_role == "oracle_overlap_hidden_transformer_support_classifier"
+                    else ""
+                ),
+                "interpretation": (
+                    "Hidden-feature same-student support-intervention Transformer-ACSR pregate row. "
+                    "Oracle support labels are train-split teachers only; heldout evaluation swaps hard "
+                    "supports into the same trained residual values and remains local/fail-closed."
+                ),
+            }
+        )
+    if "oracle_overlap_global_frequency_null" in direct_classifier_metrics:
+        metrics = direct_classifier_metrics["oracle_overlap_global_frequency_null"]
+        rows.append(
+            {
+                **common,
+                "row_role": "oracle_overlap_global_frequency_null",
+                "predictor_family": "global_train_oracle_support_frequency",
+                "target_alignment": "train_split_same_student_oracle_support_frequency",
+                "target_mse": None,
+                "target_cosine": None,
+                "support_intervention_ce": metrics.get("support_intervention_ce"),
+                "support_churn": metrics.get("support_churn"),
+                "support_overlap_with_oracle": metrics.get("support_overlap_with_oracle"),
+                "support_exact_match_with_oracle": metrics.get("support_exact_match_with_oracle"),
+                "future_perturbation_max_prefix_delta": None,
+                "uses_hidden_features": False,
+                "uses_token_position_features": False,
+                "uses_target_token_as_predictor_feature": False,
+                "uses_oracle_loss_as_predictor_feature": False,
+                "oracle_targets_enter_auxiliary_training": True,
+                "deployable_training_evidence": False,
+                "pilot_gates_pass": False,
+                "selected_next_experiment": "",
+                "interpretation": "Frequency null for the direct hidden support classifier.",
+            }
+        )
     for row in rows:
         row["row_count"] = len(rows)
     return rows
@@ -8849,6 +9219,31 @@ def _transformer_acsr_cpu_smoke_pilot_summary(rows: list[dict[str, Any]]) -> dic
             primary.get("value_aware_beats_primary_support_ce") is True
         ),
         "value_aware_gate_passes": primary.get("value_aware_gate_passes") is True,
+        "direct_hidden_support_classifier_ce": primary.get("direct_hidden_support_classifier_ce"),
+        "direct_hidden_support_classifier_churn": primary.get(
+            "direct_hidden_support_classifier_churn"
+        ),
+        "direct_hidden_support_classifier_overlap_with_oracle": primary.get(
+            "direct_hidden_support_classifier_overlap_with_oracle"
+        ),
+        "direct_hidden_support_classifier_exact_match_with_oracle": primary.get(
+            "direct_hidden_support_classifier_exact_match_with_oracle"
+        ),
+        "direct_hidden_support_classifier_future_perturbation_max_prefix_delta": primary.get(
+            "direct_hidden_support_classifier_future_perturbation_max_prefix_delta"
+        ),
+        "direct_hidden_support_classifier_ce_gain_vs_token_position_null": primary.get(
+            "direct_hidden_support_classifier_ce_gain_vs_token_position_null"
+        ),
+        "direct_hidden_support_classifier_ce_gain_vs_shuffled_null": primary.get(
+            "direct_hidden_support_classifier_ce_gain_vs_shuffled_null"
+        ),
+        "direct_hidden_support_classifier_ce_gain_vs_frequency_null": primary.get(
+            "direct_hidden_support_classifier_ce_gain_vs_frequency_null"
+        ),
+        "direct_hidden_support_classifier_gate_passes": (
+            primary.get("direct_hidden_support_classifier_gate_passes") is True
+        ),
         "future_perturbation_max_prefix_delta": primary.get("future_perturbation_max_prefix_delta"),
         "leakage_gate_passes": primary.get("leakage_gate_passes") is True,
         "beats_token_position_mse": primary.get("beats_token_position_mse") is True,

@@ -462,7 +462,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 "current_hidden",
                 summary["transformer_acsr_design_primary_result"]["causal_input_tensors"],
             )
-            self.assertEqual(summary["transformer_acsr_cpu_smoke_pilot_row_count"], 6)
+            self.assertEqual(summary["transformer_acsr_cpu_smoke_pilot_row_count"], 11)
             self.assertIsNotNone(summary["transformer_acsr_cpu_smoke_pilot_primary_result"])
             self.assertEqual(
                 summary["transformer_acsr_cpu_smoke_pilot_primary_result"]["row_count"],
@@ -1252,7 +1252,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
 
             with (out_dir / "transformer_acsr_cpu_smoke_pilot.csv").open(newline="", encoding="utf-8") as handle:
                 transformer_pilot_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(transformer_pilot_rows), 6)
+            self.assertEqual(len(transformer_pilot_rows), 11)
             pilot_by_role = {row["row_role"]: row for row in transformer_pilot_rows}
             self.assertEqual(
                 set(pilot_by_role),
@@ -1263,6 +1263,11 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                     "shuffled_target_null",
                     "mlp_predictor_control",
                     "same_student_oracle_support_ceiling",
+                    "oracle_overlap_hidden_transformer_support_classifier",
+                    "oracle_overlap_token_position_transformer_null",
+                    "oracle_overlap_shuffled_target_null",
+                    "oracle_overlap_delayed_target_null",
+                    "oracle_overlap_global_frequency_null",
                 },
             )
             primary_pilot = pilot_by_role["primary_transformer_acsr_cpu_smoke_pilot"]
@@ -1293,6 +1298,15 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 "value_aware_beats_token_position_support_ce",
                 "value_aware_beats_primary_support_ce",
                 "value_aware_gate_passes",
+                "direct_hidden_support_classifier_ce",
+                "direct_hidden_support_classifier_churn",
+                "direct_hidden_support_classifier_overlap_with_oracle",
+                "direct_hidden_support_classifier_exact_match_with_oracle",
+                "direct_hidden_support_classifier_future_perturbation_max_prefix_delta",
+                "direct_hidden_support_classifier_ce_gain_vs_token_position_null",
+                "direct_hidden_support_classifier_ce_gain_vs_shuffled_null",
+                "direct_hidden_support_classifier_ce_gain_vs_frequency_null",
+                "direct_hidden_support_classifier_gate_passes",
                 "future_perturbation_max_prefix_delta",
                 "leakage_gate_passes",
                 "beats_token_position_mse",
@@ -1326,6 +1340,8 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                     "tighten_transformer_acsr_pilot_against_null_controls_before_gpu",
                     "replace_support_intervention_assay_with_trained_same_student_residual_values",
                     "close_or_redesign_value_aware_transformer_acsr_support_router_locally",
+                    "repeat_hidden_support_classifier_transformer_acsr_null_gate_locally",
+                    "tighten_hidden_support_classifier_against_null_controls_before_gpu",
                 },
             )
             value_aware_pilot = pilot_by_role["value_aware_transformer_support_router"]
@@ -1334,6 +1350,21 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 value_aware_pilot["target_alignment"],
                 "oracle_same_student_support_value_residual",
             )
+            direct_pilot = pilot_by_role["oracle_overlap_hidden_transformer_support_classifier"]
+            self.assertEqual(
+                direct_pilot["predictor_family"],
+                "causal_transformer_hidden_support_classifier",
+            )
+            self.assertEqual(
+                direct_pilot["target_alignment"],
+                "train_split_same_student_oracle_support",
+            )
+            self.assertEqual(direct_pilot["uses_hidden_features"], "True")
+            self.assertEqual(direct_pilot["uses_target_token_as_predictor_feature"], "False")
+            self.assertEqual(direct_pilot["uses_oracle_loss_as_predictor_feature"], "False")
+            self.assertEqual(direct_pilot["deployable_training_evidence"], "False")
+            self.assertIn("support_overlap_with_oracle", direct_pilot)
+            self.assertIn("support_exact_match_with_oracle", direct_pilot)
             self.assertEqual(value_aware_pilot["requires_gpu_now"], "False")
             self.assertEqual(value_aware_pilot["promotion_allowed"], "False")
             self.assertEqual(value_aware_pilot["advance_to_gpu_validation"], "False")
