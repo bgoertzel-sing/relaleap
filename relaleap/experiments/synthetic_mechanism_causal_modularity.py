@@ -54,6 +54,7 @@ REQUIRED_ARTIFACTS = (
     "pc_decoder_adjoint_minimal_retrain_probe.csv",
     "pc_decoder_adjoint_closeout.csv",
     "pc_amortized_error_pregate_design.csv",
+    "pc_amortized_error_pregate.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -87,6 +88,7 @@ class _SyntheticArmSpec:
     gate_l1_weight: float = 0.0
     pc_inference_steps: int = 0
     pc_error_prediction_weight: float = 0.0
+    pc_error_target_mode: str = "decoder_embedding_delta"
 
 
 def run_synthetic_mechanism_causal_modularity(
@@ -427,6 +429,16 @@ def run_synthetic_mechanism_causal_modularity(
             if training_smoke is not None
             else None
         ),
+        "pc_amortized_error_pregate_row_count": (
+            len(training_smoke["pc_amortized_error_pregate"]) if training_smoke is not None else 0
+        ),
+        "pc_amortized_error_pregate_primary_result": (
+            _pc_amortized_error_pregate_summary(
+                training_smoke["pc_amortized_error_pregate"]
+            )
+            if training_smoke is not None
+            else None
+        ),
         "per_token_metric_row_count": (
             len(training_smoke["per_token_metrics"]) if training_smoke is not None else 0
         ),
@@ -652,8 +664,11 @@ def _run_training_smoke(
             if spec.pc_error_prediction_weight > 0.0 and hasattr(adapter, "residual_error_prediction_loss"):
                 loss = loss + spec.pc_error_prediction_weight * adapter.residual_error_prediction_loss(
                     train_hidden,
+                    train_inputs,
                     train_targets,
                     base.lm_head.weight,
+                    decode=base.decode,
+                    target_mode=spec.pc_error_target_mode,
                     shuffle_targets=spec.shuffled_teacher_null,
                     F=F,
                 )
@@ -736,6 +751,7 @@ def _run_training_smoke(
                 "residual_norm_clipped": spec.residual_norm_clip > 0.0,
                 "pc_inference_steps": spec.pc_inference_steps,
                 "pc_error_prediction_weight": spec.pc_error_prediction_weight,
+                "pc_error_target_mode": spec.pc_error_target_mode,
                 "core_parameter_drift_l2": (
                     adapter.core_parameter_drift_l2(core_reference)
                     if hasattr(adapter, "core_parameter_drift_l2")
@@ -763,7 +779,12 @@ def _run_training_smoke(
                 torch=torch,
             )
         )
-        if spec.family in {"sparse", "core_periphery_sparse", "pc_core_periphery_sparse"} and spec.support_mode == "learned" and spec.top_k == 2:
+        if spec.family in {
+            "sparse",
+            "core_periphery_sparse",
+            "pc_core_periphery_sparse",
+            "pc_amortized_sparse",
+        } and spec.support_mode == "learned" and spec.top_k == 2:
             train_oracle_rows = _oracle_support_sparse_topk2_rows(
                 arm=spec.name,
                 split="train",
@@ -969,6 +990,13 @@ def _run_training_smoke(
         closeout_rows=pc_decoder_adjoint_closeout,
         arm_metrics=arm_metrics,
     )
+    pc_amortized_error_pregate = _pc_amortized_error_pregate_rows(
+        design_rows=pc_amortized_error_pregate_design,
+        arm_metrics=arm_metrics,
+        residual_budget_rows=residual_budget_accounting,
+        commutator_rows=commutator_rows,
+        forgetting_rows=forgetting_rows,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -996,6 +1024,7 @@ def _run_training_smoke(
         "pc_decoder_adjoint_minimal_retrain_probe": pc_decoder_adjoint_minimal_retrain_probe,
         "pc_decoder_adjoint_closeout": pc_decoder_adjoint_closeout,
         "pc_amortized_error_pregate_design": pc_amortized_error_pregate_design,
+        "pc_amortized_error_pregate": pc_amortized_error_pregate,
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": residual_budget_accounting,
@@ -1321,6 +1350,95 @@ def _synthetic_arm_specs(
             pc_error_prediction_weight=0.05,
         ),
         _SyntheticArmSpec(
+            "pc_amortized_multisite_error_topk2",
+            "pc_amortized_sparse",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            anchor_kl_weight=0.02,
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="pc_amortized_label_free_multisite_pregate",
+            value_head_variant="pc_amortized_multisite_error",
+            core_rank=max(1, core_rank),
+            periphery_rank=max(1, periphery_rank),
+            core_lr_scale=0.10,
+            core_drift_penalty_weight=0.15,
+            periphery_l1_weight=1e-4,
+            residual_norm_clip=0.050,
+            gate_l1_weight=1e-4,
+            pc_inference_steps=2,
+            pc_error_prediction_weight=0.06,
+            pc_error_target_mode="decoder_adjoint",
+        ),
+        _SyntheticArmSpec(
+            "pc_amortized_shuffled_error_null_topk2",
+            "pc_amortized_null",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            anchor_kl_weight=0.02,
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="pc_amortized_shuffled_error_target_null",
+            value_head_variant="pc_amortized_multisite_error",
+            core_rank=max(1, core_rank),
+            periphery_rank=max(1, periphery_rank),
+            core_lr_scale=0.10,
+            core_drift_penalty_weight=0.15,
+            periphery_l1_weight=1e-4,
+            residual_norm_clip=0.050,
+            gate_l1_weight=1e-4,
+            pc_inference_steps=2,
+            pc_error_prediction_weight=0.06,
+            pc_error_target_mode="decoder_adjoint_shuffled",
+        ),
+        _SyntheticArmSpec(
+            "pc_amortized_sign_flipped_error_null_topk2",
+            "pc_amortized_null",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            anchor_kl_weight=0.02,
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="pc_amortized_sign_flipped_error_target_null",
+            value_head_variant="pc_amortized_multisite_error",
+            core_rank=max(1, core_rank),
+            periphery_rank=max(1, periphery_rank),
+            core_lr_scale=0.10,
+            core_drift_penalty_weight=0.15,
+            periphery_l1_weight=1e-4,
+            residual_norm_clip=0.050,
+            gate_l1_weight=1e-4,
+            pc_inference_steps=2,
+            pc_error_prediction_weight=0.06,
+            pc_error_target_mode="decoder_adjoint_sign_flipped",
+        ),
+        _SyntheticArmSpec(
+            "pc_amortized_token_position_error_null_topk2",
+            "pc_amortized_null",
+            support_width,
+            num_columns,
+            atoms_per_column,
+            "contextual_mlp",
+            support_mode="token_position",
+            anchor_kl_weight=0.02,
+            stored_parameter_floor=sparse_stored_parameter_floor,
+            control_budget_role="pc_amortized_token_position_error_predictor_null",
+            value_head_variant="pc_amortized_multisite_error",
+            core_rank=max(1, core_rank),
+            periphery_rank=max(1, periphery_rank),
+            core_lr_scale=0.10,
+            core_drift_penalty_weight=0.15,
+            periphery_l1_weight=1e-4,
+            residual_norm_clip=0.050,
+            gate_l1_weight=1e-4,
+            pc_inference_steps=2,
+            pc_error_prediction_weight=0.06,
+            pc_error_target_mode="token_position",
+        ),
+        _SyntheticArmSpec(
             "dense_rank_norm_matched",
             "dense_control",
             0,
@@ -1412,7 +1530,12 @@ def _build_synthetic_adapter(
         return _DenseLowRankAdapter(hidden_dim, max(1, spec.dense_rank), nn=nn)
     if spec.family == "mlp_control":
         return _LowChurnMLPAdapter(hidden_dim, max(2, spec.dense_rank * 2), nn=nn)
-    if spec.family in {"pc_core_periphery_sparse", "pc_core_periphery_null"}:
+    if spec.family in {
+        "pc_core_periphery_sparse",
+        "pc_core_periphery_null",
+        "pc_amortized_sparse",
+        "pc_amortized_null",
+    }:
         return _PCCorePeripheryResidualInferenceAdapter(
             hidden_dim=hidden_dim,
             num_columns=spec.num_columns,
@@ -1774,25 +1897,65 @@ class _PCCorePeripheryResidualInferenceAdapter(_CorePeripherySparseAdapter):
     def residual_error_prediction_loss(
         self,
         hidden: Any,
+        inputs: Any,
         targets: Any,
         decoder_weight: Any,
         *,
+        decode: Any,
+        target_mode: str,
         shuffle_targets: bool,
         F: Any,
     ) -> Any:
         import torch
 
         residual, _ = self._residual(hidden)
-        target_vectors = decoder_weight.index_select(0, targets.reshape(-1)).reshape(
-            targets.shape[0],
-            targets.shape[1],
-            -1,
-        )
-        if shuffle_targets:
-            flat = target_vectors.reshape(-1, target_vectors.shape[-1])
+        if target_mode.startswith("decoder_adjoint"):
+            target_error = _decoder_adjoint_hidden_ce_error(
+                hidden,
+                targets,
+                decoder_weight,
+                decode=decode,
+                F=F,
+                normalize=True,
+            )
+        elif target_mode == "token_position":
+            token_vectors = decoder_weight.index_select(0, inputs.reshape(-1)).reshape(
+                inputs.shape[0],
+                inputs.shape[1],
+                -1,
+            )
+            seq_len = int(inputs.shape[1])
+            if seq_len <= 1:
+                position_scale = torch.zeros(
+                    inputs.shape[0],
+                    seq_len,
+                    1,
+                    dtype=hidden.dtype,
+                    device=hidden.device,
+                )
+            else:
+                position_scale = torch.linspace(
+                    -1.0,
+                    1.0,
+                    seq_len,
+                    dtype=hidden.dtype,
+                    device=hidden.device,
+                ).view(1, seq_len, 1).expand(inputs.shape[0], seq_len, 1)
+            target_error = F.layer_norm(token_vectors - hidden, (hidden.shape[-1],)) * position_scale
+        else:
+            target_vectors = decoder_weight.index_select(0, targets.reshape(-1)).reshape(
+                targets.shape[0],
+                targets.shape[1],
+                -1,
+            )
+            target_error = F.layer_norm(target_vectors - hidden, (hidden.shape[-1],))
+        if shuffle_targets or target_mode.endswith("_shuffled"):
+            flat = target_error.reshape(-1, target_error.shape[-1])
             order = torch.arange(flat.shape[0] - 1, -1, -1, device=flat.device)
-            target_vectors = flat.index_select(0, order).reshape_as(target_vectors)
-        target_error = self.layer_norm(target_vectors - hidden).detach()
+            target_error = flat.index_select(0, order).reshape_as(target_error)
+        if target_mode.endswith("_sign_flipped"):
+            target_error = -target_error
+        target_error = target_error.detach()
         return F.mse_loss(residual, target_error)
 
 
@@ -1906,6 +2069,8 @@ def _synthetic_support(
         "core_periphery_control",
         "pc_core_periphery_sparse",
         "pc_core_periphery_null",
+        "pc_amortized_sparse",
+        "pc_amortized_null",
     }:
         return None
     batch, seq_len = int(hidden.shape[0]), int(hidden.shape[1])
@@ -4072,6 +4237,12 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("pc_amortized_error_pregate"):
+        summary = _pc_amortized_error_pregate_summary(
+            training_smoke["pc_amortized_error_pregate"]
+        )
+        if summary.get("selected_next_experiment"):
+            return str(summary["selected_next_experiment"]).replace("_", " ")
     if training_smoke.get("pc_amortized_error_pregate_design"):
         summary = _pc_amortized_error_pregate_design_summary(
             training_smoke["pc_amortized_error_pregate_design"]
@@ -7006,6 +7177,230 @@ def _pc_amortized_error_pregate_design_summary(rows: list[dict[str, Any]]) -> di
     }
 
 
+def _pc_amortized_error_pregate_rows(
+    *,
+    design_rows: list[dict[str, Any]],
+    arm_metrics: list[dict[str, Any]],
+    residual_budget_rows: list[dict[str, Any]],
+    commutator_rows: list[dict[str, Any]],
+    forgetting_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    design_summary = _pc_amortized_error_pregate_design_summary(design_rows)
+    if design_summary.get("selected_next_experiment") != "implement_local_tiny_label_free_amortized_multi_site_pc_pregate":
+        return []
+    by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
+    budget_by_arm = {str(row.get("arm", "")): row for row in residual_budget_rows}
+    primary = by_arm.get("pc_amortized_multisite_error_topk2")
+    reference = by_arm.get("promoted_contextual_topk2")
+    flat = by_arm.get("pc_same_router_flat_mlp_control_topk2")
+    dense = by_arm.get("dense_rank_norm_matched")
+    shuffled = by_arm.get("pc_amortized_shuffled_error_null_topk2")
+    sign_flipped = by_arm.get("pc_amortized_sign_flipped_error_null_topk2")
+    token_position = by_arm.get("pc_amortized_token_position_error_null_topk2")
+    stored = _best_ce_row(
+        [row for row in arm_metrics if row.get("control_budget_role") == "stored_parameter_matched_dense_mlp_upper_bound"]
+    )
+    if primary is None or reference is None:
+        return []
+
+    reference_ce = _metric_float(reference.get("holdout_ce"))
+    primary_ce = _metric_float(primary.get("holdout_ce"))
+    flat_ce = _metric_float(flat.get("holdout_ce")) if flat else None
+    dense_ce = _metric_float(dense.get("holdout_ce")) if dense else None
+    shuffled_ce = _metric_float(shuffled.get("holdout_ce")) if shuffled else None
+    sign_flipped_ce = _metric_float(sign_flipped.get("holdout_ce")) if sign_flipped else None
+    token_position_ce = _metric_float(token_position.get("holdout_ce")) if token_position else None
+    stored_ce = _metric_float(stored.get("holdout_ce")) if stored else None
+    stored_gap = _positive_gap(reference_ce, stored_ce)
+    ce_gain = _delta_value(reference_ce, primary_ce)
+    stored_gap_closed = _safe_ratio(ce_gain, stored_gap)
+    flat_margin = _delta_value(primary_ce, flat_ce)
+    dense_margin = _delta_value(primary_ce, dense_ce)
+    shuffled_margin = _delta_value(primary_ce, shuffled_ce)
+    sign_flipped_margin = _delta_value(primary_ce, sign_flipped_ce)
+    token_position_margin = _delta_value(primary_ce, token_position_ce)
+    reference_norm = _metric_float(reference.get("residual_l2"))
+    primary_norm = _metric_float(primary.get("residual_l2"))
+    reference_commutator = _mean_metric(commutator_rows, ["promoted_contextual_topk2"], "finite_update_commutator_l2")
+    primary_commutator = _mean_metric(commutator_rows, ["pc_amortized_multisite_error_topk2"], "finite_update_commutator_l2")
+    reference_churn = _mean_abs_metric(forgetting_rows, ["promoted_contextual_topk2"], "functional_churn")
+    primary_churn = _mean_abs_metric(forgetting_rows, ["pc_amortized_multisite_error_topk2"], "functional_churn")
+
+    signal_ok = bool(
+        (ce_gain is not None and ce_gain >= 0.02)
+        or (stored_gap_closed is not None and stored_gap_closed >= 0.05)
+    )
+    flat_control_ok = bool(flat_margin is None or flat_margin <= 0.01)
+    dense_control_ok = bool(dense_margin is None or dense_margin <= 0.01)
+    shuffled_ok = bool(shuffled_margin is not None and shuffled_margin <= -0.005)
+    sign_flipped_ok = bool(sign_flipped_margin is not None and sign_flipped_margin <= -0.005)
+    token_position_ok = bool(token_position_margin is not None and token_position_margin <= -0.005)
+    norm_ok = bool(
+        primary_norm is not None
+        and reference_norm is not None
+        and primary_norm <= reference_norm * 1.05
+    )
+    commutator_ok = bool(
+        primary_commutator is not None
+        and reference_commutator is not None
+        and primary_commutator <= reference_commutator * 1.10
+    )
+    churn_ok = bool(
+        primary_churn is not None
+        and reference_churn is not None
+        and primary_churn <= reference_churn * 1.10
+    )
+    pregate_passes = bool(
+        signal_ok
+        and flat_control_ok
+        and dense_control_ok
+        and shuffled_ok
+        and sign_flipped_ok
+        and token_position_ok
+        and norm_ok
+        and commutator_ok
+        and churn_ok
+    )
+
+    failures = []
+    if not signal_ok:
+        failures.append("no_ce_or_stored_gap_signal")
+    if not flat_control_ok:
+        failures.append("same_router_flat_control_stronger")
+    if not dense_control_ok:
+        failures.append("dense_rank_norm_control_stronger")
+    if not shuffled_ok:
+        failures.append("shuffled_error_target_null_competitive")
+    if not sign_flipped_ok:
+        failures.append("sign_flipped_error_target_null_competitive")
+    if not token_position_ok:
+        failures.append("token_position_error_predictor_null_competitive")
+    if not norm_ok:
+        failures.append("residual_norm_budget_failed")
+    if not commutator_ok:
+        failures.append("finite_update_commutator_budget_failed")
+    if not churn_ok:
+        failures.append("functional_churn_budget_failed")
+
+    rows: list[dict[str, Any]] = []
+    for role, arm, family, selected in (
+        ("primary_label_free_amortized_multisite_pc", "pc_amortized_multisite_error_topk2", "pc_amortized_sparse", True),
+        ("same_router_flat_control", "pc_same_router_flat_mlp_control_topk2", "flat_same_router_control", False),
+        ("dense_rank_norm_control", "dense_rank_norm_matched", "dense_rank_norm_control", False),
+        ("shuffled_error_target_null", "pc_amortized_shuffled_error_null_topk2", "target_null", False),
+        ("sign_flipped_error_target_null", "pc_amortized_sign_flipped_error_null_topk2", "target_null", False),
+        ("token_position_error_predictor_null", "pc_amortized_token_position_error_null_topk2", "target_null", False),
+        ("no_pc_promoted_sparse_reference", "promoted_contextual_topk2", "no_pc_reference", False),
+    ):
+        source = by_arm.get(arm, {})
+        source_ce = _metric_float(source.get("holdout_ce"))
+        source_commutator = _mean_metric(commutator_rows, [arm], "finite_update_commutator_l2")
+        source_churn = _mean_abs_metric(forgetting_rows, [arm], "functional_churn")
+        rows.append(
+            {
+                "pregate_name": "pc_amortized_error_pregate",
+                "pregate_role": role,
+                "arm": arm,
+                "control_family": family,
+                "selected": selected,
+                "implemented_in_current_packet": bool(source),
+                "label_free_eval": True,
+                "deploy_time_labels_required": False,
+                "training_target": source.get("pc_error_target_mode", ""),
+                "residual_update_sites": "2",
+                "proximal_norm_clamp": True,
+                "promoted_sparse_reference_ce": reference_ce,
+                "source_holdout_ce": source_ce,
+                "source_ce_minus_primary_ce": _delta_value(source_ce, primary_ce),
+                "source_ce_minus_reference_sparse_ce": _delta_value(source_ce, reference_ce),
+                "primary_holdout_ce": primary_ce,
+                "primary_ce_gain_vs_reference_sparse": ce_gain,
+                "stored_gap_closed_fraction": stored_gap_closed,
+                "primary_ce_minus_flat_control_ce": flat_margin,
+                "primary_ce_minus_dense_rank_norm_control_ce": dense_margin,
+                "primary_ce_minus_shuffled_error_null_ce": shuffled_margin,
+                "primary_ce_minus_sign_flipped_error_null_ce": sign_flipped_margin,
+                "primary_ce_minus_token_position_null_ce": token_position_margin,
+                "source_residual_l2": _metric_float(source.get("residual_l2")),
+                "source_flop_proxy_per_token": _metric_float(budget_by_arm.get(arm, {}).get("flop_proxy_per_token")),
+                "source_mean_commutator_l2": source_commutator,
+                "source_mean_abs_functional_churn": source_churn,
+                "primary_commutator_ratio_vs_reference_sparse": _safe_ratio(primary_commutator, reference_commutator),
+                "primary_churn_ratio_vs_reference_sparse": _safe_ratio(primary_churn, reference_churn),
+                "primary_pc_inference_steps": _metric_float(primary.get("pc_inference_steps")),
+                "primary_pc_error_prediction_weight": _metric_float(primary.get("pc_error_prediction_weight")),
+                "signal_gate_ok": signal_ok,
+                "flat_control_ok": flat_control_ok,
+                "dense_control_ok": dense_control_ok,
+                "shuffled_target_ok": shuffled_ok,
+                "sign_flipped_target_ok": sign_flipped_ok,
+                "token_position_null_ok": token_position_ok,
+                "norm_budget_ok": norm_ok,
+                "commutator_budget_ok": commutator_ok,
+                "functional_churn_budget_ok": churn_ok,
+                "pregate_passes": pregate_passes,
+                "failure_reasons": ";".join(failures),
+                "selected_next_experiment": (
+                    "repeat_label_free_amortized_multisite_pc_on_adjacent_seed"
+                    if pregate_passes
+                    else "close_or_redesign_label_free_amortized_multisite_pc_locally"
+                ),
+                "requires_gpu_now": False,
+                "promotion_allowed": False,
+                "advance_to_gpu_validation": False,
+                "strategic_change_level": "minor",
+                "notify_ben": False,
+                "mechanism_labels_used_for_scoring_only": True,
+                "interpretation": (
+                    "Local CPU pregate for the GPT-5.5-Pro-recommended label-free amortized multi-site PC branch. "
+                    "Training may use decoder-adjoint targets on train data, but holdout inference is label-free and "
+                    "the row remains blocked by flat/dense/null and interference gates before any GPU validation."
+                ),
+            }
+        )
+    return rows
+
+
+def _pc_amortized_error_pregate_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "selected_next_experiment": "",
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "notify_ben": False,
+            "strategic_change_level": "minor",
+        }
+    selected = next((row for row in rows if row.get("selected") is True), rows[0])
+    return {
+        "row_count": len(rows),
+        "primary_arm": selected.get("arm", ""),
+        "primary_holdout_ce": _metric_float(selected.get("primary_holdout_ce")),
+        "primary_ce_gain_vs_reference_sparse": _metric_float(selected.get("primary_ce_gain_vs_reference_sparse")),
+        "stored_gap_closed_fraction": _metric_float(selected.get("stored_gap_closed_fraction")),
+        "flat_control_ok": selected.get("flat_control_ok") is True,
+        "dense_control_ok": selected.get("dense_control_ok") is True,
+        "shuffled_target_ok": selected.get("shuffled_target_ok") is True,
+        "sign_flipped_target_ok": selected.get("sign_flipped_target_ok") is True,
+        "token_position_null_ok": selected.get("token_position_null_ok") is True,
+        "norm_budget_ok": selected.get("norm_budget_ok") is True,
+        "commutator_budget_ok": selected.get("commutator_budget_ok") is True,
+        "functional_churn_budget_ok": selected.get("functional_churn_budget_ok") is True,
+        "pregate_passes": selected.get("pregate_passes") is True,
+        "failure_reasons": selected.get("failure_reasons", ""),
+        "selected_next_experiment": selected.get("selected_next_experiment", ""),
+        "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
+        "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
+        "advance_to_gpu_validation": any(row.get("advance_to_gpu_validation") is True for row in rows),
+        "notify_ben": any(row.get("notify_ben") is True for row in rows),
+        "strategic_change_level": "major" if any(row.get("strategic_change_level") == "major" for row in rows) else "minor",
+        "interpretation": (
+            "Implemented local label-free amortized multi-site PC pregate with flat, dense, shuffled, "
+            "sign-flipped, token-position, and no-PC controls. GPU remains blocked unless the local gate passes."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -7142,6 +7537,10 @@ def _write_artifacts(
         out_dir / "pc_amortized_error_pregate_design.csv",
         [] if training_smoke is None else training_smoke["pc_amortized_error_pregate_design"],
     )
+    _write_csv(
+        out_dir / "pc_amortized_error_pregate.csv",
+        [] if training_smoke is None else training_smoke["pc_amortized_error_pregate"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -7188,6 +7587,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- PC decoder-adjoint minimal retrain probe rows: `{summary['pc_decoder_adjoint_minimal_retrain_probe_row_count']}`",
         f"- PC decoder-adjoint closeout rows: `{summary['pc_decoder_adjoint_closeout_row_count']}`",
         f"- PC amortized error pregate design rows: `{summary['pc_amortized_error_pregate_design_row_count']}`",
+        f"- PC amortized error pregate rows: `{summary['pc_amortized_error_pregate_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
