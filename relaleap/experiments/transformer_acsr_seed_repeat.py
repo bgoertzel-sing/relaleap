@@ -50,6 +50,12 @@ def _safe_regret_recovery(
     return (learned_regret - candidate_regret) / learned_regret
 
 
+def _gate_status(*, available: bool, passes: bool) -> str:
+    if not available:
+        return "missing"
+    return "pass" if passes else "fail"
+
+
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         path.write_text("", encoding="utf-8")
@@ -338,6 +344,51 @@ def run_transformer_acsr_seed_repeat(
         and hidden_classifier_learned_router_gate_passes
         and hidden_classifier_sequence_ood_budget_audit_available
     )
+    hidden_classifier_gpu_gate_required_fields = {
+        "robust_hidden_classifier_gate": _gate_status(
+            available=True, passes=robust_hidden_classifier_gate
+        ),
+        "oracle_overlap": _gate_status(
+            available=mean_hidden_classifier_overlap is not None,
+            passes=hidden_classifier_overlap_gate_passes,
+        ),
+        "weak_null_margins": _gate_status(
+            available=all(
+                value is not None
+                for value in (
+                    mean_hidden_classifier_gain_vs_token_position,
+                    mean_hidden_classifier_gain_vs_shuffled,
+                    mean_hidden_classifier_gain_vs_frequency,
+                )
+            ),
+            passes=hidden_classifier_null_margin_gate_passes,
+        ),
+        "learned_router_comparison": _gate_status(
+            available=hidden_classifier_learned_router_comparison_available,
+            passes=hidden_classifier_learned_router_gate_passes,
+        ),
+        "sequence_heldout": _gate_status(
+            available=hidden_classifier_learned_router_comparison_available,
+            passes=hidden_classifier_sequence_heldout_gate_passes,
+        ),
+        "rule_ood": _gate_status(
+            available=hidden_classifier_rule_ood_evidence_available,
+            passes=hidden_classifier_rule_ood_gate_passes,
+        ),
+        "churn_budget": _gate_status(
+            available=hidden_classifier_churn_budget_evidence_available,
+            passes=hidden_classifier_churn_budget_gate_passes,
+        ),
+        "commutator_budget": _gate_status(
+            available=hidden_classifier_commutator_budget_evidence_available,
+            passes=hidden_classifier_commutator_budget_gate_passes,
+        ),
+    }
+    hidden_classifier_gpu_gate_missing_or_failed_fields = [
+        name
+        for name, status in hidden_classifier_gpu_gate_required_fields.items()
+        if status != "pass"
+    ]
     advance_to_gpu_validation = bool(
         (robust_value_gate and overlap_gate_passes)
         or hidden_classifier_gpu_gate_passes
@@ -396,6 +447,10 @@ def run_transformer_acsr_seed_repeat(
         "hidden_classifier_commutator_budget_gate_passes": hidden_classifier_commutator_budget_gate_passes,
         "hidden_classifier_sequence_ood_budget_audit_available": hidden_classifier_sequence_ood_budget_audit_available,
         "hidden_classifier_gpu_gate_passes": hidden_classifier_gpu_gate_passes,
+        "hidden_classifier_gpu_gate_required_fields": hidden_classifier_gpu_gate_required_fields,
+        "hidden_classifier_gpu_gate_missing_or_failed_fields": (
+            hidden_classifier_gpu_gate_missing_or_failed_fields
+        ),
         "requires_gpu_now": False,
         "promotion_allowed": False,
         "advance_to_gpu_validation": advance_to_gpu_validation,
@@ -435,14 +490,23 @@ def run_transformer_acsr_seed_repeat(
         f"- Hidden support-classifier commutator budget evidence available: `{hidden_classifier_commutator_budget_evidence_available}`",
         f"- Hidden support-classifier commutator budget gate passes: `{hidden_classifier_commutator_budget_gate_passes}`",
         f"- Hidden support-classifier sequence/OOD budget audit available: `{hidden_classifier_sequence_ood_budget_audit_available}`",
+        (
+            "- Hidden support-classifier GPU gate required fields: "
+            f"`{json.dumps(hidden_classifier_gpu_gate_required_fields, sort_keys=True)}`"
+        ),
+        (
+            "- Hidden support-classifier GPU gate missing/failed fields: "
+            f"`{', '.join(hidden_classifier_gpu_gate_missing_or_failed_fields) or 'none'}`"
+        ),
         f"- Decision: `{summary['decision']}`",
         f"- Next step: `{selected_next_step}`",
         "",
         (
-            "GPU validation and promotion remain blocked unless the repeated local value-aware gate and oracle-overlap "
-            "gate pass. Hidden support-classifier evidence is pre-GPU only until it explicitly beats the learned "
-            "router or recovers at least 25% of router-oracle regret on heldout sequences, includes rule-OOD rows, "
-            "and emits nonworse residual-norm, functional-churn, and commutator budget rows."
+            "The legacy value-aware branch can advance only through the repeated local value-aware gate plus "
+            "oracle-overlap gate. The hidden support-classifier branch has a separate fail-closed GPU gate: weak-null "
+            "wins are not sufficient. It remains pre-GPU until it explicitly beats the learned router or recovers at "
+            "least 25% of router-oracle regret on heldout sequences, includes sequence and rule-OOD evidence, and "
+            "emits nonworse residual-norm, functional-churn, and commutator budget rows."
         ),
     ]
     (out_dir / "notes.md").write_text("\n".join(notes) + "\n", encoding="utf-8")

@@ -41,6 +41,32 @@ class TransformerACSRSeedRepeatTests(unittest.TestCase):
             self.assertFalse(summary["hidden_classifier_commutator_budget_gate_passes"])
             self.assertFalse(summary["hidden_classifier_sequence_ood_budget_audit_available"])
             self.assertFalse(summary["hidden_classifier_gpu_gate_passes"])
+            required_fields = summary["hidden_classifier_gpu_gate_required_fields"]
+            self.assertEqual(required_fields["learned_router_comparison"], "fail")
+            self.assertEqual(required_fields["sequence_heldout"], "fail")
+            self.assertEqual(required_fields["rule_ood"], "missing")
+            self.assertEqual(required_fields["churn_budget"], "missing")
+            self.assertEqual(required_fields["commutator_budget"], "missing")
+            self.assertIn(
+                "learned_router_comparison",
+                summary["hidden_classifier_gpu_gate_missing_or_failed_fields"],
+            )
+            self.assertIn(
+                "sequence_heldout",
+                summary["hidden_classifier_gpu_gate_missing_or_failed_fields"],
+            )
+            self.assertIn(
+                "rule_ood",
+                summary["hidden_classifier_gpu_gate_missing_or_failed_fields"],
+            )
+            self.assertIn(
+                "churn_budget",
+                summary["hidden_classifier_gpu_gate_missing_or_failed_fields"],
+            )
+            self.assertIn(
+                "commutator_budget",
+                summary["hidden_classifier_gpu_gate_missing_or_failed_fields"],
+            )
             self.assertFalse(summary["advance_to_gpu_validation"])
             self.assertEqual(summary["decision"], "transformer_acsr_seed_repeat_local_only_gpu_blocked")
             self.assertEqual(
@@ -83,7 +109,9 @@ class TransformerACSRSeedRepeatTests(unittest.TestCase):
             self.assertIn("churn budget gate passes: `False`", notes)
             self.assertIn("commutator budget evidence available: `False`", notes)
             self.assertIn("commutator budget gate passes: `False`", notes)
-            self.assertIn("Hidden support-classifier evidence is pre-GPU only", notes)
+            self.assertIn("GPU gate required fields", notes)
+            self.assertIn("GPU gate missing/failed fields", notes)
+            self.assertIn("hidden support-classifier branch has a separate fail-closed GPU gate", notes)
 
 
 if __name__ == "__main__":
