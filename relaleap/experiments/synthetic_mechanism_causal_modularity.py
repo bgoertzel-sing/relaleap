@@ -47,6 +47,7 @@ REQUIRED_ARTIFACTS = (
     "core_periphery_branch_closeout.csv",
     "sparse_value_redesign_selector.csv",
     "budget_normalized_gated_value_mixture_pregate.csv",
+    "budget_normalized_gated_value_mixture_closeout.csv",
     "pc_core_periphery_residual_inference_pregate.csv",
     "pc_residual_inference_mechanism_inspection.csv",
     "pc_error_target_inference_path_audit.csv",
@@ -356,6 +357,16 @@ def run_synthetic_mechanism_causal_modularity(
         "budget_normalized_gated_value_mixture_pregate_primary_result": (
             _budget_normalized_gated_value_mixture_pregate_summary(
                 training_smoke["budget_normalized_gated_value_mixture_pregate"]
+            )
+            if training_smoke is not None
+            else None
+        ),
+        "budget_normalized_gated_value_mixture_closeout_row_count": (
+            len(training_smoke["budget_normalized_gated_value_mixture_closeout"]) if training_smoke is not None else 0
+        ),
+        "budget_normalized_gated_value_mixture_closeout_primary_result": (
+            _budget_normalized_gated_value_mixture_closeout_summary(
+                training_smoke["budget_normalized_gated_value_mixture_closeout"]
             )
             if training_smoke is not None
             else None
@@ -943,6 +954,9 @@ def _run_training_smoke(
         commutator_rows=commutator_rows,
         forgetting_rows=forgetting_rows,
     )
+    budget_normalized_gated_value_mixture_closeout = _budget_normalized_gated_value_mixture_closeout_rows(
+        pregate_rows=budget_normalized_gated_value_mixture_pregate,
+    )
     pc_core_periphery_residual_inference_pregate = _pc_core_periphery_residual_inference_pregate_rows(
         gated_pregate_rows=budget_normalized_gated_value_mixture_pregate,
         arm_metrics=arm_metrics,
@@ -1031,6 +1045,7 @@ def _run_training_smoke(
         "core_periphery_branch_closeout": core_periphery_branch_closeout,
         "sparse_value_redesign_selector": sparse_value_redesign_selector,
         "budget_normalized_gated_value_mixture_pregate": budget_normalized_gated_value_mixture_pregate,
+        "budget_normalized_gated_value_mixture_closeout": budget_normalized_gated_value_mixture_closeout,
         "pc_core_periphery_residual_inference_pregate": pc_core_periphery_residual_inference_pregate,
         "pc_residual_inference_mechanism_inspection": pc_residual_inference_mechanism_inspection,
         "pc_error_target_inference_path_audit": pc_error_target_inference_path_audit,
@@ -4257,6 +4272,11 @@ def _selected_next_step(
             training_smoke["pc_amortized_error_pregate_closeout"]
         )
         if summary.get("selected_next_experiment"):
+            budget_closeout = _budget_normalized_gated_value_mixture_closeout_summary(
+                training_smoke.get("budget_normalized_gated_value_mixture_closeout", [])
+            )
+            if budget_closeout.get("branch_closed") and budget_closeout.get("selected_next_experiment"):
+                return str(budget_closeout["selected_next_experiment"]).replace("_", " ")
             return str(summary["selected_next_experiment"]).replace("_", " ")
     if training_smoke.get("pc_amortized_error_pregate"):
         summary = _pc_amortized_error_pregate_summary(
@@ -4325,6 +4345,11 @@ def _selected_next_step(
         summary = _budget_normalized_gated_value_mixture_pregate_summary(
             training_smoke["budget_normalized_gated_value_mixture_pregate"]
         )
+        closeout = _budget_normalized_gated_value_mixture_closeout_summary(
+            training_smoke.get("budget_normalized_gated_value_mixture_closeout", [])
+        )
+        if closeout.get("branch_closed") and closeout.get("selected_next_experiment"):
+            return str(closeout["selected_next_experiment"]).replace("_", " ")
         if summary.get("pregate_passes"):
             return (
                 "repeat the budget-normalized gated low-rank value-mixture pregate on one adjacent local seed "
@@ -5769,6 +5794,112 @@ def _budget_normalized_gated_value_mixture_pregate_summary(rows: list[dict[str, 
             "Fail-closed local pregate for the selected budget-normalized gated low-rank sparse value mixture. "
             "It records whether the new value mechanism has signal after flat-control and interference budgets; "
             "it never promotes or requests GPU by itself."
+        ),
+    }
+
+
+def _budget_normalized_gated_value_mixture_closeout_rows(
+    *,
+    pregate_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    summary = _budget_normalized_gated_value_mixture_pregate_summary(pregate_rows)
+    if summary.get("row_count", 0) <= 0:
+        return []
+    primary = next(
+        (
+            row
+            for row in pregate_rows
+            if row.get("pregate_role") == "primary_budget_normalized_gated_low_rank_value_mixture"
+        ),
+        pregate_rows[0],
+    )
+    pregate_passes = summary.get("pregate_passes") is True
+    closeout_status = "repeat_before_gpu_validation" if pregate_passes else "closed_non_improving_flat_control_blocked"
+    failure_reasons = []
+    if summary.get("signal_gate_ok") is not True:
+        failure_reasons.append("no_ce_or_stored_gap_signal")
+    if summary.get("flat_control_ok") is not True:
+        failure_reasons.append("same_router_flat_control_stronger")
+    if summary.get("norm_budget_ok") is not True:
+        failure_reasons.append("residual_norm_budget_failed")
+    if summary.get("commutator_budget_ok") is not True:
+        failure_reasons.append("finite_update_commutator_budget_failed")
+    if summary.get("functional_churn_budget_ok") is not True:
+        failure_reasons.append("functional_churn_budget_failed")
+    selected_next_experiment = (
+        "repeat_budget_normalized_gated_low_rank_value_mixture_on_adjacent_seed"
+        if pregate_passes
+        else "pivot_to_soft_mixture_low_churn_dense_modular_residual_design"
+    )
+    return [
+        {
+            "closeout_name": "budget_normalized_gated_value_mixture_closeout",
+            "closeout_status": closeout_status,
+            "source_primary_arm": summary.get("primary_arm", ""),
+            "source_pregate_passes": pregate_passes,
+            "source_primary_holdout_ce": summary.get("primary_holdout_ce"),
+            "source_ce_gain_vs_reference_sparse": summary.get("ce_gain_vs_reference_sparse"),
+            "source_stored_gap_closed_fraction": summary.get("stored_gap_closed_fraction"),
+            "source_ce_minus_flat_control_ce": summary.get("ce_minus_flat_control_ce"),
+            "source_mean_gate_value": summary.get("mean_gate_value"),
+            "signal_gate_ok": summary.get("signal_gate_ok") is True,
+            "flat_control_ok": summary.get("flat_control_ok") is True,
+            "norm_budget_ok": summary.get("norm_budget_ok") is True,
+            "commutator_budget_ok": summary.get("commutator_budget_ok") is True,
+            "functional_churn_budget_ok": summary.get("functional_churn_budget_ok") is True,
+            "interference_budgets_clear": bool(
+                summary.get("norm_budget_ok") is True
+                and summary.get("commutator_budget_ok") is True
+                and summary.get("functional_churn_budget_ok") is True
+            ),
+            "flat_and_signal_gates_clear": bool(
+                summary.get("signal_gate_ok") is True and summary.get("flat_control_ok") is True
+            ),
+            "branch_closed": not pregate_passes,
+            "selected_next_experiment": selected_next_experiment,
+            "source_failure_reasons": ";".join(failure_reasons),
+            "primary_row_reference_sparse_ce": primary.get("reference_sparse_ce"),
+            "primary_row_flat_control_ce": primary.get("flat_control_ce"),
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "advance_to_gpu_validation": False,
+            "mechanism_labels_used_for_scoring_only": True,
+            "interpretation": (
+                "Closeout row for the selected budget-normalized gated low-rank value-mixture pregate. "
+                "The branch stays local unless it has CE/stored-gap signal, does not lose to the flat "
+                "same-router value control, and clears residual norm, commutator, and churn budgets."
+            ),
+        }
+    ]
+
+
+def _budget_normalized_gated_value_mixture_closeout_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "closeout_status": "",
+            "selected_next_experiment": "",
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+        }
+    row = rows[0]
+    return {
+        "row_count": len(rows),
+        "closeout_status": row.get("closeout_status", ""),
+        "source_primary_arm": row.get("source_primary_arm", ""),
+        "source_pregate_passes": row.get("source_pregate_passes") is True,
+        "branch_closed": row.get("branch_closed") is True,
+        "signal_gate_ok": row.get("signal_gate_ok") is True,
+        "flat_control_ok": row.get("flat_control_ok") is True,
+        "interference_budgets_clear": row.get("interference_budgets_clear") is True,
+        "source_failure_reasons": row.get("source_failure_reasons", ""),
+        "selected_next_experiment": row.get("selected_next_experiment", ""),
+        "requires_gpu_now": any(closeout.get("requires_gpu_now") is True for closeout in rows),
+        "promotion_allowed": any(closeout.get("promotion_allowed") is True for closeout in rows),
+        "advance_to_gpu_validation": any(closeout.get("advance_to_gpu_validation") is True for closeout in rows),
+        "interpretation": (
+            "Closeout row for the failed budget-normalized gated value-mixture pregate. "
+            "It records the flat-control/signal blocker before pivoting to the next non-PC local branch."
         ),
     }
 
@@ -7650,6 +7781,10 @@ def _write_artifacts(
         [] if training_smoke is None else training_smoke["budget_normalized_gated_value_mixture_pregate"],
     )
     _write_csv(
+        out_dir / "budget_normalized_gated_value_mixture_closeout.csv",
+        [] if training_smoke is None else training_smoke["budget_normalized_gated_value_mixture_closeout"],
+    )
+    _write_csv(
         out_dir / "pc_core_periphery_residual_inference_pregate.csv",
         [] if training_smoke is None else training_smoke["pc_core_periphery_residual_inference_pregate"],
     )
@@ -7724,6 +7859,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Core/periphery branch closeout rows: `{summary['core_periphery_branch_closeout_row_count']}`",
         f"- Sparse value redesign selector rows: `{summary['sparse_value_redesign_selector_row_count']}`",
         f"- Budget-normalized gated value-mixture pregate rows: `{summary['budget_normalized_gated_value_mixture_pregate_row_count']}`",
+        f"- Budget-normalized gated value-mixture closeout rows: `{summary['budget_normalized_gated_value_mixture_closeout_row_count']}`",
         f"- PC core/periphery residual-inference pregate rows: `{summary['pc_core_periphery_residual_inference_pregate_row_count']}`",
         f"- PC residual-inference mechanism inspection rows: `{summary['pc_residual_inference_mechanism_inspection_row_count']}`",
         f"- PC error-target inference-path audit rows: `{summary['pc_error_target_inference_path_audit_row_count']}`",

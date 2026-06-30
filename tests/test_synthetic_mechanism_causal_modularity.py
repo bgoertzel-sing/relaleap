@@ -50,6 +50,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["core_periphery_branch_closeout_row_count"], 0)
             self.assertEqual(summary["sparse_value_redesign_selector_row_count"], 0)
             self.assertEqual(summary["budget_normalized_gated_value_mixture_pregate_row_count"], 0)
+            self.assertEqual(summary["budget_normalized_gated_value_mixture_closeout_row_count"], 0)
             self.assertEqual(summary["pc_core_periphery_residual_inference_pregate_row_count"], 0)
             self.assertEqual(summary["pc_residual_inference_mechanism_inspection_row_count"], 0)
             self.assertEqual(summary["pc_error_target_inference_path_audit_row_count"], 0)
@@ -237,6 +238,18 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(
                 summary["budget_normalized_gated_value_mixture_pregate_primary_result"]["row_count"],
                 summary["budget_normalized_gated_value_mixture_pregate_row_count"],
+            )
+            self.assertEqual(summary["budget_normalized_gated_value_mixture_closeout_row_count"], 1)
+            self.assertIsNotNone(summary["budget_normalized_gated_value_mixture_closeout_primary_result"])
+            self.assertEqual(
+                summary["budget_normalized_gated_value_mixture_closeout_primary_result"]["row_count"],
+                summary["budget_normalized_gated_value_mixture_closeout_row_count"],
+            )
+            self.assertFalse(
+                summary["budget_normalized_gated_value_mixture_closeout_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["budget_normalized_gated_value_mixture_closeout_primary_result"]["promotion_allowed"]
             )
             self.assertFalse(
                 summary["budget_normalized_gated_value_mixture_pregate_primary_result"]["requires_gpu_now"]
@@ -676,6 +689,31 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(primary_pregate["requires_gpu_now"], "False")
             self.assertEqual(primary_pregate["promotion_allowed"], "False")
             self.assertEqual(primary_pregate["mechanism_labels_used_for_scoring_only"], "True")
+
+            with (out_dir / "budget_normalized_gated_value_mixture_closeout.csv").open(newline="", encoding="utf-8") as handle:
+                value_closeout_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(value_closeout_rows), 1)
+            value_closeout = value_closeout_rows[0]
+            for required_field in {
+                "closeout_status",
+                "source_primary_arm",
+                "source_pregate_passes",
+                "source_failure_reasons",
+                "branch_closed",
+                "selected_next_experiment",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "advance_to_gpu_validation",
+            }:
+                self.assertIn(required_field, value_closeout)
+            self.assertEqual(
+                value_closeout["source_primary_arm"],
+                "budget_normalized_gated_low_rank_value_mixture_topk2",
+            )
+            self.assertEqual(value_closeout["requires_gpu_now"], "False")
+            self.assertEqual(value_closeout["promotion_allowed"], "False")
+            self.assertEqual(value_closeout["advance_to_gpu_validation"], "False")
+            self.assertTrue(value_closeout["selected_next_experiment"])
 
             with (out_dir / "pc_core_periphery_residual_inference_pregate.csv").open(newline="", encoding="utf-8") as handle:
                 pc_pregate_rows = list(csv.DictReader(handle))
@@ -1387,6 +1425,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["core_periphery_branch_closeout_row_count"], 1)
             self.assertEqual(summary["sparse_value_redesign_selector_row_count"], 3)
             self.assertEqual(summary["budget_normalized_gated_value_mixture_pregate_row_count"], 3)
+            self.assertEqual(summary["budget_normalized_gated_value_mixture_closeout_row_count"], 1)
             self.assertEqual(summary["pc_core_periphery_residual_inference_pregate_row_count"], 6)
             self.assertEqual(summary["pc_residual_inference_mechanism_inspection_row_count"], 5)
             self.assertEqual(summary["pc_error_target_inference_path_audit_row_count"], 4)
