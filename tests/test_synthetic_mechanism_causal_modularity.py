@@ -462,7 +462,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 "current_hidden",
                 summary["transformer_acsr_design_primary_result"]["causal_input_tensors"],
             )
-            self.assertEqual(summary["transformer_acsr_cpu_smoke_pilot_row_count"], 5)
+            self.assertEqual(summary["transformer_acsr_cpu_smoke_pilot_row_count"], 6)
             self.assertIsNotNone(summary["transformer_acsr_cpu_smoke_pilot_primary_result"])
             self.assertEqual(
                 summary["transformer_acsr_cpu_smoke_pilot_primary_result"]["row_count"],
@@ -506,6 +506,16 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertIn(
                 "primary_ce_gain_vs_token_position_support",
                 summary["transformer_acsr_cpu_smoke_pilot_primary_result"],
+            )
+            self.assertIn(
+                "value_aware_support_intervention_ce",
+                summary["transformer_acsr_cpu_smoke_pilot_primary_result"],
+            )
+            self.assertIn(
+                summary["transformer_acsr_cpu_smoke_pilot_primary_result"][
+                    "value_aware_gate_passes"
+                ],
+                {False, True},
             )
             self.assertLessEqual(
                 summary["transformer_acsr_cpu_smoke_pilot_primary_result"][
@@ -1242,12 +1252,13 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
 
             with (out_dir / "transformer_acsr_cpu_smoke_pilot.csv").open(newline="", encoding="utf-8") as handle:
                 transformer_pilot_rows = list(csv.DictReader(handle))
-            self.assertEqual(len(transformer_pilot_rows), 5)
+            self.assertEqual(len(transformer_pilot_rows), 6)
             pilot_by_role = {row["row_role"]: row for row in transformer_pilot_rows}
             self.assertEqual(
                 set(pilot_by_role),
                 {
                     "primary_transformer_acsr_cpu_smoke_pilot",
+                    "value_aware_transformer_support_router",
                     "token_position_transformer_null",
                     "shuffled_target_null",
                     "mlp_predictor_control",
@@ -1271,6 +1282,17 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 "primary_ce_gain_vs_token_position_support",
                 "primary_support_overlap_with_oracle",
                 "token_position_support_overlap_with_oracle",
+                "value_aware_support_intervention_ce",
+                "value_aware_target_mse",
+                "value_aware_target_cosine",
+                "value_aware_future_perturbation_max_prefix_delta",
+                "value_aware_leakage_gate_passes",
+                "value_aware_ce_gain_vs_token_position_support",
+                "value_aware_ce_gain_vs_primary_support",
+                "value_aware_support_overlap_with_oracle",
+                "value_aware_beats_token_position_support_ce",
+                "value_aware_beats_primary_support_ce",
+                "value_aware_gate_passes",
                 "future_perturbation_max_prefix_delta",
                 "leakage_gate_passes",
                 "beats_token_position_mse",
@@ -1300,10 +1322,22 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 primary_pilot["selected_next_experiment"],
                 {
                     "repeat_transformer_acsr_cpu_smoke_across_seeds",
+                    "repeat_value_aware_transformer_acsr_cpu_smoke_across_seeds_before_gpu",
                     "tighten_transformer_acsr_pilot_against_null_controls_before_gpu",
                     "replace_support_intervention_assay_with_trained_same_student_residual_values",
+                    "close_or_redesign_value_aware_transformer_acsr_support_router_locally",
                 },
             )
+            value_aware_pilot = pilot_by_role["value_aware_transformer_support_router"]
+            self.assertEqual(value_aware_pilot["predictor_family"], "causal_transformer")
+            self.assertEqual(
+                value_aware_pilot["target_alignment"],
+                "oracle_same_student_support_value_residual",
+            )
+            self.assertEqual(value_aware_pilot["requires_gpu_now"], "False")
+            self.assertEqual(value_aware_pilot["promotion_allowed"], "False")
+            self.assertEqual(value_aware_pilot["advance_to_gpu_validation"], "False")
+            self.assertIn(value_aware_pilot["pilot_gates_pass"], {"False", "True"})
 
             with (out_dir / "ce_by_rule_position.csv").open(newline="", encoding="utf-8") as handle:
                 ce_rule_position_rows = list(csv.DictReader(handle))

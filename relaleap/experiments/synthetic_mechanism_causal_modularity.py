@@ -1080,6 +1080,7 @@ def _run_training_smoke(
         design_rows=transformer_acsr_design,
         train_hidden=train_hidden,
         train_inputs=train_inputs,
+        train_targets=train_targets,
         holdout_hidden=holdout_hidden,
         holdout_inputs=holdout_inputs,
         holdout_targets=holdout_targets,
@@ -8325,6 +8326,18 @@ def _support_intervention_ce_oracle(
     return ce, support_churn, best_support.detach()
 
 
+def _support_value_target_from_support(
+    *,
+    support: Any | None,
+    trained_support_values: Any | None,
+    hidden: Any,
+) -> Any | None:
+    if support is None or trained_support_values is None:
+        return None
+    values = trained_support_values.to(device=hidden.device, dtype=hidden.dtype)
+    return values[support].mean(dim=-2).detach()
+
+
 def _support_overlap(left: Any, right: Any) -> float:
     if left is None or right is None:
         return 0.0
@@ -8350,6 +8363,7 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
     design_rows: list[dict[str, Any]],
     train_hidden: Any,
     train_inputs: Any,
+    train_targets: Any,
     holdout_hidden: Any,
     holdout_inputs: Any,
     holdout_targets: Any,
@@ -8490,6 +8504,83 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         torch=torch,
         F=F,
     )
+    train_oracle_ce, _, train_oracle_support = _support_intervention_ce_oracle(
+        hidden=train_hidden,
+        targets=train_targets,
+        decode=decode,
+        trained_support_values=trained_support_values,
+        support_width=support_width,
+        torch=torch,
+        F=F,
+    )
+    train_oracle_value_target = _support_value_target_from_support(
+        support=train_oracle_support,
+        trained_support_values=trained_support_values,
+        hidden=train_hidden,
+    )
+    holdout_oracle_value_target = _support_value_target_from_support(
+        support=oracle_support,
+        trained_support_values=trained_support_values,
+        hidden=holdout_hidden,
+    )
+    value_aware_predictor = None
+    value_aware_delta = None
+    if train_oracle_value_target is not None:
+        value_aware_predictor, value_aware_delta = _train_future_delta_predictor(
+            train_features=train_hidden,
+            train_target_delta=train_oracle_value_target,
+            holdout_features=holdout_hidden,
+            hidden_dim=hidden_dim,
+            training_steps=training_steps,
+            learning_rate=learning_rate,
+            seed=seed + 704,
+            torch=torch,
+            nn=nn,
+            F=F,
+        )
+    value_aware_ce, value_aware_churn, value_aware_support = (
+        _support_intervention_ce_from_predicted_delta(
+            hidden=holdout_hidden,
+            predicted_delta=value_aware_delta,
+            targets=holdout_targets,
+            decode=decode,
+            trained_support_values=trained_support_values,
+            support_width=support_width,
+            torch=torch,
+            F=F,
+        )
+        if value_aware_delta is not None
+        else (None, None, None)
+    )
+    value_aware_mse = (
+        float(F.mse_loss(value_aware_delta, holdout_oracle_value_target).detach().item())
+        if value_aware_delta is not None and holdout_oracle_value_target is not None
+        else None
+    )
+    value_aware_cosine = (
+        float(
+            F.cosine_similarity(
+                value_aware_delta.reshape(-1, hidden_dim),
+                holdout_oracle_value_target.reshape(-1, hidden_dim),
+                dim=-1,
+            )
+            .mean()
+            .detach()
+            .item()
+        )
+        if value_aware_delta is not None and holdout_oracle_value_target is not None
+        else None
+    )
+    value_aware_leakage_delta = (
+        _causal_transformer_future_perturbation_max_delta(
+            predictor=value_aware_predictor,
+            features=holdout_hidden,
+            perturb_from_position=max(1, int(holdout_hidden.shape[1]) // 2),
+            perturb_scale=0.25,
+        )
+        if value_aware_predictor is not None
+        else None
+    )
     trained_value_assay_available = (
         trained_support_values is not None
         and primary_ce is not None
@@ -8504,6 +8595,24 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
     primary_beats_token_position_support = (
         bool(trained_value_assay_available) and primary_ce <= token_position_ce
     )
+    value_aware_beats_token_position_support = (
+        bool(trained_value_assay_available)
+        and value_aware_ce is not None
+        and value_aware_ce <= token_position_ce
+    )
+    value_aware_beats_primary_support = (
+        bool(trained_value_assay_available)
+        and value_aware_ce is not None
+        and primary_ce is not None
+        and value_aware_ce <= primary_ce
+    )
+    value_aware_gate_pass = (
+        support_assay_valid
+        and value_aware_beats_token_position_support
+        and value_aware_beats_primary_support
+        and value_aware_leakage_delta is not None
+        and value_aware_leakage_delta <= 1e-5
+    )
     gates_pass = (
         leakage_delta <= 1e-5
         and primary_mse < token_position_mse
@@ -8517,6 +8626,10 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         else (
             "replace_support_intervention_assay_with_trained_same_student_residual_values"
             if not trained_value_assay_available
+            else "repeat_value_aware_transformer_acsr_cpu_smoke_across_seeds_before_gpu"
+            if value_aware_gate_pass
+            else "close_or_redesign_value_aware_transformer_acsr_support_router_locally"
+            if value_aware_ce is not None
             else "train_value_aware_transformer_acsr_support_router"
             if not support_assay_valid or not primary_beats_token_position_support
             else "tighten_transformer_acsr_pilot_against_null_controls_before_gpu"
@@ -8524,6 +8637,7 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
     )
     primary_oracle_overlap = _support_overlap(primary_support, oracle_support)
     token_position_oracle_overlap = _support_overlap(token_position_support, oracle_support)
+    value_aware_oracle_overlap = _support_overlap(value_aware_support, oracle_support)
     common = {
         "design_name": "transformer_acsr",
         "training_steps": max(2, min(8, training_steps)),
@@ -8538,6 +8652,7 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         ),
         "trained_support_value_assay_available": trained_value_assay_available,
         "oracle_support_intervention_ce": oracle_ce,
+        "train_oracle_support_intervention_ce": train_oracle_ce,
         "token_position_support_intervention_ce": token_position_ce,
         "oracle_ce_gain_vs_token_position": (
             token_position_ce - oracle_ce if trained_value_assay_available else None
@@ -8556,6 +8671,28 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         ),
         "primary_support_overlap_with_oracle": primary_oracle_overlap,
         "token_position_support_overlap_with_oracle": token_position_oracle_overlap,
+        "value_aware_support_intervention_ce": value_aware_ce,
+        "value_aware_support_churn": value_aware_churn,
+        "value_aware_target_mse": value_aware_mse,
+        "value_aware_target_cosine": value_aware_cosine,
+        "value_aware_future_perturbation_max_prefix_delta": value_aware_leakage_delta,
+        "value_aware_leakage_gate_passes": (
+            value_aware_leakage_delta is not None and value_aware_leakage_delta <= 1e-5
+        ),
+        "value_aware_ce_gain_vs_token_position_support": (
+            token_position_ce - value_aware_ce
+            if trained_value_assay_available and value_aware_ce is not None
+            else None
+        ),
+        "value_aware_ce_gain_vs_primary_support": (
+            primary_ce - value_aware_ce
+            if trained_value_assay_available and primary_ce is not None and value_aware_ce is not None
+            else None
+        ),
+        "value_aware_support_overlap_with_oracle": value_aware_oracle_overlap,
+        "value_aware_beats_token_position_support_ce": value_aware_beats_token_position_support,
+        "value_aware_beats_primary_support_ce": value_aware_beats_primary_support,
+        "value_aware_gate_passes": value_aware_gate_pass,
         "requires_gpu_now": False,
         "promotion_allowed": False,
         "advance_to_gpu_validation": False,
@@ -8581,6 +8718,27 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
                 "Local CPU smoke only: predicted future chunks route through trained same-student residual values. "
                 "Promotion and GPU validation remain blocked until null/control, support-assay-validity, and "
                 "non-CE gates pass robustly."
+            ),
+        },
+        {
+            **common,
+            "row_role": "value_aware_transformer_support_router",
+            "predictor_family": "causal_transformer",
+            "target_alignment": "oracle_same_student_support_value_residual",
+            "target_mse": value_aware_mse,
+            "target_cosine": value_aware_cosine,
+            "support_intervention_ce": value_aware_ce,
+            "support_churn": value_aware_churn,
+            "beats_token_position_mse": False,
+            "beats_shuffled_target_mse": False,
+            "beats_mlp_mse": False,
+            "primary_beats_token_position_support_ce": value_aware_beats_token_position_support,
+            "pilot_gates_pass": value_aware_gate_pass,
+            "selected_next_experiment": selected_next_experiment if value_aware_gate_pass else "",
+            "interpretation": (
+                "Value-aware local Transformer-ACSR support router. It trains on evaluator-derived oracle "
+                "same-student support residual vectors from the trained value assay, then routes only from "
+                "causal transformer predictions. It is a local pregate row, not GPU or promotion evidence."
             ),
         },
         {
@@ -8670,6 +8828,27 @@ def _transformer_acsr_cpu_smoke_pilot_summary(rows: list[dict[str, Any]]) -> dic
         "primary_ce_gain_vs_token_position_support": primary.get("primary_ce_gain_vs_token_position_support"),
         "primary_support_overlap_with_oracle": primary.get("primary_support_overlap_with_oracle"),
         "token_position_support_overlap_with_oracle": primary.get("token_position_support_overlap_with_oracle"),
+        "value_aware_support_intervention_ce": primary.get("value_aware_support_intervention_ce"),
+        "value_aware_target_mse": primary.get("value_aware_target_mse"),
+        "value_aware_target_cosine": primary.get("value_aware_target_cosine"),
+        "value_aware_future_perturbation_max_prefix_delta": primary.get(
+            "value_aware_future_perturbation_max_prefix_delta"
+        ),
+        "value_aware_leakage_gate_passes": primary.get("value_aware_leakage_gate_passes") is True,
+        "value_aware_ce_gain_vs_token_position_support": primary.get(
+            "value_aware_ce_gain_vs_token_position_support"
+        ),
+        "value_aware_ce_gain_vs_primary_support": primary.get(
+            "value_aware_ce_gain_vs_primary_support"
+        ),
+        "value_aware_support_overlap_with_oracle": primary.get("value_aware_support_overlap_with_oracle"),
+        "value_aware_beats_token_position_support_ce": (
+            primary.get("value_aware_beats_token_position_support_ce") is True
+        ),
+        "value_aware_beats_primary_support_ce": (
+            primary.get("value_aware_beats_primary_support_ce") is True
+        ),
+        "value_aware_gate_passes": primary.get("value_aware_gate_passes") is True,
         "future_perturbation_max_prefix_delta": primary.get("future_perturbation_max_prefix_delta"),
         "leakage_gate_passes": primary.get("leakage_gate_passes") is True,
         "beats_token_position_mse": primary.get("beats_token_position_mse") is True,
