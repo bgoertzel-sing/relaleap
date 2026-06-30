@@ -30,6 +30,11 @@ class LowChurnMlpResidualControlPilotTest(unittest.TestCase):
             self.assertEqual(summary["decision"], "low_churn_mlp_residual_control_pilot_failed_closed")
             self.assertFalse(summary["promotion_allowed"])
             self.assertFalse(summary["requires_gpu_now"])
+            self.assertFalse(summary["advance_to_gpu_validation"])
+            self.assertEqual(
+                summary["selected_next_action"],
+                "return_to_sparse_core_periphery_mechanism_work",
+            )
             for artifact in REQUIRED_ARTIFACTS:
                 self.assertTrue((root / "out" / artifact).is_file(), artifact)
 
@@ -56,6 +61,14 @@ class LowChurnMlpResidualControlPilotTest(unittest.TestCase):
             self.assertEqual(summary["decision"], "low_churn_mlp_residual_control_pilot_completed")
             self.assertFalse(summary["requires_gpu_now"])
             self.assertFalse(summary["promotion_allowed"])
+            self.assertFalse(summary["advance_to_gpu_validation"])
+            self.assertIn(
+                summary["selected_next_action"],
+                {
+                    "inspect_low_churn_mlp_pilot_per_token_rows_before_gpu",
+                    "return_to_sparse_core_periphery_mechanism_work",
+                },
+            )
             self.assertEqual(summary["arm_count"], 6)
             self.assertGreater(summary["per_token_row_count"], 0)
             self.assertGreater(summary["pareto_row_count"], 0)

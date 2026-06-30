@@ -97,6 +97,11 @@ def run_low_churn_mlp_residual_control_pilot(
     failures = [row for row in gate_rows if not row["passed"]]
     advancing = [row for row in arm_rows if row.get("advancement_gate") == "advances_local_review_only"]
     status = "pass" if not failures else "fail"
+    selected_next_action = (
+        "inspect_low_churn_mlp_pilot_per_token_rows_before_gpu"
+        if advancing and status == "pass"
+        else "return_to_sparse_core_periphery_mechanism_work"
+    )
     summary = {
         "status": status,
         "decision": (
@@ -111,6 +116,8 @@ def run_low_churn_mlp_residual_control_pilot(
         ),
         "promotion_allowed": False,
         "requires_gpu_now": False,
+        "advance_to_gpu_validation": False,
+        "selected_next_action": selected_next_action,
         "backend_policy": "local CPU pilot only; RunPod and Colab remain blocked unless a later review selects GPU validation",
         "pregate_dir": str(pregate_dir),
         "out_dir": str(out_dir),
