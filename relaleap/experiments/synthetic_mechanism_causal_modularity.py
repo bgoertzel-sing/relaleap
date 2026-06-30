@@ -55,6 +55,7 @@ REQUIRED_ARTIFACTS = (
     "pc_decoder_adjoint_closeout.csv",
     "pc_amortized_error_pregate_design.csv",
     "pc_amortized_error_pregate.csv",
+    "pc_amortized_error_pregate_closeout.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -435,6 +436,16 @@ def run_synthetic_mechanism_causal_modularity(
         "pc_amortized_error_pregate_primary_result": (
             _pc_amortized_error_pregate_summary(
                 training_smoke["pc_amortized_error_pregate"]
+            )
+            if training_smoke is not None
+            else None
+        ),
+        "pc_amortized_error_pregate_closeout_row_count": (
+            len(training_smoke["pc_amortized_error_pregate_closeout"]) if training_smoke is not None else 0
+        ),
+        "pc_amortized_error_pregate_closeout_primary_result": (
+            _pc_amortized_error_pregate_closeout_summary(
+                training_smoke["pc_amortized_error_pregate_closeout"]
             )
             if training_smoke is not None
             else None
@@ -997,6 +1008,9 @@ def _run_training_smoke(
         commutator_rows=commutator_rows,
         forgetting_rows=forgetting_rows,
     )
+    pc_amortized_error_pregate_closeout = _pc_amortized_error_pregate_closeout_rows(
+        pregate_rows=pc_amortized_error_pregate,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -1025,6 +1039,7 @@ def _run_training_smoke(
         "pc_decoder_adjoint_closeout": pc_decoder_adjoint_closeout,
         "pc_amortized_error_pregate_design": pc_amortized_error_pregate_design,
         "pc_amortized_error_pregate": pc_amortized_error_pregate,
+        "pc_amortized_error_pregate_closeout": pc_amortized_error_pregate_closeout,
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": residual_budget_accounting,
@@ -4237,6 +4252,12 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("pc_amortized_error_pregate_closeout"):
+        summary = _pc_amortized_error_pregate_closeout_summary(
+            training_smoke["pc_amortized_error_pregate_closeout"]
+        )
+        if summary.get("selected_next_experiment"):
+            return str(summary["selected_next_experiment"]).replace("_", " ")
     if training_smoke.get("pc_amortized_error_pregate"):
         summary = _pc_amortized_error_pregate_summary(
             training_smoke["pc_amortized_error_pregate"]
@@ -7401,6 +7422,125 @@ def _pc_amortized_error_pregate_summary(rows: list[dict[str, Any]]) -> dict[str,
     }
 
 
+def _pc_amortized_error_pregate_closeout_rows(
+    *,
+    pregate_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    summary = _pc_amortized_error_pregate_summary(pregate_rows)
+    if summary.get("row_count", 0) <= 0:
+        return []
+    selected = next((row for row in pregate_rows if row.get("selected") is True), pregate_rows[0])
+    pregate_passes = summary.get("pregate_passes") is True
+    nulls_all_clear = bool(
+        summary.get("shuffled_target_ok") is True
+        and summary.get("sign_flipped_target_ok") is True
+        and summary.get("token_position_null_ok") is True
+    )
+    controls_clear = bool(
+        summary.get("flat_control_ok") is True
+        and summary.get("dense_control_ok") is True
+    )
+    interference_clear = bool(
+        summary.get("norm_budget_ok") is True
+        and summary.get("commutator_budget_ok") is True
+        and summary.get("functional_churn_budget_ok") is True
+    )
+    close_current_path = not bool(
+        pregate_passes
+        and nulls_all_clear
+        and controls_clear
+        and interference_clear
+    )
+    closeout_status = (
+        "repeat_before_gpu_validation"
+        if not close_current_path
+        else "closed_current_label_free_amortized_pc_target_path"
+    )
+    selected_next_experiment = (
+        "repeat_label_free_amortized_multisite_pc_on_adjacent_seed"
+        if not close_current_path
+        else "return_to_non_pc_sparse_value_or_low_churn_dense_control_branch"
+    )
+    failure_reasons = str(summary.get("failure_reasons", ""))
+    return [
+        {
+            "closeout_name": "pc_amortized_error_pregate_closeout",
+            "closeout_status": closeout_status,
+            "source_pregate_name": selected.get("pregate_name", ""),
+            "source_primary_arm": summary.get("primary_arm", ""),
+            "source_pregate_passes": pregate_passes,
+            "source_primary_holdout_ce": summary.get("primary_holdout_ce"),
+            "source_primary_ce_gain_vs_reference_sparse": summary.get("primary_ce_gain_vs_reference_sparse"),
+            "source_stored_gap_closed_fraction": summary.get("stored_gap_closed_fraction"),
+            "source_failure_reasons": failure_reasons,
+            "signal_gate_ok": bool(
+                "no_ce_or_stored_gap_signal" not in failure_reasons
+                and summary.get("primary_ce_gain_vs_reference_sparse") is not None
+            ),
+            "flat_control_ok": summary.get("flat_control_ok") is True,
+            "dense_control_ok": summary.get("dense_control_ok") is True,
+            "shuffled_target_ok": summary.get("shuffled_target_ok") is True,
+            "sign_flipped_target_ok": summary.get("sign_flipped_target_ok") is True,
+            "token_position_null_ok": summary.get("token_position_null_ok") is True,
+            "all_target_nulls_clear": nulls_all_clear,
+            "flat_dense_controls_clear": controls_clear,
+            "interference_budgets_clear": interference_clear,
+            "current_error_target_path_closed": close_current_path,
+            "redesign_error_target_allowed": False,
+            "branch_reopen_requires_new_causal_signal": True,
+            "selected_next_experiment": selected_next_experiment,
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "advance_to_gpu_validation": False,
+            "strategic_change_level": "minor",
+            "notify_ben": False,
+            "mechanism_labels_used_for_scoring_only": True,
+            "interpretation": (
+                "Fail-closed closeout for the local label-free amortized multi-site PC pregate. "
+                "The current decoder-adjoint-derived amortized error target is closed unless it beats "
+                "flat/dense controls, shuffled/sign-flipped/token-position nulls, and interference budgets. "
+                "No GPU validation or promotion is allowed from this packet."
+            ),
+        }
+    ]
+
+
+def _pc_amortized_error_pregate_closeout_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "closeout_status": "",
+            "selected_next_experiment": "",
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "notify_ben": False,
+            "strategic_change_level": "minor",
+        }
+    row = rows[0]
+    return {
+        "row_count": len(rows),
+        "closeout_status": row.get("closeout_status", ""),
+        "source_primary_arm": row.get("source_primary_arm", ""),
+        "source_pregate_passes": row.get("source_pregate_passes") is True,
+        "current_error_target_path_closed": row.get("current_error_target_path_closed") is True,
+        "redesign_error_target_allowed": row.get("redesign_error_target_allowed") is True,
+        "branch_reopen_requires_new_causal_signal": row.get("branch_reopen_requires_new_causal_signal") is True,
+        "all_target_nulls_clear": row.get("all_target_nulls_clear") is True,
+        "flat_dense_controls_clear": row.get("flat_dense_controls_clear") is True,
+        "interference_budgets_clear": row.get("interference_budgets_clear") is True,
+        "selected_next_experiment": row.get("selected_next_experiment", ""),
+        "requires_gpu_now": any(closeout.get("requires_gpu_now") is True for closeout in rows),
+        "promotion_allowed": any(closeout.get("promotion_allowed") is True for closeout in rows),
+        "advance_to_gpu_validation": any(closeout.get("advance_to_gpu_validation") is True for closeout in rows),
+        "notify_ben": any(closeout.get("notify_ben") is True for closeout in rows),
+        "strategic_change_level": "major" if any(closeout.get("strategic_change_level") == "major" for closeout in rows) else "minor",
+        "interpretation": (
+            "Closeout row for the failed amortized PC pregate. The branch stays local and closed unless "
+            "new causal signal justifies redesigning the error target."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -7541,6 +7681,10 @@ def _write_artifacts(
         out_dir / "pc_amortized_error_pregate.csv",
         [] if training_smoke is None else training_smoke["pc_amortized_error_pregate"],
     )
+    _write_csv(
+        out_dir / "pc_amortized_error_pregate_closeout.csv",
+        [] if training_smoke is None else training_smoke["pc_amortized_error_pregate_closeout"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -7588,6 +7732,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- PC decoder-adjoint closeout rows: `{summary['pc_decoder_adjoint_closeout_row_count']}`",
         f"- PC amortized error pregate design rows: `{summary['pc_amortized_error_pregate_design_row_count']}`",
         f"- PC amortized error pregate rows: `{summary['pc_amortized_error_pregate_row_count']}`",
+        f"- PC amortized error pregate closeout rows: `{summary['pc_amortized_error_pregate_closeout_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",

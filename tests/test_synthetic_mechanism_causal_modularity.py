@@ -58,6 +58,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["pc_decoder_adjoint_closeout_row_count"], 0)
             self.assertEqual(summary["pc_amortized_error_pregate_design_row_count"], 0)
             self.assertEqual(summary["pc_amortized_error_pregate_row_count"], 0)
+            self.assertEqual(summary["pc_amortized_error_pregate_closeout_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -381,6 +382,23 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(
                 summary["pc_amortized_error_pregate_primary_result"]["primary_arm"],
                 "pc_amortized_multisite_error_topk2",
+            )
+            self.assertEqual(summary["pc_amortized_error_pregate_closeout_row_count"], 1)
+            self.assertIsNotNone(summary["pc_amortized_error_pregate_closeout_primary_result"])
+            self.assertEqual(
+                summary["pc_amortized_error_pregate_closeout_primary_result"]["row_count"],
+                summary["pc_amortized_error_pregate_closeout_row_count"],
+            )
+            self.assertFalse(
+                summary["pc_amortized_error_pregate_closeout_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["pc_amortized_error_pregate_closeout_primary_result"]["promotion_allowed"]
+            )
+            self.assertTrue(
+                summary["pc_amortized_error_pregate_closeout_primary_result"][
+                    "branch_reopen_requires_new_causal_signal"
+                ]
             )
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
@@ -961,6 +979,31 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(primary_amortized["requires_gpu_now"], "False")
             self.assertEqual(primary_amortized["promotion_allowed"], "False")
             self.assertEqual(primary_amortized["advance_to_gpu_validation"], "False")
+
+            with (out_dir / "pc_amortized_error_pregate_closeout.csv").open(newline="", encoding="utf-8") as handle:
+                amortized_closeout_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(amortized_closeout_rows), 1)
+            amortized_closeout = amortized_closeout_rows[0]
+            for required_field in {
+                "closeout_status",
+                "source_primary_arm",
+                "source_pregate_passes",
+                "source_failure_reasons",
+                "current_error_target_path_closed",
+                "redesign_error_target_allowed",
+                "branch_reopen_requires_new_causal_signal",
+                "selected_next_experiment",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "advance_to_gpu_validation",
+            }:
+                self.assertIn(required_field, amortized_closeout)
+            self.assertEqual(amortized_closeout["source_primary_arm"], "pc_amortized_multisite_error_topk2")
+            self.assertEqual(amortized_closeout["requires_gpu_now"], "False")
+            self.assertEqual(amortized_closeout["promotion_allowed"], "False")
+            self.assertEqual(amortized_closeout["advance_to_gpu_validation"], "False")
+            self.assertEqual(amortized_closeout["redesign_error_target_allowed"], "False")
+            self.assertEqual(amortized_closeout["branch_reopen_requires_new_causal_signal"], "True")
             self.assertEqual(selected_pc["source_failed_branch"], "budget_normalized_gated_low_rank_value_mixture")
             self.assertEqual(selected_pc["source_failed_branch_pregate_passes"], "False")
             self.assertEqual(selected_pc["requires_gpu_now"], "False")
@@ -1348,6 +1391,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["pc_residual_inference_mechanism_inspection_row_count"], 5)
             self.assertEqual(summary["pc_error_target_inference_path_audit_row_count"], 4)
             self.assertEqual(summary["pc_amortized_error_pregate_row_count"], 7)
+            self.assertEqual(summary["pc_amortized_error_pregate_closeout_row_count"], 1)
             teacher_summary = summary["teacher_distillation_primary_result"]
             self.assertEqual(teacher_summary["row_count"], 2)
             self.assertIsNotNone(teacher_summary["distilled_holdout_ce"])
