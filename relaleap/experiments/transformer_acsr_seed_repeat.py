@@ -29,6 +29,27 @@ def _mean_present(rows: list[dict[str, Any]], key: str) -> float | None:
     return mean(values) if values else None
 
 
+def _safe_gain(left: float | None, right: float | None) -> float | None:
+    if left is None or right is None:
+        return None
+    return left - right
+
+
+def _safe_regret_recovery(
+    *,
+    learned_ce: float | None,
+    candidate_ce: float | None,
+    oracle_ce: float | None,
+) -> float | None:
+    if learned_ce is None or candidate_ce is None or oracle_ce is None:
+        return None
+    learned_regret = learned_ce - oracle_ce
+    if learned_regret <= 0.0:
+        return None
+    candidate_regret = candidate_ce - oracle_ce
+    return (learned_regret - candidate_regret) / learned_regret
+
+
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         path.write_text("", encoding="utf-8")
@@ -79,6 +100,24 @@ def run_transformer_acsr_seed_repeat(
             include_teacher_distillation=True,
         )
         pilot = summary["transformer_acsr_cpu_smoke_pilot_primary_result"]
+        sequence_audit = summary.get("support_head_sequence_heldout_diagnostic_primary_result") or {}
+        hidden_classifier_ce = _float_or_none(
+            pilot["direct_hidden_support_classifier_ce"]
+        )
+        learned_router_ce = _float_or_none(sequence_audit.get("learned_router_ce"))
+        oracle_pair_ce = _float_or_none(sequence_audit.get("oracle_pair_ce_ceiling"))
+        hidden_gain_vs_learned = _safe_gain(learned_router_ce, hidden_classifier_ce)
+        hidden_regret_recovery = _safe_regret_recovery(
+            learned_ce=learned_router_ce,
+            candidate_ce=hidden_classifier_ce,
+            oracle_ce=oracle_pair_ce,
+        )
+        hidden_sequence_heldout_gate_passes = bool(
+            hidden_gain_vs_learned is not None
+            and hidden_regret_recovery is not None
+            and (hidden_gain_vs_learned > 0.0 or hidden_regret_recovery >= 0.25)
+        )
+        hidden_churn_budget_gate_passes = False
         seed_rows.append(
             {
                 "seed": seed,
@@ -139,6 +178,25 @@ def run_transformer_acsr_seed_repeat(
                 "direct_hidden_support_classifier_ce_gain_vs_frequency_null": pilot[
                     "direct_hidden_support_classifier_ce_gain_vs_frequency_null"
                 ],
+                "sequence_audit_learned_router_ce": learned_router_ce,
+                "sequence_audit_oracle_pair_ce_ceiling": oracle_pair_ce,
+                "direct_hidden_support_classifier_ce_gain_vs_learned_router": hidden_gain_vs_learned,
+                "direct_hidden_support_classifier_oracle_regret_recovery_vs_learned_router": (
+                    hidden_regret_recovery
+                ),
+                "direct_hidden_support_classifier_sequence_heldout_gate_passes": (
+                    hidden_sequence_heldout_gate_passes
+                ),
+                "direct_hidden_support_classifier_churn_budget_gate_passes": (
+                    hidden_churn_budget_gate_passes
+                ),
+                "sequence_audit_contextual_ce": _float_or_none(sequence_audit.get("contextual_ce")),
+                "sequence_audit_contextual_gain_vs_learned": _float_or_none(
+                    sequence_audit.get("contextual_gain_vs_learned")
+                ),
+                "sequence_audit_advance_support_head_branch": bool(
+                    sequence_audit.get("advance_support_head_branch")
+                ),
                 "selected_next_experiment": pilot["selected_next_experiment"],
                 "requires_gpu_now": pilot["requires_gpu_now"],
                 "promotion_allowed": pilot["promotion_allowed"],
@@ -182,6 +240,13 @@ def run_transformer_acsr_seed_repeat(
     mean_hidden_classifier_gain_vs_frequency = _mean_present(
         seed_rows, "direct_hidden_support_classifier_ce_gain_vs_frequency_null"
     )
+    mean_hidden_classifier_gain_vs_learned_router = _mean_present(
+        seed_rows, "direct_hidden_support_classifier_ce_gain_vs_learned_router"
+    )
+    mean_hidden_classifier_oracle_regret_recovery_vs_learned_router = _mean_present(
+        seed_rows,
+        "direct_hidden_support_classifier_oracle_regret_recovery_vs_learned_router",
+    )
     robust_value_gate = (
         completed_count == len(seed_rows)
         and value_gate_pass_count == len(seed_rows)
@@ -206,10 +271,21 @@ def run_transformer_acsr_seed_repeat(
             mean_hidden_classifier_gain_vs_frequency,
         )
     )
-    hidden_classifier_learned_router_comparison_available = False
-    hidden_classifier_sequence_heldout_gate_passes = False
+    hidden_classifier_learned_router_comparison_available = all(
+        row["sequence_audit_learned_router_ce"] is not None
+        and row["sequence_audit_oracle_pair_ce_ceiling"] is not None
+        and row["direct_hidden_support_classifier_ce"] is not None
+        for row in seed_rows
+    )
+    hidden_classifier_sequence_heldout_gate_passes = all(
+        row["direct_hidden_support_classifier_sequence_heldout_gate_passes"]
+        for row in seed_rows
+    )
     hidden_classifier_rule_ood_gate_passes = False
-    hidden_classifier_churn_budget_gate_passes = False
+    hidden_classifier_churn_budget_gate_passes = all(
+        row["direct_hidden_support_classifier_churn_budget_gate_passes"]
+        for row in seed_rows
+    )
     hidden_classifier_commutator_budget_gate_passes = False
     hidden_classifier_sequence_ood_budget_audit_available = bool(
         hidden_classifier_sequence_heldout_gate_passes
@@ -256,6 +332,12 @@ def run_transformer_acsr_seed_repeat(
         "mean_hidden_classifier_ce_gain_vs_token_position_null": mean_hidden_classifier_gain_vs_token_position,
         "mean_hidden_classifier_ce_gain_vs_shuffled_null": mean_hidden_classifier_gain_vs_shuffled,
         "mean_hidden_classifier_ce_gain_vs_frequency_null": mean_hidden_classifier_gain_vs_frequency,
+        "mean_hidden_classifier_ce_gain_vs_learned_router": (
+            mean_hidden_classifier_gain_vs_learned_router
+        ),
+        "mean_hidden_classifier_oracle_regret_recovery_vs_learned_router": (
+            mean_hidden_classifier_oracle_regret_recovery_vs_learned_router
+        ),
         "mean_hidden_classifier_support_overlap_with_oracle": mean_hidden_classifier_overlap,
         "mean_hidden_classifier_exact_match_with_oracle": mean_hidden_classifier_exact_match,
         "robust_value_gate_passes": robust_value_gate,
@@ -296,6 +378,8 @@ def run_transformer_acsr_seed_repeat(
         f"- Mean hidden support-classifier CE gain vs token/position null: `{mean_hidden_classifier_gain_vs_token_position}`",
         f"- Mean hidden support-classifier CE gain vs shuffled null: `{mean_hidden_classifier_gain_vs_shuffled}`",
         f"- Mean hidden support-classifier CE gain vs frequency null: `{mean_hidden_classifier_gain_vs_frequency}`",
+        f"- Mean hidden support-classifier CE gain vs learned router: `{mean_hidden_classifier_gain_vs_learned_router}`",
+        f"- Mean hidden support-classifier oracle-regret recovery vs learned router: `{mean_hidden_classifier_oracle_regret_recovery_vs_learned_router}`",
         f"- Mean hidden support-classifier oracle overlap: `{mean_hidden_classifier_overlap}`",
         f"- Hidden support-classifier learned-router comparison available: `{hidden_classifier_learned_router_comparison_available}`",
         f"- Hidden support-classifier sequence-heldout gate passes: `{hidden_classifier_sequence_heldout_gate_passes}`",

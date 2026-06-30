@@ -22,10 +22,15 @@ class TransformerACSRSeedRepeatTests(unittest.TestCase):
             self.assertIn("hidden_classifier_gate_pass_count", summary)
             self.assertIn("hidden_classifier_leakage_pass_count", summary)
             self.assertIn("mean_hidden_classifier_ce_gain_vs_token_position_null", summary)
+            self.assertIn("mean_hidden_classifier_ce_gain_vs_learned_router", summary)
+            self.assertIn(
+                "mean_hidden_classifier_oracle_regret_recovery_vs_learned_router",
+                summary,
+            )
             self.assertIn("mean_hidden_classifier_support_overlap_with_oracle", summary)
             self.assertIn("robust_hidden_classifier_gate_passes", summary)
             self.assertIn("hidden_classifier_null_margin_gate_passes", summary)
-            self.assertFalse(summary["hidden_classifier_learned_router_comparison_available"])
+            self.assertTrue(summary["hidden_classifier_learned_router_comparison_available"])
             self.assertFalse(summary["hidden_classifier_sequence_heldout_gate_passes"])
             self.assertFalse(summary["hidden_classifier_rule_ood_gate_passes"])
             self.assertFalse(summary["hidden_classifier_churn_budget_gate_passes"])
@@ -44,8 +49,16 @@ class TransformerACSRSeedRepeatTests(unittest.TestCase):
             seed_rows = (Path(tmp) / "seed_rows.csv").read_text(encoding="utf-8")
             self.assertIn("direct_hidden_support_classifier_gate_passes", seed_rows)
             self.assertIn("direct_hidden_support_classifier_ce_gain_vs_frequency_null", seed_rows)
+            self.assertIn(
+                "direct_hidden_support_classifier_ce_gain_vs_learned_router",
+                seed_rows,
+            )
+            self.assertIn(
+                "direct_hidden_support_classifier_oracle_regret_recovery_vs_learned_router",
+                seed_rows,
+            )
             notes = (Path(tmp) / "notes.md").read_text(encoding="utf-8")
-            self.assertIn("learned-router comparison available: `False`", notes)
+            self.assertIn("learned-router comparison available: `True`", notes)
             self.assertIn("sequence-heldout gate passes: `False`", notes)
             self.assertIn("rule-OOD gate passes: `False`", notes)
             self.assertIn("churn budget gate passes: `False`", notes)
