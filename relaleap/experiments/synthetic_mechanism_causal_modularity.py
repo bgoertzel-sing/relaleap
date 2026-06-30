@@ -58,6 +58,7 @@ REQUIRED_ARTIFACTS = (
     "pc_amortized_error_pregate_design.csv",
     "pc_amortized_error_pregate.csv",
     "pc_amortized_error_pregate_closeout.csv",
+    "transformer_acsr_design.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -469,6 +470,14 @@ def run_synthetic_mechanism_causal_modularity(
             _pc_amortized_error_pregate_closeout_summary(
                 training_smoke["pc_amortized_error_pregate_closeout"]
             )
+            if training_smoke is not None
+            else None
+        ),
+        "transformer_acsr_design_row_count": (
+            len(training_smoke["transformer_acsr_design"]) if training_smoke is not None else 0
+        ),
+        "transformer_acsr_design_primary_result": (
+            _transformer_acsr_design_summary(training_smoke["transformer_acsr_design"])
             if training_smoke is not None
             else None
         ),
@@ -1043,6 +1052,14 @@ def _run_training_smoke(
     pc_amortized_error_pregate_closeout = _pc_amortized_error_pregate_closeout_rows(
         pregate_rows=pc_amortized_error_pregate,
     )
+    transformer_acsr_design = _transformer_acsr_design_rows(
+        pc_closeout_rows=pc_amortized_error_pregate_closeout,
+        soft_design_rows=soft_mixture_low_churn_dense_modular_design,
+        arm_metrics=arm_metrics,
+        residual_budget_rows=residual_budget_accounting,
+        commutator_rows=commutator_rows,
+        forgetting_rows=forgetting_rows,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -1074,6 +1091,7 @@ def _run_training_smoke(
         "pc_amortized_error_pregate_design": pc_amortized_error_pregate_design,
         "pc_amortized_error_pregate": pc_amortized_error_pregate,
         "pc_amortized_error_pregate_closeout": pc_amortized_error_pregate_closeout,
+        "transformer_acsr_design": transformer_acsr_design,
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": residual_budget_accounting,
@@ -4286,6 +4304,12 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("transformer_acsr_design"):
+        summary = _transformer_acsr_design_summary(
+            training_smoke["transformer_acsr_design"]
+        )
+        if summary.get("selected_next_experiment"):
+            return str(summary["selected_next_experiment"]).replace("_", " ")
     if training_smoke.get("pc_amortized_error_pregate_closeout"):
         summary = _pc_amortized_error_pregate_closeout_summary(
             training_smoke["pc_amortized_error_pregate_closeout"]
@@ -7861,6 +7885,219 @@ def _pc_amortized_error_pregate_closeout_summary(rows: list[dict[str, Any]]) -> 
     }
 
 
+def _transformer_acsr_design_rows(
+    *,
+    pc_closeout_rows: list[dict[str, Any]],
+    soft_design_rows: list[dict[str, Any]],
+    arm_metrics: list[dict[str, Any]],
+    residual_budget_rows: list[dict[str, Any]],
+    commutator_rows: list[dict[str, Any]],
+    forgetting_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    pc_closeout = _pc_amortized_error_pregate_closeout_summary(pc_closeout_rows)
+    soft_design = _soft_mixture_low_churn_dense_modular_design_summary(soft_design_rows)
+    if pc_closeout.get("current_error_target_path_closed") is not True:
+        return []
+    by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
+    budget_by_arm = {str(row.get("arm", "")): row for row in residual_budget_rows}
+    promoted = by_arm.get("promoted_contextual_topk2", {})
+    token_position = by_arm.get("token_position_router_topk2", {})
+    linear = by_arm.get("intervention_trained_sparse_topk2", {})
+    random_support = by_arm.get("random_support_topk2", {})
+    dense = by_arm.get("dense_rank_norm_matched", {})
+    promoted_ce = _metric_float(promoted.get("holdout_ce"))
+    token_position_ce = _metric_float(token_position.get("holdout_ce"))
+    linear_ce = _metric_float(linear.get("holdout_ce"))
+    random_ce = _metric_float(random_support.get("holdout_ce"))
+    dense_ce = _metric_float(dense.get("holdout_ce"))
+    promoted_commutator = _mean_metric(commutator_rows, ["promoted_contextual_topk2"], "finite_update_commutator_l2")
+    promoted_churn = _mean_abs_metric(forgetting_rows, ["promoted_contextual_topk2"], "functional_churn")
+    rows = [
+        (
+            "primary_transformer_acsr_design",
+            "transformer_acsr",
+            "small_causal_transformer_predicts_future_context_chunks_and_router_logits",
+            "current_hidden;previous_hidden_window;position_encoding;past_support;past_residual_norm;past_entropy",
+            "next_hidden;next_delta;full_context_router_logits;softened_topk2_support_distribution",
+            "causal_masked_transformer_2_layers_4_heads_hidden_32_context_window_16",
+            "implement_local_transformer_acsr_cpu_smoke_pilot",
+            True,
+        ),
+        (
+            "causal_feature_safe_topk2_control",
+            "causal_contextual_topk2",
+            "router_uses_only_current_and_past_features_no_predicted_future_chunks",
+            "current_hidden;previous_hidden_window;position_encoding",
+            "",
+            "same_router_budget_as_primary_without_future_target_head",
+            "control_for_router_capacity_without_anticipatory_prediction",
+            False,
+        ),
+        (
+            "mlp_gru_predictor_control",
+            "mlp_gru_acsr_control",
+            "prior_shallow_acsr_predictors_as_ablations_not_primary_branch",
+            "current_hidden;previous_hidden_summary;position_encoding",
+            "next_hidden;next_delta;full_context_router_logits",
+            "parameter_matched_mlp_and_gru_predictors",
+            "control_for_sequence_model_choice",
+            False,
+        ),
+        (
+            "token_position_transformer_null",
+            "token_position_only_transformer_null",
+            "causal_transformer_without_hidden_features",
+            "token_id;position_encoding",
+            "next_hidden;next_delta;full_context_router_logits",
+            "same_depth_small_causal_transformer",
+            "reject_position_shortcut_explanation",
+            False,
+        ),
+        (
+            "shuffled_delayed_target_null",
+            "misaligned_future_target_null",
+            "same_predictor_trained_on_shuffled_or_delayed_future_chunks",
+            "current_hidden;previous_hidden_window;position_encoding",
+            "shuffled_next_hidden;delayed_next_delta;misaligned_router_logits",
+            "same_primary_transformer_budget",
+            "reject_target_alignment_shortcut",
+            False,
+        ),
+        (
+            "same_student_support_intervention_check",
+            "same_student_support_swap",
+            "evaluate_predicted_feature_supports_through_same_residual_values",
+            "heldout_hidden;predicted_support;null_support",
+            "fixed_residual_value_ce_and_intervention_fingerprints",
+            "no_extra_training",
+            "separate_router_support_signal_from_value_capacity",
+            False,
+        ),
+        (
+            "future_perturbation_invariance_check",
+            "causal_leakage_check",
+            "perturb_future_tokens_and_require_router_outputs_unchanged",
+            "prefix_features_before_current_position",
+            "support_logits_before_and_after_future_perturbation",
+            "max_support_logit_delta_threshold_1e-5",
+            "fail_if_future_positions_affect_deployable_router",
+            False,
+        ),
+        (
+            "retention_churn_commutator_gate",
+            "non_ce_guardrail",
+            "require_ce_guardrail_plus_support_regret_churn_and_commutator_non_regression",
+            "a_to_b_adaptation_rows;commutator_rows;oracle_regret_rows",
+            "support_churn;functional_churn;finite_update_commutator;oracle_support_regret",
+            "local_cpu_smoke_then_repeat_only_if_discriminative",
+            "block_gpu_until_ce_and_non_ce_gates_pass",
+            False,
+        ),
+    ]
+    return [
+        {
+            "design_name": "transformer_acsr",
+            "design_role": role,
+            "candidate_family": family,
+            "candidate_mechanism": mechanism,
+            "causal_input_tensors": causal_inputs,
+            "future_context_targets": targets,
+            "predictor_spec": predictor_spec,
+            "first_local_config": "configs/token_larger_support_wide_contextual_router_hep_temporal_clipped_objective_gate.yaml",
+            "first_output_dir": "results/reports/transformer_acsr_design",
+            "artifact_schema": (
+                "transformer_acsr_design.csv;summary.json;predictor_target_metrics.csv;"
+                "support_intervention_metrics.csv;causal_leakage_checks.csv;retention_churn_commutator.csv"
+            ),
+            "required_controls": (
+                "full_context_contextual_mlp_teacher;causal_feature_safe_topk2;mlp_gru_acsr;"
+                "token_position_transformer;shuffled_delayed_targets;linear_topk2;random_fixed_topk2;"
+                "rank_matched_topk1;dense_rank_norm_matched"
+            ),
+            "pass_fail_criteria": (
+                "match_or_improve_ce_vs_causal_feature_safe_topk2;close_nonzero_full_context_teacher_gap;"
+                "beat_shuffled_delayed_and_token_position_nulls;no_future_perturbation_effect;"
+                "nonworse_oracle_regret_churn_commutator_vs_causal_topk2"
+            ),
+            "smallest_implementation_patch": (
+                "add command-driven transformer_acsr pilot module, causal feature extractor, teacher target "
+                "extractor, small causal transformer predictor, support swap evaluator, and focused artifact tests"
+            ),
+            "source_pc_closeout_status": pc_closeout.get("closeout_status", ""),
+            "source_soft_mixture_selected_next_experiment": soft_design.get("selected_next_experiment", ""),
+            "soft_mixture_deferred_by_transformer_acsr_priority": True,
+            "promoted_full_context_teacher_arm": "promoted_contextual_topk2",
+            "promoted_full_context_teacher_ce": promoted_ce,
+            "causal_feature_safe_proxy_arm": "token_position_router_topk2",
+            "causal_feature_safe_proxy_ce": token_position_ce,
+            "linear_or_sparse_proxy_arm": "intervention_trained_sparse_topk2",
+            "linear_or_sparse_proxy_ce": linear_ce,
+            "random_support_proxy_ce": random_ce,
+            "dense_rank_norm_control_ce": dense_ce,
+            "promoted_teacher_commutator_l2": promoted_commutator,
+            "promoted_teacher_abs_functional_churn": promoted_churn,
+            "promoted_teacher_flop_proxy_per_token": _metric_float(
+                budget_by_arm.get("promoted_contextual_topk2", {}).get("flop_proxy_per_token")
+            ),
+            "selected": selected,
+            "design_selected": True,
+            "implemented_in_current_packet": False,
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "advance_to_gpu_validation": False,
+            "strategic_change_level": "major",
+            "notify_ben": True,
+            "selected_next_experiment": next_experiment,
+            "interpretation": (
+                "Ben's 2026-06-30 direction supersedes the soft-mixture residual branch: create a fail-closed "
+                "Transformer-ACSR design before GPU work. The promoted full-context contextual router is treated "
+                "as a nondeployable teacher, not deployable evidence."
+            ),
+        }
+        for role, family, mechanism, causal_inputs, targets, predictor_spec, next_experiment, selected in rows
+    ]
+
+
+def _transformer_acsr_design_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "design_selected": False,
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "notify_ben": False,
+            "strategic_change_level": "minor",
+            "selected_next_experiment": "",
+        }
+    selected = next((row for row in rows if row.get("selected") is True), rows[0])
+    return {
+        "row_count": len(rows),
+        "design_name": selected.get("design_name", ""),
+        "candidate_family": selected.get("candidate_family", ""),
+        "future_context_targets": selected.get("future_context_targets", ""),
+        "causal_input_tensors": selected.get("causal_input_tensors", ""),
+        "first_local_config": selected.get("first_local_config", ""),
+        "artifact_schema": selected.get("artifact_schema", ""),
+        "required_controls": selected.get("required_controls", ""),
+        "pass_fail_criteria": selected.get("pass_fail_criteria", ""),
+        "soft_mixture_deferred_by_transformer_acsr_priority": any(
+            row.get("soft_mixture_deferred_by_transformer_acsr_priority") is True for row in rows
+        ),
+        "design_selected": any(row.get("design_selected") is True for row in rows),
+        "implemented_in_current_packet": any(row.get("implemented_in_current_packet") is True for row in rows),
+        "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
+        "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
+        "advance_to_gpu_validation": any(row.get("advance_to_gpu_validation") is True for row in rows),
+        "notify_ben": any(row.get("notify_ben") is True for row in rows),
+        "strategic_change_level": "major" if any(row.get("strategic_change_level") == "major" for row in rows) else "minor",
+        "selected_next_experiment": selected.get("selected_next_experiment", ""),
+        "interpretation": (
+            "Fail-closed Transformer-ACSR design report. It records exact future targets, causal inputs, controls, "
+            "local artifact schema, and pass/fail gates before any local pilot or GPU validation."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -8013,6 +8250,10 @@ def _write_artifacts(
         out_dir / "pc_amortized_error_pregate_closeout.csv",
         [] if training_smoke is None else training_smoke["pc_amortized_error_pregate_closeout"],
     )
+    _write_csv(
+        out_dir / "transformer_acsr_design.csv",
+        [] if training_smoke is None else training_smoke["transformer_acsr_design"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -8063,6 +8304,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- PC amortized error pregate design rows: `{summary['pc_amortized_error_pregate_design_row_count']}`",
         f"- PC amortized error pregate rows: `{summary['pc_amortized_error_pregate_row_count']}`",
         f"- PC amortized error pregate closeout rows: `{summary['pc_amortized_error_pregate_closeout_row_count']}`",
+        f"- Transformer-ACSR design rows: `{summary['transformer_acsr_design_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
@@ -8093,6 +8335,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The budget-normalized gated value-mixture pregate is the selected local sparse-value redesign. It keeps the promoted contextual top-k2 router, adds residual-budget clipping plus a learned low-rank value gate, compares against the flat same-router value MLP control, and remains fail-closed with no GPU or promotion request.",
         "",
         "The soft-mixture low-churn dense modular design selector consumes the failed gated sparse value-mixture closeout and defines the next bounded non-PC packet. It is design-only: no trainable arm, GPU validation, or promotion is implied until a future local pregate beats controls and interference budgets.",
+        "",
+        "The Transformer-ACSR design report supersedes the soft-mixture residual branch under Ben's 2026-06-30 direction. It treats the promoted full-context contextual router as a nondeployable teacher, specifies future-context targets and prefix-safe causal inputs, and keeps GPU validation blocked until a local command-driven pilot clears CE, support-regret, churn, commutator, null, and future-perturbation gates.",
         "",
         "The PC core/periphery residual-inference pregate is a major-pivot scaffold from the external strategy review. It closes the current sparse value-capacity branch as unsupported, records that Ben should be notified, and defines the next local trainable packet: fixed contextual top-k2 router, protected predictive core, plastic residual-error periphery, two local inference steps, anchor KL, norm clamp, commutator/churn penalties, and flat/dense/token-position/random/shuffled controls. It is not promotion evidence.",
         "",

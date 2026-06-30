@@ -61,6 +61,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["pc_amortized_error_pregate_design_row_count"], 0)
             self.assertEqual(summary["pc_amortized_error_pregate_row_count"], 0)
             self.assertEqual(summary["pc_amortized_error_pregate_closeout_row_count"], 0)
+            self.assertEqual(summary["transformer_acsr_design_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -432,6 +433,33 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                     "branch_reopen_requires_new_causal_signal"
                 ]
             )
+            self.assertEqual(summary["transformer_acsr_design_row_count"], 8)
+            self.assertIsNotNone(summary["transformer_acsr_design_primary_result"])
+            self.assertEqual(
+                summary["transformer_acsr_design_primary_result"]["row_count"],
+                summary["transformer_acsr_design_row_count"],
+            )
+            self.assertFalse(summary["transformer_acsr_design_primary_result"]["requires_gpu_now"])
+            self.assertFalse(summary["transformer_acsr_design_primary_result"]["promotion_allowed"])
+            self.assertTrue(summary["transformer_acsr_design_primary_result"]["notify_ben"])
+            self.assertEqual(
+                summary["transformer_acsr_design_primary_result"]["strategic_change_level"],
+                "major",
+            )
+            self.assertTrue(
+                summary["transformer_acsr_design_primary_result"][
+                    "soft_mixture_deferred_by_transformer_acsr_priority"
+                ]
+            )
+            self.assertIn(
+                "next_hidden",
+                summary["transformer_acsr_design_primary_result"]["future_context_targets"],
+            )
+            self.assertIn(
+                "current_hidden",
+                summary["transformer_acsr_design_primary_result"]["causal_input_tensors"],
+            )
+            self.assertIn("transformer acsr", summary["selected_next_step"].replace("-", " "))
             self.assertGreater(summary["per_token_metric_row_count"], 0)
             self.assertGreater(summary["ce_by_rule_position_row_count"], 0)
             self.assertEqual(summary["residual_budget_accounting_row_count"], 24)
@@ -1106,6 +1134,57 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(selected_pc["strategic_change_level"], "major")
             self.assertEqual(selected_pc["notify_ben"], "True")
             self.assertEqual(selected_pc["mechanism_labels_used_for_scoring_only"], "True")
+
+            with (out_dir / "transformer_acsr_design.csv").open(newline="", encoding="utf-8") as handle:
+                transformer_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(transformer_rows), 8)
+            transformer_by_role = {row["design_role"]: row for row in transformer_rows}
+            self.assertEqual(
+                set(transformer_by_role),
+                {
+                    "primary_transformer_acsr_design",
+                    "causal_feature_safe_topk2_control",
+                    "mlp_gru_predictor_control",
+                    "token_position_transformer_null",
+                    "shuffled_delayed_target_null",
+                    "same_student_support_intervention_check",
+                    "future_perturbation_invariance_check",
+                    "retention_churn_commutator_gate",
+                },
+            )
+            primary_transformer = transformer_by_role["primary_transformer_acsr_design"]
+            for required_field in {
+                "design_name",
+                "causal_input_tensors",
+                "future_context_targets",
+                "predictor_spec",
+                "first_local_config",
+                "artifact_schema",
+                "required_controls",
+                "pass_fail_criteria",
+                "smallest_implementation_patch",
+                "soft_mixture_deferred_by_transformer_acsr_priority",
+                "implemented_in_current_packet",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "advance_to_gpu_validation",
+                "strategic_change_level",
+                "notify_ben",
+                "selected_next_experiment",
+            }:
+                self.assertIn(required_field, primary_transformer)
+            self.assertEqual(primary_transformer["design_name"], "transformer_acsr")
+            self.assertEqual(primary_transformer["selected"], "True")
+            self.assertIn("next_hidden", primary_transformer["future_context_targets"])
+            self.assertIn("current_hidden", primary_transformer["causal_input_tensors"])
+            self.assertIn("token_position_transformer", primary_transformer["required_controls"])
+            self.assertEqual(primary_transformer["soft_mixture_deferred_by_transformer_acsr_priority"], "True")
+            self.assertEqual(primary_transformer["implemented_in_current_packet"], "False")
+            self.assertEqual(primary_transformer["requires_gpu_now"], "False")
+            self.assertEqual(primary_transformer["promotion_allowed"], "False")
+            self.assertEqual(primary_transformer["advance_to_gpu_validation"], "False")
+            self.assertEqual(primary_transformer["strategic_change_level"], "major")
+            self.assertEqual(primary_transformer["notify_ben"], "True")
 
             with (out_dir / "ce_by_rule_position.csv").open(newline="", encoding="utf-8") as handle:
                 ce_rule_position_rows = list(csv.DictReader(handle))
