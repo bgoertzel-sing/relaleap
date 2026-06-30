@@ -31,9 +31,13 @@ class TransformerACSRSeedRepeatTests(unittest.TestCase):
             self.assertIn("robust_hidden_classifier_gate_passes", summary)
             self.assertIn("hidden_classifier_null_margin_gate_passes", summary)
             self.assertTrue(summary["hidden_classifier_learned_router_comparison_available"])
+            self.assertFalse(summary["hidden_classifier_learned_router_gate_passes"])
             self.assertFalse(summary["hidden_classifier_sequence_heldout_gate_passes"])
+            self.assertFalse(summary["hidden_classifier_rule_ood_evidence_available"])
             self.assertFalse(summary["hidden_classifier_rule_ood_gate_passes"])
+            self.assertFalse(summary["hidden_classifier_churn_budget_evidence_available"])
             self.assertFalse(summary["hidden_classifier_churn_budget_gate_passes"])
+            self.assertFalse(summary["hidden_classifier_commutator_budget_evidence_available"])
             self.assertFalse(summary["hidden_classifier_commutator_budget_gate_passes"])
             self.assertFalse(summary["hidden_classifier_sequence_ood_budget_audit_available"])
             self.assertFalse(summary["hidden_classifier_gpu_gate_passes"])
@@ -57,12 +61,29 @@ class TransformerACSRSeedRepeatTests(unittest.TestCase):
                 "direct_hidden_support_classifier_oracle_regret_recovery_vs_learned_router",
                 seed_rows,
             )
+            self.assertIn(
+                "direct_hidden_support_classifier_rule_ood_evidence_available",
+                seed_rows,
+            )
+            self.assertIn(
+                "direct_hidden_support_classifier_churn_budget_evidence_available",
+                seed_rows,
+            )
+            self.assertIn(
+                "direct_hidden_support_classifier_commutator_budget_evidence_available",
+                seed_rows,
+            )
             notes = (Path(tmp) / "notes.md").read_text(encoding="utf-8")
             self.assertIn("learned-router comparison available: `True`", notes)
+            self.assertIn("learned-router gate passes: `False`", notes)
             self.assertIn("sequence-heldout gate passes: `False`", notes)
+            self.assertIn("rule-OOD evidence available: `False`", notes)
             self.assertIn("rule-OOD gate passes: `False`", notes)
+            self.assertIn("churn budget evidence available: `False`", notes)
             self.assertIn("churn budget gate passes: `False`", notes)
+            self.assertIn("commutator budget evidence available: `False`", notes)
             self.assertIn("commutator budget gate passes: `False`", notes)
+            self.assertIn("Hidden support-classifier evidence is pre-GPU only", notes)
 
 
 if __name__ == "__main__":

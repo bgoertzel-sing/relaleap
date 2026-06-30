@@ -117,6 +117,9 @@ def run_transformer_acsr_seed_repeat(
             and hidden_regret_recovery is not None
             and (hidden_gain_vs_learned > 0.0 or hidden_regret_recovery >= 0.25)
         )
+        hidden_rule_ood_evidence_available = False
+        hidden_churn_budget_evidence_available = False
+        hidden_commutator_budget_evidence_available = False
         hidden_churn_budget_gate_passes = False
         seed_rows.append(
             {
@@ -187,8 +190,17 @@ def run_transformer_acsr_seed_repeat(
                 "direct_hidden_support_classifier_sequence_heldout_gate_passes": (
                     hidden_sequence_heldout_gate_passes
                 ),
+                "direct_hidden_support_classifier_rule_ood_evidence_available": (
+                    hidden_rule_ood_evidence_available
+                ),
+                "direct_hidden_support_classifier_churn_budget_evidence_available": (
+                    hidden_churn_budget_evidence_available
+                ),
                 "direct_hidden_support_classifier_churn_budget_gate_passes": (
                     hidden_churn_budget_gate_passes
+                ),
+                "direct_hidden_support_classifier_commutator_budget_evidence_available": (
+                    hidden_commutator_budget_evidence_available
                 ),
                 "sequence_audit_contextual_ce": _float_or_none(sequence_audit.get("contextual_ce")),
                 "sequence_audit_contextual_gain_vs_learned": _float_or_none(
@@ -277,20 +289,45 @@ def run_transformer_acsr_seed_repeat(
         and row["direct_hidden_support_classifier_ce"] is not None
         for row in seed_rows
     )
+    hidden_classifier_learned_router_gate_passes = bool(
+        hidden_classifier_learned_router_comparison_available
+        and all(
+            row["direct_hidden_support_classifier_sequence_heldout_gate_passes"]
+            for row in seed_rows
+        )
+    )
     hidden_classifier_sequence_heldout_gate_passes = all(
         row["direct_hidden_support_classifier_sequence_heldout_gate_passes"]
         for row in seed_rows
     )
+    hidden_classifier_rule_ood_evidence_available = all(
+        row["direct_hidden_support_classifier_rule_ood_evidence_available"]
+        for row in seed_rows
+    )
     hidden_classifier_rule_ood_gate_passes = False
-    hidden_classifier_churn_budget_gate_passes = all(
-        row["direct_hidden_support_classifier_churn_budget_gate_passes"]
+    hidden_classifier_churn_budget_evidence_available = all(
+        row["direct_hidden_support_classifier_churn_budget_evidence_available"]
+        for row in seed_rows
+    )
+    hidden_classifier_churn_budget_gate_passes = bool(
+        hidden_classifier_churn_budget_evidence_available
+        and all(
+            row["direct_hidden_support_classifier_churn_budget_gate_passes"]
+            for row in seed_rows
+        )
+    )
+    hidden_classifier_commutator_budget_evidence_available = all(
+        row["direct_hidden_support_classifier_commutator_budget_evidence_available"]
         for row in seed_rows
     )
     hidden_classifier_commutator_budget_gate_passes = False
     hidden_classifier_sequence_ood_budget_audit_available = bool(
         hidden_classifier_sequence_heldout_gate_passes
+        and hidden_classifier_rule_ood_evidence_available
         and hidden_classifier_rule_ood_gate_passes
+        and hidden_classifier_churn_budget_evidence_available
         and hidden_classifier_churn_budget_gate_passes
+        and hidden_classifier_commutator_budget_evidence_available
         and hidden_classifier_commutator_budget_gate_passes
     )
     hidden_classifier_gpu_gate_passes = bool(
@@ -298,6 +335,7 @@ def run_transformer_acsr_seed_repeat(
         and hidden_classifier_overlap_gate_passes
         and hidden_classifier_null_margin_gate_passes
         and hidden_classifier_learned_router_comparison_available
+        and hidden_classifier_learned_router_gate_passes
         and hidden_classifier_sequence_ood_budget_audit_available
     )
     advance_to_gpu_validation = bool(
@@ -346,9 +384,15 @@ def run_transformer_acsr_seed_repeat(
         "hidden_classifier_overlap_gate_passes": hidden_classifier_overlap_gate_passes,
         "hidden_classifier_null_margin_gate_passes": hidden_classifier_null_margin_gate_passes,
         "hidden_classifier_learned_router_comparison_available": hidden_classifier_learned_router_comparison_available,
+        "hidden_classifier_learned_router_gate_passes": hidden_classifier_learned_router_gate_passes,
         "hidden_classifier_sequence_heldout_gate_passes": hidden_classifier_sequence_heldout_gate_passes,
+        "hidden_classifier_rule_ood_evidence_available": hidden_classifier_rule_ood_evidence_available,
         "hidden_classifier_rule_ood_gate_passes": hidden_classifier_rule_ood_gate_passes,
+        "hidden_classifier_churn_budget_evidence_available": hidden_classifier_churn_budget_evidence_available,
         "hidden_classifier_churn_budget_gate_passes": hidden_classifier_churn_budget_gate_passes,
+        "hidden_classifier_commutator_budget_evidence_available": (
+            hidden_classifier_commutator_budget_evidence_available
+        ),
         "hidden_classifier_commutator_budget_gate_passes": hidden_classifier_commutator_budget_gate_passes,
         "hidden_classifier_sequence_ood_budget_audit_available": hidden_classifier_sequence_ood_budget_audit_available,
         "hidden_classifier_gpu_gate_passes": hidden_classifier_gpu_gate_passes,
@@ -382,9 +426,13 @@ def run_transformer_acsr_seed_repeat(
         f"- Mean hidden support-classifier oracle-regret recovery vs learned router: `{mean_hidden_classifier_oracle_regret_recovery_vs_learned_router}`",
         f"- Mean hidden support-classifier oracle overlap: `{mean_hidden_classifier_overlap}`",
         f"- Hidden support-classifier learned-router comparison available: `{hidden_classifier_learned_router_comparison_available}`",
+        f"- Hidden support-classifier learned-router gate passes: `{hidden_classifier_learned_router_gate_passes}`",
         f"- Hidden support-classifier sequence-heldout gate passes: `{hidden_classifier_sequence_heldout_gate_passes}`",
+        f"- Hidden support-classifier rule-OOD evidence available: `{hidden_classifier_rule_ood_evidence_available}`",
         f"- Hidden support-classifier rule-OOD gate passes: `{hidden_classifier_rule_ood_gate_passes}`",
+        f"- Hidden support-classifier churn budget evidence available: `{hidden_classifier_churn_budget_evidence_available}`",
         f"- Hidden support-classifier churn budget gate passes: `{hidden_classifier_churn_budget_gate_passes}`",
+        f"- Hidden support-classifier commutator budget evidence available: `{hidden_classifier_commutator_budget_evidence_available}`",
         f"- Hidden support-classifier commutator budget gate passes: `{hidden_classifier_commutator_budget_gate_passes}`",
         f"- Hidden support-classifier sequence/OOD budget audit available: `{hidden_classifier_sequence_ood_budget_audit_available}`",
         f"- Decision: `{summary['decision']}`",
@@ -392,8 +440,9 @@ def run_transformer_acsr_seed_repeat(
         "",
         (
             "GPU validation and promotion remain blocked unless the repeated local value-aware gate and oracle-overlap "
-            "gate pass, or the hidden support classifier additionally clears learned-router, sequence/OOD, and "
-            "budget comparisons."
+            "gate pass. Hidden support-classifier evidence is pre-GPU only until it explicitly beats the learned "
+            "router or recovers at least 25% of router-oracle regret on heldout sequences, includes rule-OOD rows, "
+            "and emits nonworse residual-norm, functional-churn, and commutator budget rows."
         ),
     ]
     (out_dir / "notes.md").write_text("\n".join(notes) + "\n", encoding="utf-8")
