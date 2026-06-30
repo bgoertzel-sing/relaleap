@@ -492,6 +492,17 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 "oracle_support_intervention_ce",
                 summary["transformer_acsr_cpu_smoke_pilot_primary_result"],
             )
+            self.assertEqual(
+                summary["transformer_acsr_cpu_smoke_pilot_primary_result"][
+                    "support_value_source"
+                ],
+                "trained_promoted_contextual_topk2_column_values",
+            )
+            self.assertTrue(
+                summary["transformer_acsr_cpu_smoke_pilot_primary_result"][
+                    "trained_support_value_assay_available"
+                ]
+            )
             self.assertIn(
                 "primary_ce_gain_vs_token_position_support",
                 summary["transformer_acsr_cpu_smoke_pilot_primary_result"],

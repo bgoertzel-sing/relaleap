@@ -8518,7 +8518,7 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
             "replace_support_intervention_assay_with_trained_same_student_residual_values"
             if not trained_value_assay_available
             else "train_value_aware_transformer_acsr_support_router"
-            if not support_assay_valid
+            if not support_assay_valid or not primary_beats_token_position_support
             else "tighten_transformer_acsr_pilot_against_null_controls_before_gpu"
         )
     )
@@ -8659,6 +8659,8 @@ def _transformer_acsr_cpu_smoke_pilot_summary(rows: list[dict[str, Any]]) -> dic
         "primary_target_mse": primary.get("target_mse"),
         "primary_target_cosine": primary.get("target_cosine"),
         "primary_support_intervention_ce": primary.get("support_intervention_ce"),
+        "support_value_source": primary.get("support_value_source"),
+        "trained_support_value_assay_available": primary.get("trained_support_value_assay_available") is True,
         "token_position_support_intervention_ce": primary.get("token_position_support_intervention_ce"),
         "oracle_support_intervention_ce": primary.get("oracle_support_intervention_ce"),
         "oracle_ce_gain_vs_token_position": primary.get("oracle_ce_gain_vs_token_position"),
