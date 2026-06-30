@@ -19,6 +19,15 @@ class TransformerACSRSeedRepeatTests(unittest.TestCase):
             self.assertEqual(summary["seed_count"], 1)
             self.assertFalse(summary["requires_gpu_now"])
             self.assertFalse(summary["promotion_allowed"])
+            self.assertIn("hidden_classifier_gate_pass_count", summary)
+            self.assertIn("hidden_classifier_leakage_pass_count", summary)
+            self.assertIn("mean_hidden_classifier_ce_gain_vs_token_position_null", summary)
+            self.assertIn("mean_hidden_classifier_support_overlap_with_oracle", summary)
+            self.assertIn("robust_hidden_classifier_gate_passes", summary)
+            self.assertIn("hidden_classifier_null_margin_gate_passes", summary)
+            self.assertFalse(summary["hidden_classifier_learned_router_comparison_available"])
+            self.assertFalse(summary["hidden_classifier_sequence_ood_budget_audit_available"])
+            self.assertFalse(summary["hidden_classifier_gpu_gate_passes"])
             self.assertIn(
                 summary["decision"],
                 {
@@ -30,6 +39,9 @@ class TransformerACSRSeedRepeatTests(unittest.TestCase):
             self.assertTrue((Path(tmp) / "summary.json").exists())
             self.assertTrue((Path(tmp) / "notes.md").exists())
             self.assertIn("selected_next_step", summary)
+            seed_rows = (Path(tmp) / "seed_rows.csv").read_text(encoding="utf-8")
+            self.assertIn("direct_hidden_support_classifier_gate_passes", seed_rows)
+            self.assertIn("direct_hidden_support_classifier_ce_gain_vs_frequency_null", seed_rows)
 
 
 if __name__ == "__main__":

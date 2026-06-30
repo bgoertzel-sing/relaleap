@@ -112,6 +112,33 @@ def run_transformer_acsr_seed_repeat(
                 "value_aware_support_overlap_with_oracle": pilot[
                     "value_aware_support_overlap_with_oracle"
                 ],
+                "direct_hidden_support_classifier_gate_passes": pilot[
+                    "direct_hidden_support_classifier_gate_passes"
+                ],
+                "direct_hidden_support_classifier_ce": pilot[
+                    "direct_hidden_support_classifier_ce"
+                ],
+                "direct_hidden_support_classifier_churn": pilot[
+                    "direct_hidden_support_classifier_churn"
+                ],
+                "direct_hidden_support_classifier_overlap_with_oracle": pilot[
+                    "direct_hidden_support_classifier_overlap_with_oracle"
+                ],
+                "direct_hidden_support_classifier_exact_match_with_oracle": pilot[
+                    "direct_hidden_support_classifier_exact_match_with_oracle"
+                ],
+                "direct_hidden_support_classifier_future_perturbation_max_prefix_delta": pilot[
+                    "direct_hidden_support_classifier_future_perturbation_max_prefix_delta"
+                ],
+                "direct_hidden_support_classifier_ce_gain_vs_token_position_null": pilot[
+                    "direct_hidden_support_classifier_ce_gain_vs_token_position_null"
+                ],
+                "direct_hidden_support_classifier_ce_gain_vs_shuffled_null": pilot[
+                    "direct_hidden_support_classifier_ce_gain_vs_shuffled_null"
+                ],
+                "direct_hidden_support_classifier_ce_gain_vs_frequency_null": pilot[
+                    "direct_hidden_support_classifier_ce_gain_vs_frequency_null"
+                ],
                 "selected_next_experiment": pilot["selected_next_experiment"],
                 "requires_gpu_now": pilot["requires_gpu_now"],
                 "promotion_allowed": pilot["promotion_allowed"],
@@ -121,15 +148,39 @@ def run_transformer_acsr_seed_repeat(
 
     completed_count = sum(1 for row in seed_rows if row["status"] == "pass")
     value_gate_pass_count = sum(1 for row in seed_rows if row["value_aware_gate_passes"])
+    hidden_classifier_gate_pass_count = sum(
+        1 for row in seed_rows if row["direct_hidden_support_classifier_gate_passes"]
+    )
     leakage_pass_count = sum(
         1
         for row in seed_rows
         if row["leakage_gate_passes"] and row["value_aware_leakage_gate_passes"]
     )
+    hidden_classifier_leakage_pass_count = sum(
+        1
+        for row in seed_rows
+        if row["direct_hidden_support_classifier_future_perturbation_max_prefix_delta"] is not None
+        and row["direct_hidden_support_classifier_future_perturbation_max_prefix_delta"] <= 1e-5
+    )
     assay_valid_count = sum(1 for row in seed_rows if row["support_intervention_assay_valid"])
     mean_overlap = _mean_present(seed_rows, "value_aware_support_overlap_with_oracle")
+    mean_hidden_classifier_overlap = _mean_present(
+        seed_rows, "direct_hidden_support_classifier_overlap_with_oracle"
+    )
+    mean_hidden_classifier_exact_match = _mean_present(
+        seed_rows, "direct_hidden_support_classifier_exact_match_with_oracle"
+    )
     mean_gain_vs_token_position = _mean_present(
         seed_rows, "value_aware_ce_gain_vs_token_position_support"
+    )
+    mean_hidden_classifier_gain_vs_token_position = _mean_present(
+        seed_rows, "direct_hidden_support_classifier_ce_gain_vs_token_position_null"
+    )
+    mean_hidden_classifier_gain_vs_shuffled = _mean_present(
+        seed_rows, "direct_hidden_support_classifier_ce_gain_vs_shuffled_null"
+    )
+    mean_hidden_classifier_gain_vs_frequency = _mean_present(
+        seed_rows, "direct_hidden_support_classifier_ce_gain_vs_frequency_null"
     )
     robust_value_gate = (
         completed_count == len(seed_rows)
@@ -137,11 +188,42 @@ def run_transformer_acsr_seed_repeat(
         and leakage_pass_count == len(seed_rows)
         and assay_valid_count == len(seed_rows)
     )
+    robust_hidden_classifier_gate = (
+        completed_count == len(seed_rows)
+        and hidden_classifier_gate_pass_count == len(seed_rows)
+        and hidden_classifier_leakage_pass_count == len(seed_rows)
+        and assay_valid_count == len(seed_rows)
+    )
     overlap_gate_passes = mean_overlap is not None and mean_overlap >= 0.25
-    advance_to_gpu_validation = bool(robust_value_gate and overlap_gate_passes)
+    hidden_classifier_overlap_gate_passes = (
+        mean_hidden_classifier_overlap is not None and mean_hidden_classifier_overlap >= 0.25
+    )
+    hidden_classifier_null_margin_gate_passes = all(
+        value is not None and value > 0.0
+        for value in (
+            mean_hidden_classifier_gain_vs_token_position,
+            mean_hidden_classifier_gain_vs_shuffled,
+            mean_hidden_classifier_gain_vs_frequency,
+        )
+    )
+    hidden_classifier_learned_router_comparison_available = False
+    hidden_classifier_sequence_ood_budget_audit_available = False
+    hidden_classifier_gpu_gate_passes = bool(
+        robust_hidden_classifier_gate
+        and hidden_classifier_overlap_gate_passes
+        and hidden_classifier_null_margin_gate_passes
+        and hidden_classifier_learned_router_comparison_available
+        and hidden_classifier_sequence_ood_budget_audit_available
+    )
+    advance_to_gpu_validation = bool(
+        (robust_value_gate and overlap_gate_passes)
+        or hidden_classifier_gpu_gate_passes
+    )
     selected_next_step = (
         "run_runpod_transformer_acsr_validation_with_artifact_checks"
         if advance_to_gpu_validation
+        else "run_hidden_support_classifier_sequence_ood_budget_audit_before_gpu"
+        if robust_hidden_classifier_gate
         else "tighten_value_aware_transformer_acsr_oracle_overlap_and_null_controls_before_gpu"
         if robust_value_gate
         else "close_or_redesign_value_aware_transformer_acsr_support_router_locally"
@@ -156,12 +238,25 @@ def run_transformer_acsr_seed_repeat(
         "seed_count": len(seed_rows),
         "completed_seed_count": completed_count,
         "value_aware_gate_pass_count": value_gate_pass_count,
+        "hidden_classifier_gate_pass_count": hidden_classifier_gate_pass_count,
         "leakage_pass_count": leakage_pass_count,
+        "hidden_classifier_leakage_pass_count": hidden_classifier_leakage_pass_count,
         "support_intervention_assay_valid_count": assay_valid_count,
         "mean_value_aware_ce_gain_vs_token_position_support": mean_gain_vs_token_position,
         "mean_value_aware_support_overlap_with_oracle": mean_overlap,
+        "mean_hidden_classifier_ce_gain_vs_token_position_null": mean_hidden_classifier_gain_vs_token_position,
+        "mean_hidden_classifier_ce_gain_vs_shuffled_null": mean_hidden_classifier_gain_vs_shuffled,
+        "mean_hidden_classifier_ce_gain_vs_frequency_null": mean_hidden_classifier_gain_vs_frequency,
+        "mean_hidden_classifier_support_overlap_with_oracle": mean_hidden_classifier_overlap,
+        "mean_hidden_classifier_exact_match_with_oracle": mean_hidden_classifier_exact_match,
         "robust_value_gate_passes": robust_value_gate,
+        "robust_hidden_classifier_gate_passes": robust_hidden_classifier_gate,
         "oracle_overlap_gate_passes": overlap_gate_passes,
+        "hidden_classifier_overlap_gate_passes": hidden_classifier_overlap_gate_passes,
+        "hidden_classifier_null_margin_gate_passes": hidden_classifier_null_margin_gate_passes,
+        "hidden_classifier_learned_router_comparison_available": hidden_classifier_learned_router_comparison_available,
+        "hidden_classifier_sequence_ood_budget_audit_available": hidden_classifier_sequence_ood_budget_audit_available,
+        "hidden_classifier_gpu_gate_passes": hidden_classifier_gpu_gate_passes,
         "requires_gpu_now": False,
         "promotion_allowed": False,
         "advance_to_gpu_validation": advance_to_gpu_validation,
@@ -180,13 +275,25 @@ def run_transformer_acsr_seed_repeat(
         "",
         f"- Seeds: `{', '.join(str(seed) for seed in seeds)}`",
         f"- Value-aware gate pass count: `{value_gate_pass_count}/{len(seed_rows)}`",
+        f"- Hidden support-classifier gate pass count: `{hidden_classifier_gate_pass_count}/{len(seed_rows)}`",
         f"- Leakage pass count: `{leakage_pass_count}/{len(seed_rows)}`",
+        f"- Hidden support-classifier leakage pass count: `{hidden_classifier_leakage_pass_count}/{len(seed_rows)}`",
         f"- Mean value-aware CE gain vs token/position: `{mean_gain_vs_token_position}`",
         f"- Mean value-aware oracle overlap: `{mean_overlap}`",
+        f"- Mean hidden support-classifier CE gain vs token/position null: `{mean_hidden_classifier_gain_vs_token_position}`",
+        f"- Mean hidden support-classifier CE gain vs shuffled null: `{mean_hidden_classifier_gain_vs_shuffled}`",
+        f"- Mean hidden support-classifier CE gain vs frequency null: `{mean_hidden_classifier_gain_vs_frequency}`",
+        f"- Mean hidden support-classifier oracle overlap: `{mean_hidden_classifier_overlap}`",
+        f"- Hidden support-classifier learned-router comparison available: `{hidden_classifier_learned_router_comparison_available}`",
+        f"- Hidden support-classifier sequence/OOD budget audit available: `{hidden_classifier_sequence_ood_budget_audit_available}`",
         f"- Decision: `{summary['decision']}`",
         f"- Next step: `{selected_next_step}`",
         "",
-        "GPU validation and promotion remain blocked unless the repeated local value-aware gate and oracle-overlap gate both pass.",
+        (
+            "GPU validation and promotion remain blocked unless the repeated local value-aware gate and oracle-overlap "
+            "gate pass, or the hidden support classifier additionally clears learned-router, sequence/OOD, and "
+            "budget comparisons."
+        ),
     ]
     (out_dir / "notes.md").write_text("\n".join(notes) + "\n", encoding="utf-8")
     return summary
