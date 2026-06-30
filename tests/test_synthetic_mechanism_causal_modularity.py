@@ -482,6 +482,20 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertTrue(
                 summary["transformer_acsr_cpu_smoke_pilot_primary_result"]["leakage_gate_passes"]
             )
+            self.assertIn(
+                summary["transformer_acsr_cpu_smoke_pilot_primary_result"][
+                    "support_intervention_assay_valid"
+                ],
+                {False, True},
+            )
+            self.assertIn(
+                "oracle_support_intervention_ce",
+                summary["transformer_acsr_cpu_smoke_pilot_primary_result"],
+            )
+            self.assertIn(
+                "primary_ce_gain_vs_token_position_support",
+                summary["transformer_acsr_cpu_smoke_pilot_primary_result"],
+            )
             self.assertLessEqual(
                 summary["transformer_acsr_cpu_smoke_pilot_primary_result"][
                     "future_perturbation_max_prefix_delta"
@@ -1235,11 +1249,21 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 "target_cosine",
                 "support_intervention_ce",
                 "support_churn",
+                "oracle_support_intervention_ce",
+                "token_position_support_intervention_ce",
+                "oracle_ce_gain_vs_token_position",
+                "oracle_ce_gain_vs_base",
+                "support_intervention_assay_valid",
+                "support_assay_failure_reason",
+                "primary_ce_gain_vs_token_position_support",
+                "primary_support_overlap_with_oracle",
+                "token_position_support_overlap_with_oracle",
                 "future_perturbation_max_prefix_delta",
                 "leakage_gate_passes",
                 "beats_token_position_mse",
                 "beats_shuffled_target_mse",
                 "beats_mlp_mse",
+                "primary_beats_token_position_support_ce",
                 "pilot_gates_pass",
                 "implemented_in_current_packet",
                 "requires_gpu_now",
@@ -1253,6 +1277,15 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(primary_pilot["requires_gpu_now"], "False")
             self.assertEqual(primary_pilot["promotion_allowed"], "False")
             self.assertLessEqual(float(primary_pilot["future_perturbation_max_prefix_delta"]), 1e-5)
+            self.assertIn(primary_pilot["support_intervention_assay_valid"], {"False", "True"})
+            self.assertIn(
+                primary_pilot["selected_next_experiment"],
+                {
+                    "repeat_transformer_acsr_cpu_smoke_across_seeds",
+                    "tighten_transformer_acsr_pilot_against_null_controls_before_gpu",
+                    "replace_support_intervention_assay_with_trained_same_student_residual_values",
+                },
+            )
 
             with (out_dir / "ce_by_rule_position.csv").open(newline="", encoding="utf-8") as handle:
                 ce_rule_position_rows = list(csv.DictReader(handle))

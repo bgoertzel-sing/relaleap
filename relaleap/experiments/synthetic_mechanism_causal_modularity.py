@@ -8256,7 +8256,7 @@ def _support_intervention_ce_from_predicted_delta(
     seed: int,
     torch: Any,
     F: Any,
-) -> tuple[float, float]:
+) -> tuple[float, float, Any]:
     generator = torch.Generator(device=hidden.device)
     generator.manual_seed(seed)
     hidden_dim = int(hidden.shape[-1])
@@ -8279,7 +8279,13 @@ def _support_intervention_ce_from_predicted_delta(
         if support.shape[1] > 1
         else 0.0
     )
-    return ce, support_churn
+    return ce, support_churn, support.detach()
+
+
+def _support_overlap(left: Any, right: Any) -> float:
+    if left.shape != right.shape:
+        return 0.0
+    return float((left == right).float().mean().detach().item())
 
 
 def _transformer_acsr_cpu_smoke_pilot_rows(
@@ -8397,7 +8403,7 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
     )
     base_logits = decode(holdout_hidden)
     base_ce = float(F.cross_entropy(base_logits.reshape(-1, int(base_logits.shape[-1])), holdout_targets.reshape(-1)).detach().item())
-    primary_ce, primary_churn = _support_intervention_ce_from_predicted_delta(
+    primary_ce, primary_churn, primary_support = _support_intervention_ce_from_predicted_delta(
         hidden=holdout_hidden,
         predicted_delta=primary_delta,
         targets=holdout_targets,
@@ -8407,7 +8413,7 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         torch=torch,
         F=F,
     )
-    token_position_ce, token_position_churn = _support_intervention_ce_from_predicted_delta(
+    token_position_ce, token_position_churn, token_position_support = _support_intervention_ce_from_predicted_delta(
         hidden=holdout_hidden,
         predicted_delta=token_position_delta,
         targets=holdout_targets,
@@ -8417,7 +8423,7 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         torch=torch,
         F=F,
     )
-    oracle_ce, oracle_churn = _support_intervention_ce_from_predicted_delta(
+    oracle_ce, oracle_churn, oracle_support = _support_intervention_ce_from_predicted_delta(
         hidden=holdout_hidden,
         predicted_delta=holdout_delta,
         targets=holdout_targets,
@@ -8427,12 +8433,26 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         torch=torch,
         F=F,
     )
+    support_assay_valid = oracle_ce < token_position_ce and oracle_ce < base_ce
+    primary_beats_token_position_support = primary_ce <= token_position_ce
     gates_pass = (
         leakage_delta <= 1e-5
         and primary_mse < token_position_mse
         and primary_mse < shuffled_mse
-        and primary_ce <= token_position_ce
+        and support_assay_valid
+        and primary_beats_token_position_support
     )
+    selected_next_experiment = (
+        "repeat_transformer_acsr_cpu_smoke_across_seeds"
+        if gates_pass
+        else (
+            "replace_support_intervention_assay_with_trained_same_student_residual_values"
+            if not support_assay_valid
+            else "tighten_transformer_acsr_pilot_against_null_controls_before_gpu"
+        )
+    )
+    primary_oracle_overlap = _support_overlap(primary_support, oracle_support)
+    token_position_oracle_overlap = _support_overlap(token_position_support, oracle_support)
     common = {
         "design_name": "transformer_acsr",
         "training_steps": max(2, min(8, training_steps)),
@@ -8440,6 +8460,19 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         "future_perturbation_max_prefix_delta": leakage_delta,
         "leakage_gate_passes": leakage_delta <= 1e-5,
         "base_ce": base_ce,
+        "oracle_support_intervention_ce": oracle_ce,
+        "token_position_support_intervention_ce": token_position_ce,
+        "oracle_ce_gain_vs_token_position": token_position_ce - oracle_ce,
+        "oracle_ce_gain_vs_base": base_ce - oracle_ce,
+        "support_intervention_assay_valid": support_assay_valid,
+        "support_assay_failure_reason": (
+            ""
+            if support_assay_valid
+            else "oracle_support_does_not_improve_same_student_ce_over_base_and_token_position_null"
+        ),
+        "primary_ce_gain_vs_token_position_support": token_position_ce - primary_ce,
+        "primary_support_overlap_with_oracle": primary_oracle_overlap,
+        "token_position_support_overlap_with_oracle": token_position_oracle_overlap,
         "requires_gpu_now": False,
         "promotion_allowed": False,
         "advance_to_gpu_validation": False,
@@ -8458,15 +8491,13 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
             "beats_token_position_mse": primary_mse < token_position_mse,
             "beats_shuffled_target_mse": primary_mse < shuffled_mse,
             "beats_mlp_mse": primary_mse < mlp_mse,
+            "primary_beats_token_position_support_ce": primary_beats_token_position_support,
             "pilot_gates_pass": gates_pass,
-            "selected_next_experiment": (
-                "repeat_transformer_acsr_cpu_smoke_across_seeds"
-                if gates_pass
-                else "tighten_transformer_acsr_pilot_against_null_controls_before_gpu"
-            ),
+            "selected_next_experiment": selected_next_experiment,
             "interpretation": (
                 "Local CPU smoke only: predicted future chunks route through fixed same-student residual values. "
-                "Promotion and GPU validation remain blocked until null/control and non-CE gates pass robustly."
+                "Promotion and GPU validation remain blocked until null/control, support-assay-validity, and "
+                "non-CE gates pass robustly."
             ),
         },
         {
@@ -8545,11 +8576,21 @@ def _transformer_acsr_cpu_smoke_pilot_summary(rows: list[dict[str, Any]]) -> dic
         "primary_target_mse": primary.get("target_mse"),
         "primary_target_cosine": primary.get("target_cosine"),
         "primary_support_intervention_ce": primary.get("support_intervention_ce"),
+        "token_position_support_intervention_ce": primary.get("token_position_support_intervention_ce"),
+        "oracle_support_intervention_ce": primary.get("oracle_support_intervention_ce"),
+        "oracle_ce_gain_vs_token_position": primary.get("oracle_ce_gain_vs_token_position"),
+        "oracle_ce_gain_vs_base": primary.get("oracle_ce_gain_vs_base"),
+        "support_intervention_assay_valid": primary.get("support_intervention_assay_valid") is True,
+        "support_assay_failure_reason": primary.get("support_assay_failure_reason", ""),
+        "primary_ce_gain_vs_token_position_support": primary.get("primary_ce_gain_vs_token_position_support"),
+        "primary_support_overlap_with_oracle": primary.get("primary_support_overlap_with_oracle"),
+        "token_position_support_overlap_with_oracle": primary.get("token_position_support_overlap_with_oracle"),
         "future_perturbation_max_prefix_delta": primary.get("future_perturbation_max_prefix_delta"),
         "leakage_gate_passes": primary.get("leakage_gate_passes") is True,
         "beats_token_position_mse": primary.get("beats_token_position_mse") is True,
         "beats_shuffled_target_mse": primary.get("beats_shuffled_target_mse") is True,
         "beats_mlp_mse": primary.get("beats_mlp_mse") is True,
+        "primary_beats_token_position_support_ce": primary.get("primary_beats_token_position_support_ce") is True,
         "pilot_gates_pass": primary.get("pilot_gates_pass") is True,
         "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
         "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
