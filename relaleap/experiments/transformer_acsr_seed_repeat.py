@@ -207,7 +207,16 @@ def run_transformer_acsr_seed_repeat(
         )
     )
     hidden_classifier_learned_router_comparison_available = False
-    hidden_classifier_sequence_ood_budget_audit_available = False
+    hidden_classifier_sequence_heldout_gate_passes = False
+    hidden_classifier_rule_ood_gate_passes = False
+    hidden_classifier_churn_budget_gate_passes = False
+    hidden_classifier_commutator_budget_gate_passes = False
+    hidden_classifier_sequence_ood_budget_audit_available = bool(
+        hidden_classifier_sequence_heldout_gate_passes
+        and hidden_classifier_rule_ood_gate_passes
+        and hidden_classifier_churn_budget_gate_passes
+        and hidden_classifier_commutator_budget_gate_passes
+    )
     hidden_classifier_gpu_gate_passes = bool(
         robust_hidden_classifier_gate
         and hidden_classifier_overlap_gate_passes
@@ -255,6 +264,10 @@ def run_transformer_acsr_seed_repeat(
         "hidden_classifier_overlap_gate_passes": hidden_classifier_overlap_gate_passes,
         "hidden_classifier_null_margin_gate_passes": hidden_classifier_null_margin_gate_passes,
         "hidden_classifier_learned_router_comparison_available": hidden_classifier_learned_router_comparison_available,
+        "hidden_classifier_sequence_heldout_gate_passes": hidden_classifier_sequence_heldout_gate_passes,
+        "hidden_classifier_rule_ood_gate_passes": hidden_classifier_rule_ood_gate_passes,
+        "hidden_classifier_churn_budget_gate_passes": hidden_classifier_churn_budget_gate_passes,
+        "hidden_classifier_commutator_budget_gate_passes": hidden_classifier_commutator_budget_gate_passes,
         "hidden_classifier_sequence_ood_budget_audit_available": hidden_classifier_sequence_ood_budget_audit_available,
         "hidden_classifier_gpu_gate_passes": hidden_classifier_gpu_gate_passes,
         "requires_gpu_now": False,
@@ -285,6 +298,10 @@ def run_transformer_acsr_seed_repeat(
         f"- Mean hidden support-classifier CE gain vs frequency null: `{mean_hidden_classifier_gain_vs_frequency}`",
         f"- Mean hidden support-classifier oracle overlap: `{mean_hidden_classifier_overlap}`",
         f"- Hidden support-classifier learned-router comparison available: `{hidden_classifier_learned_router_comparison_available}`",
+        f"- Hidden support-classifier sequence-heldout gate passes: `{hidden_classifier_sequence_heldout_gate_passes}`",
+        f"- Hidden support-classifier rule-OOD gate passes: `{hidden_classifier_rule_ood_gate_passes}`",
+        f"- Hidden support-classifier churn budget gate passes: `{hidden_classifier_churn_budget_gate_passes}`",
+        f"- Hidden support-classifier commutator budget gate passes: `{hidden_classifier_commutator_budget_gate_passes}`",
         f"- Hidden support-classifier sequence/OOD budget audit available: `{hidden_classifier_sequence_ood_budget_audit_available}`",
         f"- Decision: `{summary['decision']}`",
         f"- Next step: `{selected_next_step}`",
