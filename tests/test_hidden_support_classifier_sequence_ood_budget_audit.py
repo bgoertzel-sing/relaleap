@@ -34,11 +34,22 @@ class HiddenSupportClassifierSequenceOodBudgetAuditTests(unittest.TestCase):
             self.assertIn("mean_hidden_classifier_ce_gain_vs_learned_router", summary)
             self.assertIn("mean_oracle_regret_recovery_vs_learned_router", summary)
             self.assertEqual(
+                summary["closeout_status"],
+                "closed_hidden_support_classifier_branch_before_gpu",
+            )
+            self.assertTrue(summary["close_hidden_classifier_branch"])
+            self.assertEqual(
                 summary["selected_next_step"],
-                "add_rule_combo_heldout_and_exact_budget_rows_or_close_hidden_classifier_branch",
+                "close_or_redesign_hidden_support_classifier_branch_before_gpu",
             )
 
-            for artifact in ("audit_rows.csv", "budget_rows.csv", "summary.json", "notes.md"):
+            for artifact in (
+                "audit_rows.csv",
+                "budget_rows.csv",
+                "closeout_rows.csv",
+                "summary.json",
+                "notes.md",
+            ):
                 self.assertTrue((out_dir / artifact).is_file(), artifact)
 
             with (out_dir / "audit_rows.csv").open(newline="", encoding="utf-8") as handle:
@@ -48,8 +59,21 @@ class HiddenSupportClassifierSequenceOodBudgetAuditTests(unittest.TestCase):
             self.assertEqual({row["evidence_measured"] for row in rule_rows}, {"False"})
             self.assertIn("hidden_classifier_ce_gain_vs_learned_router", rows[0])
 
+            with (out_dir / "closeout_rows.csv").open(newline="", encoding="utf-8") as handle:
+                closeout_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(closeout_rows), 1)
+            self.assertEqual(
+                closeout_rows[0]["status"],
+                "closed_hidden_support_classifier_branch_before_gpu",
+            )
+            self.assertIn("sequence-heldout", closeout_rows[0]["deferred_exact_row_reason"])
+
             notes = (out_dir / "notes.md").read_text(encoding="utf-8")
             self.assertIn("Rule-combo-heldout gate passes: `False`", notes)
+            self.assertIn(
+                "Closeout status: `closed_hidden_support_classifier_branch_before_gpu`",
+                notes,
+            )
             self.assertIn("GPU validation remains blocked", notes)
 
 

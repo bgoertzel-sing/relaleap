@@ -108,6 +108,7 @@ def run_hidden_support_classifier_sequence_ood_budget_audit(
     seed_root.mkdir(parents=True, exist_ok=True)
     audit_rows: list[dict[str, Any]] = []
     budget_rows: list[dict[str, Any]] = []
+    closeout_rows: list[dict[str, Any]] = []
 
     for seed in seeds:
         seed_out = seed_root / f"seed_{seed}"
@@ -240,6 +241,56 @@ def run_hidden_support_classifier_sequence_ood_budget_audit(
     )
     budget_gate_passes = all(row["gate_passes"] for row in budget_rows)
     advance_to_gpu_validation = bool(sequence_gate_passes and rule_ood_gate_passes and budget_gate_passes)
+    sequence_rows = [row for row in audit_rows if row["split"] == "sequence_heldout"]
+    sequence_evidence_measured = bool(sequence_rows) and all(
+        row["evidence_measured"] for row in sequence_rows
+    )
+    close_hidden_classifier_branch = bool(
+        sequence_evidence_measured and not sequence_gate_passes
+    )
+    closeout_status = (
+        "closed_hidden_support_classifier_branch_before_gpu"
+        if close_hidden_classifier_branch
+        else "hidden_support_classifier_gpu_ready"
+        if advance_to_gpu_validation
+        else "requires_exact_rule_combo_and_budget_rows_before_decision"
+    )
+    closeout_rows.append(
+        {
+            "branch": "direct_hidden_support_classifier",
+            "status": closeout_status,
+            "sequence_evidence_measured": sequence_evidence_measured,
+            "sequence_heldout_gate_passes": sequence_gate_passes,
+            "rule_combo_heldout_gate_passes": rule_ood_gate_passes,
+            "budget_gate_passes": budget_gate_passes,
+            "mean_hidden_classifier_ce_gain_vs_learned_router": _mean_present(
+                audit_rows, "hidden_classifier_ce_gain_vs_learned_router"
+            ),
+            "mean_oracle_regret_recovery_vs_learned_router": _mean_present(
+                audit_rows, "oracle_regret_recovery_vs_learned_router"
+            ),
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "next_step": (
+                "close_or_redesign_hidden_support_classifier_branch_before_gpu"
+                if close_hidden_classifier_branch
+                else "run_runpod_hidden_support_classifier_validation_with_artifact_checks"
+                if advance_to_gpu_validation
+                else "add_rule_combo_heldout_and_exact_budget_rows_before_gpu"
+            ),
+            "deferred_exact_row_reason": (
+                "sequence-heldout same-student intervention rows already lose to the learned router on the necessary gate"
+                if close_hidden_classifier_branch
+                else ""
+            ),
+        }
+    )
+    if close_hidden_classifier_branch:
+        selected_next_step = "close_or_redesign_hidden_support_classifier_branch_before_gpu"
+    elif advance_to_gpu_validation:
+        selected_next_step = "run_runpod_hidden_support_classifier_validation_with_artifact_checks"
+    else:
+        selected_next_step = "add_rule_combo_heldout_and_exact_budget_rows_or_close_hidden_classifier_branch"
     summary = {
         "status": "pass",
         "decision": (
@@ -266,23 +317,23 @@ def run_hidden_support_classifier_sequence_ood_budget_audit(
         "mean_oracle_regret_recovery_vs_learned_router": _mean_present(
             audit_rows, "oracle_regret_recovery_vs_learned_router"
         ),
+        "closeout_status": closeout_status,
+        "close_hidden_classifier_branch": close_hidden_classifier_branch,
         "requires_gpu_now": False,
         "promotion_allowed": False,
         "advance_to_gpu_validation": advance_to_gpu_validation,
-        "selected_next_step": (
-            "run_runpod_hidden_support_classifier_validation_with_artifact_checks"
-            if advance_to_gpu_validation
-            else "add_rule_combo_heldout_and_exact_budget_rows_or_close_hidden_classifier_branch"
-        ),
+        "selected_next_step": selected_next_step,
         "artifacts": {
             "audit_rows_csv": str(out_dir / "audit_rows.csv"),
             "budget_rows_csv": str(out_dir / "budget_rows.csv"),
+            "closeout_rows_csv": str(out_dir / "closeout_rows.csv"),
             "summary_json": str(out_dir / "summary.json"),
             "notes_md": str(out_dir / "notes.md"),
         },
     }
     _write_csv(out_dir / "audit_rows.csv", audit_rows)
     _write_csv(out_dir / "budget_rows.csv", budget_rows)
+    _write_csv(out_dir / "closeout_rows.csv", closeout_rows)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     notes = [
         "# Hidden Support-Classifier Sequence/OOD/Budget Audit",
@@ -293,10 +344,15 @@ def run_hidden_support_classifier_sequence_ood_budget_audit(
         f"- Budget gate passes: `{budget_gate_passes}`",
         f"- Mean CE gain vs learned router: `{summary['mean_hidden_classifier_ce_gain_vs_learned_router']}`",
         f"- Mean oracle-regret recovery vs learned router: `{summary['mean_oracle_regret_recovery_vs_learned_router']}`",
+        f"- Closeout status: `{closeout_status}`",
         f"- Decision: `{summary['decision']}`",
         f"- Next step: `{summary['selected_next_step']}`",
         "",
-        "GPU validation remains blocked unless sequence-heldout, rule-combo-heldout, residual-norm, functional-churn, and finite-update-commutator evidence all pass with exact emitted rows.",
+        (
+            "GPU validation remains blocked. Exact rule-combo and budget rows are still required for any "
+            "positive hidden-classifier claim, but the current branch can be closed or redesigned now because "
+            "the measured sequence-heldout same-student intervention gate already fails against the learned router."
+        ),
     ]
     (out_dir / "notes.md").write_text("\n".join(notes) + "\n", encoding="utf-8")
     return summary
