@@ -1,0 +1,225 @@
+"""Repeat the local Transformer-ACSR CPU smoke pilot across adjacent seeds."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+from pathlib import Path
+from statistics import mean
+from typing import Any
+
+from relaleap.experiments.synthetic_mechanism_causal_modularity import (
+    run_synthetic_mechanism_causal_modularity,
+)
+
+
+DEFAULT_OUT_DIR = Path("results/reports/transformer_acsr_seed_repeat")
+DEFAULT_SEEDS = (17, 18, 19)
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
+def _mean_present(rows: list[dict[str, Any]], key: str) -> float | None:
+    values = [_float_or_none(row.get(key)) for row in rows if row.get(key) is not None]
+    return mean(values) if values else None
+
+
+def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        path.write_text("", encoding="utf-8")
+        return
+    keys: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in keys:
+                keys.append(key)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=keys)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def run_transformer_acsr_seed_repeat(
+    *,
+    out_dir: Path = DEFAULT_OUT_DIR,
+    seeds: tuple[int, ...] = DEFAULT_SEEDS,
+    vocab_size: int = 16,
+    seq_len: int = 10,
+    train_episodes_per_rule: int = 3,
+    holdout_episodes_per_rule: int = 2,
+    support_width: int = 2,
+    training_steps: int = 12,
+    hidden_dim: int = 24,
+    learning_rate: float = 8e-3,
+) -> dict[str, Any]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    seed_rows: list[dict[str, Any]] = []
+    seed_root = out_dir / "seeds"
+    seed_root.mkdir(parents=True, exist_ok=True)
+
+    for seed in seeds:
+        seed_out = seed_root / f"seed_{seed}"
+        summary = run_synthetic_mechanism_causal_modularity(
+            out_dir=seed_out,
+            seed=seed,
+            vocab_size=vocab_size,
+            seq_len=seq_len,
+            train_episodes_per_rule=train_episodes_per_rule,
+            holdout_episodes_per_rule=holdout_episodes_per_rule,
+            support_width=support_width,
+            run_training_smoke=True,
+            training_steps=training_steps,
+            hidden_dim=hidden_dim,
+            learning_rate=learning_rate,
+            include_teacher_distillation=True,
+        )
+        pilot = summary["transformer_acsr_cpu_smoke_pilot_primary_result"]
+        seed_rows.append(
+            {
+                "seed": seed,
+                "status": summary["status"],
+                "source_decision": summary["decision"],
+                "pilot_gates_pass": pilot["pilot_gates_pass"],
+                "value_aware_gate_passes": pilot["value_aware_gate_passes"],
+                "support_intervention_assay_valid": pilot["support_intervention_assay_valid"],
+                "leakage_gate_passes": pilot["leakage_gate_passes"],
+                "value_aware_leakage_gate_passes": pilot["value_aware_leakage_gate_passes"],
+                "primary_support_intervention_ce": pilot["primary_support_intervention_ce"],
+                "token_position_support_intervention_ce": pilot[
+                    "token_position_support_intervention_ce"
+                ],
+                "value_aware_support_intervention_ce": pilot[
+                    "value_aware_support_intervention_ce"
+                ],
+                "oracle_support_intervention_ce": pilot["oracle_support_intervention_ce"],
+                "primary_ce_gain_vs_token_position_support": pilot[
+                    "primary_ce_gain_vs_token_position_support"
+                ],
+                "value_aware_ce_gain_vs_token_position_support": pilot[
+                    "value_aware_ce_gain_vs_token_position_support"
+                ],
+                "value_aware_ce_gain_vs_primary_support": pilot[
+                    "value_aware_ce_gain_vs_primary_support"
+                ],
+                "primary_support_overlap_with_oracle": pilot[
+                    "primary_support_overlap_with_oracle"
+                ],
+                "value_aware_support_overlap_with_oracle": pilot[
+                    "value_aware_support_overlap_with_oracle"
+                ],
+                "selected_next_experiment": pilot["selected_next_experiment"],
+                "requires_gpu_now": pilot["requires_gpu_now"],
+                "promotion_allowed": pilot["promotion_allowed"],
+                "seed_artifact_dir": str(seed_out),
+            }
+        )
+
+    completed_count = sum(1 for row in seed_rows if row["status"] == "pass")
+    value_gate_pass_count = sum(1 for row in seed_rows if row["value_aware_gate_passes"])
+    leakage_pass_count = sum(
+        1
+        for row in seed_rows
+        if row["leakage_gate_passes"] and row["value_aware_leakage_gate_passes"]
+    )
+    assay_valid_count = sum(1 for row in seed_rows if row["support_intervention_assay_valid"])
+    mean_overlap = _mean_present(seed_rows, "value_aware_support_overlap_with_oracle")
+    mean_gain_vs_token_position = _mean_present(
+        seed_rows, "value_aware_ce_gain_vs_token_position_support"
+    )
+    robust_value_gate = (
+        completed_count == len(seed_rows)
+        and value_gate_pass_count == len(seed_rows)
+        and leakage_pass_count == len(seed_rows)
+        and assay_valid_count == len(seed_rows)
+    )
+    overlap_gate_passes = mean_overlap is not None and mean_overlap >= 0.25
+    advance_to_gpu_validation = bool(robust_value_gate and overlap_gate_passes)
+    selected_next_step = (
+        "run_runpod_transformer_acsr_validation_with_artifact_checks"
+        if advance_to_gpu_validation
+        else "tighten_value_aware_transformer_acsr_oracle_overlap_and_null_controls_before_gpu"
+        if robust_value_gate
+        else "close_or_redesign_value_aware_transformer_acsr_support_router_locally"
+    )
+    summary = {
+        "status": "pass" if completed_count == len(seed_rows) else "fail",
+        "decision": (
+            "transformer_acsr_seed_repeat_passed_gpu_validation_ready"
+            if advance_to_gpu_validation
+            else "transformer_acsr_seed_repeat_local_only_gpu_blocked"
+        ),
+        "seed_count": len(seed_rows),
+        "completed_seed_count": completed_count,
+        "value_aware_gate_pass_count": value_gate_pass_count,
+        "leakage_pass_count": leakage_pass_count,
+        "support_intervention_assay_valid_count": assay_valid_count,
+        "mean_value_aware_ce_gain_vs_token_position_support": mean_gain_vs_token_position,
+        "mean_value_aware_support_overlap_with_oracle": mean_overlap,
+        "robust_value_gate_passes": robust_value_gate,
+        "oracle_overlap_gate_passes": overlap_gate_passes,
+        "requires_gpu_now": False,
+        "promotion_allowed": False,
+        "advance_to_gpu_validation": advance_to_gpu_validation,
+        "selected_next_step": selected_next_step,
+        "artifacts": {
+            "seed_rows_csv": str(out_dir / "seed_rows.csv"),
+            "summary_json": str(out_dir / "summary.json"),
+            "notes_md": str(out_dir / "notes.md"),
+        },
+    }
+
+    _write_csv(out_dir / "seed_rows.csv", seed_rows)
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    notes = [
+        "# Transformer-ACSR Seed Repeat",
+        "",
+        f"- Seeds: `{', '.join(str(seed) for seed in seeds)}`",
+        f"- Value-aware gate pass count: `{value_gate_pass_count}/{len(seed_rows)}`",
+        f"- Leakage pass count: `{leakage_pass_count}/{len(seed_rows)}`",
+        f"- Mean value-aware CE gain vs token/position: `{mean_gain_vs_token_position}`",
+        f"- Mean value-aware oracle overlap: `{mean_overlap}`",
+        f"- Decision: `{summary['decision']}`",
+        f"- Next step: `{selected_next_step}`",
+        "",
+        "GPU validation and promotion remain blocked unless the repeated local value-aware gate and oracle-overlap gate both pass.",
+    ]
+    (out_dir / "notes.md").write_text("\n".join(notes) + "\n", encoding="utf-8")
+    return summary
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument("--seeds", type=int, nargs="+", default=list(DEFAULT_SEEDS))
+    parser.add_argument("--vocab-size", type=int, default=16)
+    parser.add_argument("--seq-len", type=int, default=10)
+    parser.add_argument("--train-episodes-per-rule", type=int, default=3)
+    parser.add_argument("--holdout-episodes-per-rule", type=int, default=2)
+    parser.add_argument("--support-width", type=int, default=2)
+    parser.add_argument("--training-steps", type=int, default=12)
+    parser.add_argument("--hidden-dim", type=int, default=24)
+    parser.add_argument("--learning-rate", type=float, default=8e-3)
+    args = parser.parse_args(argv)
+    summary = run_transformer_acsr_seed_repeat(
+        out_dir=args.out,
+        seeds=tuple(args.seeds),
+        vocab_size=args.vocab_size,
+        seq_len=args.seq_len,
+        train_episodes_per_rule=args.train_episodes_per_rule,
+        holdout_episodes_per_rule=args.holdout_episodes_per_rule,
+        support_width=args.support_width,
+        training_steps=args.training_steps,
+        hidden_dim=args.hidden_dim,
+        learning_rate=args.learning_rate,
+    )
+    print(json.dumps({"status": summary["status"], "decision": summary["decision"]}, sort_keys=True))
+    return 0 if summary["status"] == "pass" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
