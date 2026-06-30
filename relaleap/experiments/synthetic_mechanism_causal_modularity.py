@@ -59,6 +59,7 @@ REQUIRED_ARTIFACTS = (
     "pc_amortized_error_pregate.csv",
     "pc_amortized_error_pregate_closeout.csv",
     "transformer_acsr_design.csv",
+    "transformer_acsr_cpu_smoke_pilot.csv",
     "per_token_metrics.csv",
     "ce_by_rule_position.csv",
     "residual_budget_accounting.csv",
@@ -478,6 +479,14 @@ def run_synthetic_mechanism_causal_modularity(
         ),
         "transformer_acsr_design_primary_result": (
             _transformer_acsr_design_summary(training_smoke["transformer_acsr_design"])
+            if training_smoke is not None
+            else None
+        ),
+        "transformer_acsr_cpu_smoke_pilot_row_count": (
+            len(training_smoke["transformer_acsr_cpu_smoke_pilot"]) if training_smoke is not None else 0
+        ),
+        "transformer_acsr_cpu_smoke_pilot_primary_result": (
+            _transformer_acsr_cpu_smoke_pilot_summary(training_smoke["transformer_acsr_cpu_smoke_pilot"])
             if training_smoke is not None
             else None
         ),
@@ -1060,6 +1069,21 @@ def _run_training_smoke(
         commutator_rows=commutator_rows,
         forgetting_rows=forgetting_rows,
     )
+    transformer_acsr_cpu_smoke_pilot = _transformer_acsr_cpu_smoke_pilot_rows(
+        design_rows=transformer_acsr_design,
+        train_hidden=train_hidden,
+        train_inputs=train_inputs,
+        holdout_hidden=holdout_hidden,
+        holdout_inputs=holdout_inputs,
+        holdout_targets=holdout_targets,
+        decode=base.decode,
+        training_steps=training_steps,
+        learning_rate=learning_rate,
+        seed=seed,
+        torch=torch,
+        nn=nn,
+        F=F,
+    )
     return {
         "arm_metrics": arm_metrics,
         "ce_gap_decomposition": _ce_gap_decomposition_rows(arm_metrics),
@@ -1092,6 +1116,7 @@ def _run_training_smoke(
         "pc_amortized_error_pregate": pc_amortized_error_pregate,
         "pc_amortized_error_pregate_closeout": pc_amortized_error_pregate_closeout,
         "transformer_acsr_design": transformer_acsr_design,
+        "transformer_acsr_cpu_smoke_pilot": transformer_acsr_cpu_smoke_pilot,
         "per_token_metrics": per_token_metrics,
         "ce_by_rule_position": ce_by_rule_position,
         "residual_budget_accounting": residual_budget_accounting,
@@ -1679,6 +1704,84 @@ class _LowChurnMLPAdapter:
 
     def __call__(self, hidden: Any) -> Any:
         return hidden + 0.5 * self.net(hidden)
+
+
+class _CausalTransformerFuturePredictor:
+    """Tiny batch-first causal transformer used by the local Transformer-ACSR smoke."""
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        *,
+        seq_len: int,
+        predictor_dim: int,
+        num_heads: int,
+        nn: Any,
+        torch: Any,
+    ) -> None:
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.input_projection = nn.Linear(hidden_dim, predictor_dim)
+        self.position_embedding = nn.Parameter(torch.zeros(1, seq_len, predictor_dim))
+        layer = nn.TransformerEncoderLayer(
+            d_model=predictor_dim,
+            nhead=num_heads,
+            dim_feedforward=predictor_dim * 2,
+            dropout=0.0,
+            batch_first=True,
+            activation="gelu",
+        )
+        self.encoder = nn.TransformerEncoder(layer, num_layers=2)
+        self.output_projection = nn.Linear(predictor_dim, hidden_dim)
+
+    def parameters(self) -> Any:
+        yield from self.input_projection.parameters()
+        yield self.position_embedding
+        yield from self.encoder.parameters()
+        yield from self.output_projection.parameters()
+
+    def __call__(self, features: Any) -> Any:
+        import torch
+
+        seq_len = int(features.shape[1])
+        mask = torch.triu(
+            torch.ones(seq_len, seq_len, dtype=torch.bool, device=features.device),
+            diagonal=1,
+        )
+        projected = self.input_projection(features) + self.position_embedding[:, :seq_len, :]
+        return self.output_projection(self.encoder(projected, mask=mask))
+
+
+def _causal_transformer_future_perturbation_max_delta(
+    *,
+    predictor: Any,
+    features: Any,
+    perturb_from_position: int,
+    perturb_scale: float,
+) -> float:
+    """Return max pre-perturbation-position output change after perturbing future inputs."""
+
+    import torch
+
+    with torch.no_grad():
+        original = predictor(features).detach()
+        perturbed_features = features.detach().clone()
+        if perturb_from_position < int(features.shape[1]):
+            perturb = torch.linspace(
+                perturb_scale,
+                perturb_scale * 2.0,
+                steps=perturbed_features[:, perturb_from_position:, :].numel(),
+                dtype=features.dtype,
+                device=features.device,
+            ).reshape_as(perturbed_features[:, perturb_from_position:, :])
+            perturbed_features[:, perturb_from_position:, :] = (
+                perturbed_features[:, perturb_from_position:, :] + perturb
+            )
+        perturbed = predictor(perturbed_features).detach()
+        prefix_end = min(max(perturb_from_position, 0), int(features.shape[1]))
+        if prefix_end == 0:
+            return 0.0
+        return float((original[:, :prefix_end, :] - perturbed[:, :prefix_end, :]).abs().max().item())
 
 
 class _CorePeripherySparseAdapter:
@@ -4304,6 +4407,12 @@ def _selected_next_step(
         return "repair synthetic causal-modularity hard artifact gates before interpretation"
     if training_smoke is None:
         return "run the tiny CPU synthetic causal-modularity smoke and evaluate intervention purity, leakage, forgetting, and commutators"
+    if training_smoke.get("transformer_acsr_cpu_smoke_pilot"):
+        summary = _transformer_acsr_cpu_smoke_pilot_summary(
+            training_smoke["transformer_acsr_cpu_smoke_pilot"]
+        )
+        if summary.get("selected_next_experiment"):
+            return str(summary["selected_next_experiment"]).replace("_", " ")
     if training_smoke.get("transformer_acsr_design"):
         summary = _transformer_acsr_design_summary(
             training_smoke["transformer_acsr_design"]
@@ -8098,6 +8207,361 @@ def _transformer_acsr_design_summary(rows: list[dict[str, Any]]) -> dict[str, An
     }
 
 
+def _next_hidden_targets(hidden: Any, torch: Any) -> Any:
+    return torch.cat([hidden[:, 1:, :], hidden[:, -1:, :]], dim=1).detach()
+
+
+def _train_future_delta_predictor(
+    *,
+    train_features: Any,
+    train_target_delta: Any,
+    holdout_features: Any,
+    hidden_dim: int,
+    training_steps: int,
+    learning_rate: float,
+    seed: int,
+    torch: Any,
+    nn: Any,
+    F: Any,
+) -> tuple[Any, Any]:
+    torch.manual_seed(seed)
+    predictor_dim = max(8, min(32, hidden_dim * 2))
+    num_heads = next(candidate for candidate in (4, 2, 1) if predictor_dim % candidate == 0)
+    predictor = _CausalTransformerFuturePredictor(
+        hidden_dim,
+        seq_len=int(train_features.shape[1]),
+        predictor_dim=predictor_dim,
+        num_heads=num_heads,
+        nn=nn,
+        torch=torch,
+    )
+    optimizer = torch.optim.AdamW(list(predictor.parameters()), lr=learning_rate)
+    for _ in range(max(2, min(8, training_steps))):
+        optimizer.zero_grad(set_to_none=True)
+        loss = F.mse_loss(predictor(train_features), train_target_delta)
+        loss.backward()
+        optimizer.step()
+    with torch.no_grad():
+        holdout_predicted = predictor(holdout_features).detach()
+    return predictor, holdout_predicted
+
+
+def _support_intervention_ce_from_predicted_delta(
+    *,
+    hidden: Any,
+    predicted_delta: Any,
+    targets: Any,
+    decode: Any,
+    support_width: int,
+    seed: int,
+    torch: Any,
+    F: Any,
+) -> tuple[float, float]:
+    generator = torch.Generator(device=hidden.device)
+    generator.manual_seed(seed)
+    hidden_dim = int(hidden.shape[-1])
+    num_columns = max(4, support_width * 4)
+    values = torch.randn(
+        num_columns,
+        hidden_dim,
+        generator=generator,
+        device=hidden.device,
+        dtype=hidden.dtype,
+    )
+    values = F.normalize(values, dim=-1)
+    scores = torch.einsum("bth,ch->btc", predicted_delta, values)
+    support = torch.topk(scores, k=min(support_width, num_columns), dim=-1).indices
+    selected = values[support].mean(dim=-2)
+    logits = decode(hidden + 0.05 * selected)
+    ce = float(F.cross_entropy(logits.reshape(-1, int(logits.shape[-1])), targets.reshape(-1)).detach().item())
+    support_churn = (
+        float((support[:, 1:, :] != support[:, :-1, :]).float().mean().detach().item())
+        if support.shape[1] > 1
+        else 0.0
+    )
+    return ce, support_churn
+
+
+def _transformer_acsr_cpu_smoke_pilot_rows(
+    *,
+    design_rows: list[dict[str, Any]],
+    train_hidden: Any,
+    train_inputs: Any,
+    holdout_hidden: Any,
+    holdout_inputs: Any,
+    holdout_targets: Any,
+    decode: Any,
+    training_steps: int,
+    learning_rate: float,
+    seed: int,
+    torch: Any,
+    nn: Any,
+    F: Any,
+) -> list[dict[str, Any]]:
+    design = _transformer_acsr_design_summary(design_rows)
+    if not design.get("design_selected"):
+        return []
+
+    hidden_dim = int(train_hidden.shape[-1])
+    support_width = 2
+    train_delta = _next_hidden_targets(train_hidden, torch) - train_hidden
+    holdout_delta = _next_hidden_targets(holdout_hidden, torch) - holdout_hidden
+
+    primary_predictor, primary_delta = _train_future_delta_predictor(
+        train_features=train_hidden,
+        train_target_delta=train_delta,
+        holdout_features=holdout_hidden,
+        hidden_dim=hidden_dim,
+        training_steps=training_steps,
+        learning_rate=learning_rate,
+        seed=seed + 700,
+        torch=torch,
+        nn=nn,
+        F=F,
+    )
+    shuffled_target = train_delta[torch.randperm(train_delta.shape[0])]
+    _, shuffled_delta = _train_future_delta_predictor(
+        train_features=train_hidden,
+        train_target_delta=shuffled_target,
+        holdout_features=holdout_hidden,
+        hidden_dim=hidden_dim,
+        training_steps=training_steps,
+        learning_rate=learning_rate,
+        seed=seed + 701,
+        torch=torch,
+        nn=nn,
+        F=F,
+    )
+    train_token_position_features = torch.zeros_like(train_hidden)
+    train_token_position_features[..., 0] = train_inputs.float() / max(1.0, float(train_inputs.max().item()))
+    train_token_position_features[..., 1] = torch.linspace(
+        0.0,
+        1.0,
+        steps=int(train_inputs.shape[1]),
+        dtype=train_hidden.dtype,
+        device=train_hidden.device,
+    ).unsqueeze(0)
+    holdout_token_position_features = torch.zeros_like(holdout_hidden)
+    holdout_token_position_features[..., 0] = holdout_inputs.float() / max(1.0, float(holdout_inputs.max().item()))
+    holdout_token_position_features[..., 1] = torch.linspace(
+        0.0,
+        1.0,
+        steps=int(holdout_inputs.shape[1]),
+        dtype=holdout_hidden.dtype,
+        device=holdout_hidden.device,
+    ).unsqueeze(0)
+    _, token_position_delta = _train_future_delta_predictor(
+        train_features=train_token_position_features,
+        train_target_delta=train_delta,
+        holdout_features=holdout_token_position_features,
+        hidden_dim=hidden_dim,
+        training_steps=training_steps,
+        learning_rate=learning_rate,
+        seed=seed + 702,
+        torch=torch,
+        nn=nn,
+        F=F,
+    )
+    torch.manual_seed(seed + 703)
+    mlp = nn.Sequential(
+        nn.LayerNorm(hidden_dim),
+        nn.Linear(hidden_dim, hidden_dim),
+        nn.GELU(),
+        nn.Linear(hidden_dim, hidden_dim),
+    )
+    optimizer = torch.optim.AdamW(mlp.parameters(), lr=learning_rate)
+    for _ in range(max(2, min(8, training_steps))):
+        optimizer.zero_grad(set_to_none=True)
+        loss = F.mse_loss(mlp(train_hidden), train_delta)
+        loss.backward()
+        optimizer.step()
+    with torch.no_grad():
+        mlp_delta = mlp(holdout_hidden).detach()
+
+    primary_mse = float(F.mse_loss(primary_delta, holdout_delta).detach().item())
+    token_position_mse = float(F.mse_loss(token_position_delta, holdout_delta).detach().item())
+    shuffled_mse = float(F.mse_loss(shuffled_delta, holdout_delta).detach().item())
+    mlp_mse = float(F.mse_loss(mlp_delta, holdout_delta).detach().item())
+    primary_cosine = float(
+        F.cosine_similarity(
+            primary_delta.reshape(-1, hidden_dim),
+            holdout_delta.reshape(-1, hidden_dim),
+            dim=-1,
+        ).mean().detach().item()
+    )
+    leakage_delta = _causal_transformer_future_perturbation_max_delta(
+        predictor=primary_predictor,
+        features=holdout_hidden,
+        perturb_from_position=max(1, int(holdout_hidden.shape[1]) // 2),
+        perturb_scale=0.25,
+    )
+    base_logits = decode(holdout_hidden)
+    base_ce = float(F.cross_entropy(base_logits.reshape(-1, int(base_logits.shape[-1])), holdout_targets.reshape(-1)).detach().item())
+    primary_ce, primary_churn = _support_intervention_ce_from_predicted_delta(
+        hidden=holdout_hidden,
+        predicted_delta=primary_delta,
+        targets=holdout_targets,
+        decode=decode,
+        support_width=support_width,
+        seed=seed + 710,
+        torch=torch,
+        F=F,
+    )
+    token_position_ce, token_position_churn = _support_intervention_ce_from_predicted_delta(
+        hidden=holdout_hidden,
+        predicted_delta=token_position_delta,
+        targets=holdout_targets,
+        decode=decode,
+        support_width=support_width,
+        seed=seed + 710,
+        torch=torch,
+        F=F,
+    )
+    oracle_ce, oracle_churn = _support_intervention_ce_from_predicted_delta(
+        hidden=holdout_hidden,
+        predicted_delta=holdout_delta,
+        targets=holdout_targets,
+        decode=decode,
+        support_width=support_width,
+        seed=seed + 710,
+        torch=torch,
+        F=F,
+    )
+    gates_pass = (
+        leakage_delta <= 1e-5
+        and primary_mse < token_position_mse
+        and primary_mse < shuffled_mse
+        and primary_ce <= token_position_ce
+    )
+    common = {
+        "design_name": "transformer_acsr",
+        "training_steps": max(2, min(8, training_steps)),
+        "support_width": support_width,
+        "future_perturbation_max_prefix_delta": leakage_delta,
+        "leakage_gate_passes": leakage_delta <= 1e-5,
+        "base_ce": base_ce,
+        "requires_gpu_now": False,
+        "promotion_allowed": False,
+        "advance_to_gpu_validation": False,
+        "implemented_in_current_packet": True,
+    }
+    rows = [
+        {
+            **common,
+            "row_role": "primary_transformer_acsr_cpu_smoke_pilot",
+            "predictor_family": "causal_transformer",
+            "target_alignment": "next_hidden_delta",
+            "target_mse": primary_mse,
+            "target_cosine": primary_cosine,
+            "support_intervention_ce": primary_ce,
+            "support_churn": primary_churn,
+            "beats_token_position_mse": primary_mse < token_position_mse,
+            "beats_shuffled_target_mse": primary_mse < shuffled_mse,
+            "beats_mlp_mse": primary_mse < mlp_mse,
+            "pilot_gates_pass": gates_pass,
+            "selected_next_experiment": (
+                "repeat_transformer_acsr_cpu_smoke_across_seeds"
+                if gates_pass
+                else "tighten_transformer_acsr_pilot_against_null_controls_before_gpu"
+            ),
+            "interpretation": (
+                "Local CPU smoke only: predicted future chunks route through fixed same-student residual values. "
+                "Promotion and GPU validation remain blocked until null/control and non-CE gates pass robustly."
+            ),
+        },
+        {
+            **common,
+            "row_role": "token_position_transformer_null",
+            "predictor_family": "token_position_only_transformer",
+            "target_alignment": "next_hidden_delta",
+            "target_mse": token_position_mse,
+            "target_cosine": float(F.cosine_similarity(token_position_delta.reshape(-1, hidden_dim), holdout_delta.reshape(-1, hidden_dim), dim=-1).mean().detach().item()),
+            "support_intervention_ce": token_position_ce,
+            "support_churn": token_position_churn,
+            "pilot_gates_pass": False,
+            "selected_next_experiment": "",
+            "interpretation": "Null control for token/position shortcuts.",
+        },
+        {
+            **common,
+            "row_role": "shuffled_target_null",
+            "predictor_family": "causal_transformer",
+            "target_alignment": "batch_shuffled_next_hidden_delta",
+            "target_mse": shuffled_mse,
+            "target_cosine": float(F.cosine_similarity(shuffled_delta.reshape(-1, hidden_dim), holdout_delta.reshape(-1, hidden_dim), dim=-1).mean().detach().item()),
+            "support_intervention_ce": None,
+            "support_churn": None,
+            "pilot_gates_pass": False,
+            "selected_next_experiment": "",
+            "interpretation": "Null control for future-target alignment.",
+        },
+        {
+            **common,
+            "row_role": "mlp_predictor_control",
+            "predictor_family": "causal_mlp",
+            "target_alignment": "next_hidden_delta",
+            "target_mse": mlp_mse,
+            "target_cosine": float(F.cosine_similarity(mlp_delta.reshape(-1, hidden_dim), holdout_delta.reshape(-1, hidden_dim), dim=-1).mean().detach().item()),
+            "support_intervention_ce": None,
+            "support_churn": None,
+            "pilot_gates_pass": False,
+            "selected_next_experiment": "",
+            "interpretation": "Ablation for sequence-model choice.",
+        },
+        {
+            **common,
+            "row_role": "same_student_oracle_support_ceiling",
+            "predictor_family": "evaluator_oracle_delta",
+            "target_alignment": "actual_holdout_next_hidden_delta",
+            "target_mse": 0.0,
+            "target_cosine": 1.0,
+            "support_intervention_ce": oracle_ce,
+            "support_churn": oracle_churn,
+            "pilot_gates_pass": False,
+            "selected_next_experiment": "",
+            "interpretation": "Evaluator-only same-student support ceiling; not deployable evidence.",
+        },
+    ]
+    for row in rows:
+        row["row_count"] = len(rows)
+    return rows
+
+
+def _transformer_acsr_cpu_smoke_pilot_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "implemented_in_current_packet": False,
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "advance_to_gpu_validation": False,
+            "pilot_gates_pass": False,
+            "selected_next_experiment": "",
+        }
+    primary = next((row for row in rows if row.get("row_role") == "primary_transformer_acsr_cpu_smoke_pilot"), rows[0])
+    return {
+        "row_count": len(rows),
+        "implemented_in_current_packet": any(row.get("implemented_in_current_packet") is True for row in rows),
+        "primary_target_mse": primary.get("target_mse"),
+        "primary_target_cosine": primary.get("target_cosine"),
+        "primary_support_intervention_ce": primary.get("support_intervention_ce"),
+        "future_perturbation_max_prefix_delta": primary.get("future_perturbation_max_prefix_delta"),
+        "leakage_gate_passes": primary.get("leakage_gate_passes") is True,
+        "beats_token_position_mse": primary.get("beats_token_position_mse") is True,
+        "beats_shuffled_target_mse": primary.get("beats_shuffled_target_mse") is True,
+        "beats_mlp_mse": primary.get("beats_mlp_mse") is True,
+        "pilot_gates_pass": primary.get("pilot_gates_pass") is True,
+        "requires_gpu_now": any(row.get("requires_gpu_now") is True for row in rows),
+        "promotion_allowed": any(row.get("promotion_allowed") is True for row in rows),
+        "advance_to_gpu_validation": any(row.get("advance_to_gpu_validation") is True for row in rows),
+        "selected_next_experiment": primary.get("selected_next_experiment", ""),
+        "interpretation": (
+            "Command-driven local Transformer-ACSR CPU smoke. It trains a tiny causal transformer on prefix-safe "
+            "hidden features and reports null/control, leakage, and same-student fixed residual-value support metrics."
+        ),
+    }
+
+
 def _mean_optional(rows: list[dict[str, Any]], field: str) -> float | None:
     values = [_metric_float(row.get(field)) for row in rows]
     values = [value for value in values if value is not None]
@@ -8254,6 +8718,10 @@ def _write_artifacts(
         out_dir / "transformer_acsr_design.csv",
         [] if training_smoke is None else training_smoke["transformer_acsr_design"],
     )
+    _write_csv(
+        out_dir / "transformer_acsr_cpu_smoke_pilot.csv",
+        [] if training_smoke is None else training_smoke["transformer_acsr_cpu_smoke_pilot"],
+    )
     _write_csv(out_dir / "per_token_metrics.csv", [] if training_smoke is None else training_smoke["per_token_metrics"])
     _write_csv(
         out_dir / "ce_by_rule_position.csv",
@@ -8305,6 +8773,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- PC amortized error pregate rows: `{summary['pc_amortized_error_pregate_row_count']}`",
         f"- PC amortized error pregate closeout rows: `{summary['pc_amortized_error_pregate_closeout_row_count']}`",
         f"- Transformer-ACSR design rows: `{summary['transformer_acsr_design_row_count']}`",
+        f"- Transformer-ACSR CPU smoke pilot rows: `{summary['transformer_acsr_cpu_smoke_pilot_row_count']}`",
         f"- CE by rule/position rows: `{summary['ce_by_rule_position_row_count']}`",
         f"- Residual budget accounting rows: `{summary['residual_budget_accounting_row_count']}`",
         f"- Teacher distillation included: `{summary['teacher_distillation_included']}`",
@@ -8337,6 +8806,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The soft-mixture low-churn dense modular design selector consumes the failed gated sparse value-mixture closeout and defines the next bounded non-PC packet. It is design-only: no trainable arm, GPU validation, or promotion is implied until a future local pregate beats controls and interference budgets.",
         "",
         "The Transformer-ACSR design report supersedes the soft-mixture residual branch under Ben's 2026-06-30 direction. It treats the promoted full-context contextual router as a nondeployable teacher, specifies future-context targets and prefix-safe causal inputs, and keeps GPU validation blocked until a local command-driven pilot clears CE, support-regret, churn, commutator, null, and future-perturbation gates.",
+        "",
+        "The Transformer-ACSR CPU smoke pilot is command-driven local evidence only. It trains a tiny causal-mask transformer on prefix-safe hidden features to predict next-hidden deltas, compares against token/position, shuffled-target, and MLP controls, checks future-perturbation invariance, and routes predicted supports through fixed same-student residual values. Promotion and GPU validation remain blocked unless these gates become robust across follow-up repeats.",
         "",
         "The PC core/periphery residual-inference pregate is a major-pivot scaffold from the external strategy review. It closes the current sparse value-capacity branch as unsupported, records that Ben should be notified, and defines the next local trainable packet: fixed contextual top-k2 router, protected predictive core, plastic residual-error periphery, two local inference steps, anchor KL, norm clamp, commutator/churn penalties, and flat/dense/token-position/random/shuffled controls. It is not promotion evidence.",
         "",

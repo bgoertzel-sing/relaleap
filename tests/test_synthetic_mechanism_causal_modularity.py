@@ -7,6 +7,8 @@ from pathlib import Path
 
 from relaleap.experiments.synthetic_mechanism_causal_modularity import (
     REQUIRED_ARTIFACTS,
+    _CausalTransformerFuturePredictor,
+    _causal_transformer_future_perturbation_max_delta,
     _decoder_adjoint_hidden_ce_error,
     run_synthetic_mechanism_causal_modularity,
 )
@@ -62,6 +64,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["pc_amortized_error_pregate_row_count"], 0)
             self.assertEqual(summary["pc_amortized_error_pregate_closeout_row_count"], 0)
             self.assertEqual(summary["transformer_acsr_design_row_count"], 0)
+            self.assertEqual(summary["transformer_acsr_cpu_smoke_pilot_row_count"], 0)
             self.assertTrue(summary["missing_training_hooks"])
             failed = {row["criterion"] for row in summary["failures"]}
             self.assertIn("training_hooks_available", failed)
@@ -458,6 +461,32 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertIn(
                 "current_hidden",
                 summary["transformer_acsr_design_primary_result"]["causal_input_tensors"],
+            )
+            self.assertEqual(summary["transformer_acsr_cpu_smoke_pilot_row_count"], 5)
+            self.assertIsNotNone(summary["transformer_acsr_cpu_smoke_pilot_primary_result"])
+            self.assertEqual(
+                summary["transformer_acsr_cpu_smoke_pilot_primary_result"]["row_count"],
+                summary["transformer_acsr_cpu_smoke_pilot_row_count"],
+            )
+            self.assertTrue(
+                summary["transformer_acsr_cpu_smoke_pilot_primary_result"][
+                    "implemented_in_current_packet"
+                ]
+            )
+            self.assertFalse(
+                summary["transformer_acsr_cpu_smoke_pilot_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["transformer_acsr_cpu_smoke_pilot_primary_result"]["promotion_allowed"]
+            )
+            self.assertTrue(
+                summary["transformer_acsr_cpu_smoke_pilot_primary_result"]["leakage_gate_passes"]
+            )
+            self.assertLessEqual(
+                summary["transformer_acsr_cpu_smoke_pilot_primary_result"][
+                    "future_perturbation_max_prefix_delta"
+                ],
+                1e-5,
             )
             self.assertIn("transformer acsr", summary["selected_next_step"].replace("-", " "))
             self.assertGreater(summary["per_token_metric_row_count"], 0)
@@ -1186,6 +1215,45 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(primary_transformer["strategic_change_level"], "major")
             self.assertEqual(primary_transformer["notify_ben"], "True")
 
+            with (out_dir / "transformer_acsr_cpu_smoke_pilot.csv").open(newline="", encoding="utf-8") as handle:
+                transformer_pilot_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(transformer_pilot_rows), 5)
+            pilot_by_role = {row["row_role"]: row for row in transformer_pilot_rows}
+            self.assertEqual(
+                set(pilot_by_role),
+                {
+                    "primary_transformer_acsr_cpu_smoke_pilot",
+                    "token_position_transformer_null",
+                    "shuffled_target_null",
+                    "mlp_predictor_control",
+                    "same_student_oracle_support_ceiling",
+                },
+            )
+            primary_pilot = pilot_by_role["primary_transformer_acsr_cpu_smoke_pilot"]
+            for required_field in {
+                "target_mse",
+                "target_cosine",
+                "support_intervention_ce",
+                "support_churn",
+                "future_perturbation_max_prefix_delta",
+                "leakage_gate_passes",
+                "beats_token_position_mse",
+                "beats_shuffled_target_mse",
+                "beats_mlp_mse",
+                "pilot_gates_pass",
+                "implemented_in_current_packet",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "advance_to_gpu_validation",
+                "selected_next_experiment",
+            }:
+                self.assertIn(required_field, primary_pilot)
+            self.assertEqual(primary_pilot["implemented_in_current_packet"], "True")
+            self.assertEqual(primary_pilot["leakage_gate_passes"], "True")
+            self.assertEqual(primary_pilot["requires_gpu_now"], "False")
+            self.assertEqual(primary_pilot["promotion_allowed"], "False")
+            self.assertLessEqual(float(primary_pilot["future_perturbation_max_prefix_delta"]), 1e-5)
+
             with (out_dir / "ce_by_rule_position.csv").open(newline="", encoding="utf-8") as handle:
                 ce_rule_position_rows = list(csv.DictReader(handle))
             self.assertEqual(len(ce_rule_position_rows), summary["ce_by_rule_position_row_count"])
@@ -1661,6 +1729,30 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
 
         self.assertLess(float(positive_ce.item()), float(base_ce.item()))
         self.assertLess(float(positive_ce.item()), float(sign_flipped_ce.item()))
+
+    def test_causal_transformer_outputs_ignore_future_perturbations(self) -> None:
+        import torch
+        import torch.nn as nn
+
+        torch.manual_seed(19)
+        predictor = _CausalTransformerFuturePredictor(
+            6,
+            seq_len=5,
+            predictor_dim=12,
+            num_heads=3,
+            nn=nn,
+            torch=torch,
+        )
+        features = torch.randn(2, 5, 6)
+
+        delta = _causal_transformer_future_perturbation_max_delta(
+            predictor=predictor,
+            features=features,
+            perturb_from_position=3,
+            perturb_scale=10.0,
+        )
+
+        self.assertLessEqual(delta, 1e-5)
 
 
 if __name__ == "__main__":
