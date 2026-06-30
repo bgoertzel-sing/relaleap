@@ -29,10 +29,27 @@ The predictor may be trained against future-context targets extracted from the
 full-context oracle router, but the future-context target vectors must not be
 read directly by the router during evaluation.
 
+## 2026-06-30 priority: Transformer-ACSR
+
+Ben's follow-up direction is to prioritize a smarter ACSR predictor rather than
+treat the earlier shallow MLP/GRU result as decisive. The promoted
+`contextual_mlp` top-k2 router uses full-context `next_hidden` and
+`next_delta` chunks, so it should be treated as a nondeployable teacher. The
+next ACSR branch should ask whether a strictly causal sequence model can
+predict enough of those teacher chunks to recover useful support routing
+without reading future hidden states directly.
+
+The preferred next bounded experiment is `transformer_acsr`: a small causal
+transformer over prefix-safe features that predicts future-router feature
+chunks and/or teacher router logits from causal inputs only, then routes
+columns using the predicted chunks. This supersedes the previous instruction to
+start with another MLP/GRU-only ACSR pass. MLP/GRU predictors should remain
+controls or ablations, not the main branch.
+
 ## Concrete experiment
 
 Implement a command-driven pilot tentatively named
-`anticipatory_contextual_support_routing`.
+`transformer_acsr`.
 
 The pilot should:
 
@@ -40,26 +57,30 @@ The pilot should:
    scale.
 2. Extract the full-context oracle feature vector used by the nondeployable
    contextual MLP router.
-3. Train a small causal predictor to reconstruct that future-context feature
+3. Train a small causal transformer to reconstruct that future-context feature
    vector from causal inputs only.
 4. Feed the predicted future-context features, not the true future features,
    into a support router.
 5. Compare against the existing controls:
    - promoted full-context top-k2 contextual router;
    - causal-feature-safe contextual top-k2 router;
+   - prior MLP/GRU ACSR predictors where available;
    - linear top-k2 router;
    - rank-matched contextual top-k1;
    - random/fixed top-k2;
    - norm-matched dense active-rank control where already available.
 
-Acceptable predictor families for the first pass:
+Preferred predictor/target design:
 
-- small MLP over current/past summary features;
-- small GRU/causal 1D temporal model;
-- small causal transformer only if the simpler predictors fail and the compute
-  budget is still local-feasible.
-
-Start with the smallest MLP/GRU version before using a transformer.
+- small causal transformer over token prefix, current/previous hidden, causal
+  position encoding, recent support choices, residual norms, entropy/confidence,
+  and any other prefix-safe sequence summaries;
+- multi-target training against `next_hidden`, `next_delta`, full-context
+  router logits, and/or softened top-k support distribution;
+- optional uncertainty/calibration head so low-confidence predicted future
+  chunks can be damped rather than over-routed;
+- MLP, GRU, token/position-only transformer, and shuffled/misaligned target
+  predictors as controls.
 
 ## Required controls
 
@@ -67,11 +88,15 @@ The branch must include nulls that distinguish real anticipatory signal from
 cheap CE or position shortcuts:
 
 - shuffled predicted-feature control;
+- delayed or misaligned predicted-feature control;
 - token/position-only predicted-feature control;
+- same-parameter MLP/GRU predictor controls;
 - same-student support intervention: predicted-feature support versus
   token/position-null support through the same trained residual values;
 - causal-feature perturbation check showing that future positions do not change
   router outputs;
+- full-context `contextual_mlp` teacher as an explicit oracle/nondeployable
+  upper bound, not as deployable evidence;
 - retention/churn evaluation after A-to-B adaptation, not just fixed-batch CE.
 
 ## Promotion criteria
@@ -93,10 +118,12 @@ operational CE router rather than as causal column-selection evidence.
 ## First bounded automation step
 
 The next RelaLeap automation step should create a fail-closed design report for
-ACSR before any GPU work. The report should identify:
+Transformer-ACSR before any GPU work. The report should identify:
 
 - exact full-context feature tensors to predict;
 - exact causal input tensors;
+- transformer size, causal mask, context window, and local CPU smoke budget;
+- MLP/GRU and token/position-only control predictors;
 - first local config and output directory;
 - artifact schema;
 - controls and nulls;
