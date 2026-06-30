@@ -48,6 +48,7 @@ REQUIRED_ARTIFACTS = (
     "sparse_value_redesign_selector.csv",
     "budget_normalized_gated_value_mixture_pregate.csv",
     "budget_normalized_gated_value_mixture_closeout.csv",
+    "soft_mixture_low_churn_dense_modular_design.csv",
     "pc_core_periphery_residual_inference_pregate.csv",
     "pc_residual_inference_mechanism_inspection.csv",
     "pc_error_target_inference_path_audit.csv",
@@ -367,6 +368,16 @@ def run_synthetic_mechanism_causal_modularity(
         "budget_normalized_gated_value_mixture_closeout_primary_result": (
             _budget_normalized_gated_value_mixture_closeout_summary(
                 training_smoke["budget_normalized_gated_value_mixture_closeout"]
+            )
+            if training_smoke is not None
+            else None
+        ),
+        "soft_mixture_low_churn_dense_modular_design_row_count": (
+            len(training_smoke["soft_mixture_low_churn_dense_modular_design"]) if training_smoke is not None else 0
+        ),
+        "soft_mixture_low_churn_dense_modular_design_primary_result": (
+            _soft_mixture_low_churn_dense_modular_design_summary(
+                training_smoke["soft_mixture_low_churn_dense_modular_design"]
             )
             if training_smoke is not None
             else None
@@ -957,6 +968,13 @@ def _run_training_smoke(
     budget_normalized_gated_value_mixture_closeout = _budget_normalized_gated_value_mixture_closeout_rows(
         pregate_rows=budget_normalized_gated_value_mixture_pregate,
     )
+    soft_mixture_low_churn_dense_modular_design = _soft_mixture_low_churn_dense_modular_design_rows(
+        closeout_rows=budget_normalized_gated_value_mixture_closeout,
+        arm_metrics=arm_metrics,
+        residual_budget_rows=residual_budget_accounting,
+        commutator_rows=commutator_rows,
+        forgetting_rows=forgetting_rows,
+    )
     pc_core_periphery_residual_inference_pregate = _pc_core_periphery_residual_inference_pregate_rows(
         gated_pregate_rows=budget_normalized_gated_value_mixture_pregate,
         arm_metrics=arm_metrics,
@@ -1046,6 +1064,7 @@ def _run_training_smoke(
         "sparse_value_redesign_selector": sparse_value_redesign_selector,
         "budget_normalized_gated_value_mixture_pregate": budget_normalized_gated_value_mixture_pregate,
         "budget_normalized_gated_value_mixture_closeout": budget_normalized_gated_value_mixture_closeout,
+        "soft_mixture_low_churn_dense_modular_design": soft_mixture_low_churn_dense_modular_design,
         "pc_core_periphery_residual_inference_pregate": pc_core_periphery_residual_inference_pregate,
         "pc_residual_inference_mechanism_inspection": pc_residual_inference_mechanism_inspection,
         "pc_error_target_inference_path_audit": pc_error_target_inference_path_audit,
@@ -4272,6 +4291,11 @@ def _selected_next_step(
             training_smoke["pc_amortized_error_pregate_closeout"]
         )
         if summary.get("selected_next_experiment"):
+            soft_design = _soft_mixture_low_churn_dense_modular_design_summary(
+                training_smoke.get("soft_mixture_low_churn_dense_modular_design", [])
+            )
+            if soft_design.get("selected_next_experiment"):
+                return str(soft_design["selected_next_experiment"]).replace("_", " ")
             budget_closeout = _budget_normalized_gated_value_mixture_closeout_summary(
                 training_smoke.get("budget_normalized_gated_value_mixture_closeout", [])
             )
@@ -4342,6 +4366,11 @@ def _selected_next_step(
                 "and shuffled-target null controls before any GPU validation"
             )
     if training_smoke.get("budget_normalized_gated_value_mixture_pregate"):
+        soft_design = _soft_mixture_low_churn_dense_modular_design_summary(
+            training_smoke.get("soft_mixture_low_churn_dense_modular_design", [])
+        )
+        if soft_design.get("selected_next_experiment"):
+            return str(soft_design["selected_next_experiment"]).replace("_", " ")
         summary = _budget_normalized_gated_value_mixture_pregate_summary(
             training_smoke["budget_normalized_gated_value_mixture_pregate"]
         )
@@ -5900,6 +5929,166 @@ def _budget_normalized_gated_value_mixture_closeout_summary(rows: list[dict[str,
         "interpretation": (
             "Closeout row for the failed budget-normalized gated value-mixture pregate. "
             "It records the flat-control/signal blocker before pivoting to the next non-PC local branch."
+        ),
+    }
+
+
+def _soft_mixture_low_churn_dense_modular_design_rows(
+    *,
+    closeout_rows: list[dict[str, Any]],
+    arm_metrics: list[dict[str, Any]],
+    residual_budget_rows: list[dict[str, Any]],
+    commutator_rows: list[dict[str, Any]],
+    forgetting_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    closeout = _budget_normalized_gated_value_mixture_closeout_summary(closeout_rows)
+    if closeout.get("branch_closed") is not True:
+        return []
+
+    by_arm = {str(row.get("arm", "")): row for row in arm_metrics}
+    budget_by_arm = {str(row.get("arm", "")): row for row in residual_budget_rows}
+    promoted = by_arm.get("promoted_contextual_topk2")
+    low_churn_active = by_arm.get("low_churn_mlp_active_matched")
+    dense_active = by_arm.get("dense_rank_norm_matched")
+    low_churn_stored = by_arm.get("low_churn_mlp_stored_parameter_matched")
+    if promoted is None or low_churn_active is None:
+        return []
+
+    promoted_ce = _metric_float(promoted.get("holdout_ce"))
+    active_ce = _metric_float(low_churn_active.get("holdout_ce"))
+    dense_ce = _metric_float(dense_active.get("holdout_ce")) if dense_active else None
+    stored_ce = _metric_float(low_churn_stored.get("holdout_ce")) if low_churn_stored else None
+    promoted_norm = _metric_float(promoted.get("residual_l2"))
+    active_norm = _metric_float(low_churn_active.get("residual_l2"))
+    active_commutator = _mean_metric(
+        commutator_rows,
+        ["low_churn_mlp_active_matched"],
+        "finite_update_commutator_l2",
+    )
+    promoted_commutator = _mean_metric(
+        commutator_rows,
+        ["promoted_contextual_topk2"],
+        "finite_update_commutator_l2",
+    )
+    active_churn = _mean_abs_metric(
+        forgetting_rows,
+        ["low_churn_mlp_active_matched"],
+        "functional_churn",
+    )
+    promoted_churn = _mean_abs_metric(
+        forgetting_rows,
+        ["promoted_contextual_topk2"],
+        "functional_churn",
+    )
+    ce_gap_vs_active = _positive_gap(promoted_ce, active_ce)
+    ce_gap_vs_stored = _positive_gap(promoted_ce, stored_ce)
+    dense_active_gap = _delta_value(active_ce, dense_ce)
+    churn_ratio = _safe_ratio(active_churn, promoted_churn)
+    commutator_ratio = _safe_ratio(active_commutator, promoted_commutator)
+    norm_ratio = _safe_ratio(active_norm, promoted_norm)
+    design_allowed = bool(
+        closeout.get("selected_next_experiment")
+        == "pivot_to_soft_mixture_low_churn_dense_modular_residual_design"
+    )
+    return [
+        {
+            "design_name": "soft_mixture_low_churn_dense_modular_residual",
+            "source_closeout_status": closeout.get("closeout_status", ""),
+            "source_failed_branch": closeout.get("source_primary_arm", ""),
+            "source_failure_reasons": closeout.get("source_failure_reasons", ""),
+            "candidate_family": "dense_modular_control",
+            "candidate_mechanism": "soft_mixture_of_low_churn_experts_with_modularity_penalties",
+            "candidate_status": "design_scaffold_selected" if design_allowed else "blocked_by_source_closeout",
+            "reference_sparse_arm": "promoted_contextual_topk2",
+            "reference_sparse_ce": promoted_ce,
+            "active_low_churn_control_arm": "low_churn_mlp_active_matched",
+            "active_low_churn_control_ce": active_ce,
+            "dense_active_control_arm": "dense_rank_norm_matched" if dense_active else "",
+            "dense_active_control_ce": dense_ce,
+            "stored_low_churn_control_arm": "low_churn_mlp_stored_parameter_matched" if low_churn_stored else "",
+            "stored_low_churn_control_ce": stored_ce,
+            "reference_sparse_gap_to_active_low_churn_ce": ce_gap_vs_active,
+            "reference_sparse_gap_to_stored_low_churn_ce": ce_gap_vs_stored,
+            "active_low_churn_ce_minus_dense_active_ce": dense_active_gap,
+            "active_low_churn_residual_l2": active_norm,
+            "reference_sparse_residual_l2": promoted_norm,
+            "active_low_churn_norm_ratio_vs_reference_sparse": norm_ratio,
+            "active_low_churn_mean_commutator_l2": active_commutator,
+            "reference_sparse_mean_commutator_l2": promoted_commutator,
+            "active_low_churn_commutator_ratio_vs_reference_sparse": commutator_ratio,
+            "active_low_churn_mean_abs_functional_churn": active_churn,
+            "reference_sparse_mean_abs_functional_churn": promoted_churn,
+            "active_low_churn_churn_ratio_vs_reference_sparse": churn_ratio,
+            "active_low_churn_flop_proxy_per_token": _metric_float(
+                budget_by_arm.get("low_churn_mlp_active_matched", {}).get("flop_proxy_per_token")
+            ),
+            "reference_sparse_flop_proxy_per_token": _metric_float(
+                budget_by_arm.get("promoted_contextual_topk2", {}).get("flop_proxy_per_token")
+            ),
+            "required_controls": (
+                "promoted_contextual_topk2;dense_rank_norm_matched;low_churn_mlp_active_matched;"
+                "low_churn_mlp_stored_parameter_matched;token_position_router_topk2;random_support_topk2"
+            ),
+            "required_next_packet": (
+                "trainable_soft_mixture_low_churn_dense_modular_residual_with_expert_dropout;"
+                "entropy_or_load_balance_penalty;norm_clamp;commutator_churn_intervention_fingerprints"
+            ),
+            "implemented_in_current_packet": False,
+            "design_selected": design_allowed,
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "advance_to_gpu_validation": False,
+            "mechanism_labels_used_for_scoring_only": True,
+            "interpretation": (
+                "Local design selector after the gated sparse value-mixture closeout. It records why the "
+                "next non-PC step should test a soft-mixture low-churn dense modular residual against the "
+                "promoted sparse router and dense/MLP controls, but it does not train or promote that arm."
+            ),
+        }
+    ]
+
+
+def _soft_mixture_low_churn_dense_modular_design_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "row_count": 0,
+            "design_selected": False,
+            "requires_gpu_now": False,
+            "promotion_allowed": False,
+            "interpretation": "soft-mixture low-churn dense modular design selector was not run",
+        }
+    row = rows[0]
+    return {
+        "row_count": len(rows),
+        "design_name": row.get("design_name", ""),
+        "candidate_status": row.get("candidate_status", ""),
+        "source_failed_branch": row.get("source_failed_branch", ""),
+        "source_failure_reasons": row.get("source_failure_reasons", ""),
+        "reference_sparse_gap_to_active_low_churn_ce": _metric_float(
+            row.get("reference_sparse_gap_to_active_low_churn_ce")
+        ),
+        "reference_sparse_gap_to_stored_low_churn_ce": _metric_float(
+            row.get("reference_sparse_gap_to_stored_low_churn_ce")
+        ),
+        "active_low_churn_churn_ratio_vs_reference_sparse": _metric_float(
+            row.get("active_low_churn_churn_ratio_vs_reference_sparse")
+        ),
+        "active_low_churn_commutator_ratio_vs_reference_sparse": _metric_float(
+            row.get("active_low_churn_commutator_ratio_vs_reference_sparse")
+        ),
+        "implemented_in_current_packet": row.get("implemented_in_current_packet") is True,
+        "design_selected": row.get("design_selected") is True,
+        "requires_gpu_now": any(item.get("requires_gpu_now") is True for item in rows),
+        "promotion_allowed": any(item.get("promotion_allowed") is True for item in rows),
+        "advance_to_gpu_validation": any(item.get("advance_to_gpu_validation") is True for item in rows),
+        "selected_next_experiment": (
+            "implement_local_soft_mixture_low_churn_dense_modular_residual_pregate"
+            if row.get("design_selected") is True
+            else ""
+        ),
+        "interpretation": (
+            "Design-only local branch selector. It consumes the failed gated sparse value-mixture closeout "
+            "and defines the next bounded non-PC packet without requesting GPU validation."
         ),
     }
 
@@ -7785,6 +7974,10 @@ def _write_artifacts(
         [] if training_smoke is None else training_smoke["budget_normalized_gated_value_mixture_closeout"],
     )
     _write_csv(
+        out_dir / "soft_mixture_low_churn_dense_modular_design.csv",
+        [] if training_smoke is None else training_smoke["soft_mixture_low_churn_dense_modular_design"],
+    )
+    _write_csv(
         out_dir / "pc_core_periphery_residual_inference_pregate.csv",
         [] if training_smoke is None else training_smoke["pc_core_periphery_residual_inference_pregate"],
     )
@@ -7860,6 +8053,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         f"- Sparse value redesign selector rows: `{summary['sparse_value_redesign_selector_row_count']}`",
         f"- Budget-normalized gated value-mixture pregate rows: `{summary['budget_normalized_gated_value_mixture_pregate_row_count']}`",
         f"- Budget-normalized gated value-mixture closeout rows: `{summary['budget_normalized_gated_value_mixture_closeout_row_count']}`",
+        f"- Soft-mixture low-churn dense modular design rows: `{summary['soft_mixture_low_churn_dense_modular_design_row_count']}`",
         f"- PC core/periphery residual-inference pregate rows: `{summary['pc_core_periphery_residual_inference_pregate_row_count']}`",
         f"- PC residual-inference mechanism inspection rows: `{summary['pc_residual_inference_mechanism_inspection_row_count']}`",
         f"- PC error-target inference-path audit rows: `{summary['pc_error_target_inference_path_audit_row_count']}`",
@@ -7897,6 +8091,8 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "The core/periphery branch closeout artifact is fail-closed. It closes or redirects the current clipped core/periphery value-capacity branch unless the primary arm clears CE or stored-gap thresholds, norm, commutator, and churn budgets, and is not explained by the flat same-router value-capacity control.",
         "",
         "The budget-normalized gated value-mixture pregate is the selected local sparse-value redesign. It keeps the promoted contextual top-k2 router, adds residual-budget clipping plus a learned low-rank value gate, compares against the flat same-router value MLP control, and remains fail-closed with no GPU or promotion request.",
+        "",
+        "The soft-mixture low-churn dense modular design selector consumes the failed gated sparse value-mixture closeout and defines the next bounded non-PC packet. It is design-only: no trainable arm, GPU validation, or promotion is implied until a future local pregate beats controls and interference budgets.",
         "",
         "The PC core/periphery residual-inference pregate is a major-pivot scaffold from the external strategy review. It closes the current sparse value-capacity branch as unsupported, records that Ben should be notified, and defines the next local trainable packet: fixed contextual top-k2 router, protected predictive core, plastic residual-error periphery, two local inference steps, anchor KL, norm clamp, commutator/churn penalties, and flat/dense/token-position/random/shuffled controls. It is not promotion evidence.",
         "",

@@ -51,6 +51,7 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(summary["sparse_value_redesign_selector_row_count"], 0)
             self.assertEqual(summary["budget_normalized_gated_value_mixture_pregate_row_count"], 0)
             self.assertEqual(summary["budget_normalized_gated_value_mixture_closeout_row_count"], 0)
+            self.assertEqual(summary["soft_mixture_low_churn_dense_modular_design_row_count"], 0)
             self.assertEqual(summary["pc_core_periphery_residual_inference_pregate_row_count"], 0)
             self.assertEqual(summary["pc_residual_inference_mechanism_inspection_row_count"], 0)
             self.assertEqual(summary["pc_error_target_inference_path_audit_row_count"], 0)
@@ -256,6 +257,24 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             )
             self.assertFalse(
                 summary["budget_normalized_gated_value_mixture_pregate_primary_result"]["promotion_allowed"]
+            )
+            self.assertEqual(summary["soft_mixture_low_churn_dense_modular_design_row_count"], 1)
+            self.assertIsNotNone(summary["soft_mixture_low_churn_dense_modular_design_primary_result"])
+            self.assertEqual(
+                summary["soft_mixture_low_churn_dense_modular_design_primary_result"]["row_count"],
+                summary["soft_mixture_low_churn_dense_modular_design_row_count"],
+            )
+            self.assertTrue(
+                summary["soft_mixture_low_churn_dense_modular_design_primary_result"]["design_selected"]
+            )
+            self.assertFalse(
+                summary["soft_mixture_low_churn_dense_modular_design_primary_result"]["implemented_in_current_packet"]
+            )
+            self.assertFalse(
+                summary["soft_mixture_low_churn_dense_modular_design_primary_result"]["requires_gpu_now"]
+            )
+            self.assertFalse(
+                summary["soft_mixture_low_churn_dense_modular_design_primary_result"]["promotion_allowed"]
             )
             self.assertEqual(summary["pc_core_periphery_residual_inference_pregate_row_count"], 6)
             self.assertIsNotNone(summary["pc_core_periphery_residual_inference_pregate_primary_result"])
@@ -714,6 +733,43 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(value_closeout["promotion_allowed"], "False")
             self.assertEqual(value_closeout["advance_to_gpu_validation"], "False")
             self.assertTrue(value_closeout["selected_next_experiment"])
+
+            with (out_dir / "soft_mixture_low_churn_dense_modular_design.csv").open(newline="", encoding="utf-8") as handle:
+                soft_design_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(soft_design_rows), 1)
+            soft_design = soft_design_rows[0]
+            for required_field in {
+                "design_name",
+                "source_closeout_status",
+                "source_failed_branch",
+                "source_failure_reasons",
+                "candidate_family",
+                "candidate_mechanism",
+                "candidate_status",
+                "reference_sparse_gap_to_active_low_churn_ce",
+                "active_low_churn_churn_ratio_vs_reference_sparse",
+                "required_controls",
+                "required_next_packet",
+                "implemented_in_current_packet",
+                "design_selected",
+                "requires_gpu_now",
+                "promotion_allowed",
+                "advance_to_gpu_validation",
+            }:
+                self.assertIn(required_field, soft_design)
+            self.assertEqual(
+                soft_design["design_name"],
+                "soft_mixture_low_churn_dense_modular_residual",
+            )
+            self.assertEqual(
+                soft_design["source_failed_branch"],
+                "budget_normalized_gated_low_rank_value_mixture_topk2",
+            )
+            self.assertEqual(soft_design["implemented_in_current_packet"], "False")
+            self.assertEqual(soft_design["design_selected"], "True")
+            self.assertEqual(soft_design["requires_gpu_now"], "False")
+            self.assertEqual(soft_design["promotion_allowed"], "False")
+            self.assertEqual(soft_design["advance_to_gpu_validation"], "False")
 
             with (out_dir / "pc_core_periphery_residual_inference_pregate.csv").open(newline="", encoding="utf-8") as handle:
                 pc_pregate_rows = list(csv.DictReader(handle))
