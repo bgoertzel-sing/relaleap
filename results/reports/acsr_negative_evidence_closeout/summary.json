@@ -38,7 +38,7 @@
     "acsr_gate_status": "fail",
     "acsr_intervention_l2_guardrail": true,
     "acsr_retention_churn_guardrail": false,
-    "acsr_student_ce_loss": 2.8332395553588867,
+    "acsr_student_ce_loss": 3.8522276878356934,
     "ben_notification_required": false,
     "commutator_claim_status": "finite_update_commutator_too_small_for_sparse_mechanism_claim",
     "commutator_decision": "acsr_finite_update_commutator_assay_tiny_commutator",
@@ -50,7 +50,7 @@
     "dense_rank_norm_decision": "acsr_sparse_support_claim_blocked_by_dense_rank_norm_controls",
     "dense_rank_norm_status": "pass",
     "dense_teacher_ce_guardrail_passed": false,
-    "dense_teacher_ce_loss": 0.2611331641674042,
+    "dense_teacher_ce_loss": 0.3070065975189209,
     "dense_teacher_claim_status": "dense_teacher_distillation_not_interpretable_or_not_better_than_controls",
     "dense_teacher_decision": "dense_teacher_residual_distillation_pilot_not_supported",
     "dense_teacher_status": "fail",
@@ -70,7 +70,7 @@
     "norm_budgeted_status": "pass",
     "rank24_delta_minus_sparse": -0.05769681930541992,
     "sparse_mean_logit_mse": 0.0006394577972709417,
-    "strategy_recommended_next_action": "Run the local ACSR broader mechanism gate now, but make it fail closed on shuffled-feature/token-position/null controls, intervention fingerprints, churn, and residual-L2 before any GPU/default claim.",
+    "strategy_recommended_next_action": "Do not launch RunPod yet; repair the hidden-classifier gate/report inconsistency and run a local sequence/OOD/null-budget audit that compares against the learned router.",
     "strategy_verdict": "FIX"
   },
   "evidence_matrix": [
@@ -125,13 +125,13 @@
     }
   ],
   "failures": [],
-  "git_commit": "e05efb8f8e7bc3255bf7babb6319e23c2102fdff",
+  "git_commit": "b8d25b95f55fd485c067d5dce3aa261274851dac",
   "next_step": "treat ACSR as a diagnostic probe; make the next experiment target dense/MLP residual controls rather than ACSR/default-router promotion",
   "out_dir": "results/reports/acsr_negative_evidence_closeout",
   "platform": "macOS-26.5.1-x86_64-i386-64bit",
   "rationale": "ACSR beats simple nulls but fails parameter-matched and retention-churn guardrails, while dense-teacher, dense24/rank-norm, MLP, norm-budgeted, commutator, and CL-repeat evidence do not establish a sparse-specific mechanism",
   "requires_gpu_now": false,
-  "runtime_seconds": 0.0077,
+  "runtime_seconds": 0.0052,
   "selected_next_action": "demote_acsr_to_diagnostic_status",
   "source_rows": [
     {
@@ -192,7 +192,7 @@
     },
     {
       "claim_status": "strategic_change_level=minor; notify_ben=false",
-      "decision": "Run the local ACSR broader mechanism gate now, but make it fail closed on shuffled-feature/token-position/null controls, intervention fingerprints, churn, and residual-L2 before any GPU/default claim.",
+      "decision": "Do not launch RunPod yet; repair the hidden-classifier gate/report inconsistency and run a local sequence/OOD/null-budget audit that compares against the learned router.",
       "path": "../outputs/strategy-reviews/relaleap/latest-review.md",
       "present": true,
       "source": "strategy_review",
@@ -204,7 +204,7 @@
     "ben_notification_required": false,
     "notify_ben": "false",
     "present": true,
-    "recommended_next_action": "Run the local ACSR broader mechanism gate now, but make it fail closed on shuffled-feature/token-position/null controls, intervention fingerprints, churn, and residual-L2 before any GPU/default claim.",
+    "recommended_next_action": "Do not launch RunPod yet; repair the hidden-classifier gate/report inconsistency and run a local sequence/OOD/null-budget audit that compares against the learned router.",
     "strategic_change_level": "minor",
     "verdict": "FIX"
   }
