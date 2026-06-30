@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import itertools
 import json
 import platform
 import random
@@ -638,6 +639,7 @@ def _run_training_smoke(
     forgetting_rows: list[dict[str, Any]] = []
     final_ce_by_arm: dict[str, float] = {}
     support_head_rows: list[dict[str, Any]] = []
+    transformer_acsr_support_values = None
 
     for arm_index, spec in enumerate(specs):
         torch.manual_seed(seed + 100 + arm_index)
@@ -766,6 +768,11 @@ def _run_training_smoke(
                     F.mse_loss(adapted_holdout_hidden - holdout_hidden, teacher_delta)
                     .detach()
                     .item()
+                )
+            if spec.name == "promoted_contextual_topk2":
+                transformer_acsr_support_values = _trained_column_value_vectors(
+                    adapter=adapter,
+                    torch=torch,
                 )
         final_ce_by_arm[spec.name] = holdout_ce
         arm_metrics.append(
@@ -1077,6 +1084,7 @@ def _run_training_smoke(
         holdout_inputs=holdout_inputs,
         holdout_targets=holdout_targets,
         decode=base.decode,
+        trained_support_values=transformer_acsr_support_values,
         training_steps=training_steps,
         learning_rate=learning_rate,
         seed=seed,
@@ -8252,27 +8260,21 @@ def _support_intervention_ce_from_predicted_delta(
     predicted_delta: Any,
     targets: Any,
     decode: Any,
+    trained_support_values: Any | None,
     support_width: int,
-    seed: int,
     torch: Any,
     F: Any,
-) -> tuple[float, float, Any]:
-    generator = torch.Generator(device=hidden.device)
-    generator.manual_seed(seed)
-    hidden_dim = int(hidden.shape[-1])
-    num_columns = max(4, support_width * 4)
-    values = torch.randn(
-        num_columns,
-        hidden_dim,
-        generator=generator,
-        device=hidden.device,
-        dtype=hidden.dtype,
-    )
-    values = F.normalize(values, dim=-1)
+) -> tuple[float | None, float | None, Any | None]:
+    if trained_support_values is None:
+        return None, None, None
+    values = trained_support_values.to(device=hidden.device, dtype=hidden.dtype)
+    num_columns = int(values.shape[0])
+    if num_columns < support_width:
+        return None, None, None
     scores = torch.einsum("bth,ch->btc", predicted_delta, values)
     support = torch.topk(scores, k=min(support_width, num_columns), dim=-1).indices
     selected = values[support].mean(dim=-2)
-    logits = decode(hidden + 0.05 * selected)
+    logits = decode(hidden + selected)
     ce = float(F.cross_entropy(logits.reshape(-1, int(logits.shape[-1])), targets.reshape(-1)).detach().item())
     support_churn = (
         float((support[:, 1:, :] != support[:, :-1, :]).float().mean().detach().item())
@@ -8282,10 +8284,65 @@ def _support_intervention_ce_from_predicted_delta(
     return ce, support_churn, support.detach()
 
 
+def _support_intervention_ce_oracle(
+    *,
+    hidden: Any,
+    targets: Any,
+    decode: Any,
+    trained_support_values: Any | None,
+    support_width: int,
+    torch: Any,
+    F: Any,
+) -> tuple[float | None, float | None, Any | None]:
+    if trained_support_values is None:
+        return None, None, None
+    values = trained_support_values.to(device=hidden.device, dtype=hidden.dtype)
+    num_columns = int(values.shape[0])
+    if num_columns < support_width:
+        return None, None, None
+    support_sets = list(itertools.combinations(range(num_columns), support_width))
+    if not support_sets:
+        return None, None, None
+    support_tensor = torch.tensor(support_sets, dtype=torch.long, device=hidden.device)
+    support_values = values[support_tensor].mean(dim=1)
+    candidate_logits = decode(hidden.unsqueeze(0) + support_values[:, None, None, :])
+    vocab_size = int(candidate_logits.shape[-1])
+    candidate_losses = F.cross_entropy(
+        candidate_logits.reshape(-1, vocab_size),
+        targets.unsqueeze(0).expand(len(support_sets), -1, -1).reshape(-1),
+        reduction="none",
+    ).reshape(len(support_sets), int(hidden.shape[0]), int(hidden.shape[1]))
+    best_indices = candidate_losses.argmin(dim=0)
+    best_support = support_tensor[best_indices]
+    best_selected = values[best_support].mean(dim=-2)
+    logits = decode(hidden + best_selected)
+    ce = float(F.cross_entropy(logits.reshape(-1, vocab_size), targets.reshape(-1)).detach().item())
+    support_churn = (
+        float((best_support[:, 1:, :] != best_support[:, :-1, :]).float().mean().detach().item())
+        if best_support.shape[1] > 1
+        else 0.0
+    )
+    return ce, support_churn, best_support.detach()
+
+
 def _support_overlap(left: Any, right: Any) -> float:
+    if left is None or right is None:
+        return 0.0
     if left.shape != right.shape:
         return 0.0
     return float((left == right).float().mean().detach().item())
+
+
+def _trained_column_value_vectors(*, adapter: Any, torch: Any) -> Any | None:
+    if not hasattr(adapter, "atom_logits") or not hasattr(adapter, "atom_values"):
+        return None
+    with torch.no_grad():
+        atom_weights = torch.softmax(adapter.atom_logits.detach(), dim=-1)
+        return torch.einsum(
+            "ca,cah->ch",
+            atom_weights,
+            adapter.atom_values.detach(),
+        ).detach()
 
 
 def _transformer_acsr_cpu_smoke_pilot_rows(
@@ -8297,6 +8354,7 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
     holdout_inputs: Any,
     holdout_targets: Any,
     decode: Any,
+    trained_support_values: Any | None,
     training_steps: int,
     learning_rate: float,
     seed: int,
@@ -8408,8 +8466,8 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         predicted_delta=primary_delta,
         targets=holdout_targets,
         decode=decode,
+        trained_support_values=trained_support_values,
         support_width=support_width,
-        seed=seed + 710,
         torch=torch,
         F=F,
     )
@@ -8418,23 +8476,34 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         predicted_delta=token_position_delta,
         targets=holdout_targets,
         decode=decode,
+        trained_support_values=trained_support_values,
         support_width=support_width,
-        seed=seed + 710,
         torch=torch,
         F=F,
     )
-    oracle_ce, oracle_churn, oracle_support = _support_intervention_ce_from_predicted_delta(
+    oracle_ce, oracle_churn, oracle_support = _support_intervention_ce_oracle(
         hidden=holdout_hidden,
-        predicted_delta=holdout_delta,
         targets=holdout_targets,
         decode=decode,
+        trained_support_values=trained_support_values,
         support_width=support_width,
-        seed=seed + 710,
         torch=torch,
         F=F,
     )
-    support_assay_valid = oracle_ce < token_position_ce and oracle_ce < base_ce
-    primary_beats_token_position_support = primary_ce <= token_position_ce
+    trained_value_assay_available = (
+        trained_support_values is not None
+        and primary_ce is not None
+        and token_position_ce is not None
+        and oracle_ce is not None
+    )
+    support_assay_valid = (
+        bool(trained_value_assay_available)
+        and oracle_ce < token_position_ce
+        and oracle_ce < base_ce
+    )
+    primary_beats_token_position_support = (
+        bool(trained_value_assay_available) and primary_ce <= token_position_ce
+    )
     gates_pass = (
         leakage_delta <= 1e-5
         and primary_mse < token_position_mse
@@ -8447,6 +8516,8 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         if gates_pass
         else (
             "replace_support_intervention_assay_with_trained_same_student_residual_values"
+            if not trained_value_assay_available
+            else "train_value_aware_transformer_acsr_support_router"
             if not support_assay_valid
             else "tighten_transformer_acsr_pilot_against_null_controls_before_gpu"
         )
@@ -8460,17 +8531,29 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
         "future_perturbation_max_prefix_delta": leakage_delta,
         "leakage_gate_passes": leakage_delta <= 1e-5,
         "base_ce": base_ce,
+        "support_value_source": (
+            "trained_promoted_contextual_topk2_column_values"
+            if trained_value_assay_available
+            else "unavailable"
+        ),
+        "trained_support_value_assay_available": trained_value_assay_available,
         "oracle_support_intervention_ce": oracle_ce,
         "token_position_support_intervention_ce": token_position_ce,
-        "oracle_ce_gain_vs_token_position": token_position_ce - oracle_ce,
-        "oracle_ce_gain_vs_base": base_ce - oracle_ce,
+        "oracle_ce_gain_vs_token_position": (
+            token_position_ce - oracle_ce if trained_value_assay_available else None
+        ),
+        "oracle_ce_gain_vs_base": base_ce - oracle_ce if trained_value_assay_available else None,
         "support_intervention_assay_valid": support_assay_valid,
         "support_assay_failure_reason": (
             ""
             if support_assay_valid
+            else "trained_same_student_residual_values_unavailable"
+            if not trained_value_assay_available
             else "oracle_support_does_not_improve_same_student_ce_over_base_and_token_position_null"
         ),
-        "primary_ce_gain_vs_token_position_support": token_position_ce - primary_ce,
+        "primary_ce_gain_vs_token_position_support": (
+            token_position_ce - primary_ce if trained_value_assay_available else None
+        ),
         "primary_support_overlap_with_oracle": primary_oracle_overlap,
         "token_position_support_overlap_with_oracle": token_position_oracle_overlap,
         "requires_gpu_now": False,
@@ -8495,7 +8578,7 @@ def _transformer_acsr_cpu_smoke_pilot_rows(
             "pilot_gates_pass": gates_pass,
             "selected_next_experiment": selected_next_experiment,
             "interpretation": (
-                "Local CPU smoke only: predicted future chunks route through fixed same-student residual values. "
+                "Local CPU smoke only: predicted future chunks route through trained same-student residual values. "
                 "Promotion and GPU validation remain blocked until null/control, support-assay-validity, and "
                 "non-CE gates pass robustly."
             ),
@@ -8598,7 +8681,7 @@ def _transformer_acsr_cpu_smoke_pilot_summary(rows: list[dict[str, Any]]) -> dic
         "selected_next_experiment": primary.get("selected_next_experiment", ""),
         "interpretation": (
             "Command-driven local Transformer-ACSR CPU smoke. It trains a tiny causal transformer on prefix-safe "
-            "hidden features and reports null/control, leakage, and same-student fixed residual-value support metrics."
+            "hidden features and reports null/control, leakage, and trained same-student residual-value support metrics."
         ),
     }
 
@@ -8848,7 +8931,7 @@ def _write_notes(path: Path, summary: dict[str, Any]) -> None:
         "",
         "The Transformer-ACSR design report supersedes the soft-mixture residual branch under Ben's 2026-06-30 direction. It treats the promoted full-context contextual router as a nondeployable teacher, specifies future-context targets and prefix-safe causal inputs, and keeps GPU validation blocked until a local command-driven pilot clears CE, support-regret, churn, commutator, null, and future-perturbation gates.",
         "",
-        "The Transformer-ACSR CPU smoke pilot is command-driven local evidence only. It trains a tiny causal-mask transformer on prefix-safe hidden features to predict next-hidden deltas, compares against token/position, shuffled-target, and MLP controls, checks future-perturbation invariance, and routes predicted supports through fixed same-student residual values. Promotion and GPU validation remain blocked unless these gates become robust across follow-up repeats.",
+        "The Transformer-ACSR CPU smoke pilot is command-driven local evidence only. It trains a tiny causal-mask transformer on prefix-safe hidden features to predict next-hidden deltas, compares against token/position, shuffled-target, and MLP controls, checks future-perturbation invariance, and routes predicted supports through trained same-student residual values. Promotion and GPU validation remain blocked unless these gates become robust across follow-up repeats.",
         "",
         "The PC core/periphery residual-inference pregate is a major-pivot scaffold from the external strategy review. It closes the current sparse value-capacity branch as unsupported, records that Ben should be notified, and defines the next local trainable packet: fixed contextual top-k2 router, protected predictive core, plastic residual-error periphery, two local inference steps, anchor KL, norm clamp, commutator/churn penalties, and flat/dense/token-position/random/shuffled controls. It is not promotion evidence.",
         "",

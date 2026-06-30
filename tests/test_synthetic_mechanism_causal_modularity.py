@@ -1249,6 +1249,8 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
                 "target_cosine",
                 "support_intervention_ce",
                 "support_churn",
+                "support_value_source",
+                "trained_support_value_assay_available",
                 "oracle_support_intervention_ce",
                 "token_position_support_intervention_ce",
                 "oracle_ce_gain_vs_token_position",
@@ -1276,6 +1278,11 @@ class SyntheticMechanismCausalModularityTest(unittest.TestCase):
             self.assertEqual(primary_pilot["leakage_gate_passes"], "True")
             self.assertEqual(primary_pilot["requires_gpu_now"], "False")
             self.assertEqual(primary_pilot["promotion_allowed"], "False")
+            self.assertEqual(
+                primary_pilot["support_value_source"],
+                "trained_promoted_contextual_topk2_column_values",
+            )
+            self.assertEqual(primary_pilot["trained_support_value_assay_available"], "True")
             self.assertLessEqual(float(primary_pilot["future_perturbation_max_prefix_delta"]), 1e-5)
             self.assertIn(primary_pilot["support_intervention_assay_valid"], {"False", "True"})
             self.assertIn(
