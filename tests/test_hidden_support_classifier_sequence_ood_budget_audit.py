@@ -26,6 +26,9 @@ class HiddenSupportClassifierSequenceOodBudgetAuditTests(unittest.TestCase):
             self.assertFalse(summary["requires_gpu_now"])
             self.assertFalse(summary["promotion_allowed"])
             self.assertFalse(summary["advance_to_gpu_validation"])
+            self.assertFalse(summary["rule_combo_evidence_available"])
+            self.assertTrue(summary["learned_router_budget_reference_available"])
+            self.assertFalse(summary["hidden_classifier_exact_budget_evidence_available"])
             self.assertFalse(summary["rule_combo_heldout_gate_passes"])
             self.assertFalse(summary["budget_gate_passes"])
             self.assertFalse(summary["residual_norm_budget_gate_passes"])
@@ -57,7 +60,23 @@ class HiddenSupportClassifierSequenceOodBudgetAuditTests(unittest.TestCase):
             self.assertEqual({row["split"] for row in rows}, {"sequence_heldout", "rule_combo_heldout"})
             rule_rows = [row for row in rows if row["split"] == "rule_combo_heldout"]
             self.assertEqual({row["evidence_measured"] for row in rule_rows}, {"False"})
+            self.assertEqual({row["exact_rule_combo_rows_available"] for row in rule_rows}, {"False"})
             self.assertIn("hidden_classifier_ce_gain_vs_learned_router", rows[0])
+
+            with (out_dir / "budget_rows.csv").open(newline="", encoding="utf-8") as handle:
+                budget_rows = list(csv.DictReader(handle))
+            self.assertEqual(
+                {row["budget"] for row in budget_rows},
+                {"residual_norm", "functional_churn", "finite_update_commutator"},
+            )
+            self.assertEqual({row["gate_passes"] for row in budget_rows}, {"False"})
+            self.assertEqual(
+                {row["learned_router_reference_available"] for row in budget_rows},
+                {"True"},
+            )
+            self.assertTrue(
+                any("direct hidden support-classifier" in row["failure_reason"] for row in budget_rows)
+            )
 
             with (out_dir / "closeout_rows.csv").open(newline="", encoding="utf-8") as handle:
                 closeout_rows = list(csv.DictReader(handle))
@@ -69,11 +88,15 @@ class HiddenSupportClassifierSequenceOodBudgetAuditTests(unittest.TestCase):
             self.assertIn("sequence-heldout", closeout_rows[0]["deferred_exact_row_reason"])
 
             notes = (out_dir / "notes.md").read_text(encoding="utf-8")
+            self.assertIn("Rule-combo evidence available: `False`", notes)
             self.assertIn("Rule-combo-heldout gate passes: `False`", notes)
+            self.assertIn("Learned-router budget references available: `True`", notes)
+            self.assertIn("Hidden-classifier exact budget evidence available: `False`", notes)
             self.assertIn(
                 "Closeout status: `closed_hidden_support_classifier_branch_before_gpu`",
                 notes,
             )
+            self.assertIn("does not substitute them", notes)
             self.assertIn("GPU validation remains blocked", notes)
 
 

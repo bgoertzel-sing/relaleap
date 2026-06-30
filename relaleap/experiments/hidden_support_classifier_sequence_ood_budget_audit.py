@@ -83,11 +83,28 @@ def _primary_support_head_row(rows: list[dict[str, str]]) -> dict[str, str]:
     return rows[0] if rows else {}
 
 
+def _row_for_arm(rows: list[dict[str, str]], arm: str) -> dict[str, str]:
+    for row in rows:
+        if row.get("arm") == arm:
+            return row
+    return {}
+
+
 def _first_pilot_row(rows: list[dict[str, str]]) -> dict[str, str]:
     for row in rows:
         if row.get("row_role") == "primary_transformer_acsr_cpu_smoke_pilot":
             return row
     return rows[0] if rows else {}
+
+
+def _mean_metric_for_arm(rows: list[dict[str, str]], arm: str, metric: str) -> float | None:
+    values = [
+        _float_or_none(row.get(metric))
+        for row in rows
+        if row.get("arm") == arm and row.get(metric) not in (None, "")
+    ]
+    present = [value for value in values if value is not None]
+    return mean(present) if present else None
 
 
 def run_hidden_support_classifier_sequence_ood_budget_audit(
@@ -130,9 +147,30 @@ def run_hidden_support_classifier_sequence_ood_budget_audit(
         support_head = _primary_support_head_row(
             _read_csv(seed_out / "support_head_sequence_heldout_diagnostic.csv")
         )
+        arm_metrics = _read_csv(seed_out / "arm_metrics.csv")
+        forgetting_rows = _read_csv(seed_out / "forgetting_rows.csv")
+        commutator_rows = _read_csv(seed_out / "commutator_rows.csv")
+        learned_router_arm = "promoted_contextual_topk2"
+        learned_router_metrics = _row_for_arm(arm_metrics, learned_router_arm)
         hidden_ce = _float_or_none(pilot.get("direct_hidden_support_classifier_ce"))
         learned_ce = _float_or_none(support_head.get("learned_router_ce"))
         oracle_ce = _float_or_none(support_head.get("oracle_pair_ce_ceiling"))
+        learned_router_residual_l2 = _float_or_none(
+            support_head.get("residual_l2")
+        ) or _float_or_none(learned_router_metrics.get("residual_l2"))
+        learned_router_support_churn = _float_or_none(
+            support_head.get("support_change_fraction")
+        )
+        learned_router_functional_churn = _mean_metric_for_arm(
+            forgetting_rows,
+            learned_router_arm,
+            "functional_churn",
+        )
+        learned_router_commutator = _mean_metric_for_arm(
+            commutator_rows,
+            learned_router_arm,
+            "finite_update_commutator_l2",
+        )
         token_null_gain = _float_or_none(
             pilot.get("direct_hidden_support_classifier_ce_gain_vs_token_position_null")
         )
@@ -194,8 +232,13 @@ def run_hidden_support_classifier_sequence_ood_budget_audit(
                 "split": "rule_combo_heldout",
                 "diagnostic": "direct_hidden_support_classifier",
                 "evidence_measured": False,
+                "sequence_heldout_gate_passes": sequence_gate,
+                "exact_rule_combo_rows_available": False,
                 "gate_passes": False,
-                "failure_reason": "rule-combo-heldout support-classifier intervention rows are not emitted by the current harness",
+                "failure_reason": (
+                    "rule-combo-heldout support-classifier intervention rows are not emitted by the current "
+                    "harness; sequence-heldout underperformance already blocks this branch before GPU"
+                ),
                 "source_artifact_dir": str(seed_out),
                 "source_status": summary["status"],
             }
@@ -207,28 +250,47 @@ def run_hidden_support_classifier_sequence_ood_budget_audit(
                     "seed": seed,
                     "budget": "residual_norm",
                     "evidence_measured": False,
+                    "evidence_scope": "direct_hidden_support_classifier_hard_support_swap",
+                    "reference_arm": learned_router_arm,
+                    "learned_router_reference_available": learned_router_residual_l2 is not None,
                     "candidate_value": None,
-                    "reference_value": None,
+                    "reference_value": learned_router_residual_l2,
                     "gate_passes": False,
-                    "failure_reason": "direct hidden support-classifier residual norm budget is not emitted",
+                    "failure_reason": (
+                        "learned-router residual norm reference is available, but the direct hidden "
+                        "support-classifier hard-swap residual norm budget is not emitted"
+                    ),
                 },
                 {
                     "seed": seed,
                     "budget": "functional_churn",
-                    "evidence_measured": hidden_churn is not None,
+                    "evidence_measured": False,
+                    "evidence_scope": "direct_hidden_support_classifier_logit_functional_churn",
+                    "reference_arm": learned_router_arm,
+                    "learned_router_reference_available": learned_router_functional_churn is not None,
                     "candidate_value": hidden_churn,
-                    "reference_value": None,
+                    "reference_value": learned_router_functional_churn,
+                    "support_churn_reference_value": learned_router_support_churn,
                     "gate_passes": False,
-                    "failure_reason": "nonworse functional-churn reference for the learned router is not emitted",
+                    "failure_reason": (
+                        "pilot emits hidden support-set churn, not exact logit functional-churn rows for "
+                        "the hidden classifier; learned-router functional-churn reference exists but is not comparable"
+                    ),
                 },
                 {
                     "seed": seed,
                     "budget": "finite_update_commutator",
                     "evidence_measured": False,
+                    "evidence_scope": "direct_hidden_support_classifier_finite_update_order",
+                    "reference_arm": learned_router_arm,
+                    "learned_router_reference_available": learned_router_commutator is not None,
                     "candidate_value": None,
-                    "reference_value": None,
+                    "reference_value": learned_router_commutator,
                     "gate_passes": False,
-                    "failure_reason": "direct hidden support-classifier finite-update commutator rows are not emitted",
+                    "failure_reason": (
+                        "learned-router finite-update commutator reference is available, but direct hidden "
+                        "support-classifier finite-update commutator rows are not emitted"
+                    ),
                 },
             ]
         )
@@ -240,6 +302,15 @@ def run_hidden_support_classifier_sequence_ood_budget_audit(
         row["gate_passes"] for row in audit_rows if row["split"] == "rule_combo_heldout"
     )
     budget_gate_passes = all(row["gate_passes"] for row in budget_rows)
+    learned_router_budget_reference_available = all(
+        row.get("learned_router_reference_available") is True for row in budget_rows
+    )
+    hidden_classifier_exact_budget_evidence_available = all(
+        row["evidence_measured"] for row in budget_rows
+    )
+    rule_combo_evidence_available = all(
+        row["evidence_measured"] for row in audit_rows if row["split"] == "rule_combo_heldout"
+    )
     advance_to_gpu_validation = bool(sequence_gate_passes and rule_ood_gate_passes and budget_gate_passes)
     sequence_rows = [row for row in audit_rows if row["split"] == "sequence_heldout"]
     sequence_evidence_measured = bool(sequence_rows) and all(
@@ -263,6 +334,9 @@ def run_hidden_support_classifier_sequence_ood_budget_audit(
             "sequence_heldout_gate_passes": sequence_gate_passes,
             "rule_combo_heldout_gate_passes": rule_ood_gate_passes,
             "budget_gate_passes": budget_gate_passes,
+            "rule_combo_evidence_available": rule_combo_evidence_available,
+            "learned_router_budget_reference_available": learned_router_budget_reference_available,
+            "hidden_classifier_exact_budget_evidence_available": hidden_classifier_exact_budget_evidence_available,
             "mean_hidden_classifier_ce_gain_vs_learned_router": _mean_present(
                 audit_rows, "hidden_classifier_ce_gain_vs_learned_router"
             ),
@@ -302,6 +376,9 @@ def run_hidden_support_classifier_sequence_ood_budget_audit(
         "sequence_heldout_gate_passes": sequence_gate_passes,
         "rule_combo_heldout_gate_passes": rule_ood_gate_passes,
         "budget_gate_passes": budget_gate_passes,
+        "rule_combo_evidence_available": rule_combo_evidence_available,
+        "learned_router_budget_reference_available": learned_router_budget_reference_available,
+        "hidden_classifier_exact_budget_evidence_available": hidden_classifier_exact_budget_evidence_available,
         "residual_norm_budget_gate_passes": all(
             row["gate_passes"] for row in budget_rows if row["budget"] == "residual_norm"
         ),
@@ -340,7 +417,10 @@ def run_hidden_support_classifier_sequence_ood_budget_audit(
         "",
         f"- Seeds: `{', '.join(str(seed) for seed in seeds)}`",
         f"- Sequence-heldout gate passes: `{sequence_gate_passes}`",
+        f"- Rule-combo evidence available: `{rule_combo_evidence_available}`",
         f"- Rule-combo-heldout gate passes: `{rule_ood_gate_passes}`",
+        f"- Learned-router budget references available: `{learned_router_budget_reference_available}`",
+        f"- Hidden-classifier exact budget evidence available: `{hidden_classifier_exact_budget_evidence_available}`",
         f"- Budget gate passes: `{budget_gate_passes}`",
         f"- Mean CE gain vs learned router: `{summary['mean_hidden_classifier_ce_gain_vs_learned_router']}`",
         f"- Mean oracle-regret recovery vs learned router: `{summary['mean_oracle_regret_recovery_vs_learned_router']}`",
@@ -350,8 +430,10 @@ def run_hidden_support_classifier_sequence_ood_budget_audit(
         "",
         (
             "GPU validation remains blocked. Exact rule-combo and budget rows are still required for any "
-            "positive hidden-classifier claim, but the current branch can be closed or redesigned now because "
-            "the measured sequence-heldout same-student intervention gate already fails against the learned router."
+            "positive hidden-classifier claim. This audit reads available learned-router budget references, but "
+            "does not substitute them for direct hidden-classifier residual-norm, functional-churn, or commutator "
+            "rows. The current branch can be closed or redesigned now because the measured sequence-heldout "
+            "same-student intervention gate already fails against the learned router."
         ),
     ]
     (out_dir / "notes.md").write_text("\n".join(notes) + "\n", encoding="utf-8")
