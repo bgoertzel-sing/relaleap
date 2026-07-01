@@ -1,4 +1,4 @@
-"""Run a deterministic local pilot for the orthogonalized sparse core/periphery branch."""
+"""Run the local pilot contract for the orthogonalized sparse core/periphery branch."""
 
 from __future__ import annotations
 
@@ -29,29 +29,36 @@ REQUIRED_ARTIFACTS = (
 CANDIDATE_ARM = "orthogonalized_sparse_additive_core_periphery"
 NEXT_ACTION = "replace_synthetic_rows_with_bounded_local_cpu_training_pilot"
 REPAIR_ACTION = "repair_orthogonalized_sparse_core_periphery_pilot_sources"
+TRAINING_NOT_IMPLEMENTED = "training_not_implemented_yet"
 
 
 def run_orthogonalized_sparse_core_periphery_interference_pilot(
     *,
     pregate_dir: Path = DEFAULT_PREGATE_DIR,
     out_dir: Path = DEFAULT_OUT_DIR,
+    schema_only: bool = False,
 ) -> dict[str, Any]:
-    """Write deterministic pilot rows and fail-closed gates for the selected branch."""
+    """Write pilot artifacts, failing closed until real training rows are implemented."""
 
     start = time.time()
     pregate_summary_path = pregate_dir / "summary.json"
     pregate = _read_json(pregate_summary_path)
     source_rows = [_source_row("orthogonalized_sparse_core_periphery_interference_pregate", pregate_summary_path, pregate)]
     preflight = _preflight_rows(pregate_dir, pregate)
-    arm_rows = _synthetic_arm_rows() if all(row["passed"] for row in preflight) else []
+    preflight_passed = all(row["passed"] for row in preflight)
+    arm_rows = _synthetic_arm_rows() if schema_only and preflight_passed else []
     control_rows = _matched_control_rows(arm_rows)
     null_rows = _leakage_null_rows(arm_rows)
     observable_rows = _observable_rows(arm_rows)
     artifact_rows = _artifact_gate_rows(arm_rows, control_rows, null_rows)
-    failures = [row for row in preflight + artifact_rows if not row["passed"]]
+    training_rows = _training_gate_rows(schema_only=schema_only, preflight_passed=preflight_passed)
+    failures = [row for row in preflight + training_rows + artifact_rows if not row["passed"]]
     scientific_failures = [row for row in observable_rows if not row["passed"]]
     status = "pass" if not failures else "fail"
     scientific_gate = "blocked" if scientific_failures or status != "pass" else "advances_local_review_only"
+    source_failed = any(not row["passed"] for row in preflight)
+    selected_next_action = REPAIR_ACTION if source_failed else NEXT_ACTION
+    training_rows_present = bool(arm_rows) and not schema_only
     summary = {
         "status": status,
         "decision": (
@@ -61,14 +68,16 @@ def run_orthogonalized_sparse_core_periphery_interference_pilot(
         ),
         "claim_status": (
             "deterministic_schema_pilot_blocks_gpu_until_real_training_rows_clear_dense_mlp_gates"
-            if status == "pass"
+            if status == "pass" and schema_only
+            else TRAINING_NOT_IMPLEMENTED
+            if not source_failed
             else "pilot_sources_or_artifact_contract_incomplete"
         ),
         "scientific_gate": scientific_gate,
-        "selected_next_action": NEXT_ACTION if status == "pass" else REPAIR_ACTION,
+        "selected_next_action": selected_next_action,
         "selected_next_step": (
             "replace deterministic synthetic pilot rows with a bounded local CPU training pilot using the same artifacts and gates"
-            if status == "pass"
+            if not source_failed
             else "repair the missing pregate source before running the pilot"
         ),
         "requires_gpu_now": False,
@@ -82,7 +91,7 @@ def run_orthogonalized_sparse_core_periphery_interference_pilot(
         "matched_control_matrix": control_rows,
         "leakage_null_matrix": null_rows,
         "observable_gates": observable_rows,
-        "gate_criteria": preflight + artifact_rows + observable_rows,
+        "gate_criteria": preflight + training_rows + artifact_rows + observable_rows,
         "failures": failures,
         "scientific_failures": scientific_failures,
         "candidate_arm": CANDIDATE_ARM,
@@ -90,7 +99,10 @@ def run_orthogonalized_sparse_core_periphery_interference_pilot(
         "matched_control_row_count": len(control_rows),
         "leakage_null_row_count": len(null_rows),
         "observable_gate_count": len(observable_rows),
-        "synthetic_rows_only": True,
+        "schema_only": schema_only,
+        "synthetic_rows_only": schema_only and bool(arm_rows),
+        "training_rows_present": training_rows_present,
+        "training_status": "schema_only" if schema_only else TRAINING_NOT_IMPLEMENTED,
         "runtime_seconds": round(time.time() - start, 4),
         "platform": platform.platform(),
         "git_commit": _git_commit(),
@@ -259,6 +271,19 @@ def _artifact_gate_rows(
     ]
 
 
+def _training_gate_rows(*, schema_only: bool, preflight_passed: bool) -> list[dict[str, Any]]:
+    if not preflight_passed:
+        return []
+    return [
+        _criterion(
+            "real_training_rows_present",
+            False if not schema_only else True,
+            "schema_only" if schema_only else TRAINING_NOT_IMPLEMENTED,
+            "default pilot runs must use real training rows; pass --schema-only for deterministic contract rows",
+        )
+    ]
+
+
 def _row_for(rows: list[dict[str, Any]], arm: str) -> dict[str, Any]:
     for row in rows:
         if row.get("arm") == arm:
@@ -330,6 +355,11 @@ def _csv_value(value: Any) -> Any:
 
 
 def _notes(summary: dict[str, Any]) -> str:
+    evidence_note = (
+        "GPU validation remains blocked. These rows are a deterministic local schema pilot, not training evidence."
+        if summary["schema_only"]
+        else "GPU validation remains blocked. Default pilot execution fails closed because real training rows are not implemented yet."
+    )
     return "\n".join(
         [
             "# Orthogonalized Sparse Core/Periphery Interference Pilot",
@@ -339,9 +369,11 @@ def _notes(summary: dict[str, Any]) -> str:
             f"- Scientific gate: `{summary['scientific_gate']}`",
             f"- Selected action: `{summary['selected_next_action']}`",
             f"- Requires GPU now: `{summary['requires_gpu_now']}`",
+            f"- Schema only: `{summary['schema_only']}`",
             f"- Synthetic rows only: `{summary['synthetic_rows_only']}`",
+            f"- Training status: `{summary['training_status']}`",
             "",
-            "GPU validation remains blocked. These rows are a deterministic local schema pilot, not training evidence.",
+            evidence_note,
             "",
         ]
     )
@@ -378,10 +410,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pregate-dir", type=Path, default=DEFAULT_PREGATE_DIR)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument(
+        "--schema-only",
+        action="store_true",
+        help="Emit deterministic schema rows for contract checks instead of requiring real training rows.",
+    )
     args = parser.parse_args()
     summary = run_orthogonalized_sparse_core_periphery_interference_pilot(
         pregate_dir=args.pregate_dir,
         out_dir=args.out,
+        schema_only=args.schema_only,
     )
     print(
         json.dumps(
