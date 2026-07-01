@@ -72,8 +72,15 @@ class DenseTeacherPairComposerControlExtensionProbeTest(unittest.TestCase):
             self.assertIn("delayed_pair_target_null", sentinel_arms)
             self.assertIn("misaligned_support_pair_null", sentinel_arms)
             self.assertIn("token_position_pair_router_null", sentinel_arms)
+            control_arms = {row["arm"] for row in summary["control_rows"]}
+            self.assertIn("same_parameter_independent_additive_control", control_arms)
+            self.assertIn("rank_norm_matched_dense_ridge_control", control_arms)
+            self.assertIn("matched_mlp_random_feature_residual_control", control_arms)
             criteria = {row["criterion"]: row for row in summary["gate_criteria"]}
             self.assertFalse(criteria["remaining_controls_complete_for_gpu"]["passed"])
+            self.assertTrue(criteria["matched_dense_mlp_control_rows_measured"]["passed"])
+            self.assertFalse(criteria["exact_finite_update_commutator_measured"]["passed"])
+            self.assertFalse(criteria["retention_churn_measured"]["passed"])
             self.assertIn("support_pair_class_balance_sufficient", criteria)
             self.assertFalse(criteria["support_pair_class_balance_sufficient"]["passed"])
             self.assertEqual(summary["majority_pair_holdout_support_pair_accuracy"], 1.0)

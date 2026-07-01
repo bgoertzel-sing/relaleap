@@ -28,7 +28,7 @@ DEFAULT_DESIGN = Path("results/reports/dense_teacher_pair_composer_control_exten
 DEFAULT_TRUTH_AUDIT = Path("results/reports/dense_teacher_pair_composer_truth_audit/summary.json")
 DEFAULT_OUT_DIR = Path("results/reports/dense_teacher_pair_composer_control_extension_probe")
 
-NEXT_ACTION = "extend_pair_composer_probe_with_norm_churn_commutator_dense_controls"
+NEXT_ACTION = "extend_pair_composer_probe_with_exact_commutator_retention_churn"
 REPAIR_ACTION = "repair_pair_composer_control_extension_probe_sources"
 
 REQUIRED_ARTIFACTS = (
@@ -36,6 +36,7 @@ REQUIRED_ARTIFACTS = (
     "source_rows.csv",
     "router_rows.csv",
     "sentinel_rows.csv",
+    "control_rows.csv",
     "gate_criteria.csv",
     "candidate_actions.csv",
     "notes.md",
@@ -72,6 +73,7 @@ def run_dense_teacher_pair_composer_control_extension_probe(
             source_rows=source_rows,
             router_rows=[],
             sentinel_rows=[],
+            control_rows=[],
             gate_criteria=[
                 _criterion("required_sources_present", False, "design, truth audit, and exported tensors must exist")
             ],
@@ -82,14 +84,15 @@ def run_dense_teacher_pair_composer_control_extension_probe(
         return summary
 
     try:
-        router_rows, sentinel_rows = _run_probe_rows(distillation_dir)
+        router_rows, sentinel_rows, control_rows = _run_probe_rows(distillation_dir)
         runtime_failure = ""
     except Exception as exc:  # pragma: no cover - defensive fail-closed path
         router_rows = []
         sentinel_rows = []
+        control_rows = []
         runtime_failure = f"{type(exc).__name__}: {exc}"
 
-    criteria = _gate_criteria(design, truth_audit, router_rows, sentinel_rows, runtime_failure)
+    criteria = _gate_criteria(design, truth_audit, router_rows, sentinel_rows, control_rows, runtime_failure)
     failures = [row for row in criteria if not row["passed"] and row["criterion"] in {"probe_runtime_completed"}]
     status = "fail" if failures else "pass"
     learned_holdout = _row(router_rows, "learned_causal_pair_router", "holdout")
@@ -111,8 +114,8 @@ def run_dense_teacher_pair_composer_control_extension_probe(
     )
     rationale = (
         "The probe records a first deployable pair-router row and delayed/misaligned/token-position sentinel rows. "
-        "It remains local evidence only: norm/churn/retention, exact finite-update commutator, and matched dense/MLP "
-        "interference controls are still absent."
+        "It now also records matched independent/dense/MLP residual control rows. It remains local evidence only: "
+        "retention/churn and exact finite-update commutator controls are still absent."
         if status == "pass"
         else "The probe did not complete, so no scientific interpretation is made."
     )
@@ -127,6 +130,7 @@ def run_dense_teacher_pair_composer_control_extension_probe(
         source_rows=source_rows,
         router_rows=router_rows,
         sentinel_rows=sentinel_rows,
+        control_rows=control_rows,
         gate_criteria=criteria,
         failures=failures,
         rationale=rationale,
@@ -134,6 +138,7 @@ def run_dense_teacher_pair_composer_control_extension_probe(
     summary.update(
         {
             "candidate_actions": candidate_actions,
+            "control_rows": control_rows,
             "distillation_dir": str(distillation_dir),
             "design_path": str(design_path),
             "truth_audit_path": str(truth_audit_path),
@@ -159,7 +164,7 @@ def run_dense_teacher_pair_composer_control_extension_probe(
     return summary
 
 
-def _run_probe_rows(distillation_dir: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _run_probe_rows(distillation_dir: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     import torch
     import torch.nn.functional as F
 
@@ -331,7 +336,24 @@ def _run_probe_rows(distillation_dir: Path) -> tuple[list[dict[str, Any]], list[
         train_indices=train_indices,
         holdout_indices=holdout_indices,
     )
-    return router_rows, sentinel_rows
+    control_rows = _control_metric_rows(
+        torch,
+        F,
+        oracle_design=oracle_design,
+        prefix_features=_prefix_features(torch, tensors["inputs"], base_hidden, learned_scores),
+        base_hidden=base_hidden,
+        base_logits=base_logits,
+        targets=targets,
+        teacher_logits=teacher_logits,
+        teacher_hidden_residual=teacher_hidden_residual,
+        decoder_weight=decoder_weight,
+        decoder_bias=decoder_bias,
+        train_indices=train_indices,
+        holdout_indices=holdout_indices,
+        num_columns=num_columns,
+        pair_feature_count=feature_count,
+    )
+    return router_rows, sentinel_rows, control_rows
 
 
 def _split_indices(torch: Any, targets: Any, *, split_seed: int) -> tuple[Any, Any, Any]:
@@ -558,6 +580,115 @@ def _metric_rows(
     return rows
 
 
+def _control_metric_rows(
+    torch: Any,
+    F: Any,
+    *,
+    oracle_design: Any,
+    prefix_features: Any,
+    base_hidden: Any,
+    base_logits: Any,
+    targets: Any,
+    teacher_logits: Any,
+    teacher_hidden_residual: Any,
+    decoder_weight: Any,
+    decoder_bias: Any | None,
+    train_indices: Any,
+    holdout_indices: Any,
+    num_columns: int,
+    pair_feature_count: int,
+) -> list[dict[str, Any]]:
+    flat_target = teacher_hidden_residual.reshape(-1, teacher_hidden_residual.shape[-1])
+    independent_design = oracle_design[:, :num_columns]
+    independent_values = _ridge_fit(torch, independent_design[train_indices], flat_target[train_indices], ridge=1e-4)
+
+    dense_design = torch.cat(
+        [torch.ones(prefix_features.shape[0], 1, dtype=prefix_features.dtype, device=prefix_features.device), prefix_features],
+        dim=1,
+    )
+    dense_values = _ridge_fit(torch, dense_design[train_indices], flat_target[train_indices], ridge=1e-3)
+
+    mlp_design = _fixed_mlp_features(torch, prefix_features, width=max(pair_feature_count, 8), seed=1731)
+    mlp_values = _ridge_fit(torch, mlp_design[train_indices], flat_target[train_indices], ridge=1e-3)
+
+    specs = [
+        (
+            "same_parameter_independent_additive_control",
+            independent_design,
+            independent_values,
+            num_columns,
+            "oracle singleton support only; removes explicit pair-interaction features",
+        ),
+        (
+            "rank_norm_matched_dense_ridge_control",
+            dense_design,
+            dense_values,
+            int(dense_design.shape[1]),
+            "dense prefix-feature ridge residual control evaluated through the frozen decoder",
+        ),
+        (
+            "matched_mlp_random_feature_residual_control",
+            mlp_design,
+            mlp_values,
+            int(mlp_design.shape[1]),
+            "fixed random-feature MLP residual control with ridge-trained output layer",
+        ),
+    ]
+    rows: list[dict[str, Any]] = []
+    batch, seq_len = targets.shape
+    hidden_dim = base_hidden.shape[-1]
+    for arm, design, values, feature_count, notes in specs:
+        hidden_update = design.matmul(values).reshape(batch, seq_len, hidden_dim)
+        logits = torch.matmul(base_hidden + hidden_update, decoder_weight.t())
+        if decoder_bias is not None:
+            logits = logits + decoder_bias
+        for split, indices in (("train", train_indices), ("holdout", holdout_indices)):
+            row = _split_pregate_metric_row(
+                torch,
+                F,
+                arm=arm,
+                split=split,
+                logits=logits,
+                base_hidden=base_hidden,
+                base_logits=base_logits,
+                hidden_update=hidden_update,
+                targets=targets,
+                teacher_logits=teacher_logits,
+                teacher_hidden_residual=teacher_hidden_residual,
+                indices=indices,
+                feature_count=feature_count,
+                split_seed=1729,
+            )
+            row["control_family"] = "matched_residual_interference_control"
+            row["matched_pair_feature_count"] = int(pair_feature_count)
+            row["feature_count_ratio_vs_pair_composer"] = float(feature_count / max(pair_feature_count, 1))
+            row["residual_norm_ratio"] = _norm_ratio(
+                hidden_update.reshape(-1, hidden_dim)[indices],
+                teacher_hidden_residual.reshape(-1, hidden_dim)[indices],
+            )
+            row["residual_direction_error"] = 1.0 - _cosine(
+                F,
+                hidden_update.reshape(-1, hidden_dim)[indices],
+                teacher_hidden_residual.reshape(-1, hidden_dim)[indices],
+            )
+            row["commutator_measured"] = False
+            row["retention_churn_measured"] = False
+            row["notes"] = notes
+            rows.append(row)
+    return rows
+
+
+def _fixed_mlp_features(torch: Any, features: Any, *, width: int, seed: int) -> Any:
+    trainable = features.to(dtype=torch.float32)
+    generator = torch.Generator(device=trainable.device)
+    generator.manual_seed(seed)
+    projection = torch.randn(trainable.shape[1], width, generator=generator, dtype=trainable.dtype, device=trainable.device)
+    projection = projection / max(float(trainable.shape[1]) ** 0.5, 1.0)
+    bias = torch.randn(width, generator=generator, dtype=trainable.dtype, device=trainable.device) * 0.05
+    hidden = torch.relu(trainable.matmul(projection) + bias)
+    return torch.cat([torch.ones(hidden.shape[0], 1, dtype=hidden.dtype, device=hidden.device), hidden], dim=1)
+
+
 def _support_distribution_metrics(torch: Any, oracle_support: Any, indices: Any) -> dict[str, Any]:
     selected = oracle_support[indices]
     labels = [tuple(sorted(int(item) for item in row)) for row in selected.tolist()]
@@ -598,6 +729,7 @@ def _gate_criteria(
     truth_audit: dict[str, Any],
     router_rows: list[dict[str, Any]],
     sentinel_rows: list[dict[str, Any]],
+    control_rows: list[dict[str, Any]],
     runtime_failure: str,
 ) -> list[dict[str, Any]]:
     oracle_holdout = _row(router_rows, "oracle_pair_composer_reference", "holdout")
@@ -617,6 +749,19 @@ def _gate_criteria(
     majority_fraction = _float(oracle_holdout.get("support_pair_majority_fraction"))
     delayed_ce = _float(delayed_holdout.get("true_decoder_ce_loss"))
     misaligned_ce = _float(misaligned_holdout.get("true_decoder_ce_loss"))
+    control_holdouts = [row for row in control_rows if row.get("split") == "holdout"]
+    control_arms = {str(row.get("arm")) for row in control_holdouts}
+    required_controls = {
+        "same_parameter_independent_additive_control",
+        "rank_norm_matched_dense_ridge_control",
+        "matched_mlp_random_feature_residual_control",
+    }
+    control_ces = [
+        _float(row.get("true_decoder_ce_loss"))
+        for row in control_holdouts
+        if _float(row.get("true_decoder_ce_loss")) is not None
+    ]
+    best_control_ce = min(control_ces) if control_ces else None
     return [
         _criterion("required_sources_present", source_ready, "design and truth-audit sources must select the local probe"),
         _criterion("probe_runtime_completed", runtime_failure == "", "local tensor probe must complete without exception", runtime_failure),
@@ -654,9 +799,31 @@ def _gate_criteria(
             {"oracle": oracle_ce, "delayed": delayed_ce, "misaligned": misaligned_ce},
         ),
         _criterion(
+            "matched_dense_mlp_control_rows_measured",
+            required_controls.issubset(control_arms),
+            "independent additive, dense ridge, and matched MLP residual controls must be measured",
+            {"required": sorted(required_controls), "observed": sorted(control_arms), "best_control_ce": best_control_ce},
+        ),
+        _criterion(
+            "pair_composer_beats_best_matched_control",
+            oracle_ce is not None and best_control_ce is not None and oracle_ce <= best_control_ce - 0.01,
+            "oracle pair-composer reference should beat the best measured matched control by at least 0.01 CE",
+            {"oracle": oracle_ce, "best_control": best_control_ce},
+        ),
+        _criterion(
+            "exact_finite_update_commutator_measured",
+            False,
+            "exact finite-update order/commutator measurements are still absent",
+        ),
+        _criterion(
+            "retention_churn_measured",
+            False,
+            "retention and functional churn measurements are still absent",
+        ),
+        _criterion(
             "remaining_controls_complete_for_gpu",
             False,
-            "norm/churn/retention, exact commutator, and matched dense/MLP interference controls are still absent",
+            "exact commutator and retention/churn controls are still absent",
         ),
     ]
 
@@ -676,9 +843,9 @@ def _candidate_actions(status: str) -> list[dict[str, str]]:
         _candidate(
             NEXT_ACTION,
             "selected",
-            "learned-router and leakage-sentinel rows now exist, but the full mechanism/interference gate is incomplete",
-            "extend the probe with norm/churn/retention, exact commutator, and matched dense/MLP interference controls",
-            "pair_composer_probe_partial_controls_recorded_no_gpu",
+            "learned-router, leakage-sentinel, and matched-control rows now exist, but exact commutator and retention/churn gates remain incomplete",
+            "extend the probe with exact finite-update commutator plus retention/churn controls",
+            "pair_composer_probe_interference_controls_recorded_no_gpu",
         ),
         _candidate(
             "run_gpu_pair_composer_validation",
@@ -701,6 +868,7 @@ def _summary(
     source_rows: list[dict[str, Any]],
     router_rows: list[dict[str, Any]],
     sentinel_rows: list[dict[str, Any]],
+    control_rows: list[dict[str, Any]],
     gate_criteria: list[dict[str, Any]],
     failures: list[dict[str, Any]],
     rationale: str,
@@ -711,13 +879,14 @@ def _summary(
         "claim_status": claim_status,
         "selected_next_action": selected_next_action,
         "selected_next_step": (
-            "extend pair-composer control probe with norm/churn/retention, exact commutator, and matched dense/MLP controls"
+            "extend pair-composer control probe with exact finite-update commutator and retention/churn controls"
             if status == "pass"
             else "repair pair-composer control-extension probe sources/runtime"
         ),
         "source_rows": source_rows,
         "router_rows": router_rows,
         "sentinel_rows": sentinel_rows,
+        "control_rows": control_rows,
         "gate_criteria": gate_criteria,
         "candidate_actions": _candidate_actions(status),
         "failures": failures,
@@ -736,6 +905,7 @@ def _write_artifacts(out_dir: Path, summary: dict[str, Any]) -> None:
     _write_csv(out_dir / "source_rows.csv", summary["source_rows"])
     _write_csv(out_dir / "router_rows.csv", summary["router_rows"])
     _write_csv(out_dir / "sentinel_rows.csv", summary["sentinel_rows"])
+    _write_csv(out_dir / "control_rows.csv", summary["control_rows"])
     _write_csv(out_dir / "gate_criteria.csv", summary["gate_criteria"])
     _write_csv(out_dir / "candidate_actions.csv", summary["candidate_actions"])
     (out_dir / "notes.md").write_text(_notes(summary), encoding="utf-8")
@@ -762,6 +932,7 @@ def _notes(summary: dict[str, Any]) -> str:
             f"- Majority-pair null CE: `{summary.get('majority_pair_holdout_true_decoder_ce_loss')}`",
             f"- Delayed null CE: `{summary.get('delayed_null_holdout_true_decoder_ce_loss')}`",
             f"- Misaligned null CE: `{summary.get('misaligned_null_holdout_true_decoder_ce_loss')}`",
+            f"- Matched control holdout rows: `{len([row for row in summary.get('control_rows', []) if row.get('split') == 'holdout'])}`",
             "",
             "## Interpretation",
             "",
