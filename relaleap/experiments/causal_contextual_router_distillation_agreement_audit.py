@@ -60,6 +60,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
     student_distill_weight: float = 0.05,
     ce_guardrail: float = 0.05,
     random_seed: int = 3901,
+    capture_hidden_future: bool = False,
 ) -> dict[str, Any]:
     """Rerun the bounded distillation setup with per-token support logging."""
 
@@ -117,6 +118,8 @@ def run_causal_contextual_router_distillation_agreement_audit(
     null_control_rows: list[dict[str, Any]] = []
     null_sampling_rows: list[dict[str, Any]] = []
     per_token_rows: list[dict[str, Any]] = []
+    hidden_future_rows: list[dict[str, Any]] = []
+    exact_intervention_rows: list[dict[str, Any]] = []
     support_count_rows: list[dict[str, Any]] = []
 
     for fold_index in range(fold_count):
@@ -304,6 +307,13 @@ def run_causal_contextual_router_distillation_agreement_audit(
                 teacher_residual,
                 teacher_hidden,
                 feature_mask=None,
+            )
+            teacher_scores = (
+                teacher_residual._score_columns(teacher_hidden)
+                + teacher_residual.score_tie_breaker.to(
+                    device=teacher_hidden.device,
+                    dtype=teacher_hidden.dtype,
+                )
             )
             student_logits, student_support = _forward_with_feature_ablation(
                 student_base,
@@ -522,6 +532,33 @@ def run_causal_contextual_router_distillation_agreement_audit(
                 losses_by_intervention=forced_losses,
             )
         )
+        if capture_hidden_future:
+            hidden_future_rows.extend(
+                _hidden_future_capture_rows(
+                    fold_index=fold_index,
+                    current_hidden=student_hidden[:, :-1, :],
+                    future_hidden=teacher_hidden[:, 1:, :],
+                    targets=holdout_targets[:, :-1],
+                    teacher_scores=teacher_scores[:, :-1, :],
+                    teacher_support=teacher_token_support,
+                    student_support=student_token_support,
+                    oracle_support=oracle_token_support,
+                    token_position_null_support=token_position_null_token_support,
+                )
+            )
+            exact_intervention_rows.extend(
+                _exact_same_student_intervention_rows(
+                    fold_index=fold_index,
+                    all_pairs=all_pairs,
+                    pair_rows=pair_rows,
+                    student_losses=student_token_losses,
+                    teacher_losses=forced_losses["teacher_support_forced_into_student"],
+                    oracle_losses=oracle_losses,
+                    teacher_support=teacher_token_support,
+                    student_support=student_token_support,
+                    oracle_support=oracle_token_support,
+                )
+            )
         support_count_rows.extend(
             _support_count_rows(fold_index, "teacher_support", teacher_token_support)
         )
@@ -593,6 +630,11 @@ def run_causal_contextual_router_distillation_agreement_audit(
             "null_control_aggregates": null_control_aggregates,
             "null_sampling_rows": null_sampling_rows,
             "null_sampling_aggregates": _aggregate_null_sampling_rows(null_sampling_rows),
+            "hidden_future_capture": _hidden_future_capture_summary(
+                capture_hidden_future=capture_hidden_future,
+                hidden_future_rows=hidden_future_rows,
+                exact_intervention_rows=exact_intervention_rows,
+            ),
             "gate_criteria": decision["criteria"],
             "failures": decision["failures"],
             "rationale": decision["rationale"],
@@ -606,6 +648,8 @@ def run_causal_contextual_router_distillation_agreement_audit(
             "null_control_metrics_csv": str(out_dir / "null_control_metrics.csv"),
             "null_sampling_diagnostics_csv": str(out_dir / "null_sampling_diagnostics.csv"),
             "per_token_supports_csv": str(out_dir / "per_token_supports.csv"),
+            "hidden_future_rows_csv": str(out_dir / "hidden_future_rows.csv"),
+            "intervention_rows_exact_csv": str(out_dir / "intervention_rows_exact.csv"),
             "support_counts_csv": str(out_dir / "support_counts.csv"),
             "notes_md": str(out_dir / "notes.md"),
         },
@@ -619,6 +663,8 @@ def run_causal_contextual_router_distillation_agreement_audit(
     _write_csv(out_dir / "null_control_metrics.csv", null_control_rows)
     _write_csv(out_dir / "null_sampling_diagnostics.csv", null_sampling_rows)
     _write_csv(out_dir / "per_token_supports.csv", per_token_rows)
+    _write_csv(out_dir / "hidden_future_rows.csv", hidden_future_rows)
+    _write_csv(out_dir / "intervention_rows_exact.csv", exact_intervention_rows)
     _write_csv(out_dir / "support_counts.csv", support_count_rows)
     (out_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
@@ -654,6 +700,203 @@ def _source_artifact_assessment(
             }
         )
     return rows
+
+
+def _hidden_future_capture_rows(
+    *,
+    fold_index: int,
+    current_hidden: Any,
+    future_hidden: Any,
+    targets: Any,
+    teacher_scores: Any,
+    teacher_support: Any,
+    student_support: Any,
+    oracle_support: Any,
+    token_position_null_support: Any,
+) -> list[dict[str, Any]]:
+    import torch
+
+    previous_hidden = torch.cat(
+        [current_hidden[:, :1, :], current_hidden[:, :-1, :]],
+        dim=1,
+    )
+    future_delta = future_hidden - current_hidden
+    rows: list[dict[str, Any]] = []
+    flat_position = 0
+    for batch_index in range(int(current_hidden.shape[0])):
+        for position_index in range(int(current_hidden.shape[1])):
+            teacher_pair = _tensor_support_key(teacher_support[batch_index, position_index])
+            student_pair = _tensor_support_key(student_support[batch_index, position_index])
+            oracle_pair = _tensor_support_key(oracle_support[batch_index, position_index])
+            null_pair = _tensor_support_key(
+                token_position_null_support[batch_index, position_index]
+            )
+            rows.append(
+                {
+                    "fold": fold_index,
+                    "split": "heldout",
+                    "sequence_id": f"fold{fold_index}_sequence{batch_index}",
+                    "batch_index": batch_index,
+                    "position_index": position_index,
+                    "flat_position": flat_position,
+                    "target_token_eval_only": int(targets[batch_index, position_index].item()),
+                    "current_hidden_json": _tensor_json(
+                        current_hidden[batch_index, position_index]
+                    ),
+                    "previous_hidden_json": _tensor_json(
+                        previous_hidden[batch_index, position_index]
+                    ),
+                    "future_hidden_json": _tensor_json(
+                        future_hidden[batch_index, position_index]
+                    ),
+                    "future_delta_json": _tensor_json(
+                        future_delta[batch_index, position_index]
+                    ),
+                    "teacher_support_logits_json": _tensor_json(
+                        teacher_scores[batch_index, position_index]
+                    ),
+                    "teacher_topk_support": teacher_pair,
+                    "student_router_support": student_pair,
+                    "oracle_support_eval_only": oracle_pair,
+                    "token_position_null_support": null_pair,
+                    "prefix_safe_fields": "current_hidden_json;previous_hidden_json;position_index",
+                    "teacher_target_fields": (
+                        "future_hidden_json;future_delta_json;"
+                        "teacher_support_logits_json;teacher_topk_support"
+                    ),
+                    "forbidden_predictor_fields": (
+                        "future_hidden_json;future_delta_json;teacher_support_logits_json;"
+                        "teacher_topk_support;target_token_eval_only;oracle_support_eval_only"
+                    ),
+                    "router_teacher_provenance": "contextual_router_distillation_agreement_teacher",
+                    "future_targets_nondeployable": True,
+                }
+            )
+            flat_position += 1
+    return rows
+
+
+def _exact_same_student_intervention_rows(
+    *,
+    fold_index: int,
+    all_pairs: list[tuple[int, ...]],
+    pair_rows: list[dict[str, Any]],
+    student_losses: Any,
+    teacher_losses: Any,
+    oracle_losses: Any,
+    teacher_support: Any,
+    student_support: Any,
+    oracle_support: Any,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    student_flat = student_losses.reshape(-1)
+    teacher_flat = teacher_losses.reshape(-1)
+    oracle_loss_flat = oracle_losses.reshape(-1)
+    teacher_support_flat = teacher_support.reshape(-1, teacher_support.shape[-1])
+    student_support_flat = student_support.reshape(-1, student_support.shape[-1])
+    oracle_support_flat = oracle_support.reshape(-1, oracle_support.shape[-1])
+    pair_loss_columns = [
+        pair_row["_token_losses"].reshape(-1).detach().cpu().tolist()
+        for pair_row in pair_rows
+    ]
+    positions_per_sequence = int(teacher_support.shape[1])
+    for flat_position in range(int(student_flat.shape[0])):
+        sequence_index = flat_position // positions_per_sequence
+        position_index = flat_position % positions_per_sequence
+        teacher_pair = _tensor_support_key(teacher_support_flat[flat_position])
+        student_pair = _tensor_support_key(student_support_flat[flat_position])
+        oracle_pair = _tensor_support_key(oracle_support_flat[flat_position])
+        student_loss = float(student_flat[flat_position].item())
+        oracle_loss = float(oracle_loss_flat[flat_position].item())
+        for pair_index, pair in enumerate(all_pairs):
+            pair_key = _support_key(pair)
+            forced_loss = float(pair_loss_columns[pair_index][flat_position])
+            rows.append(
+                {
+                    "fold": fold_index,
+                    "split": "heldout",
+                    "sequence_id": f"fold{fold_index}_sequence{sequence_index}",
+                    "position_index": position_index,
+                    "flat_position": flat_position,
+                    "forced_support_pair": pair_key,
+                    "forced_support_pair_index": pair_index,
+                    "forced_support_loss": forced_loss,
+                    "student_router_support": student_pair,
+                    "student_router_support_loss": student_loss,
+                    "teacher_support": teacher_pair,
+                    "teacher_support_forced_loss": float(
+                        teacher_flat[flat_position].item()
+                    ),
+                    "oracle_support": oracle_pair,
+                    "oracle_support_loss": oracle_loss,
+                    "forced_minus_student_router_loss": forced_loss - student_loss,
+                    "forced_minus_oracle_loss": forced_loss - oracle_loss,
+                    "is_teacher_support_pair": pair_key == teacher_pair,
+                    "is_student_router_support_pair": pair_key == student_pair,
+                    "is_oracle_support_pair": pair_key == oracle_pair,
+                    "row_family": "same_student_forced_support_exact_pair",
+                }
+            )
+    return rows
+
+
+def _hidden_future_capture_summary(
+    *,
+    capture_hidden_future: bool,
+    hidden_future_rows: list[dict[str, Any]],
+    exact_intervention_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    hidden_fields = {
+        "current_hidden_json",
+        "previous_hidden_json",
+        "future_hidden_json",
+        "future_delta_json",
+        "teacher_support_logits_json",
+    }
+    intervention_fields = {
+        "forced_support_pair",
+        "forced_support_loss",
+        "student_router_support_loss",
+        "teacher_support_forced_loss",
+        "oracle_support_loss",
+    }
+    hidden_schema_ok = bool(hidden_future_rows) and hidden_fields.issubset(
+        hidden_future_rows[0]
+    )
+    intervention_schema_ok = bool(
+        exact_intervention_rows
+    ) and intervention_fields.issubset(exact_intervention_rows[0])
+    return {
+        "enabled": capture_hidden_future,
+        "status": (
+            "captured"
+            if capture_hidden_future and hidden_schema_ok and intervention_schema_ok
+            else "not_requested"
+            if not capture_hidden_future
+            else "failed_closed"
+        ),
+        "hidden_future_row_count": len(hidden_future_rows),
+        "exact_intervention_row_count": len(exact_intervention_rows),
+        "hidden_future_schema_ok": hidden_schema_ok,
+        "exact_intervention_schema_ok": intervention_schema_ok,
+        "requires_gpu_now": False,
+        "promotion_allowed": False,
+        "leakage_contract": (
+            "current/previous hidden are prefix-safe inputs; future hidden, future delta, "
+            "teacher logits/support, targets, and oracle labels are forbidden predictor inputs"
+        ),
+    }
+
+
+def _tensor_json(value: Any) -> str:
+    return json.dumps(
+        [round(float(item), 8) for item in value.detach().cpu().reshape(-1).tolist()],
+        separators=(",", ":"),
+    )
+
+
+def _tensor_support_key(value: Any) -> str:
+    return ",".join(str(int(item)) for item in value.detach().cpu().reshape(-1).tolist())
 
 
 def _support_from_pair_indices(indices: Any, all_pairs: list[tuple[int, ...]], *, like: Any) -> Any:
@@ -1422,6 +1665,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--teacher-oracle-weight", type=float, default=0.05)
     parser.add_argument("--student-distill-weight", type=float, default=0.05)
     parser.add_argument("--ce-guardrail", type=float, default=0.05)
+    parser.add_argument(
+        "--capture-hidden-future",
+        action="store_true",
+        help="emit prefix hidden, future target, teacher-logit, and exact intervention rows",
+    )
     args = parser.parse_args(argv)
     summary = run_causal_contextual_router_distillation_agreement_audit(
         args.config,
@@ -1432,6 +1680,7 @@ def main(argv: list[str] | None = None) -> int:
         teacher_oracle_weight=args.teacher_oracle_weight,
         student_distill_weight=args.student_distill_weight,
         ce_guardrail=args.ce_guardrail,
+        capture_hidden_future=args.capture_hidden_future,
     )
     print(json.dumps({"status": summary["status"], "decision": summary["decision"]}))
     return 0

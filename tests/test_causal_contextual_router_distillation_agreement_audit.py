@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import tempfile
 import unittest
@@ -63,6 +64,7 @@ outputs:
                 max_folds=2,
                 teacher_oracle_weight=0.01,
                 student_distill_weight=0.01,
+                capture_hidden_future=True,
             )
 
             self.assertEqual(summary["status"], "pass")
@@ -98,6 +100,8 @@ outputs:
             self.assertTrue((root / "audit" / "null_control_metrics.csv").is_file())
             self.assertTrue((root / "audit" / "null_sampling_diagnostics.csv").is_file())
             self.assertTrue((root / "audit" / "per_token_supports.csv").is_file())
+            self.assertTrue((root / "audit" / "hidden_future_rows.csv").is_file())
+            self.assertTrue((root / "audit" / "intervention_rows_exact.csv").is_file())
             self.assertTrue((root / "audit" / "support_counts.csv").is_file())
             self.assertTrue((root / "audit" / "notes.md").is_file())
 
@@ -113,10 +117,34 @@ outputs:
             self.assertIn("token_position_null_support_forced_into_student_loss", token_row)
             self.assertGreater(len(saved["audit"]["agreement_rows"]), 0)
             self.assertGreater(len(saved["audit"]["null_control_rows"]), 0)
+            capture = saved["audit"]["hidden_future_capture"]
+            self.assertEqual(capture["status"], "captured")
+            self.assertTrue(capture["hidden_future_schema_ok"])
+            self.assertTrue(capture["exact_intervention_schema_ok"])
+            self.assertFalse(capture["requires_gpu_now"])
             self.assertIn(
                 "teacher_student_disagreement_tokens::token_position_null_support_forced_into_student",
                 saved["audit"]["intervention_aggregates"],
             )
+            with (root / "audit" / "hidden_future_rows.csv").open(
+                newline="", encoding="utf-8"
+            ) as handle:
+                hidden_rows = list(csv.DictReader(handle))
+            self.assertGreater(len(hidden_rows), 0)
+            self.assertIn("current_hidden_json", hidden_rows[0])
+            self.assertIn("future_hidden_json", hidden_rows[0])
+            self.assertIn("teacher_support_logits_json", hidden_rows[0])
+            self.assertIn("forbidden_predictor_fields", hidden_rows[0])
+            self.assertIn("future_hidden_json", hidden_rows[0]["forbidden_predictor_fields"])
+
+            with (root / "audit" / "intervention_rows_exact.csv").open(
+                newline="", encoding="utf-8"
+            ) as handle:
+                exact_rows = list(csv.DictReader(handle))
+            self.assertGreater(len(exact_rows), 0)
+            self.assertIn("forced_support_pair", exact_rows[0])
+            self.assertIn("forced_support_loss", exact_rows[0])
+            self.assertIn("oracle_support_loss", exact_rows[0])
 
     def test_requires_causal_contextual_topk2(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
