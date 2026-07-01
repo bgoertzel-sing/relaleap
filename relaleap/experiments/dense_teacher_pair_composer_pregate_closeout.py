@@ -17,8 +17,10 @@ DEFAULT_STRATEGY_REVIEW = Path("../outputs/strategy-reviews/relaleap/latest-revi
 DEFAULT_OUT_DIR = Path("results/reports/dense_teacher_pair_composer_pregate_closeout")
 
 CLOSEOUT_DECISION = "dense_teacher_pair_composer_pregate_closed_negative"
+POSITIVE_AUDIT_DECISION = "dense_teacher_pair_composer_pregate_positive_truth_audit_selected"
 FAILED_CLOSED_DECISION = "dense_teacher_pair_composer_pregate_closeout_failed_closed"
 NEXT_ACTION = "redirect_to_core_periphery_predictive_coding_column_design"
+TRUTH_AUDIT_ACTION = "run_local_pair_composer_truth_audit_before_gpu"
 REPAIR_ACTION = "repair_dense_teacher_pair_composer_pregate_source_artifact"
 
 REQUIRED_ARTIFACTS = (
@@ -60,7 +62,7 @@ def run_dense_teacher_pair_composer_pregate_closeout(
     ]
     criteria = _criteria(source_rows, evidence)
     failures = [row for row in criteria if not row["passed"]]
-    candidate_actions = _candidate_actions(failures)
+    candidate_actions = _candidate_actions(evidence, failures)
     selected = [row for row in candidate_actions if row["disposition"] == "selected"]
 
     if failures or len(selected) != 1:
@@ -72,19 +74,33 @@ def run_dense_teacher_pair_composer_pregate_closeout(
         rationale = "The closeout cannot interpret the pair-composer pregate until the source artifact is coherent."
     else:
         status = "pass"
-        decision = CLOSEOUT_DECISION
-        claim_status = "dense_teacher_pair_composer_negative_local_evidence_no_gpu"
-        selected_next_action = NEXT_ACTION
-        next_step = (
-            "resume the local core/periphery PC column design and pilot path; keep dense-teacher "
-            "pair composition as negative diagnostic context, not GPU validation evidence"
-        )
-        rationale = (
-            "The local train/holdout pregate uses the exported frozen decoder and records a real split. "
-            "The pair composer improves heldout true-decoder CE over independent oracle-support values, "
-            "but loses to the feature-count-matched shuffled-pair null. That blocks a sparse-column "
-            "pair-composer claim and makes GPU validation low value."
-        )
+        selected_next_action = selected[0]["candidate_action"]
+        if selected_next_action == TRUTH_AUDIT_ACTION:
+            decision = POSITIVE_AUDIT_DECISION
+            claim_status = "dense_teacher_pair_composer_positive_local_signal_truth_audit_needed"
+            next_step = (
+                "run a local true-decoder pair-interaction audit with leakage, null, norm, churn, "
+                "and commutator gates before any GPU validation"
+            )
+            rationale = (
+                "The local train/holdout pregate uses the exported frozen decoder and records a real split. "
+                "The pair composer improves heldout true-decoder CE over independent oracle-support values "
+                "and the feature-count-matched shuffled-pair null, so the earlier negative closeout polarity "
+                "was stale. This is still a small oracle-support local signal, not a promotion or GPU claim."
+            )
+        else:
+            decision = CLOSEOUT_DECISION
+            claim_status = "dense_teacher_pair_composer_negative_local_evidence_no_gpu"
+            next_step = (
+                "resume the local core/periphery PC column design and pilot path; keep dense-teacher "
+                "pair composition as negative diagnostic context, not GPU validation evidence"
+            )
+            rationale = (
+                "The local train/holdout pregate uses the exported frozen decoder and records a real split. "
+                "The pair composer improves heldout true-decoder CE over independent oracle-support values, "
+                "but loses to the feature-count-matched shuffled-pair null. That blocks a sparse-column "
+                "pair-composer claim and makes GPU validation low value."
+            )
 
     summary = {
         "status": status,
@@ -146,7 +162,7 @@ def _criteria(source_rows: list[dict[str, Any]], evidence: dict[str, Any]) -> li
     source_present = source_rows[0]["present"]
     split_recorded = evidence["composer_train_holdout_split_recorded"] is True
     true_decoder_recorded = evidence["composer_uses_true_frozen_decoder_for_ce"] is True
-    null_failed = evidence["pair_beats_feature_count_null"] is False
+    null_result_recorded = evidence["pair_beats_feature_count_null"] in (True, False)
     independent_helped = evidence["pair_beats_independent"] is True
     return [
         _criterion(
@@ -175,10 +191,10 @@ def _criteria(source_rows: list[dict[str, Any]], evidence: dict[str, Any]) -> li
             independent_helped,
         ),
         _criterion(
-            "feature_count_matched_null_blocks_gpu",
-            null_failed,
-            "GPU validation is blocked unless pair composer beats feature-count-matched shuffled-pair null",
-            null_failed,
+            "feature_count_matched_null_result_recorded",
+            null_result_recorded,
+            "pair composer must record whether it beats the feature-count-matched shuffled-pair null",
+            evidence["pair_beats_feature_count_null"],
         ),
         _criterion(
             "strategy_review_local_pregate_respected",
@@ -190,7 +206,10 @@ def _criteria(source_rows: list[dict[str, Any]], evidence: dict[str, Any]) -> li
     ]
 
 
-def _candidate_actions(failures: list[dict[str, Any]]) -> list[dict[str, str]]:
+def _candidate_actions(
+    evidence: dict[str, Any],
+    failures: list[dict[str, Any]],
+) -> list[dict[str, str]]:
     if failures:
         return [
             _candidate(
@@ -206,6 +225,30 @@ def _candidate_actions(failures: list[dict[str, Any]]) -> list[dict[str, str]]:
                 "cannot redirect from an incoherent pregate artifact",
                 "rerun after source repair",
                 "blocked_pending_source_repair",
+            ),
+        ]
+    if evidence.get("pair_beats_feature_count_null") is True:
+        return [
+            _candidate(
+                TRUTH_AUDIT_ACTION,
+                "selected",
+                "pair composer beats both independent oracle-support values and the feature-count-matched shuffled-pair null under heldout true-decoder CE",
+                "add a local pair-composer truth audit with leakage/null/interference/norm gates; keep RunPod and Colab blocked",
+                "positive_pair_composer_local_signal_truth_audit_selected_no_gpu",
+            ),
+            _candidate(
+                "run_gpu_pair_composer_validation",
+                "rejected",
+                "the positive is still a small oracle-support local signal without leakage, learned-router, churn, commutator, or retention gates",
+                "do not use RunPod or Colab before the truth audit",
+                "gpu_validation_blocked_pending_truth_audit",
+            ),
+            _candidate(
+                "promote_pair_composer_sparse_column_claim",
+                "rejected",
+                "oracle pair-composer evidence does not establish deployable routing or low-interference sparse columns",
+                "require the local truth audit before any mechanism claim",
+                "sparse_pair_composer_claim_not_established",
             ),
         ]
     return [
@@ -271,8 +314,9 @@ def _strategy_response(strategy: dict[str, Any]) -> dict[str, Any]:
         "recommendation_disposition": "accepted",
         "reason": (
             "The review recommended a local decoder-exported train/holdout pregate before GPU. "
-            "That pregate is now recorded and negative against the matched null, so the block-GPU "
-            "direction is carried forward."
+            "That pregate is now recorded and interpreted through matched-null controls, so the "
+            "block-GPU direction is carried forward until a local truth audit clears leakage, null, "
+            "norm, churn, and commutator gates."
         ),
         "ben_should_be_notified": bool(strategy.get("ben_notification_required")),
     }
