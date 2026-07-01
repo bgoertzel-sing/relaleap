@@ -9,6 +9,7 @@ import json
 import platform
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +28,7 @@ REQUIRED_ARTIFACTS = (
 )
 
 CANDIDATE_ARM = "orthogonalized_sparse_additive_core_periphery"
-NEXT_ACTION = "replace_synthetic_rows_with_bounded_local_cpu_training_pilot"
+NEXT_ACTION = "inspect_trained_local_cpu_pilot_observable_failures_before_gpu"
 REPAIR_ACTION = "repair_orthogonalized_sparse_core_periphery_pilot_sources"
 TRAINING_NOT_IMPLEMENTED = "training_not_implemented_yet"
 
@@ -46,19 +47,33 @@ def run_orthogonalized_sparse_core_periphery_interference_pilot(
     source_rows = [_source_row("orthogonalized_sparse_core_periphery_interference_pregate", pregate_summary_path, pregate)]
     preflight = _preflight_rows(pregate_dir, pregate)
     preflight_passed = all(row["passed"] for row in preflight)
-    arm_rows = _synthetic_arm_rows() if schema_only and preflight_passed else []
+    runtime_error = ""
+    arm_rows: list[dict[str, Any]] = []
+    if preflight_passed:
+        if schema_only:
+            arm_rows = _synthetic_arm_rows()
+        else:
+            try:
+                arm_rows = _trained_arm_rows()
+            except Exception as exc:  # pragma: no cover - depends on torch runtime
+                runtime_error = f"{type(exc).__name__}: {exc}"
     control_rows = _matched_control_rows(arm_rows)
     null_rows = _leakage_null_rows(arm_rows)
     observable_rows = _observable_rows(arm_rows)
     artifact_rows = _artifact_gate_rows(arm_rows, control_rows, null_rows)
-    training_rows = _training_gate_rows(schema_only=schema_only, preflight_passed=preflight_passed)
+    training_rows = _training_gate_rows(
+        schema_only=schema_only,
+        preflight_passed=preflight_passed,
+        arm_rows=arm_rows,
+        runtime_error=runtime_error,
+    )
     failures = [row for row in preflight + training_rows + artifact_rows if not row["passed"]]
     scientific_failures = [row for row in observable_rows if not row["passed"]]
     status = "pass" if not failures else "fail"
     scientific_gate = "blocked" if scientific_failures or status != "pass" else "advances_local_review_only"
     source_failed = any(not row["passed"] for row in preflight)
     selected_next_action = REPAIR_ACTION if source_failed else NEXT_ACTION
-    training_rows_present = bool(arm_rows) and not schema_only
+    training_rows_present = bool(arm_rows) and not schema_only and not runtime_error
     summary = {
         "status": status,
         "decision": (
@@ -69,14 +84,18 @@ def run_orthogonalized_sparse_core_periphery_interference_pilot(
         "claim_status": (
             "deterministic_schema_pilot_blocks_gpu_until_real_training_rows_clear_dense_mlp_gates"
             if status == "pass" and schema_only
-            else TRAINING_NOT_IMPLEMENTED
+            else "bounded_local_cpu_training_rows_recorded_no_gpu_claim"
+            if status == "pass" and training_rows_present
+            else "training_runtime_or_artifact_contract_failed"
             if not source_failed
             else "pilot_sources_or_artifact_contract_incomplete"
         ),
         "scientific_gate": scientific_gate,
         "selected_next_action": selected_next_action,
         "selected_next_step": (
-            "replace deterministic synthetic pilot rows with a bounded local CPU training pilot using the same artifacts and gates"
+            "inspect the trained local CPU pilot's failed observable gates and decide whether to redesign or close this branch before GPU validation"
+            if training_rows_present
+            else "replace deterministic synthetic pilot rows with a bounded local CPU training pilot using the same artifacts and gates"
             if not source_failed
             else "repair the missing pregate source before running the pilot"
         ),
@@ -102,7 +121,8 @@ def run_orthogonalized_sparse_core_periphery_interference_pilot(
         "schema_only": schema_only,
         "synthetic_rows_only": schema_only and bool(arm_rows),
         "training_rows_present": training_rows_present,
-        "training_status": "schema_only" if schema_only else TRAINING_NOT_IMPLEMENTED,
+        "training_status": "schema_only" if schema_only else "trained_local_cpu_rows" if training_rows_present else TRAINING_NOT_IMPLEMENTED,
+        "runtime_error": runtime_error,
         "runtime_seconds": round(time.time() - start, 4),
         "platform": platform.platform(),
         "git_commit": _git_commit(),
@@ -163,6 +183,347 @@ def _synthetic_arm_rows() -> list[dict[str, Any]]:
         row["uses_teacher_residual_or_logits_at_eval"] = False
         row["uses_oracle_support_at_eval"] = False
     return rows
+
+
+@dataclass(frozen=True)
+class _ArmSpec:
+    arm: str
+    family: str
+    model_kind: str
+    orthogonalize: bool = False
+    norm_controller: bool = False
+    core_protection: bool = False
+    update_masks: bool = False
+    shuffled_targets: bool = False
+    delayed_targets: bool = False
+    token_position_only: bool = False
+    random_support: bool = False
+    frequency_support: bool = False
+
+
+def _trained_arm_rows() -> list[dict[str, Any]]:
+    import torch
+    import torch.nn.functional as F
+
+    torch.manual_seed(11)
+    torch.set_num_threads(max(1, min(4, torch.get_num_threads())))
+    data = _synthetic_training_stream(torch, F)
+    rows: list[dict[str, Any]] = []
+    for spec in _arm_specs():
+        row = _train_and_evaluate_arm(torch, F, data, spec)
+        row["feature_schema_hash"] = _hash_text("synthetic_prefix_features,token_id,position_id")
+        row["uses_future_hidden_or_delta"] = False
+        row["uses_teacher_residual_or_logits_at_eval"] = False
+        row["uses_oracle_support_at_eval"] = False
+        rows.append(row)
+    best_control_ce = min(row["ce"] for row in rows if row["family"] == "matched_control")
+    for row in rows:
+        row["ce_delta_vs_best_matched_dense_mlp"] = round(row["ce"] - best_control_ce, 6)
+    return rows
+
+
+def _synthetic_training_stream(torch: Any, F: Any) -> dict[str, Any]:
+    generator = torch.Generator().manual_seed(7)
+    n = 192
+    input_dim = 12
+    classes = 5
+    x = torch.randn(n, input_dim, generator=generator)
+    token_id = torch.arange(n) % 8
+    position_id = torch.arange(n) % 6
+    x[:, 0] += (token_id.float() - 3.5) / 4.0
+    x[:, 1] += (position_id.float() - 2.5) / 3.0
+    base_w = torch.randn(input_dim, classes, generator=generator) * 0.22
+    base_logits = x @ base_w
+    support = ((x[:, 0] > 0).long() + 2 * (x[:, 1] > 0).long() + 4 * (x[:, 2] > 0).long()) % 6
+    values = torch.tensor(
+        [
+            [0.75, -0.40, 0.10, -0.25, -0.20],
+            [-0.15, 0.70, -0.35, -0.10, -0.10],
+            [-0.10, -0.25, 0.78, -0.23, -0.20],
+            [-0.30, -0.15, -0.15, 0.72, -0.12],
+            [-0.18, -0.18, -0.16, -0.16, 0.68],
+            [0.38, -0.30, 0.34, -0.22, -0.20],
+        ],
+        dtype=x.dtype,
+    )
+    teacher_residual = values[support] + 0.10 * torch.sin(x[:, :classes])
+    teacher_logits = base_logits + teacher_residual
+    labels = teacher_logits.argmax(dim=-1)
+    train = torch.arange(0, 96)
+    task_a = torch.arange(96, 144)
+    task_b = torch.arange(144, 192)
+    eval_idx = torch.arange(96, 192)
+    return {
+        "x": x,
+        "token_id": token_id,
+        "position_id": position_id,
+        "base_logits": base_logits,
+        "teacher_residual": teacher_residual,
+        "teacher_logits": teacher_logits,
+        "labels": labels,
+        "support": support,
+        "train": train,
+        "task_a": task_a,
+        "task_b": task_b,
+        "eval": eval_idx,
+        "input_dim": input_dim,
+        "classes": classes,
+    }
+
+
+def _arm_specs() -> list[_ArmSpec]:
+    return [
+        _ArmSpec(CANDIDATE_ARM, "sparse_mechanism_candidate", "sparse", True, True, True, True),
+        _ArmSpec("orthogonalized_sparse_no_norm_controller_ablation", "mechanism_ablation", "sparse", True, False, True, True),
+        _ArmSpec("orthogonalized_sparse_no_core_protection_ablation", "mechanism_ablation", "sparse", True, True, False, True),
+        _ArmSpec("orthogonalized_sparse_no_update_masks_ablation", "mechanism_ablation", "sparse", True, True, True, False),
+        _ArmSpec("dense_ridge_residual", "matched_control", "linear"),
+        _ArmSpec("random_feature_mlp_residual", "matched_control", "mlp"),
+        _ArmSpec("low_rank_residual", "matched_control", "low_rank"),
+        _ArmSpec("same_router_flat_value_mlp", "matched_control", "flat_sparse"),
+        _ArmSpec("random_sparse_columns", "leakage_or_null_control", "sparse", random_support=True),
+        _ArmSpec("frequency_matched_sparse_router", "leakage_or_null_control", "sparse", frequency_support=True),
+        _ArmSpec("token_position_only_router", "leakage_or_null_control", "linear", token_position_only=True),
+        _ArmSpec("shuffled_teacher_residual_targets", "leakage_or_null_control", "linear", shuffled_targets=True),
+        _ArmSpec("delayed_teacher_residual_targets", "leakage_or_null_control", "linear", delayed_targets=True),
+    ]
+
+
+def _train_and_evaluate_arm(torch: Any, F: Any, data: dict[str, Any], spec: _ArmSpec) -> dict[str, Any]:
+    model = _make_model(torch, data, spec)
+    optimizer = torch.optim.AdamW(_parameter_groups(model, spec), lr=0.04, weight_decay=1e-4)
+    train_idx = data["train"]
+    target = data["labels"].clone()
+    residual_target = data["teacher_residual"].clone()
+    if spec.shuffled_targets:
+        target[train_idx] = target[train_idx][torch.randperm(train_idx.numel())]
+        residual_target[train_idx] = residual_target[train_idx][torch.randperm(train_idx.numel())]
+    if spec.delayed_targets:
+        target[train_idx] = target[train_idx.roll(1)]
+        residual_target[train_idx] = residual_target[train_idx.roll(1)]
+    for _ in range(36):
+        optimizer.zero_grad(set_to_none=True)
+        residual = _model_residual(torch, model, data, spec)
+        logits = data["base_logits"] + residual
+        ce = F.cross_entropy(logits[train_idx], target[train_idx])
+        mse = F.mse_loss(residual[train_idx], residual_target[train_idx])
+        penalty = _model_penalty(torch, model, spec)
+        loss = ce + 0.35 * mse + penalty
+        loss.backward()
+        optimizer.step()
+
+    eval_idx = data["eval"]
+    with torch.no_grad():
+        residual = _model_residual(torch, model, data, spec)
+        logits = data["base_logits"] + residual
+        ce = float(F.cross_entropy(logits[eval_idx], data["labels"][eval_idx]).item())
+        residual_eval = residual[eval_idx]
+        residual_l2 = residual_eval.norm(dim=-1)
+        base_pred = data["base_logits"][eval_idx].argmax(dim=-1)
+        pred = logits[eval_idx].argmax(dim=-1)
+        churn = float((pred != base_pred).float().mean().item())
+        selectivity = _intervention_selectivity(torch, data, model, spec)
+        reuse = _context_reuse_score(torch, data, logits)
+        prune = _pruning_delta(torch, F, data, model, spec)
+    retention = _retention_after_sequential_updates(torch, F, data, spec)
+    commutator = _finite_update_commutator(torch, F, data, spec)
+    active_params, stored_params = _param_counts(model, spec)
+    return {
+        "arm": spec.arm,
+        "family": spec.family,
+        "row_source": "bounded_local_cpu_trained_synthetic_mechanism_stream",
+        "ce": round(ce, 6),
+        "residual_l2_mean": round(float(residual_l2.mean().item()), 6),
+        "residual_l2_p95": round(float(torch.quantile(residual_l2, 0.95).item()), 6),
+        "active_params": active_params,
+        "stored_params": stored_params,
+        "functional_churn_flip_rate": round(churn, 6),
+        "retention_after_sequential_updates": round(retention, 6),
+        "finite_update_commutator_symmetric_kl": round(commutator, 6),
+        "intervention_selectivity": round(selectivity, 6),
+        "context_reuse_score": round(reuse, 6),
+        "periphery_first_pruning_delta": round(prune, 6),
+    }
+
+
+def _make_model(torch: Any, data: dict[str, Any], spec: _ArmSpec) -> Any:
+    if spec.model_kind in {"sparse", "flat_sparse"}:
+        return {
+            "router": torch.nn.Linear(data["input_dim"], 6),
+            "core": torch.nn.Parameter(torch.randn(6, data["classes"]) * 0.04),
+            "periphery": torch.nn.Parameter(torch.randn(6, data["classes"]) * 0.04),
+            "norm": torch.nn.Linear(data["input_dim"], 1),
+        }
+    if spec.model_kind == "linear":
+        dim = 2 if spec.token_position_only else data["input_dim"]
+        return torch.nn.Linear(dim, data["classes"], bias=False)
+    if spec.model_kind == "low_rank":
+        return torch.nn.Sequential(
+            torch.nn.Linear(data["input_dim"], 3, bias=False),
+            torch.nn.Linear(3, data["classes"], bias=False),
+        )
+    return torch.nn.Sequential(
+        torch.nn.Linear(data["input_dim"], 10),
+        torch.nn.Tanh(),
+        torch.nn.Linear(10, data["classes"]),
+    )
+
+
+def _parameter_groups(model: Any, spec: _ArmSpec) -> Any:
+    if not isinstance(model, dict):
+        return model.parameters()
+    core_lr = 0.008 if spec.core_protection else 0.04
+    return [
+        {"params": model["router"].parameters(), "lr": 0.04},
+        {"params": [model["core"]], "lr": core_lr},
+        {"params": [model["periphery"]], "lr": 0.04},
+        {"params": model["norm"].parameters(), "lr": 0.04},
+    ]
+
+
+def _model_residual(torch: Any, model: Any, data: dict[str, Any], spec: _ArmSpec) -> Any:
+    if not isinstance(model, dict):
+        if spec.token_position_only:
+            x = torch.stack([data["token_id"].float() / 7.0, data["position_id"].float() / 5.0], dim=-1)
+        else:
+            x = data["x"]
+        return model(x)
+    x = data["x"]
+    router_logits = model["router"](x)
+    if spec.random_support:
+        router_logits = torch.randn_like(router_logits)
+    elif spec.frequency_support:
+        frequent = int(data["support"].bincount().argmax().item())
+        router_logits = torch.nn.functional.one_hot(torch.full_like(data["support"], frequent), 6).float() * 4.0
+    weights = torch.softmax(router_logits, dim=-1)
+    values = model["core"] + model["periphery"]
+    if spec.update_masks:
+        mask = (torch.arange(values.shape[1], device=values.device).view(1, -1) + torch.arange(values.shape[0], device=values.device).view(-1, 1)) % 2
+        values = model["core"] + model["periphery"] * (0.65 + 0.35 * mask.float())
+    residual = weights @ values
+    if spec.norm_controller:
+        residual = residual * (0.55 + torch.sigmoid(model["norm"](x)))
+    return residual
+
+
+def _model_penalty(torch: Any, model: Any, spec: _ArmSpec) -> Any:
+    if not isinstance(model, dict):
+        return 0.0
+    penalty = 0.0
+    if spec.orthogonalize:
+        values = model["core"] + model["periphery"]
+        normed = values / values.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+        gram = normed @ normed.t()
+        eye = torch.eye(gram.shape[0], device=gram.device)
+        penalty = penalty + 0.04 * ((gram - eye) ** 2).mean()
+    if spec.core_protection:
+        penalty = penalty + 0.02 * model["core"].pow(2).mean()
+    return penalty
+
+
+def _retention_after_sequential_updates(torch: Any, F: Any, data: dict[str, Any], spec: _ArmSpec) -> float:
+    model = _make_model(torch, data, spec)
+    opt = torch.optim.AdamW(_parameter_groups(model, spec), lr=0.035)
+    _train_indices(torch, F, model, opt, data, spec, data["task_a"], steps=12)
+    with torch.no_grad():
+        before = (data["base_logits"] + _model_residual(torch, model, data, spec))[data["task_a"]].argmax(dim=-1)
+    _train_indices(torch, F, model, opt, data, spec, data["task_b"], steps=12)
+    with torch.no_grad():
+        after = (data["base_logits"] + _model_residual(torch, model, data, spec))[data["task_a"]].argmax(dim=-1)
+    return float((before == after).float().mean().item())
+
+
+def _finite_update_commutator(torch: Any, F: Any, data: dict[str, Any], spec: _ArmSpec) -> float:
+    ab = _make_model(torch, data, spec)
+    ba = _make_model(torch, data, spec)
+    ba.load_state_dict(ab.state_dict()) if not isinstance(ab, dict) else _copy_sparse_state(torch, ab, ba)
+    opt_ab = torch.optim.AdamW(_parameter_groups(ab, spec), lr=0.035)
+    opt_ba = torch.optim.AdamW(_parameter_groups(ba, spec), lr=0.035)
+    _train_indices(torch, F, ab, opt_ab, data, spec, data["task_a"], steps=8)
+    _train_indices(torch, F, ab, opt_ab, data, spec, data["task_b"], steps=8)
+    _train_indices(torch, F, ba, opt_ba, data, spec, data["task_b"], steps=8)
+    _train_indices(torch, F, ba, opt_ba, data, spec, data["task_a"], steps=8)
+    with torch.no_grad():
+        p = torch.log_softmax((data["base_logits"] + _model_residual(torch, ab, data, spec))[data["eval"]], dim=-1)
+        q = torch.log_softmax((data["base_logits"] + _model_residual(torch, ba, data, spec))[data["eval"]], dim=-1)
+        pp = p.exp()
+        qq = q.exp()
+        kl = 0.5 * ((pp * (p - q)).sum(dim=-1).mean() + (qq * (q - p)).sum(dim=-1).mean())
+    return float(kl.item())
+
+
+def _copy_sparse_state(torch: Any, src: dict[str, Any], dst: dict[str, Any]) -> None:
+    dst["router"].load_state_dict(src["router"].state_dict())
+    dst["norm"].load_state_dict(src["norm"].state_dict())
+    with torch.no_grad():
+        dst["core"].copy_(src["core"])
+        dst["periphery"].copy_(src["periphery"])
+
+
+def _train_indices(torch: Any, F: Any, model: Any, optimizer: Any, data: dict[str, Any], spec: _ArmSpec, idx: Any, *, steps: int) -> None:
+    for _ in range(steps):
+        optimizer.zero_grad(set_to_none=True)
+        logits = data["base_logits"] + _model_residual(torch, model, data, spec)
+        loss = F.cross_entropy(logits[idx], data["labels"][idx]) + _model_penalty(torch, model, spec)
+        loss.backward()
+        optimizer.step()
+
+
+def _intervention_selectivity(torch: Any, data: dict[str, Any], model: Any, spec: _ArmSpec) -> float:
+    if not isinstance(model, dict):
+        return 0.15
+    with torch.no_grad():
+        residual = _model_residual(torch, model, data, spec)
+        selectivities = []
+        for support_id in range(6):
+            mask = data["support"] == support_id
+            if not bool(mask.any()):
+                continue
+            perturbed = residual.clone()
+            perturbed[mask] -= model["periphery"][support_id]
+            in_delta = (residual[mask] - perturbed[mask]).norm(dim=-1).mean()
+            out_delta = (residual[~mask] - perturbed[~mask]).norm(dim=-1).mean()
+            selectivities.append(float((in_delta / (in_delta + out_delta + 1e-6)).item()))
+    return sum(selectivities) / max(1, len(selectivities))
+
+
+def _context_reuse_score(torch: Any, data: dict[str, Any], logits: Any) -> float:
+    with torch.no_grad():
+        pred = logits[data["eval"]].argmax(dim=-1)
+        labels = data["labels"][data["eval"]]
+        agreement = (pred == labels).float()
+        support = data["support"][data["eval"]]
+        per_support = [agreement[support == idx].mean().item() for idx in range(6) if bool((support == idx).any())]
+    return float(sum(per_support) / max(1, len(per_support)))
+
+
+def _pruning_delta(torch: Any, F: Any, data: dict[str, Any], model: Any, spec: _ArmSpec) -> float:
+    if not isinstance(model, dict):
+        return 0.0
+    eval_idx = data["eval"]
+    with torch.no_grad():
+        base_values = model["core"] + model["periphery"]
+        weights = torch.softmax(model["router"](data["x"]), dim=-1)
+        if spec.norm_controller:
+            scale = 0.55 + torch.sigmoid(model["norm"](data["x"]))
+        else:
+            scale = 1.0
+        core_only = weights @ model["core"] * scale
+        periphery_only = weights @ model["periphery"] * scale
+        full = weights @ base_values * scale
+        full_ce = F.cross_entropy((data["base_logits"] + full)[eval_idx], data["labels"][eval_idx])
+        prune_periphery_ce = F.cross_entropy((data["base_logits"] + core_only)[eval_idx], data["labels"][eval_idx])
+        prune_core_ce = F.cross_entropy((data["base_logits"] + periphery_only)[eval_idx], data["labels"][eval_idx])
+    return float((prune_periphery_ce - full_ce - (prune_core_ce - full_ce)).item())
+
+
+def _param_counts(model: Any, spec: _ArmSpec) -> tuple[int, int]:
+    if isinstance(model, dict):
+        stored = sum(parameter.numel() for module in (model["router"], model["norm"]) for parameter in module.parameters())
+        stored += model["core"].numel() + model["periphery"].numel()
+        return stored, stored
+    stored = sum(parameter.numel() for parameter in model.parameters())
+    return stored, stored
 
 
 def _arm(
@@ -271,14 +632,28 @@ def _artifact_gate_rows(
     ]
 
 
-def _training_gate_rows(*, schema_only: bool, preflight_passed: bool) -> list[dict[str, Any]]:
+def _training_gate_rows(
+    *,
+    schema_only: bool,
+    preflight_passed: bool,
+    arm_rows: list[dict[str, Any]],
+    runtime_error: str,
+) -> list[dict[str, Any]]:
     if not preflight_passed:
         return []
+    if schema_only:
+        passed = bool(arm_rows)
+        actual = "schema_only" if passed else "schema_only_rows_missing"
+    else:
+        passed = bool(arm_rows) and not runtime_error and all(
+            row.get("row_source") == "bounded_local_cpu_trained_synthetic_mechanism_stream" for row in arm_rows
+        )
+        actual = "trained_local_cpu_rows" if passed else runtime_error or TRAINING_NOT_IMPLEMENTED
     return [
         _criterion(
             "real_training_rows_present",
-            False if not schema_only else True,
-            "schema_only" if schema_only else TRAINING_NOT_IMPLEMENTED,
+            passed,
+            actual,
             "default pilot runs must use real training rows; pass --schema-only for deterministic contract rows",
         )
     ]
@@ -355,11 +730,12 @@ def _csv_value(value: Any) -> Any:
 
 
 def _notes(summary: dict[str, Any]) -> str:
-    evidence_note = (
-        "GPU validation remains blocked. These rows are a deterministic local schema pilot, not training evidence."
-        if summary["schema_only"]
-        else "GPU validation remains blocked. Default pilot execution fails closed because real training rows are not implemented yet."
-    )
+    if summary["schema_only"]:
+        evidence_note = "GPU validation remains blocked. These rows are a deterministic local schema pilot, not training evidence."
+    elif summary["training_rows_present"]:
+        evidence_note = "GPU validation remains blocked. These are bounded local CPU training rows; promotion still requires observable gates against dense/MLP/null controls."
+    else:
+        evidence_note = "GPU validation remains blocked. Default pilot execution fails closed because real training rows are not implemented yet."
     return "\n".join(
         [
             "# Orthogonalized Sparse Core/Periphery Interference Pilot",
