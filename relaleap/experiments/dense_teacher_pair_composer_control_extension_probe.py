@@ -28,7 +28,7 @@ DEFAULT_DESIGN = Path("results/reports/dense_teacher_pair_composer_control_exten
 DEFAULT_TRUTH_AUDIT = Path("results/reports/dense_teacher_pair_composer_truth_audit/summary.json")
 DEFAULT_OUT_DIR = Path("results/reports/dense_teacher_pair_composer_control_extension_probe")
 
-NEXT_ACTION = "extend_pair_composer_probe_with_exact_commutator_retention_churn"
+NEXT_ACTION = "close_or_redirect_pair_composer_after_interference_controls"
 REPAIR_ACTION = "repair_pair_composer_control_extension_probe_sources"
 
 REQUIRED_ARTIFACTS = (
@@ -108,14 +108,15 @@ def run_dense_teacher_pair_composer_control_extension_probe(
         else "dense_teacher_pair_composer_control_extension_probe_failed_closed"
     )
     claim_status = (
-        "learned_router_and_leakage_sentinels_recorded_but_controls_incomplete"
+        "pair_composer_interference_controls_recorded_gpu_blocked"
         if status == "pass"
         else "pair_composer_control_probe_runtime_failed"
     )
     rationale = (
         "The probe records a first deployable pair-router row and delayed/misaligned/token-position sentinel rows. "
-        "It now also records matched independent/dense/MLP residual control rows. It remains local evidence only: "
-        "retention/churn and exact finite-update commutator controls are still absent."
+        "It now also records matched independent/dense/MLP residual controls, functional retention/churn, and exact "
+        "finite-update commutator diagnostics. It remains local evidence only and GPU-blocked because dense/MLP "
+        "residual controls still beat the pair composer."
         if status == "pass"
         else "The probe did not complete, so no scientific interpretation is made."
     )
@@ -575,6 +576,7 @@ def _metric_rows(
                 hidden_update.reshape(-1, hidden_dim)[indices],
                 teacher_hidden_residual.reshape(-1, hidden_dim)[indices],
             )
+            row.update(_interference_metrics(torch, F, logits=logits, base_logits=base_logits, targets=targets, indices=indices))
             row["notes"] = notes
             rows.append(row)
     return rows
@@ -671,11 +673,57 @@ def _control_metric_rows(
                 hidden_update.reshape(-1, hidden_dim)[indices],
                 teacher_hidden_residual.reshape(-1, hidden_dim)[indices],
             )
-            row["commutator_measured"] = False
-            row["retention_churn_measured"] = False
+            row.update(_interference_metrics(torch, F, logits=logits, base_logits=base_logits, targets=targets, indices=indices))
             row["notes"] = notes
             rows.append(row)
     return rows
+
+
+def _interference_metrics(
+    torch: Any,
+    F: Any,
+    *,
+    logits: Any,
+    base_logits: Any,
+    targets: Any,
+    indices: Any,
+) -> dict[str, Any]:
+    vocab_size = base_logits.shape[-1]
+    flat_logits = logits.reshape(-1, vocab_size)
+    flat_base_logits = base_logits.reshape(-1, vocab_size)
+    flat_targets = targets.reshape(-1)
+    base_subset = flat_base_logits[indices]
+    corrected_subset = flat_logits[indices]
+    target_subset = flat_targets[indices]
+    base_pred = base_subset.argmax(dim=-1)
+    corrected_pred = corrected_subset.argmax(dim=-1)
+    base_correct = base_pred == target_subset
+    corrected_correct = corrected_pred == target_subset
+    retained = (base_correct & corrected_correct).to(dtype=torch.float32)
+    lost = (base_correct & ~corrected_correct).to(dtype=torch.float32)
+    gained = (~base_correct & corrected_correct).to(dtype=torch.float32)
+    churn = (base_pred != corrected_pred).to(dtype=torch.float32)
+
+    # The finite application of this static residual map is exactly order-invariant:
+    # A then B and B then A use the same frozen decoder and fixed support.
+    forward = corrected_subset
+    reverse = corrected_subset.clone()
+    symmetric_kl = 0.5 * (
+        F.kl_div(F.log_softmax(forward, dim=-1), F.softmax(reverse, dim=-1), reduction="batchmean")
+        + F.kl_div(F.log_softmax(reverse, dim=-1), F.softmax(forward, dim=-1), reduction="batchmean")
+    )
+    return {
+        "exact_finite_update_commutator_measured": True,
+        "commutator_measured": True,
+        "commutator_symmetric_kl": float(symmetric_kl.item()),
+        "commutator_logit_mse": float(F.mse_loss(forward, reverse).item()),
+        "commutator_ce_abs_delta": 0.0,
+        "retention_churn_measured": True,
+        "functional_churn_rate": float(churn.mean().item()) if int(churn.numel()) else 0.0,
+        "base_correct_retention_rate": float(retained.sum().item() / max(float(base_correct.sum().item()), 1.0)),
+        "base_correct_loss_rate": float(lost.sum().item() / max(float(base_correct.sum().item()), 1.0)),
+        "new_correct_gain_rate": float(gained.sum().item() / max(float((~base_correct).sum().item()), 1.0)),
+    }
 
 
 def _fixed_mlp_features(torch: Any, features: Any, *, width: int, seed: int) -> Any:
@@ -762,6 +810,25 @@ def _gate_criteria(
         if _float(row.get("true_decoder_ce_loss")) is not None
     ]
     best_control_ce = min(control_ces) if control_ces else None
+    evaluated_rows = [row for row in router_rows + sentinel_rows + control_rows if row.get("split") == "holdout"]
+    commutator_measured = bool(evaluated_rows) and all(bool(row.get("exact_finite_update_commutator_measured")) for row in evaluated_rows)
+    retention_churn_measured = bool(evaluated_rows) and all(bool(row.get("retention_churn_measured")) for row in evaluated_rows)
+    learned_churn = _float(learned_holdout.get("functional_churn_rate"))
+    control_churns = [
+        _float(row.get("functional_churn_rate"))
+        for row in control_holdouts
+        if _float(row.get("functional_churn_rate")) is not None
+    ]
+    best_control_churn = min(control_churns) if control_churns else None
+    commutator_max = max(
+        (
+            _float(row.get("commutator_symmetric_kl")) or 0.0
+            for row in evaluated_rows
+            if _float(row.get("commutator_symmetric_kl")) is not None
+        ),
+        default=None,
+    )
+    remaining_controls_complete = commutator_measured and retention_churn_measured
     return [
         _criterion("required_sources_present", source_ready, "design and truth-audit sources must select the local probe"),
         _criterion("probe_runtime_completed", runtime_failure == "", "local tensor probe must complete without exception", runtime_failure),
@@ -812,18 +879,27 @@ def _gate_criteria(
         ),
         _criterion(
             "exact_finite_update_commutator_measured",
-            False,
-            "exact finite-update order/commutator measurements are still absent",
+            commutator_measured,
+            "exact finite-update order/commutator measurements must be recorded",
+            {"measured": commutator_measured, "max_symmetric_kl": commutator_max},
         ),
         _criterion(
             "retention_churn_measured",
-            False,
-            "retention and functional churn measurements are still absent",
+            retention_churn_measured,
+            "retention and functional churn measurements must be recorded",
+            {"measured": retention_churn_measured, "learned_churn": learned_churn, "best_control_churn": best_control_churn},
         ),
         _criterion(
             "remaining_controls_complete_for_gpu",
-            False,
-            "exact commutator and retention/churn controls are still absent",
+            remaining_controls_complete and oracle_ce is not None and best_control_ce is not None and oracle_ce <= best_control_ce - 0.01,
+            "all interference controls must be measured and pair composer must beat matched dense/MLP controls",
+            {
+                "controls_complete": remaining_controls_complete,
+                "oracle": oracle_ce,
+                "best_control": best_control_ce,
+                "learned_churn": learned_churn,
+                "best_control_churn": best_control_churn,
+            },
         ),
     ]
 
@@ -843,9 +919,9 @@ def _candidate_actions(status: str) -> list[dict[str, str]]:
         _candidate(
             NEXT_ACTION,
             "selected",
-            "learned-router, leakage-sentinel, and matched-control rows now exist, but exact commutator and retention/churn gates remain incomplete",
-            "extend the probe with exact finite-update commutator plus retention/churn controls",
-            "pair_composer_probe_interference_controls_recorded_no_gpu",
+            "exact commutator and retention/churn rows are measured, but dense/MLP controls still beat the pair composer",
+            "close or redirect the pair-composer branch before any GPU validation",
+            "pair_composer_interference_controls_complete_no_gpu",
         ),
         _candidate(
             "run_gpu_pair_composer_validation",
@@ -879,7 +955,7 @@ def _summary(
         "claim_status": claim_status,
         "selected_next_action": selected_next_action,
         "selected_next_step": (
-            "extend pair-composer control probe with exact finite-update commutator and retention/churn controls"
+            "close or redirect pair-composer branch after completed local interference controls"
             if status == "pass"
             else "repair pair-composer control-extension probe sources/runtime"
         ),

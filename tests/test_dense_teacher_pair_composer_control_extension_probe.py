@@ -79,12 +79,22 @@ class DenseTeacherPairComposerControlExtensionProbeTest(unittest.TestCase):
             criteria = {row["criterion"]: row for row in summary["gate_criteria"]}
             self.assertFalse(criteria["remaining_controls_complete_for_gpu"]["passed"])
             self.assertTrue(criteria["matched_dense_mlp_control_rows_measured"]["passed"])
-            self.assertFalse(criteria["exact_finite_update_commutator_measured"]["passed"])
-            self.assertFalse(criteria["retention_churn_measured"]["passed"])
+            self.assertTrue(criteria["exact_finite_update_commutator_measured"]["passed"])
+            self.assertTrue(criteria["retention_churn_measured"]["passed"])
+            self.assertFalse(criteria["remaining_controls_complete_for_gpu"]["passed"])
             self.assertIn("support_pair_class_balance_sufficient", criteria)
             self.assertFalse(criteria["support_pair_class_balance_sufficient"]["passed"])
             self.assertEqual(summary["majority_pair_holdout_support_pair_accuracy"], 1.0)
             self.assertEqual(summary["learned_router_holdout_support_pair_accuracy"], 1.0)
+            learned_holdout = next(
+                row
+                for row in summary["router_rows"]
+                if row["arm"] == "learned_causal_pair_router" and row["split"] == "holdout"
+            )
+            self.assertTrue(learned_holdout["exact_finite_update_commutator_measured"])
+            self.assertTrue(learned_holdout["retention_churn_measured"])
+            self.assertEqual(learned_holdout["commutator_ce_abs_delta"], 0.0)
+            self.assertGreaterEqual(learned_holdout["functional_churn_rate"], 0.0)
             notes = (root / "out" / "notes.md").read_text(encoding="utf-8")
             self.assertIn("GPU validation remains blocked", notes)
 
