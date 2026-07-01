@@ -191,14 +191,14 @@ def _decision_matrix(
             "expected": "retention/churn, commutator, and future-perturbation controls remain unavailable",
         },
         {
-            "signal": "capture_too_small_for_promotion",
+            "signal": "capture_too_limited_for_promotion",
             "required": True,
-            "passed": train_sequence_count <= 3 and heldout_sequence_count <= 1,
+            "passed": train_sequence_count <= 3 or heldout_sequence_count <= 1,
             "actual": {
                 "train_sequence_count": train_sequence_count,
                 "heldout_sequence_count": heldout_sequence_count,
             },
-            "expected": "current packet is a smoke pregate, not promotion-scale evidence",
+            "expected": "current packet is still train or heldout limited, not promotion-scale evidence",
         },
         {
             "signal": "strategy_review_supports_local_no_gpu",
@@ -237,8 +237,16 @@ def _candidate_actions(
     nulls_beat = _signal(decision_matrix, "prefix_hidden_beats_registered_nulls").get("passed") is True
     same_student_failed = _signal(decision_matrix, "same_student_loss_gate_failed").get("passed") is True
     controls_missing = _signal(decision_matrix, "downstream_controls_missing").get("passed") is True
-    tiny_capture = _signal(decision_matrix, "capture_too_small_for_promotion").get("passed") is True
-    select_scale = pregate_ok and nulls_beat and same_student_failed and controls_missing and tiny_capture
+    limited_capture = (
+        _signal(decision_matrix, "capture_too_limited_for_promotion").get("passed") is True
+    )
+    select_scale = (
+        pregate_ok
+        and nulls_beat
+        and same_student_failed
+        and controls_missing
+        and limited_capture
+    )
     select_hold = pregate_ok and (same_student_failed or controls_missing)
 
     return [
@@ -246,7 +254,7 @@ def _candidate_actions(
             SCALE_CAPTURE_ACTION,
             "selected" if select_scale else "deferred",
             (
-                "Prefix-hidden support prediction beats registered nulls, but the current 3-train/1-heldout packet is too small and the predicted pair is still worse than the same student router under exact forced loss."
+                "Prefix-hidden support prediction beats registered nulls, but the local packet remains heldout-limited and the predicted pair is still worse than the same student router under exact forced loss."
             ),
             "scale local hidden/future capture and add current-hidden-shuffled/null-stratified, retention/churn, commutator, and future-perturbation controls before any GPU validation",
             "hidden_future_branch_interesting_but_gpu_blocked",

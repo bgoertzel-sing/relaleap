@@ -60,6 +60,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
     student_distill_weight: float = 0.05,
     ce_guardrail: float = 0.05,
     random_seed: int = 3901,
+    batch_size: int = 4,
     capture_hidden_future: bool = False,
     capture_train_hidden_future: bool = False,
 ) -> dict[str, Any]:
@@ -113,10 +114,16 @@ def run_causal_contextual_router_distillation_agreement_audit(
         raise ValueError(
             "capture_train_hidden_future requires max_folds=1 to avoid cross-fold leakage"
         )
+    if batch_size < 2:
+        raise ValueError("batch_size must be at least 2")
 
     source_assessment = _source_artifact_assessment(audit_dir, runpod_audit_dir)
     torch.manual_seed(seed)
-    inputs, targets, vocab_size = _build_batch(dataset=dataset, seq_len=seq_len, batch_size=4)
+    inputs, targets, vocab_size = _build_batch(
+        dataset=dataset,
+        seq_len=seq_len,
+        batch_size=batch_size,
+    )
     fold_count = int(inputs.shape[0]) if max_folds is None else min(max_folds, int(inputs.shape[0]))
     all_pairs = list(itertools.combinations(range(num_columns), top_k))
     fold_rows: list[dict[str, Any]] = []
@@ -1824,6 +1831,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--student-distill-weight", type=float, default=0.05)
     parser.add_argument("--ce-guardrail", type=float, default=0.05)
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=4,
+        help=(
+            "batch sequences to build before fold splitting; with "
+            "--capture-train-hidden-future and --max-folds 1 this scales train "
+            "coverage without cross-fold split leakage"
+        ),
+    )
+    parser.add_argument(
         "--capture-hidden-future",
         action="store_true",
         help="emit prefix hidden, future target, teacher-logit, and exact intervention rows",
@@ -1846,6 +1863,7 @@ def main(argv: list[str] | None = None) -> int:
         teacher_oracle_weight=args.teacher_oracle_weight,
         student_distill_weight=args.student_distill_weight,
         ce_guardrail=args.ce_guardrail,
+        batch_size=args.batch_size,
         capture_hidden_future=args.capture_hidden_future,
         capture_train_hidden_future=args.capture_train_hidden_future,
     )
