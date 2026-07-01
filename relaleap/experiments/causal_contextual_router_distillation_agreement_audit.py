@@ -61,6 +61,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
     ce_guardrail: float = 0.05,
     random_seed: int = 3901,
     capture_hidden_future: bool = False,
+    capture_train_hidden_future: bool = False,
 ) -> dict[str, Any]:
     """Rerun the bounded distillation setup with per-token support logging."""
 
@@ -106,6 +107,12 @@ def run_causal_contextual_router_distillation_agreement_audit(
         raise ValueError("teacher_oracle_weight must be positive")
     if student_distill_weight <= 0.0:
         raise ValueError("student_distill_weight must be positive")
+    if capture_train_hidden_future and not capture_hidden_future:
+        raise ValueError("capture_train_hidden_future requires capture_hidden_future")
+    if capture_train_hidden_future and max_folds != 1:
+        raise ValueError(
+            "capture_train_hidden_future requires max_folds=1 to avoid cross-fold leakage"
+        )
 
     source_assessment = _source_artifact_assessment(audit_dir, runpod_audit_dir)
     torch.manual_seed(seed)
@@ -461,6 +468,27 @@ def run_causal_contextual_router_distillation_agreement_audit(
                     support=token_position_null_support,
                 )
             )
+            if capture_hidden_future and capture_train_hidden_future:
+                (
+                    train_hidden_future_rows,
+                    train_exact_intervention_rows,
+                ) = _capture_split_hidden_future_and_interventions(
+                    split="train",
+                    fold_index=fold_index,
+                    all_pairs=all_pairs,
+                    student_base=student_base,
+                    student_residual=student_residual,
+                    student_inputs=train_inputs,
+                    student_targets=train_targets,
+                    teacher_base=teacher_base,
+                    teacher_residual=teacher_residual,
+                    token_position_null_support=token_position_frequency_matched_teacher_train_support[
+                        :, :-1, :
+                    ],
+                    vocab_size=vocab_size,
+                )
+                hidden_future_rows.extend(train_hidden_future_rows)
+                exact_intervention_rows.extend(train_exact_intervention_rows)
 
         fold_rows.extend(
             [
@@ -535,6 +563,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
         if capture_hidden_future:
             hidden_future_rows.extend(
                 _hidden_future_capture_rows(
+                    split="heldout",
                     fold_index=fold_index,
                     current_hidden=student_hidden[:, :-1, :],
                     future_hidden=teacher_hidden[:, 1:, :],
@@ -548,6 +577,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
             )
             exact_intervention_rows.extend(
                 _exact_same_student_intervention_rows(
+                    split="heldout",
                     fold_index=fold_index,
                     all_pairs=all_pairs,
                     pair_rows=pair_rows,
@@ -632,6 +662,7 @@ def run_causal_contextual_router_distillation_agreement_audit(
             "null_sampling_aggregates": _aggregate_null_sampling_rows(null_sampling_rows),
             "hidden_future_capture": _hidden_future_capture_summary(
                 capture_hidden_future=capture_hidden_future,
+                capture_train_hidden_future=capture_train_hidden_future,
                 hidden_future_rows=hidden_future_rows,
                 exact_intervention_rows=exact_intervention_rows,
             ),
@@ -702,8 +733,110 @@ def _source_artifact_assessment(
     return rows
 
 
+def _capture_split_hidden_future_and_interventions(
+    *,
+    split: str,
+    fold_index: int,
+    all_pairs: list[tuple[int, ...]],
+    student_base: Any,
+    student_residual: Any,
+    student_inputs: Any,
+    student_targets: Any,
+    teacher_base: Any,
+    teacher_residual: Any,
+    token_position_null_support: Any,
+    vocab_size: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    import torch
+
+    with torch.no_grad():
+        student_hidden = student_base.encode(student_inputs)
+        teacher_hidden = teacher_base.encode(student_inputs)
+        student_logits, student_support = _forward_with_feature_ablation(
+            student_base,
+            student_residual,
+            student_hidden,
+            feature_mask=None,
+        )
+        _, teacher_support = _forward_with_feature_ablation(
+            teacher_base,
+            teacher_residual,
+            teacher_hidden,
+            feature_mask=None,
+        )
+        teacher_scores = (
+            teacher_residual._score_columns(teacher_hidden)
+            + teacher_residual.score_tie_breaker.to(
+                device=teacher_hidden.device,
+                dtype=teacher_hidden.dtype,
+            )
+        )
+        student_token_losses = _token_losses(student_logits, student_targets).reshape(-1)
+        empty_logits = student_base.decode(student_hidden)
+        empty_loss = _ce_loss(empty_logits, student_targets, vocab_size)
+        student_router_loss = float(student_token_losses.mean().item())
+        pair_rows = [
+            _score_for_support(
+                student_base,
+                student_residual,
+                student_hidden,
+                student_targets,
+                vocab_size,
+                support=pair,
+                empty_loss=empty_loss,
+                router_loss=student_router_loss,
+            )
+            for pair in all_pairs
+        ]
+        pair_loss_matrix = torch.stack(
+            [row["_token_losses"].reshape(-1) for row in pair_rows],
+            dim=1,
+        )
+        oracle_losses, oracle_indices = pair_loss_matrix.min(dim=1)
+        student_token_support = student_support[:, :-1, :]
+        teacher_token_support = teacher_support[:, :-1, :]
+        oracle_token_support = _support_from_pair_indices(
+            oracle_indices,
+            all_pairs,
+            like=student_token_support,
+        )
+        teacher_losses = _forced_token_losses(
+            student_base,
+            student_residual,
+            student_hidden,
+            student_targets,
+            support=teacher_support,
+        )
+    hidden_rows = _hidden_future_capture_rows(
+        split=split,
+        fold_index=fold_index,
+        current_hidden=student_hidden[:, :-1, :],
+        future_hidden=teacher_hidden[:, 1:, :],
+        targets=student_targets[:, :-1],
+        teacher_scores=teacher_scores[:, :-1, :],
+        teacher_support=teacher_token_support,
+        student_support=student_token_support,
+        oracle_support=oracle_token_support,
+        token_position_null_support=token_position_null_support,
+    )
+    exact_rows = _exact_same_student_intervention_rows(
+        split=split,
+        fold_index=fold_index,
+        all_pairs=all_pairs,
+        pair_rows=pair_rows,
+        student_losses=student_token_losses,
+        teacher_losses=teacher_losses,
+        oracle_losses=oracle_losses,
+        teacher_support=teacher_token_support,
+        student_support=student_token_support,
+        oracle_support=oracle_token_support,
+    )
+    return hidden_rows, exact_rows
+
+
 def _hidden_future_capture_rows(
     *,
+    split: str,
     fold_index: int,
     current_hidden: Any,
     future_hidden: Any,
@@ -734,8 +867,8 @@ def _hidden_future_capture_rows(
             rows.append(
                 {
                     "fold": fold_index,
-                    "split": "heldout",
-                    "sequence_id": f"fold{fold_index}_sequence{batch_index}",
+                    "split": split,
+                    "sequence_id": f"fold{fold_index}_{split}_sequence{batch_index}",
                     "batch_index": batch_index,
                     "position_index": position_index,
                     "flat_position": flat_position,
@@ -778,6 +911,7 @@ def _hidden_future_capture_rows(
 
 def _exact_same_student_intervention_rows(
     *,
+    split: str,
     fold_index: int,
     all_pairs: list[tuple[int, ...]],
     pair_rows: list[dict[str, Any]],
@@ -814,8 +948,8 @@ def _exact_same_student_intervention_rows(
             rows.append(
                 {
                     "fold": fold_index,
-                    "split": "heldout",
-                    "sequence_id": f"fold{fold_index}_sequence{sequence_index}",
+                    "split": split,
+                    "sequence_id": f"fold{fold_index}_{split}_sequence{sequence_index}",
                     "position_index": position_index,
                     "flat_position": flat_position,
                     "forced_support_pair": pair_key,
@@ -843,6 +977,7 @@ def _exact_same_student_intervention_rows(
 def _hidden_future_capture_summary(
     *,
     capture_hidden_future: bool,
+    capture_train_hidden_future: bool,
     hidden_future_rows: list[dict[str, Any]],
     exact_intervention_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -866,8 +1001,11 @@ def _hidden_future_capture_summary(
     intervention_schema_ok = bool(
         exact_intervention_rows
     ) and intervention_fields.issubset(exact_intervention_rows[0])
+    hidden_split_counts = _split_counts(hidden_future_rows)
+    intervention_split_counts = _split_counts(exact_intervention_rows)
     return {
         "enabled": capture_hidden_future,
+        "train_capture_enabled": capture_train_hidden_future,
         "status": (
             "captured"
             if capture_hidden_future and hidden_schema_ok and intervention_schema_ok
@@ -877,6 +1015,14 @@ def _hidden_future_capture_summary(
         ),
         "hidden_future_row_count": len(hidden_future_rows),
         "exact_intervention_row_count": len(exact_intervention_rows),
+        "hidden_future_split_counts": hidden_split_counts,
+        "exact_intervention_split_counts": intervention_split_counts,
+        "train_sequence_count": _sequence_count(hidden_future_rows, "train"),
+        "heldout_sequence_count": _sequence_count(hidden_future_rows, "heldout"),
+        "split_coverage_available": (
+            _sequence_count(hidden_future_rows, "train") > 0
+            and _sequence_count(hidden_future_rows, "heldout") > 0
+        ),
         "hidden_future_schema_ok": hidden_schema_ok,
         "exact_intervention_schema_ok": intervention_schema_ok,
         "requires_gpu_now": False,
@@ -886,6 +1032,18 @@ def _hidden_future_capture_summary(
             "teacher logits/support, targets, and oracle labels are forbidden predictor inputs"
         ),
     }
+
+
+def _split_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        split = str(row.get("split", ""))
+        counts[split] = counts.get(split, 0) + 1
+    return counts
+
+
+def _sequence_count(rows: list[dict[str, Any]], split: str) -> int:
+    return len({row["sequence_id"] for row in rows if row.get("split") == split})
 
 
 def _tensor_json(value: Any) -> str:
@@ -1670,6 +1828,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="emit prefix hidden, future target, teacher-logit, and exact intervention rows",
     )
+    parser.add_argument(
+        "--capture-train-hidden-future",
+        action="store_true",
+        help=(
+            "also emit train split hidden/future rows; requires --capture-hidden-future "
+            "and --max-folds 1"
+        ),
+    )
     args = parser.parse_args(argv)
     summary = run_causal_contextual_router_distillation_agreement_audit(
         args.config,
@@ -1681,6 +1847,7 @@ def main(argv: list[str] | None = None) -> int:
         student_distill_weight=args.student_distill_weight,
         ce_guardrail=args.ce_guardrail,
         capture_hidden_future=args.capture_hidden_future,
+        capture_train_hidden_future=args.capture_train_hidden_future,
     )
     print(json.dumps({"status": summary["status"], "decision": summary["decision"]}))
     return 0

@@ -325,12 +325,17 @@ def _loss_lookup_rows(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     failures: list[dict[str, Any]] = []
     hidden_keys = {
-        (row["sequence_id"], int(row["flat_position"]), int(row["position_index"]))
+        (row["split"], row["sequence_id"], int(row["flat_position"]), int(row["position_index"]))
         for row in hidden_rows
     }
-    grouped: dict[tuple[str, int, int], list[dict[str, str]]] = {}
+    grouped: dict[tuple[str, str, int, int], list[dict[str, str]]] = {}
     for row in intervention_rows:
-        key = (row["sequence_id"], int(row["flat_position"]), int(row["position_index"]))
+        key = (
+            row["split"],
+            row["sequence_id"],
+            int(row["flat_position"]),
+            int(row["position_index"]),
+        )
         grouped.setdefault(key, []).append(row)
     if set(grouped) != hidden_keys:
         failures.append(
@@ -347,9 +352,10 @@ def _loss_lookup_rows(
                 {
                     "source": "intervention_rows_exact",
                     "check": "exact_pair_count_per_position",
-                    "sequence_id": key[0],
-                    "flat_position": key[1],
-                    "position_index": key[2],
+                    "split": key[0],
+                    "sequence_id": key[1],
+                    "flat_position": key[2],
+                    "position_index": key[3],
                     "reason": f"expected {expected_pair_count}, got {len(rows)}",
                 }
             )
@@ -359,9 +365,10 @@ def _loss_lookup_rows(
                 {
                     "source": "intervention_rows_exact",
                     "check": "exact_pair_count_unique_pairs",
-                    "sequence_id": key[0],
-                    "flat_position": key[1],
-                    "position_index": key[2],
+                    "split": key[0],
+                    "sequence_id": key[1],
+                    "flat_position": key[2],
+                    "position_index": key[3],
                     "reason": f"rows={len(rows)} unique_pairs={len(seen_pairs)}",
                 }
             )

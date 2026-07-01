@@ -183,6 +183,127 @@ model:
                     max_folds=1,
                 )
 
+    def test_hidden_future_capture_can_include_train_split_for_single_fold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "config.yaml"
+            config_path.write_text(
+                """
+run:
+  experiment_id: test_causal_contextual_router_train_capture
+  seed: 1
+  max_steps: 1
+
+data:
+  dataset: tiny_shakespeare_word
+  seq_len: 12
+
+training:
+  residual_objective: supervised_ce
+
+model:
+  base:
+    layers: 1
+    hidden_dim: 24
+  columns:
+    num_columns: 4
+    atoms_per_column: 2
+    top_k: 2
+    insertion_sites: 1
+    support_router: contextual_mlp_causal
+    contextual_router_hidden_dim: 12
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = run_causal_contextual_router_distillation_agreement_audit(
+                config_path,
+                root / "audit",
+                runpod_audit_dir=None,
+                max_folds=1,
+                teacher_oracle_weight=0.01,
+                student_distill_weight=0.01,
+                capture_hidden_future=True,
+                capture_train_hidden_future=True,
+            )
+
+            capture = summary["audit"]["hidden_future_capture"]
+            self.assertEqual(capture["status"], "captured")
+            self.assertTrue(capture["train_capture_enabled"])
+            self.assertTrue(capture["split_coverage_available"])
+            self.assertGreater(capture["train_sequence_count"], 0)
+            self.assertGreater(capture["heldout_sequence_count"], 0)
+            self.assertGreater(capture["hidden_future_split_counts"]["train"], 0)
+            self.assertGreater(capture["hidden_future_split_counts"]["heldout"], 0)
+
+            with (root / "audit" / "hidden_future_rows.csv").open(
+                newline="", encoding="utf-8"
+            ) as handle:
+                hidden_rows = list(csv.DictReader(handle))
+            self.assertEqual({row["split"] for row in hidden_rows}, {"train", "heldout"})
+            splits_by_sequence: dict[str, set[str]] = {}
+            for row in hidden_rows:
+                splits_by_sequence.setdefault(row["sequence_id"], set()).add(row["split"])
+            self.assertTrue(all(len(splits) == 1 for splits in splits_by_sequence.values()))
+
+            with (root / "audit" / "intervention_rows_exact.csv").open(
+                newline="", encoding="utf-8"
+            ) as handle:
+                exact_rows = list(csv.DictReader(handle))
+            self.assertEqual({row["split"] for row in exact_rows}, {"train", "heldout"})
+            pair_counts: dict[tuple[str, str, str, str], set[str]] = {}
+            for row in exact_rows:
+                key = (
+                    row["split"],
+                    row["sequence_id"],
+                    row["flat_position"],
+                    row["position_index"],
+                )
+                pair_counts.setdefault(key, set()).add(row["forced_support_pair"])
+            self.assertTrue(pair_counts)
+            self.assertEqual({len(pairs) for pairs in pair_counts.values()}, {6})
+
+    def test_train_hidden_future_capture_requires_single_fold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "config.yaml"
+            config_path.write_text(
+                """
+run:
+  experiment_id: test_causal_contextual_router_train_capture_bad
+  seed: 1
+  max_steps: 1
+
+data:
+  dataset: tiny_shakespeare_word
+  seq_len: 12
+
+model:
+  base:
+    layers: 1
+    hidden_dim: 24
+  columns:
+    num_columns: 4
+    atoms_per_column: 2
+    top_k: 2
+    support_router: contextual_mlp_causal
+    contextual_router_hidden_dim: 12
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "max_folds=1"):
+                run_causal_contextual_router_distillation_agreement_audit(
+                    config_path,
+                    root / "audit",
+                    runpod_audit_dir=None,
+                    max_folds=2,
+                    capture_hidden_future=True,
+                    capture_train_hidden_future=True,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
