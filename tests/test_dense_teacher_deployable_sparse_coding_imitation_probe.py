@@ -80,6 +80,8 @@ class DenseTeacherDeployableSparseCodingImitationProbeTests(unittest.TestCase):
             self.assertTrue(set(ARMS).issubset(arms))
             by_arm = {row["arm"]: row for row in summary["imitation_rows"]}
             self.assertTrue(by_arm["oracle_topk_orthogonal_sparse_coding"]["oracle_support_non_deployable"])
+            self.assertIn("oracle_support_learned_combo_coeff_sparse_coding", by_arm)
+            self.assertIn("learned_combo_support_oracle_coeff_sparse_coding", by_arm)
             self.assertFalse(by_arm["enhanced_joint_mlp_router_scalar_imitation"]["uses_oracle_support_at_eval"])
             self.assertFalse(by_arm["combo_mlp_router_scalar_imitation"]["uses_oracle_support_at_eval"])
             for row in summary["imitation_rows"]:
@@ -87,6 +89,9 @@ class DenseTeacherDeployableSparseCodingImitationProbeTests(unittest.TestCase):
                 self.assertIn("oracle_gain_retained_fraction", row)
                 self.assertIn("oracle_mask_exact_cell_overlap", row)
                 self.assertIn("oracle_selected_component_overlap", row)
+                self.assertIn("coefficient_mse_vs_oracle", row)
+                self.assertIn("oracle_active_coefficient_mse", row)
+                self.assertIn("coefficient_cosine_vs_oracle", row)
                 self.assertFalse(row["uses_future_hidden_or_delta"])
                 self.assertFalse(row["uses_task_id"])
 
@@ -99,6 +104,8 @@ class DenseTeacherDeployableSparseCodingImitationProbeTests(unittest.TestCase):
             self.assertIn("combo_improves_linear_imitation", gates)
             self.assertIn("best_deployable_retains_oracle_gain", gates)
             self.assertIn("best_deployable_near_flat_control", gates)
+            self.assertIn("oracle_support_learned_coeff_retains_oracle_gain", gates)
+            self.assertIn("learned_support_oracle_coeff_retains_oracle_gain", gates)
 
             for artifact in REQUIRED_ARTIFACTS:
                 self.assertTrue((root / "probe" / artifact).is_file(), artifact)

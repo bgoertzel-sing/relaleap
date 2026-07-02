@@ -58,6 +58,8 @@ REQUIRED_ARTIFACTS = (
 
 ARMS = (
     "oracle_topk_orthogonal_sparse_coding",
+    "oracle_support_learned_combo_coeff_sparse_coding",
+    "learned_combo_support_oracle_coeff_sparse_coding",
     "baseline_linear_router_scalar_imitation",
     "enhanced_joint_mlp_router_scalar_imitation",
     "combo_mlp_router_scalar_imitation",
@@ -207,6 +209,8 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
     combo_logits, combo_coeff = _combo_outputs(combo_model, data["x_holdout"], effective_basis_size, len(support_combos))
     combo_mask = _combo_mask_from_logits(torch, combo_logits, support_combos, effective_basis_size)
     combo_pred = _decode_sparse(mean, basis, combo_coeff, combo_mask)
+    oracle_support_learned_coeff_pred = _decode_sparse(mean, basis, combo_coeff, oracle_mask)
+    learned_support_oracle_coeff_pred = _decode_sparse(mean, basis, holdout_coeff, combo_mask)
     zero_support = torch.zeros(len(data["x_holdout"]), dtype=torch.long)
 
     arms: dict[str, tuple[Any, Any, bool, str]] = {
@@ -215,6 +219,18 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
             _mask_to_support(torch, oracle_mask),
             True,
             "nondeployable oracle top-k sparse-coding ceiling",
+        ),
+        "oracle_support_learned_combo_coeff_sparse_coding": (
+            oracle_support_learned_coeff_pred,
+            _mask_to_support(torch, oracle_mask),
+            True,
+            "diagnostic cross: oracle support with deployable combo-learned scalar coefficients",
+        ),
+        "learned_combo_support_oracle_coeff_sparse_coding": (
+            learned_support_oracle_coeff_pred,
+            _mask_to_support(torch, combo_mask),
+            True,
+            "diagnostic cross: deployable combo support with nondeployable oracle scalar coefficients",
         ),
         "baseline_linear_router_scalar_imitation": (
             baseline_pred,
@@ -274,6 +290,8 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
             torch,
             mask=_mask_for_arm(arm, oracle_mask, baseline_mask, enhanced_mask, combo_mask, random_mask),
             oracle_mask=oracle_mask,
+            coeff=_coeff_for_arm(arm, holdout_coeff, baseline_coeff(data["x_holdout"]), enhanced_coeff, combo_coeff),
+            oracle_coeff=holdout_coeff,
             no_update_r2=None,
         )
         for arm, (pred, support, oracle, note) in arms.items()
@@ -436,8 +454,10 @@ def _combo_mask_from_logits(torch: Any, logits: Any, combos: list[tuple[int, ...
 
 
 def _mask_for_arm(arm: str, oracle_mask: Any, baseline_mask: Any, enhanced_mask: Any, combo_mask: Any, random_mask: Any) -> Any:
-    if arm == "oracle_topk_orthogonal_sparse_coding":
+    if arm in {"oracle_topk_orthogonal_sparse_coding", "oracle_support_learned_combo_coeff_sparse_coding"}:
         return oracle_mask
+    if arm == "learned_combo_support_oracle_coeff_sparse_coding":
+        return combo_mask
     if arm == "baseline_linear_router_scalar_imitation":
         return baseline_mask
     if arm == "enhanced_joint_mlp_router_scalar_imitation":
@@ -449,11 +469,39 @@ def _mask_for_arm(arm: str, oracle_mask: Any, baseline_mask: Any, enhanced_mask:
     return oracle_mask * 0.0
 
 
-def _with_imitation_fields(row: dict[str, Any], torch: Any, *, mask: Any, oracle_mask: Any, no_update_r2: float | None) -> dict[str, Any]:
+def _coeff_for_arm(arm: str, oracle_coeff: Any, baseline_coeff: Any, enhanced_coeff: Any, combo_coeff: Any) -> Any:
+    if arm in {"oracle_topk_orthogonal_sparse_coding", "learned_combo_support_oracle_coeff_sparse_coding", "random_topk_sparse_coding_null"}:
+        return oracle_coeff
+    if arm == "baseline_linear_router_scalar_imitation":
+        return baseline_coeff
+    if arm == "enhanced_joint_mlp_router_scalar_imitation":
+        return enhanced_coeff
+    if arm in {"combo_mlp_router_scalar_imitation", "oracle_support_learned_combo_coeff_sparse_coding", "same_router_flat_value_control"}:
+        return combo_coeff
+    return oracle_coeff * 0.0
+
+
+def _with_imitation_fields(
+    row: dict[str, Any],
+    torch: Any,
+    *,
+    mask: Any,
+    oracle_mask: Any,
+    coeff: Any,
+    oracle_coeff: Any,
+    no_update_r2: float | None,
+) -> dict[str, Any]:
     exact_overlap = float(((mask > 0.0) == (oracle_mask > 0.0)).float().mean().item())
     selected_overlap = float(((mask > 0.0) & (oracle_mask > 0.0)).float().sum(dim=1).mean().item() / max(1, int(oracle_mask.sum(dim=1).max().item())))
+    coeff_error = (coeff - oracle_coeff) ** 2
+    active_error = coeff_error * oracle_mask
+    active_denom = oracle_mask.sum().clamp_min(1.0)
+    coeff_cosine = torch.nn.functional.cosine_similarity(coeff, oracle_coeff, dim=1).mean()
     row["oracle_mask_exact_cell_overlap"] = round(exact_overlap, 6)
     row["oracle_selected_component_overlap"] = round(selected_overlap, 6)
+    row["coefficient_mse_vs_oracle"] = round(float(coeff_error.mean().item()), 6)
+    row["oracle_active_coefficient_mse"] = round(float(active_error.sum().item() / active_denom.item()), 6)
+    row["coefficient_cosine_vs_oracle"] = round(float(coeff_cosine.item()), 6)
     row["oracle_gain_retained_fraction"] = ""
     row["no_update_relative_r2_gain"] = ""
     return row
@@ -474,6 +522,8 @@ def _fill_gain_fields(rows: list[dict[str, Any]]) -> None:
 def _gate_rows(source_rows: list[dict[str, Any]], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_arm = {row["arm"]: row for row in rows}
     oracle = by_arm.get("oracle_topk_orthogonal_sparse_coding", {})
+    oracle_support_learned_coeff = by_arm.get("oracle_support_learned_combo_coeff_sparse_coding", {})
+    learned_support_oracle_coeff = by_arm.get("learned_combo_support_oracle_coeff_sparse_coding", {})
     baseline = by_arm.get("baseline_linear_router_scalar_imitation", {})
     enhanced = by_arm.get("enhanced_joint_mlp_router_scalar_imitation", {})
     combo = by_arm.get("combo_mlp_router_scalar_imitation", {})
@@ -483,6 +533,8 @@ def _gate_rows(source_rows: list[dict[str, Any]], rows: list[dict[str, Any]]) ->
     enhanced_retention = _float(enhanced.get("oracle_gain_retained_fraction"), -math.inf)
     combo_retention = _float(combo.get("oracle_gain_retained_fraction"), -math.inf)
     baseline_retention = _float(baseline.get("oracle_gain_retained_fraction"), -math.inf)
+    oracle_support_learned_coeff_retention = _float(oracle_support_learned_coeff.get("oracle_gain_retained_fraction"), -math.inf)
+    learned_support_oracle_coeff_retention = _float(learned_support_oracle_coeff.get("oracle_gain_retained_fraction"), -math.inf)
     best_deployable_retention = max(enhanced_retention, combo_retention)
     best_deployable_r2 = max(
         _float(enhanced.get("teacher_residual_reconstruction_r2"), -math.inf),
@@ -503,6 +555,8 @@ def _gate_rows(source_rows: list[dict[str, Any]], rows: list[dict[str, Any]]) ->
         _gate("best_deployable_retains_oracle_gain", best_deployable_retention >= 0.8, False, "scientific", f"best_retention={best_deployable_retention:.6f}; enhanced={enhanced_retention:.6f}; combo={combo_retention:.6f}; required=0.800000"),
         _gate("best_deployable_near_flat_control", best_deployable_r2 >= _float(flat.get("teacher_residual_reconstruction_r2"), -math.inf) - 0.1, False, "scientific", f"best_deployable_r2={best_deployable_r2:.6f}; flat_r2={flat.get('teacher_residual_reconstruction_r2')}"),
         _gate("best_deployable_beats_no_update_ce", best_deployable_ce < _float(no_update.get("ce"), -math.inf), False, "scientific", f"best_deployable_ce={best_deployable_ce:.6f}; no_update_ce={no_update.get('ce')}"),
+        _gate("oracle_support_learned_coeff_retains_oracle_gain", oracle_support_learned_coeff_retention >= 0.8, False, "scientific", f"retention={oracle_support_learned_coeff_retention:.6f}; coefficient_mse={oracle_support_learned_coeff.get('coefficient_mse_vs_oracle')}; required=0.800000"),
+        _gate("learned_support_oracle_coeff_retains_oracle_gain", learned_support_oracle_coeff_retention >= 0.8, False, "scientific", f"retention={learned_support_oracle_coeff_retention:.6f}; selected_overlap={learned_support_oracle_coeff.get('oracle_selected_component_overlap')}; required=0.800000"),
     ]
 
 
@@ -510,10 +564,16 @@ def _claim_status(status: str, failures: list[dict[str, Any]], rows: list[dict[s
     if status != "pass":
         return "deployable_sparse_coding_imitation_runtime_failed_closed"
     failed = {row["criterion"] for row in failures}
+    if "oracle_support_learned_coeff_retains_oracle_gain" in failed and "learned_support_oracle_coeff_retains_oracle_gain" in failed:
+        return "support_and_coefficient_bottlenecks_block_gpu"
+    if "oracle_support_learned_coeff_retains_oracle_gain" in failed:
+        return "coefficient_value_bottleneck_blocks_gpu"
+    if "learned_support_oracle_coeff_retains_oracle_gain" in failed:
+        return "support_routing_bottleneck_blocks_gpu"
     if not failures:
         return "deployable_sparse_coding_imitation_clears_local_gates_no_gpu_yet"
     if "best_deployable_retains_oracle_gain" in failed:
-        return "structured_imitation_improves_but_oracle_regret_still_blocks_gpu"
+        return "support_coefficient_interaction_bottleneck_blocks_gpu"
     return "deployable_sparse_coding_imitation_local_gates_block_gpu"
 
 
@@ -521,8 +581,14 @@ def _selected_next_step(status: str, failures: list[dict[str, Any]], rows: list[
     if status != "pass":
         return "repair deployable sparse-coding imitation probe runtime artifacts before interpretation"
     failed = {row["criterion"] for row in failures}
+    if "oracle_support_learned_coeff_retains_oracle_gain" in failed and "learned_support_oracle_coeff_retains_oracle_gain" in failed:
+        return "decompose support and coefficient failures with a richer support-conditioned sparse value model before GPU"
+    if "oracle_support_learned_coeff_retains_oracle_gain" in failed:
+        return "improve sparse coefficient/value model under oracle support before GPU"
+    if "learned_support_oracle_coeff_retains_oracle_gain" in failed:
+        return "improve deployable support routing for the oracle sparse-coding basis before GPU"
     if "best_deployable_retains_oracle_gain" in failed:
-        return "close current deployable router/scalar imitation; test a richer sparse value model or demote this oracle basis before GPU"
+        return "train a support-conditioned sparse coefficient/value head for the combo support before GPU"
     if "best_deployable_near_flat_control" in failed:
         return "inspect flat-control gap before any backend validation"
     if failures:
