@@ -62,6 +62,7 @@ def run_retention_churn_microtest(
     include_commutator_value_penalty_variants: bool = False,
     include_hub_value_composition_variants: bool = False,
     include_router_policy_interventions: bool = False,
+    include_deployable_commutator_regularized_sparse_update_variant: bool = False,
 ) -> dict[str, Any]:
     """Train on slice A then slice B and measure anchor drift/churn."""
 
@@ -331,6 +332,35 @@ def run_retention_churn_microtest(
                     support_router="contextual_mlp",
                     contextual_router_hidden_dim=contextual_router_hidden_dim,
                     hub_value_composition_penalty_weight=1.00,
+                ),
+            ]
+        )
+    if include_deployable_commutator_regularized_sparse_update_variant:
+        specs.extend(
+            [
+                _VariantSpec(
+                    name="norm_matched_dense_stored_rank",
+                    kind="dense",
+                    top_k=0,
+                    num_columns=0,
+                    atoms_per_column=0,
+                    support_router="none",
+                    contextual_router_hidden_dim=0,
+                    dense_rank=active_rank * 2,
+                ),
+                _VariantSpec(
+                    name="deployable_commutator_regularized_sparse_update",
+                    kind="sparse",
+                    top_k=2,
+                    num_columns=num_columns,
+                    atoms_per_column=atoms_per_column,
+                    support_router="contextual_mlp",
+                    contextual_router_hidden_dim=contextual_router_hidden_dim,
+                    freeze_router_during_transfer=True,
+                    gradient_clip_norm=0.25,
+                    value_gradient_clip_norm=0.10,
+                    value_gradient_low_rank=2,
+                    commutator_value_penalty_weight=0.10,
                 ),
             ]
         )
@@ -1090,6 +1120,9 @@ def run_retention_churn_microtest(
                 include_hub_value_composition_variants
             ),
             "include_router_policy_interventions": include_router_policy_interventions,
+            "include_deployable_commutator_regularized_sparse_update_variant": (
+                include_deployable_commutator_regularized_sparse_update_variant
+            ),
             "router_policy_interventions": router_policy_intervention_rows,
         },
         "artifacts": {
