@@ -96,6 +96,7 @@ def run_causal_contextual_router_support_audit(
     fold_rows: list[dict[str, Any]] = []
     support_count_rows: list[dict[str, Any]] = []
     control_rows: list[dict[str, Any]] = []
+    per_token_label_rows: list[dict[str, Any]] = []
     final_delta: float | None = None
     final_support_audit: dict[str, Any] | None = None
 
@@ -196,6 +197,10 @@ def run_causal_contextual_router_support_audit(
                 {"fold": fold_index, "control": spec["name"], **item}
                 for item in audit["controls"]
             )
+            per_token_label_rows.extend(
+                {"fold": fold_index, "control": spec["name"], **item}
+                for item in audit["per_token_support_labels"]
+            )
             support_count_rows.extend(
                 {
                     "fold": fold_index,
@@ -240,6 +245,7 @@ def run_causal_contextual_router_support_audit(
             "gate_criteria": decision["criteria"],
             "failures": decision["failures"],
             "rationale": decision["rationale"],
+            "per_token_support_label_rows": len(per_token_label_rows),
             "support_audit_last_causal_fold": final_support_audit,
             "residual_parameter_delta_last_causal_fold": final_delta,
         },
@@ -248,6 +254,7 @@ def run_causal_contextual_router_support_audit(
             "fold_metrics_csv": str(out_dir / "fold_metrics.csv"),
             "aggregate_metrics_csv": str(out_dir / "aggregate_metrics.csv"),
             "control_metrics_csv": str(out_dir / "control_metrics.csv"),
+            "per_token_support_labels_csv": str(out_dir / "per_token_support_labels.csv"),
             "support_counts_csv": str(out_dir / "support_counts.csv"),
             "notes_md": str(out_dir / "notes.md"),
         },
@@ -257,6 +264,7 @@ def run_causal_contextual_router_support_audit(
     _write_csv(out_dir / "fold_metrics.csv", fold_rows)
     _write_csv(out_dir / "aggregate_metrics.csv", aggregate_rows)
     _write_csv(out_dir / "control_metrics.csv", control_rows)
+    _write_csv(out_dir / "per_token_support_labels.csv", per_token_label_rows)
     _write_csv(out_dir / "support_counts.csv", support_count_rows)
     (out_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
@@ -394,8 +402,114 @@ def _support_quality_metrics(
             "delta_from_router": shuffled_loss - router_loss,
         },
     ]
-    del oracle_indices
-    return {"metrics": metrics, "controls": controls, "support_counts": support_counts}
+    per_token_support_labels = _per_token_support_label_rows(
+        support=support,
+        targets=targets,
+        router_token_losses=router_token_losses,
+        token_loss_matrix=token_loss_matrix,
+        oracle_indices=oracle_indices,
+        pair_rows=pair_rows,
+    )
+    return {
+        "metrics": metrics,
+        "controls": controls,
+        "support_counts": support_counts,
+        "per_token_support_labels": per_token_support_labels,
+    }
+
+
+def _per_token_support_label_rows(
+    *,
+    support: Any,
+    targets: Any,
+    router_token_losses: Any,
+    token_loss_matrix: Any,
+    oracle_indices: Any,
+    pair_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return per-token oracle and one-swap support labels for route-only training."""
+
+    pair_supports = [tuple(int(value) for value in row["support"]) for row in pair_rows]
+    pair_keys = [str(row["support_key"]) for row in pair_rows]
+    pair_index_by_key = {key: index for index, key in enumerate(pair_keys)}
+    effective_seq_len = int(targets.shape[1]) - 1
+    flat_targets = targets[:, :-1].reshape(-1).detach().cpu().tolist()
+    actual_supports = support[:, :-1, :].reshape(-1, support.shape[-1]).detach().cpu().tolist()
+    rows: list[dict[str, Any]] = []
+    for flat_position, support_values in enumerate(actual_supports):
+        actual_support = tuple(sorted(int(value) for value in support_values))
+        actual_key = _support_key(actual_support)
+        actual_index = pair_index_by_key.get(actual_key)
+        oracle_index = int(oracle_indices[flat_position].detach().cpu().item())
+        one_swap_index = _best_one_swap_index(
+            token_loss_matrix=token_loss_matrix,
+            flat_position=flat_position,
+            pair_supports=pair_supports,
+            actual_support=actual_support,
+            fallback_index=actual_index,
+        )
+        router_loss = float(router_token_losses[flat_position].detach().cpu().item())
+        actual_loss = (
+            router_loss
+            if actual_index is None
+            else float(token_loss_matrix[flat_position, actual_index].detach().cpu().item())
+        )
+        oracle_loss = float(token_loss_matrix[flat_position, oracle_index].detach().cpu().item())
+        one_swap_loss = (
+            None
+            if one_swap_index is None
+            else float(token_loss_matrix[flat_position, one_swap_index].detach().cpu().item())
+        )
+        rows.append(
+            {
+                "flat_position": flat_position,
+                "sequence_index": flat_position // effective_seq_len,
+                "position_index": flat_position % effective_seq_len,
+                "target_token": int(flat_targets[flat_position]),
+                "actual_support": actual_key,
+                "actual_support_loss": actual_loss,
+                "router_support_loss": router_loss,
+                "oracle_support": pair_keys[oracle_index],
+                "oracle_support_loss": oracle_loss,
+                "oracle_support_regret": router_loss - oracle_loss,
+                "oracle_support_exact_match": actual_key == pair_keys[oracle_index],
+                "best_one_swap_support": "" if one_swap_index is None else pair_keys[one_swap_index],
+                "best_one_swap_support_loss": "" if one_swap_loss is None else one_swap_loss,
+                "best_one_swap_regret": "" if one_swap_loss is None else one_swap_loss - oracle_loss,
+                "best_one_swap_improves_actual": (
+                    False if one_swap_loss is None else one_swap_loss < actual_loss
+                ),
+                "best_one_swap_gain_vs_actual": (
+                    "" if one_swap_loss is None else actual_loss - one_swap_loss
+                ),
+                "one_swap_label_is_oracle": (
+                    False if one_swap_index is None else pair_keys[one_swap_index] == pair_keys[oracle_index]
+                ),
+            }
+        )
+    return rows
+
+
+def _best_one_swap_index(
+    *,
+    token_loss_matrix: Any,
+    flat_position: int,
+    pair_supports: list[tuple[int, ...]],
+    actual_support: tuple[int, ...],
+    fallback_index: int | None,
+) -> int | None:
+    selected = set(actual_support)
+    candidates = [
+        index
+        for index, support in enumerate(pair_supports)
+        if len(set(support).intersection(selected)) == len(actual_support) - 1
+    ]
+    if not candidates:
+        return fallback_index
+    return min(
+        candidates,
+        key=lambda index: float(token_loss_matrix[flat_position, index].detach().cpu().item()),
+    )
 
 
 def _shuffled_support(support: Any, *, seed: int) -> Any:

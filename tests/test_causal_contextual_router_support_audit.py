@@ -74,6 +74,7 @@ outputs:
             self.assertTrue((root / "audit" / "fold_metrics.csv").is_file())
             self.assertTrue((root / "audit" / "aggregate_metrics.csv").is_file())
             self.assertTrue((root / "audit" / "control_metrics.csv").is_file())
+            self.assertTrue((root / "audit" / "per_token_support_labels.csv").is_file())
             self.assertTrue((root / "audit" / "support_counts.csv").is_file())
             self.assertTrue((root / "audit" / "notes.md").is_file())
 
@@ -82,6 +83,12 @@ outputs:
             self.assertIn("mean_oracle_support_regret", causal)
             self.assertIn("mean_functional_churn_logit_l1", causal)
             self.assertIn("mean_support_load_entropy", causal)
+            self.assertGreater(saved["audit"]["per_token_support_label_rows"], 0)
+            per_token_text = (root / "audit" / "per_token_support_labels.csv").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("best_one_swap_support", per_token_text)
+            self.assertIn("oracle_support_regret", per_token_text)
 
     def test_requires_causal_contextual_topk2(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
