@@ -23,12 +23,23 @@ DEFAULT_CAPACITY_ASSAY = Path("results/reports/dense_teacher_residual_value_capa
 DEFAULT_FAILURE_LOCALIZATION = Path(
     "results/reports/dense_teacher_residual_columnability_failure_localization/summary.json"
 )
+DEFAULT_CONTINUOUS_CLOSEOUT = Path("results/reports/continuous_coefficient_closeout/summary.json")
+DEFAULT_SOFT_MIXTURE_CLOSEOUT = Path(
+    "results/reports/prunable_soft_mixture_residual_compression_closeout/summary.json"
+)
+DEFAULT_SCALE_CLOSEOUT = Path(
+    "results/reports/scale_constrained_sparse_residual_compression_closeout/summary.json"
+)
+DEFAULT_COMMUTATOR_CLOSEOUT = Path(
+    "results/reports/post_deployable_commutator_update_closeout_selector/summary.json"
+)
 DEFAULT_STRATEGY_REVIEW = Path("../outputs/strategy-reviews/relaleap/latest-review.md")
 DEFAULT_OUT_DIR = Path("results/reports/post_dense_teacher_sparse_dictionary_branch_selector")
 
 REPAIR_ACTION = "repair_post_dense_teacher_sparse_dictionary_branch_selector_sources"
 CONTINUOUS_COEFFICIENT_ACTION = "design_continuous_coefficient_sparse_value_pregate"
 SOFT_MIXTURE_ACTION = "design_soft_mixture_residual_compression_pregate"
+SUPPORT_FORCING_PRUNING_ACTION = "design_dense_teacher_support_forcing_pruning_pregate"
 CONSERVATIVE_CLOSEOUT_ACTION = "keep_sparse_dictionary_closed_without_new_mechanism"
 HARD_DICTIONARY_ACTION = "continue_hard_in_column_sparse_value_dictionary"
 GPU_ACTION = "launch_gpu_validation_for_hard_sparse_dictionary"
@@ -48,6 +59,10 @@ def run_post_dense_teacher_sparse_dictionary_branch_selector(
     diagnostic_path: Path = DEFAULT_DIAGNOSTIC,
     capacity_assay_path: Path = DEFAULT_CAPACITY_ASSAY,
     failure_localization_path: Path = DEFAULT_FAILURE_LOCALIZATION,
+    continuous_closeout_path: Path = DEFAULT_CONTINUOUS_CLOSEOUT,
+    soft_mixture_closeout_path: Path = DEFAULT_SOFT_MIXTURE_CLOSEOUT,
+    scale_closeout_path: Path = DEFAULT_SCALE_CLOSEOUT,
+    commutator_closeout_path: Path = DEFAULT_COMMUTATOR_CLOSEOUT,
     strategy_review_path: Path = DEFAULT_STRATEGY_REVIEW,
     out_dir: Path = DEFAULT_OUT_DIR,
 ) -> dict[str, Any]:
@@ -58,12 +73,20 @@ def run_post_dense_teacher_sparse_dictionary_branch_selector(
     diagnostic = _read_json(diagnostic_path)
     capacity = _read_json(capacity_assay_path)
     failure_localization = _read_json(failure_localization_path)
+    continuous_closeout = _read_json(continuous_closeout_path)
+    soft_mixture_closeout = _read_json(soft_mixture_closeout_path)
+    scale_closeout = _read_json(scale_closeout_path)
+    commutator_closeout = _read_json(commutator_closeout_path)
     strategy = _strategy_review(strategy_review_path)
     source_rows = [
         _source_row("sparse_value_formulation_closeout", closeout_path, closeout),
         _source_row("sparse_value_selection_diagnostic", diagnostic_path, diagnostic),
         _source_row("value_capacity_norm_assay", capacity_assay_path, capacity),
         _source_row("columnability_failure_localization", failure_localization_path, failure_localization),
+        _source_row("continuous_coefficient_closeout", continuous_closeout_path, continuous_closeout),
+        _source_row("prunable_soft_mixture_residual_compression_closeout", soft_mixture_closeout_path, soft_mixture_closeout),
+        _source_row("scale_constrained_sparse_residual_compression_closeout", scale_closeout_path, scale_closeout),
+        _source_row("deployable_commutator_update_closeout", commutator_closeout_path, commutator_closeout),
         {
             "source": "strategy_review",
             "path": str(strategy_review_path),
@@ -79,7 +102,17 @@ def run_post_dense_teacher_sparse_dictionary_branch_selector(
             "git_commit": "",
         },
     ]
-    evidence = _evidence(closeout, diagnostic, capacity, failure_localization, strategy)
+    evidence = _evidence(
+        closeout,
+        diagnostic,
+        capacity,
+        failure_localization,
+        continuous_closeout,
+        soft_mixture_closeout,
+        scale_closeout,
+        commutator_closeout,
+        strategy,
+    )
     gate_rows = _gate_rows(evidence, source_rows)
     failures = _failures(source_rows, gate_rows)
     branch_rows = _branch_rows(evidence, failures)
@@ -136,10 +169,20 @@ def _evidence(
     diagnostic: dict[str, Any],
     capacity: dict[str, Any],
     failure_localization: dict[str, Any],
+    continuous_closeout: dict[str, Any],
+    soft_mixture_closeout: dict[str, Any],
+    scale_closeout: dict[str, Any],
+    commutator_closeout: dict[str, Any],
     strategy: dict[str, Any],
 ) -> dict[str, Any]:
     closeout_evidence = _as_dict(closeout.get("evidence"))
     failures = _list(diagnostic.get("failures"))
+    assay_rows = _list(capacity.get("arm_metrics"))
+    oracle_sparse = _arm(assay_rows, "oracle_support_norm_matched_multi_value_dictionary")
+    learned_sparse = _arm(assay_rows, "learned_router_norm_matched_multi_value_dictionary")
+    flat_value = _arm(assay_rows, "same_router_flat_value_norm_matched_control")
+    rank_control = _arm(assay_rows, "rank_matched_residual_control")
+    mlp_control = _arm(assay_rows, "norm_clipped_mlp_control")
     return {
         "closeout_status": closeout.get("status", ""),
         "closeout_decision": closeout.get("decision", ""),
@@ -175,6 +218,36 @@ def _evidence(
         "deployable_leakage_flags_false": bool(closeout_evidence.get("deployable_leakage_flags_false")),
         "oracle_value_code_non_deployable": bool(closeout_evidence.get("oracle_value_code_non_deployable")),
         "diagnostic_failure_count": len(failures),
+        "assay_arm_metrics_present": bool(assay_rows),
+        "oracle_sparse_r2": _coalesce_float(oracle_sparse.get("teacher_residual_reconstruction_r2")),
+        "oracle_sparse_ce_gap_closure": _coalesce_float(oracle_sparse.get("teacher_ce_gap_closure_fraction")),
+        "oracle_sparse_support_overlap": _coalesce_float(oracle_sparse.get("support_overlap_with_oracle")),
+        "oracle_sparse_support_entropy": _coalesce_float(oracle_sparse.get("support_load_entropy")),
+        "oracle_sparse_active_rank": _coalesce_float(oracle_sparse.get("active_rank_proxy")),
+        "oracle_sparse_commutator": _coalesce_float(oracle_sparse.get("finite_update_commutator_proxy")),
+        "oracle_sparse_retention": _coalesce_float(oracle_sparse.get("retention_proxy")),
+        "learned_sparse_r2": _coalesce_float(learned_sparse.get("teacher_residual_reconstruction_r2")),
+        "learned_sparse_ce_gap_closure": _coalesce_float(learned_sparse.get("teacher_ce_gap_closure_fraction")),
+        "learned_sparse_support_overlap": _coalesce_float(learned_sparse.get("support_overlap_with_oracle")),
+        "learned_sparse_support_entropy": _coalesce_float(learned_sparse.get("support_load_entropy")),
+        "learned_sparse_commutator": _coalesce_float(learned_sparse.get("finite_update_commutator_proxy")),
+        "learned_sparse_retention": _coalesce_float(learned_sparse.get("retention_proxy")),
+        "flat_value_r2": _coalesce_float(flat_value.get("teacher_residual_reconstruction_r2")),
+        "flat_value_ce_gap_closure": _coalesce_float(flat_value.get("teacher_ce_gap_closure_fraction")),
+        "flat_value_support_overlap": _coalesce_float(flat_value.get("support_overlap_with_oracle")),
+        "flat_value_commutator": _coalesce_float(flat_value.get("finite_update_commutator_proxy")),
+        "flat_value_retention": _coalesce_float(flat_value.get("retention_proxy")),
+        "rank_control_r2": _coalesce_float(rank_control.get("teacher_residual_reconstruction_r2")),
+        "rank_control_ce_gap_closure": _coalesce_float(rank_control.get("teacher_ce_gap_closure_fraction")),
+        "mlp_control_r2": _coalesce_float(mlp_control.get("teacher_residual_reconstruction_r2")),
+        "mlp_control_ce_gap_closure": _coalesce_float(mlp_control.get("teacher_ce_gap_closure_fraction")),
+        "continuous_closeout_claim_status": continuous_closeout.get("claim_status", ""),
+        "soft_mixture_closeout_claim_status": soft_mixture_closeout.get("claim_status", ""),
+        "scale_closeout_claim_status": scale_closeout.get("claim_status", ""),
+        "commutator_closeout_claim_status": commutator_closeout.get("claim_status", ""),
+        "continuous_selected_next_action": continuous_closeout.get("selected_next_action", ""),
+        "scale_selected_next_action": scale_closeout.get("selected_next_action", ""),
+        "commutator_selected_next_action": commutator_closeout.get("selected_next_action", ""),
         "strategy_recommended_next_action": strategy["recommended_next_action"],
         "strategy_verdict": strategy["verdict"],
         "ben_notification_required": strategy["ben_notification_required"],
@@ -232,6 +305,63 @@ def _gate_rows(evidence: dict[str, Any], source_rows: list[dict[str, Any]]) -> l
             ),
         ),
         _gate(
+            "dense_teacher_assay_observable_contract_present",
+            evidence["assay_arm_metrics_present"]
+            and evidence["oracle_sparse_r2"] is not None
+            and evidence["learned_sparse_r2"] is not None
+            and evidence["flat_value_r2"] is not None
+            and evidence["oracle_sparse_support_entropy"] is not None
+            and evidence["oracle_sparse_commutator"] is not None
+            and evidence["oracle_sparse_retention"] is not None,
+            "required",
+            (
+                f"oracle_r2={evidence['oracle_sparse_r2']}; learned_r2={evidence['learned_sparse_r2']}; "
+                f"flat_r2={evidence['flat_value_r2']}; oracle_entropy={evidence['oracle_sparse_support_entropy']}"
+            ),
+        ),
+        _gate(
+            "oracle_support_sparse_ceiling_still_low_under_new_observables",
+            _lt(evidence["oracle_sparse_r2"], 0.20)
+            and _lt(evidence["oracle_sparse_ce_gap_closure"], 0.25)
+            and _gt(evidence["oracle_sparse_support_overlap"], 0.99)
+            and _gt(evidence["oracle_sparse_support_entropy"], 0.80),
+            "scientific",
+            (
+                f"oracle_r2={evidence['oracle_sparse_r2']}; "
+                f"oracle_ce_gap_closure={evidence['oracle_sparse_ce_gap_closure']}; "
+                f"overlap={evidence['oracle_sparse_support_overlap']}; entropy={evidence['oracle_sparse_support_entropy']}"
+            ),
+        ),
+        _gate(
+            "flat_value_dominates_new_dense_teacher_observables",
+            _gt(_delta(evidence["flat_value_r2"], evidence["oracle_sparse_r2"]), 0.40)
+            and _gt(_delta(evidence["flat_value_ce_gap_closure"], evidence["oracle_sparse_ce_gap_closure"]), 0.50),
+            "scientific",
+            (
+                f"flat_r2={evidence['flat_value_r2']}; oracle_r2={evidence['oracle_sparse_r2']}; "
+                f"flat_gap_closure={evidence['flat_value_ce_gap_closure']}; "
+                f"oracle_gap_closure={evidence['oracle_sparse_ce_gap_closure']}"
+            ),
+        ),
+        _gate(
+            "later_residual_compression_paths_already_closed",
+            evidence["continuous_closeout_claim_status"] == "unconstrained_continuous_coefficients_retired_before_gpu"
+            and evidence["soft_mixture_closeout_claim_status"] == "prunable_soft_mixture_retired_before_gpu"
+            and evidence["scale_closeout_claim_status"] == "scale_constrained_sparse_residual_compression_retired_before_gpu",
+            "required",
+            (
+                f"continuous={evidence['continuous_closeout_claim_status']}; "
+                f"soft={evidence['soft_mixture_closeout_claim_status']}; "
+                f"scale={evidence['scale_closeout_claim_status']}"
+            ),
+        ),
+        _gate(
+            "deployable_commutator_update_line_already_closed",
+            evidence["commutator_closeout_claim_status"] == "commutator_update_mechanisms_not_established",
+            "required",
+            f"commutator_claim={evidence['commutator_closeout_claim_status']}",
+        ),
+        _gate(
             "gpu_validation_blocked",
             True,
             "required",
@@ -262,21 +392,28 @@ def _branch_rows(evidence: dict[str, Any], failures: list[dict[str, Any]]) -> li
         ),
         _branch(
             CONTINUOUS_COEFFICIENT_ACTION,
-            "selected",
-            (
-                "the next trainable candidate directly targets the observed blocker by keeping sparse support but "
-                "replacing hard value-code lookup with continuous per-active-column coefficients/value generation, "
-                "with norm, parameter, churn, commutator, retention, sparsity, and intervention-selectivity gates"
-            ),
-            "implement a local continuous-coefficient sparse-value pregate before any GPU validation",
-            "continuous_coefficient_sparse_value_pregate_selected_no_gpu",
+            "rejected",
+            "unconstrained continuous coefficients were already closed as dense-like and flat-control dominated",
+            "do not reopen continuous coefficients without a different support-forcing or pruning mechanism",
+            "continuous_coefficient_branch_already_closed",
         ),
         _branch(
             SOFT_MIXTURE_ACTION,
-            "deferred",
-            "soft mixtures are a plausible alternative but risk collapsing into dense adapters unless sparsity/selectivity gates are defined first",
-            "consider after the continuous-coefficient pregate or if it fails by becoming dense-like",
-            "soft_mixture_residual_compression_deferred",
+            "rejected",
+            "soft-mixture and scale-constrained compression variants were already closed by flat CE/MSE controls",
+            "do not iterate residual-compression variants without new dense-teacher headroom evidence",
+            "residual_compression_branches_already_closed",
+        ),
+        _branch(
+            SUPPORT_FORCING_PRUNING_ACTION,
+            "selected",
+            (
+                "the new assay observables show oracle support is clean and loaded but hard sparse values still have "
+                "low R2/CE-gap closure versus flat controls; the next executable local step should isolate support "
+                "forcing and causal-efficacy pruning rather than reopen closed value-compression or commutator lines"
+            ),
+            "implement a local dense-teacher support-forcing/pruning pregate with same values under oracle, learned, and permuted supports",
+            "dense_teacher_support_forcing_pruning_pregate_selected_no_gpu",
         ),
         _branch(
             CONSERVATIVE_CLOSEOUT_ACTION,
@@ -374,10 +511,11 @@ def _strategy_review_handling(strategy: dict[str, Any]) -> str:
         return (
             "Read the latest external review; it requests Ben notification or a major direction shift. "
             "The recommendation is accepted: hard sparse dictionaries are killed locally, GPU remains blocked, "
-            "and the next branch is a continuous-coefficient sparse-value pregate."
+            "and later closed compression/commutator branches are not reopened."
         )
     return (
-        "Read the latest external review and incorporated its local no-GPU branch-selection recommendation."
+        "Read the latest external review and incorporated its no-GPU dense-teacher assay recommendation; "
+        "later residual-compression and commutator closeouts are treated as closed evidence, not as branches to reopen."
     )
 
 
@@ -386,8 +524,8 @@ def _direction_shift(strategy: dict[str, Any]) -> dict[str, Any]:
         "strategic_change_level": strategy["strategic_change_level"],
         "ben_should_be_notified": bool(strategy["ben_notification_required"]),
         "direction": (
-            "retire the current hard in-column sparse value-code dictionary and select a continuous-coefficient "
-            "sparse residual value mechanism before any GPU validation"
+            "retire hard sparse dictionaries and closed compression/commutator variants; select a bounded local "
+            "dense-teacher support-forcing/pruning pregate before any GPU validation"
         ),
         "recommendation_disposition": "accepted",
         "deferred_or_rejected_recommendations": [],
@@ -430,6 +568,7 @@ def _notes(summary: dict[str, Any]) -> str:
             f"- Selected next action: {summary['selected_next_action']}",
             f"- Selected next step: {summary['selected_next_step']}",
             "- Hard in-column sparse value-code dictionary branch is killed.",
+            "- Continuous, soft-mixture, scale-constrained residual-compression, and deployable commutator-update branches are treated as closed local evidence.",
             "- GPU validation remains blocked: requires_gpu_now=false, promotion_allowed=false, advance_to_gpu_validation=false.",
             f"- Strategy review handling: {summary['strategy_review_handling']}",
             "",
@@ -449,6 +588,13 @@ def _list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
+def _arm(rows: list[Any], arm: str) -> dict[str, Any]:
+    for row in rows:
+        if isinstance(row, dict) and row.get("arm") == arm:
+            return row
+    return {}
+
+
 def _coalesce_float(*values: Any) -> float | None:
     for value in values:
         if value is None:
@@ -464,6 +610,16 @@ def _gt(value: float | None, threshold: float) -> bool:
     return value is not None and value > threshold
 
 
+def _lt(value: float | None, threshold: float) -> bool:
+    return value is not None and value < threshold
+
+
+def _delta(left: float | None, right: float | None) -> float | None:
+    if left is None or right is None:
+        return None
+    return left - right
+
+
 def _git_commit() -> str:
     try:
         return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -477,6 +633,10 @@ def main() -> None:
     parser.add_argument("--diagnostic", type=Path, default=DEFAULT_DIAGNOSTIC)
     parser.add_argument("--capacity-assay", type=Path, default=DEFAULT_CAPACITY_ASSAY)
     parser.add_argument("--failure-localization", type=Path, default=DEFAULT_FAILURE_LOCALIZATION)
+    parser.add_argument("--continuous-closeout", type=Path, default=DEFAULT_CONTINUOUS_CLOSEOUT)
+    parser.add_argument("--soft-mixture-closeout", type=Path, default=DEFAULT_SOFT_MIXTURE_CLOSEOUT)
+    parser.add_argument("--scale-closeout", type=Path, default=DEFAULT_SCALE_CLOSEOUT)
+    parser.add_argument("--commutator-closeout", type=Path, default=DEFAULT_COMMUTATOR_CLOSEOUT)
     parser.add_argument("--strategy-review", type=Path, default=DEFAULT_STRATEGY_REVIEW)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     args = parser.parse_args()
@@ -485,6 +645,10 @@ def main() -> None:
         diagnostic_path=args.diagnostic,
         capacity_assay_path=args.capacity_assay,
         failure_localization_path=args.failure_localization,
+        continuous_closeout_path=args.continuous_closeout,
+        soft_mixture_closeout_path=args.soft_mixture_closeout,
+        scale_closeout_path=args.scale_closeout,
+        commutator_closeout_path=args.commutator_closeout,
         strategy_review_path=args.strategy_review,
         out_dir=args.out,
     )

@@ -6,10 +6,10 @@ import unittest
 from pathlib import Path
 
 from relaleap.experiments.post_dense_teacher_sparse_dictionary_branch_selector import (
-    CONTINUOUS_COEFFICIENT_ACTION,
     HARD_DICTIONARY_ACTION,
     REPAIR_ACTION,
     REQUIRED_ARTIFACTS,
+    SUPPORT_FORCING_PRUNING_ACTION,
     run_post_dense_teacher_sparse_dictionary_branch_selector,
 )
 
@@ -37,13 +37,17 @@ class PostDenseTeacherSparseDictionaryBranchSelectorTests(unittest.TestCase):
             for artifact in REQUIRED_ARTIFACTS:
                 self.assertTrue((root / "out" / artifact).is_file(), artifact)
 
-    def test_kills_hard_dictionary_and_selects_continuous_coefficient_pregate(self) -> None:
+    def test_kills_closed_branches_and_selects_support_forcing_pruning_pregate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             closeout = root / "closeout.json"
             diagnostic = root / "diagnostic.json"
             capacity = root / "capacity.json"
             failure = root / "failure.json"
+            continuous = root / "continuous.json"
+            soft = root / "soft.json"
+            scale = root / "scale.json"
+            commutator = root / "commutator.json"
             review = root / "latest-review.md"
             _write_json(
                 closeout,
@@ -101,6 +105,46 @@ class PostDenseTeacherSparseDictionaryBranchSelectorTests(unittest.TestCase):
                     "requires_gpu_now": False,
                     "promotion_allowed": False,
                     "advance_to_gpu_validation": False,
+                    "arm_metrics": [
+                        {
+                            "arm": "oracle_support_norm_matched_multi_value_dictionary",
+                            "teacher_residual_reconstruction_r2": 0.062943,
+                            "teacher_ce_gap_closure_fraction": 0.019181,
+                            "support_overlap_with_oracle": 1.0,
+                            "support_load_entropy": 0.985001,
+                            "active_rank_proxy": 5,
+                            "finite_update_commutator_proxy": 11.172819,
+                            "retention_proxy": 0.882812,
+                        },
+                        {
+                            "arm": "learned_router_norm_matched_multi_value_dictionary",
+                            "teacher_residual_reconstruction_r2": 0.041416,
+                            "teacher_ce_gap_closure_fraction": -0.666122,
+                            "support_overlap_with_oracle": 0.59375,
+                            "support_load_entropy": 0.955582,
+                            "active_rank_proxy": 5,
+                            "finite_update_commutator_proxy": 10.872332,
+                            "retention_proxy": 0.867188,
+                        },
+                        {
+                            "arm": "same_router_flat_value_norm_matched_control",
+                            "teacher_residual_reconstruction_r2": 0.677639,
+                            "teacher_ce_gap_closure_fraction": 0.923228,
+                            "support_overlap_with_oracle": 0.59375,
+                            "finite_update_commutator_proxy": 11.130129,
+                            "retention_proxy": 0.976562,
+                        },
+                        {
+                            "arm": "rank_matched_residual_control",
+                            "teacher_residual_reconstruction_r2": 0.476134,
+                            "teacher_ce_gap_closure_fraction": 0.363945,
+                        },
+                        {
+                            "arm": "norm_clipped_mlp_control",
+                            "teacher_residual_reconstruction_r2": 0.597164,
+                            "teacher_ce_gap_closure_fraction": 1.14326,
+                        },
+                    ],
                 },
             )
             _write_json(
@@ -109,6 +153,53 @@ class PostDenseTeacherSparseDictionaryBranchSelectorTests(unittest.TestCase):
                     "status": "pass",
                     "decision": "dense_teacher_residual_columnability_failure_localization_recorded",
                     "claim_status": "dense_teacher_residual_columnability_failure_localized_gpu_blocked",
+                    "requires_gpu_now": False,
+                    "promotion_allowed": False,
+                    "advance_to_gpu_validation": False,
+                },
+            )
+            _write_json(
+                continuous,
+                {
+                    "status": "pass",
+                    "decision": "continuous_coefficient_branch_closed_no_gpu",
+                    "claim_status": "unconstrained_continuous_coefficients_retired_before_gpu",
+                    "selected_next_action": "design_prunable_soft_mixture_residual_compression_pregate",
+                    "requires_gpu_now": False,
+                    "promotion_allowed": False,
+                    "advance_to_gpu_validation": False,
+                },
+            )
+            _write_json(
+                soft,
+                {
+                    "status": "pass",
+                    "decision": "prunable_soft_mixture_residual_compression_closed_no_gpu",
+                    "claim_status": "prunable_soft_mixture_retired_before_gpu",
+                    "requires_gpu_now": False,
+                    "promotion_allowed": False,
+                    "advance_to_gpu_validation": False,
+                },
+            )
+            _write_json(
+                scale,
+                {
+                    "status": "pass",
+                    "decision": "scale_constrained_sparse_residual_compression_closed_no_gpu",
+                    "claim_status": "scale_constrained_sparse_residual_compression_retired_before_gpu",
+                    "selected_next_action": "redirect_to_mechanism_factorized_continual_learning_local_gate",
+                    "requires_gpu_now": False,
+                    "promotion_allowed": False,
+                    "advance_to_gpu_validation": False,
+                },
+            )
+            _write_json(
+                commutator,
+                {
+                    "status": "pass",
+                    "decision": "deployable_commutator_update_line_closed_no_gpu",
+                    "claim_status": "commutator_update_mechanisms_not_established",
+                    "selected_next_action": "close_deployable_commutator_update_line_before_gpu",
                     "requires_gpu_now": False,
                     "promotion_allowed": False,
                     "advance_to_gpu_validation": False,
@@ -132,16 +223,20 @@ class PostDenseTeacherSparseDictionaryBranchSelectorTests(unittest.TestCase):
                 diagnostic_path=diagnostic,
                 capacity_assay_path=capacity,
                 failure_localization_path=failure,
+                continuous_closeout_path=continuous,
+                soft_mixture_closeout_path=soft,
+                scale_closeout_path=scale,
+                commutator_closeout_path=commutator,
                 strategy_review_path=review,
                 out_dir=root / "out",
             )
 
             self.assertEqual(summary["status"], "pass")
             self.assertEqual(summary["decision"], "post_dense_teacher_sparse_dictionary_branch_selected")
-            self.assertEqual(summary["selected_next_action"], CONTINUOUS_COEFFICIENT_ACTION)
+            self.assertEqual(summary["selected_next_action"], SUPPORT_FORCING_PRUNING_ACTION)
             self.assertEqual(
                 summary["claim_status"],
-                "continuous_coefficient_sparse_value_pregate_selected_no_gpu",
+                "dense_teacher_support_forcing_pruning_pregate_selected_no_gpu",
             )
             self.assertFalse(summary["requires_gpu_now"])
             self.assertFalse(summary["promotion_allowed"])
@@ -159,9 +254,13 @@ class PostDenseTeacherSparseDictionaryBranchSelectorTests(unittest.TestCase):
             gates = {row["gate"]: row for row in summary["gate_rows"]}
             self.assertTrue(gates["flat_value_dominates_non_deployable_sparse_ceilings"]["passed"])
             self.assertTrue(gates["deployable_sparse_loses_ce_guardrail"]["passed"])
+            self.assertTrue(gates["dense_teacher_assay_observable_contract_present"]["passed"])
+            self.assertTrue(gates["flat_value_dominates_new_dense_teacher_observables"]["passed"])
+            self.assertTrue(gates["later_residual_compression_paths_already_closed"]["passed"])
+            self.assertTrue(gates["deployable_commutator_update_line_already_closed"]["passed"])
             notes = (root / "out" / "notes.md").read_text(encoding="utf-8")
             self.assertIn("Hard in-column sparse value-code dictionary branch is killed", notes)
-            self.assertIn(CONTINUOUS_COEFFICIENT_ACTION, notes)
+            self.assertIn(SUPPORT_FORCING_PRUNING_ACTION, notes)
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:
