@@ -543,12 +543,19 @@ def _arm_metrics(
     logits = data["base_logits_holdout"] + pred
     ce = float(F.cross_entropy(logits, data["y_holdout"]).item())
     mse = float(F.mse_loss(pred, target).item())
+    target_variance = float(torch.mean((target - target.mean(dim=0, keepdim=True)) ** 2).item())
+    reconstruction_r2 = 1.0 - mse / max(target_variance, 1e-8)
+    teacher_gap = max(base_ce - teacher_ce, 1e-8)
+    ce_gap_closure = (base_ce - ce) / teacher_gap
     residual_l2 = torch.linalg.vector_norm(pred, dim=1)
     teacher_l2 = torch.linalg.vector_norm(target, dim=1)
     churn = float((logits.argmax(dim=-1) != data["base_logits_holdout"].argmax(dim=-1)).float().mean().item())
     teacher_logits = data["base_logits_holdout"] + target
     teacher_churn = float((teacher_logits.argmax(dim=-1) != data["base_logits_holdout"].argmax(dim=-1)).float().mean().item())
     retention = max(0.0, 1.0 - abs(churn - teacher_churn))
+    support_load_entropy = _support_load_entropy(torch, support, column_count)
+    support_overlap = float((support == data["support_holdout"]).float().mean().item())
+    active_rank = _active_rank_proxy(torch, pred)
     return {
         "arm": arm,
         "row_source": "bounded_local_cpu_trained_value_capacity_norm_control_assay",
@@ -558,11 +565,16 @@ def _arm_metrics(
         "dense_teacher_ce": round(teacher_ce, 6),
         "ce_gap_vs_dense_teacher": round(ce - teacher_ce, 6),
         "ce_improvement_vs_base": round(base_ce - ce, 6),
+        "teacher_ce_gap_closure_fraction": round(ce_gap_closure, 6),
         "teacher_residual_reconstruction_mse": round(mse, 6),
+        "teacher_residual_reconstruction_r2": round(reconstruction_r2, 6),
         "functional_churn": round(churn, 6),
         "retention_proxy": round(retention, 6),
         "finite_update_commutator_proxy": round(_commutator_proxy(torch, pred, support), 6),
         "intervention_selectivity_proxy": round(_selectivity_proxy(torch, pred, target, support), 6),
+        "support_load_entropy": round(support_load_entropy, 6),
+        "support_overlap_with_oracle": round(support_overlap, 6),
+        "active_rank_proxy": active_rank,
         "residual_l2_mean": round(float(residual_l2.mean().item()), 6),
         "residual_l2_p95": round(float(torch.quantile(residual_l2, 0.95).item()), 6),
         "teacher_residual_l2_mean": round(float(teacher_l2.mean().item()), 6),
@@ -578,6 +590,26 @@ def _arm_metrics(
         "feature_schema_hash": "prefix_x_position_support_only_v2",
         "note": note,
     }
+
+
+def _support_load_entropy(torch: Any, support: Any, column_count: int) -> float:
+    if column_count <= 1 or len(support) == 0:
+        return 0.0
+    counts = torch.bincount(support.long(), minlength=column_count).float()
+    probs = counts / counts.sum().clamp_min(1.0)
+    entropy = -(probs * torch.log(probs.clamp_min(1e-8))).sum()
+    return float((entropy / math.log(column_count)).item())
+
+
+def _active_rank_proxy(torch: Any, pred: Any) -> int:
+    if pred.numel() == 0:
+        return 0
+    centered = pred - pred.mean(dim=0, keepdim=True)
+    singular_values = torch.linalg.svdvals(centered)
+    if len(singular_values) == 0:
+        return 0
+    threshold = singular_values.max().clamp_min(1e-8) * 0.05
+    return int((singular_values > threshold).sum().item())
 
 
 def _commutator_proxy(torch: Any, pred: Any, support: Any) -> float:
