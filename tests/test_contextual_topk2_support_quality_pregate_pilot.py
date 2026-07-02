@@ -94,10 +94,25 @@ class ContextualTopk2SupportQualityPregatePilotTest(unittest.TestCase):
             self.assertTrue((root / "report" / "arm_metrics.csv").is_file())
             self.assertTrue((root / "report" / "fold_policy_rows.csv").is_file())
             self.assertTrue((root / "report" / "per_token_policy_rows.csv").is_file())
+            self.assertTrue((root / "report" / "same_student_forced_support_rows.csv").is_file())
+            self.assertTrue((root / "report" / "same_student_intervention_summary.csv").is_file())
             with (root / "report" / "arm_metrics.csv").open(newline="", encoding="utf-8") as handle:
                 arms = {row["arm"] for row in csv.DictReader(handle)}
             self.assertIn("per_token_one_swap_route_only", arms)
             self.assertIn("churn_aware_per_token_one_swap_route_only", arms)
+            with (root / "report" / "same_student_intervention_summary.csv").open(
+                newline="", encoding="utf-8"
+            ) as handle:
+                intervention_rows = list(csv.DictReader(handle))
+            churn_aware_interventions = [
+                row
+                for row in intervention_rows
+                if row["arm"] == "churn_aware_per_token_one_swap_route_only"
+            ]
+            self.assertTrue(churn_aware_interventions)
+            self.assertTrue(
+                any(float(row["mean_forced_gain_vs_linear"]) > 0 for row in churn_aware_interventions)
+            )
             self.assertIn(
                 "per_token_one_swap_does_not_increase_support_churn_vs_linear",
                 {
@@ -108,6 +123,14 @@ class ContextualTopk2SupportQualityPregatePilotTest(unittest.TestCase):
             )
             self.assertIn(
                 "churn_aware_per_token_one_swap_does_not_increase_support_churn_vs_linear",
+                {row["criterion"] for row in summary["gate_criteria"]},
+            )
+            self.assertIn(
+                "same_student_forced_support_rows_present",
+                {row["criterion"] for row in summary["gate_criteria"]},
+            )
+            self.assertIn(
+                "churn_aware_same_student_forced_support_improves_linear_regret",
                 {row["criterion"] for row in summary["gate_criteria"]},
             )
 

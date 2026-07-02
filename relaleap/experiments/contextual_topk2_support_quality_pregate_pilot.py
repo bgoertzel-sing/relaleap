@@ -35,6 +35,8 @@ REQUIRED_ARTIFACTS = (
     "arm_metrics.csv",
     "fold_policy_rows.csv",
     "per_token_policy_rows.csv",
+    "same_student_forced_support_rows.csv",
+    "same_student_intervention_summary.csv",
     "gate_criteria.csv",
     "notes.md",
 )
@@ -83,6 +85,8 @@ def run_contextual_topk2_support_quality_pregate_pilot(
     source_failures = _source_failures(source_rows, branch_selector)
     fold_policy_rows = []
     per_token_policy_rows = []
+    same_student_rows = []
+    intervention_summary_rows = []
     arm_rows = []
     if not source_failures:
         fold_policy_rows = _fold_policy_rows(
@@ -95,10 +99,16 @@ def run_contextual_topk2_support_quality_pregate_pilot(
             regret_margin=regret_margin,
             support_switch_penalty=support_switch_penalty,
         )
+        same_student_rows = _same_student_forced_support_rows(per_token_policy_rows)
+        intervention_summary_rows = _same_student_intervention_summary_rows(
+            [local, runpod],
+            same_student_rows,
+        )
         arm_rows = _arm_rows([local, runpod], fold_policy_rows, per_token_policy_rows, active)
     gates = _gate_criteria(
         source_failures,
         arm_rows,
+        intervention_summary_rows,
         branch_selector,
         strategy,
         ce_guardrail_tolerance=ce_guardrail_tolerance,
@@ -134,11 +144,12 @@ def run_contextual_topk2_support_quality_pregate_pilot(
                 "the contextual router's worse regret/churn rows, but collapses to "
                 "the linear support policy. The per-token one-swap label arm recovers "
                 "some local oracle-regret headroom; the churn-aware variant tests "
-                "whether that headroom can be retained under a switching penalty. "
+                "whether that headroom can be retained under a switching penalty and "
+                "now emits same-student forced-support proxy/selectivity rows. "
                 "This remains local route-only evidence, not promotion or GPU evidence."
             )
 
-    evidence = _evidence(arm_rows, fold_policy_rows, active, strategy)
+    evidence = _evidence(arm_rows, fold_policy_rows, intervention_summary_rows, active, strategy)
     summary = {
         "status": status,
         "decision": decision,
@@ -177,7 +188,16 @@ def run_contextual_topk2_support_quality_pregate_pilot(
         "git_commit": _git_commit(),
         "artifacts": {name.replace(".", "_"): str(out_dir / name) for name in REQUIRED_ARTIFACTS},
     }
-    _write_artifacts(out_dir, summary, arm_rows, fold_policy_rows, per_token_policy_rows, gates)
+    _write_artifacts(
+        out_dir,
+        summary,
+        arm_rows,
+        fold_policy_rows,
+        per_token_policy_rows,
+        same_student_rows,
+        intervention_summary_rows,
+        gates,
+    )
     return summary
 
 
@@ -426,6 +446,143 @@ def _per_token_policy_rows(
     return rows
 
 
+def _same_student_forced_support_rows(per_token_policy_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in per_token_policy_rows:
+        linear_loss = _float(row.get("linear_actual_support_loss"))
+        selected_loss = _float(row.get("selected_support_loss"))
+        oracle_loss = _float(row.get("oracle_support_loss"))
+        oracle_headroom = max(linear_loss - oracle_loss, 0.0)
+        selected_gain = linear_loss - selected_loss
+        rows.append(
+            {
+                "backend": row["backend"],
+                "policy_arm": row["policy_arm"],
+                "fold": row["fold"],
+                "sequence_index": row["sequence_index"],
+                "position_index": row["position_index"],
+                "target_token": row["target_token"],
+                "forced_support": row["selected_support"],
+                "linear_support": row["linear_actual_support"],
+                "oracle_support": row["oracle_support"],
+                "contextual_support": row["contextual_actual_support"],
+                "accepted_one_swap": row["accepted_one_swap"],
+                "switch_penalty_applied": row["switch_penalty_applied"],
+                "forced_support_loss": selected_loss,
+                "linear_support_loss": linear_loss,
+                "oracle_support_loss": oracle_loss,
+                "forced_gain_vs_linear": selected_gain,
+                "oracle_headroom_vs_linear": oracle_headroom,
+                "oracle_headroom_capture": (
+                    selected_gain / oracle_headroom if oracle_headroom > 0 else 0.0
+                ),
+                "forced_regret_vs_oracle": selected_loss - oracle_loss,
+                "linear_regret_vs_oracle": linear_loss - oracle_loss,
+                "selective_improvement": selected_gain > 0 and row["selected_support"] == row["oracle_support"],
+                "off_oracle_harm": selected_gain < 0 and row["selected_support"] != row["oracle_support"],
+                "same_student_intervention_proxy": True,
+            }
+        )
+    return rows
+
+
+def _same_student_intervention_summary_rows(
+    packets: list[dict[str, Any]],
+    same_student_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    by_backend_policy: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in same_student_rows:
+        by_backend_policy.setdefault((row["backend"], row["policy_arm"]), []).append(row)
+    for (backend, policy_arm), policy_rows in sorted(by_backend_policy.items()):
+        rows.append(_summarize_intervention_rows(backend, policy_arm, "candidate", policy_rows))
+
+    packet_by_backend = {packet["backend"]: packet for packet in packets}
+    for backend, packet in sorted(packet_by_backend.items()):
+        labels = packet.get("per_token_support_labels", [])
+        if labels:
+            rows.append(_linear_intervention_summary(backend, labels))
+        aggregate = _aggregate_by_control(packet.get("fold_metrics", []))
+        for arm, control, key, role in (
+            ("token_position_only_linear_proxy", "linear_topk2", "router_loss", "token_position_control"),
+            ("shuffled_contextual_support_labels", "causal_contextual_topk2", "shuffled_support_loss", "shuffled_null"),
+            ("random_contextual_support", "causal_contextual_topk2", "random_support_loss", "random_null"),
+        ):
+            control_rows = aggregate.get(control, [])
+            if control_rows:
+                rows.append(
+                    {
+                        "backend": backend,
+                        "arm": arm,
+                        "role": role,
+                        "row_count": len(control_rows),
+                        "mean_forced_support_loss": _mean(_float(row.get(key)) for row in control_rows),
+                        "mean_linear_support_loss": "",
+                        "mean_oracle_support_loss": "",
+                        "mean_forced_gain_vs_linear": "",
+                        "mean_oracle_headroom_capture": "",
+                        "mean_forced_regret_vs_oracle": "",
+                        "selective_improvement_fraction": "",
+                        "off_oracle_harm_fraction": "",
+                        "accepted_one_swap_fraction": "",
+                        "same_student_intervention_proxy": False,
+                    }
+                )
+    return rows
+
+
+def _summarize_intervention_rows(
+    backend: str, arm: str, role: str, rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    return {
+        "backend": backend,
+        "arm": arm,
+        "role": role,
+        "row_count": len(rows),
+        "mean_forced_support_loss": _mean(row["forced_support_loss"] for row in rows),
+        "mean_linear_support_loss": _mean(row["linear_support_loss"] for row in rows),
+        "mean_oracle_support_loss": _mean(row["oracle_support_loss"] for row in rows),
+        "mean_forced_gain_vs_linear": _mean(row["forced_gain_vs_linear"] for row in rows),
+        "mean_oracle_headroom_capture": _mean(row["oracle_headroom_capture"] for row in rows),
+        "mean_forced_regret_vs_oracle": _mean(row["forced_regret_vs_oracle"] for row in rows),
+        "selective_improvement_fraction": _mean(
+            1.0 if row["selective_improvement"] else 0.0 for row in rows
+        ),
+        "off_oracle_harm_fraction": _mean(1.0 if row["off_oracle_harm"] else 0.0 for row in rows),
+        "accepted_one_swap_fraction": _mean(1.0 if row["accepted_one_swap"] else 0.0 for row in rows),
+        "same_student_intervention_proxy": True,
+    }
+
+
+def _linear_intervention_summary(backend: str, labels: list[dict[str, str]]) -> dict[str, Any]:
+    linear_rows = [row for row in labels if row.get("control") == "linear_topk2"]
+    forced_rows = []
+    for row in linear_rows:
+        linear_loss = _float(row.get("actual_support_loss"))
+        oracle_loss = _float(row.get("oracle_support_loss"))
+        forced_rows.append(
+            {
+                "forced_support_loss": linear_loss,
+                "linear_support_loss": linear_loss,
+                "oracle_support_loss": oracle_loss,
+                "forced_gain_vs_linear": 0.0,
+                "oracle_headroom_capture": 0.0,
+                "forced_regret_vs_oracle": linear_loss - oracle_loss,
+                "selective_improvement": False,
+                "off_oracle_harm": False,
+                "accepted_one_swap": False,
+            }
+        )
+    return _summarize_intervention_rows(backend, "linear_topk2", "strong_control", forced_rows)
+
+
+def _aggregate_by_control(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
+    result: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        result.setdefault(row.get("control", ""), []).append(row)
+    return result
+
+
 def _summarize_control(backend: str, control: str, rows: list[dict[str, str]]) -> dict[str, Any]:
     role = {
         "linear_topk2": "strong_control",
@@ -498,6 +655,7 @@ def _variant_row(
 def _gate_criteria(
     source_failures: list[dict[str, Any]],
     arm_rows: list[dict[str, Any]],
+    intervention_summary_rows: list[dict[str, Any]],
     branch_selector: dict[str, Any],
     strategy: dict[str, Any],
     *,
@@ -513,6 +671,7 @@ def _gate_criteria(
             )
         ]
     by_backend = _rows_by_backend_arm(arm_rows)
+    intervention_by_backend = _rows_by_backend_arm(intervention_summary_rows)
     backend_rows = []
     for backend, arms in sorted(by_backend.items()):
         candidate = arms.get("pregated_contextual_topk2_route_only", {})
@@ -525,6 +684,14 @@ def _gate_criteria(
         shuffled = arms.get("shuffled_contextual_support_labels", {})
         random = arms.get("random_contextual_support", {})
         token_position = arms.get("token_position_only_linear_proxy", {})
+        intervention_arms = intervention_by_backend.get(backend, {})
+        churn_aware_intervention = intervention_arms.get(
+            "churn_aware_per_token_one_swap_route_only", {}
+        )
+        linear_intervention = intervention_arms.get("linear_topk2", {})
+        token_position_intervention = intervention_arms.get("token_position_only_linear_proxy", {})
+        shuffled_intervention = intervention_arms.get("shuffled_contextual_support_labels", {})
+        random_intervention = intervention_arms.get("random_contextual_support", {})
         backend_rows.append(
             {
                 "backend": backend,
@@ -575,6 +742,34 @@ def _gate_criteria(
                 ),
                 "churn_aware_per_token_candidate_swap_fraction": churn_aware_per_token_candidate.get(
                     "accepted_contextual_swap_fraction"
+                ),
+                "churn_aware_forced_gain_vs_linear": churn_aware_intervention.get(
+                    "mean_forced_gain_vs_linear"
+                ),
+                "linear_forced_gain_vs_linear": linear_intervention.get(
+                    "mean_forced_gain_vs_linear"
+                ),
+                "churn_aware_forced_regret_delta_vs_linear": _delta(
+                    churn_aware_intervention.get("mean_forced_regret_vs_oracle"),
+                    linear_intervention.get("mean_forced_regret_vs_oracle"),
+                ),
+                "churn_aware_selective_improvement_fraction": churn_aware_intervention.get(
+                    "selective_improvement_fraction"
+                ),
+                "churn_aware_off_oracle_harm_fraction": churn_aware_intervention.get(
+                    "off_oracle_harm_fraction"
+                ),
+                "churn_aware_forced_loss_minus_token_position": _delta(
+                    churn_aware_intervention.get("mean_forced_support_loss"),
+                    token_position_intervention.get("mean_forced_support_loss"),
+                ),
+                "churn_aware_forced_loss_minus_shuffled": _delta(
+                    churn_aware_intervention.get("mean_forced_support_loss"),
+                    shuffled_intervention.get("mean_forced_support_loss"),
+                ),
+                "churn_aware_forced_loss_minus_random": _delta(
+                    churn_aware_intervention.get("mean_forced_support_loss"),
+                    random_intervention.get("mean_forced_support_loss"),
                 ),
             }
         )
@@ -674,6 +869,54 @@ def _gate_criteria(
             backend_rows,
         ),
         _criterion(
+            "same_student_forced_support_rows_present",
+            bool(intervention_summary_rows)
+            and any(
+                row.get("arm") == "churn_aware_per_token_one_swap_route_only"
+                and row.get("same_student_intervention_proxy") is True
+                for row in intervention_summary_rows
+            ),
+            "same-student forced-support proxy rows must be emitted for the churn-aware per-token arm",
+            intervention_summary_rows,
+        ),
+        _criterion(
+            "churn_aware_same_student_forced_support_improves_linear_regret",
+            any(
+                row["churn_aware_forced_regret_delta_vs_linear"] is not None
+                and row["churn_aware_forced_regret_delta_vs_linear"] < 0
+                for row in backend_rows
+            ),
+            "churn-aware forced supports should reduce same-student oracle-regret proxy versus linear on at least one source",
+            backend_rows,
+        ),
+        _criterion(
+            "churn_aware_same_student_selectivity_not_harm_dominated",
+            all(
+                row["churn_aware_selective_improvement_fraction"] not in (None, "")
+                and row["churn_aware_off_oracle_harm_fraction"] not in (None, "")
+                and row["churn_aware_selective_improvement_fraction"]
+                >= row["churn_aware_off_oracle_harm_fraction"]
+                for row in backend_rows
+                if row["churn_aware_forced_regret_delta_vs_linear"] is not None
+            ),
+            "churn-aware forced-support gains should not be dominated by off-oracle harm",
+            backend_rows,
+        ),
+        _criterion(
+            "churn_aware_same_student_beats_null_forced_support_controls",
+            any(
+                row["churn_aware_forced_loss_minus_token_position"] is not None
+                and row["churn_aware_forced_loss_minus_token_position"] <= ce_guardrail_tolerance
+                and row["churn_aware_forced_loss_minus_shuffled"] is not None
+                and row["churn_aware_forced_loss_minus_shuffled"] < 0
+                and row["churn_aware_forced_loss_minus_random"] is not None
+                and row["churn_aware_forced_loss_minus_random"] < 0
+                for row in backend_rows
+            ),
+            "churn-aware forced-support proxy should beat shuffled/random support controls and avoid losing materially to token-position",
+            backend_rows,
+        ),
+        _criterion(
             "gpu_validation_remains_blocked_until_all_support_quality_gates_pass",
             True,
             "this local pilot is not itself GPU evidence; GPU remains blocked unless all above gates pass in a future run",
@@ -685,10 +928,12 @@ def _gate_criteria(
 def _evidence(
     arm_rows: list[dict[str, Any]],
     fold_policy_rows: list[dict[str, Any]],
+    intervention_summary_rows: list[dict[str, Any]],
     active: dict[str, Any],
     strategy: dict[str, Any],
 ) -> dict[str, Any]:
     by_backend = _rows_by_backend_arm(arm_rows)
+    intervention_by_backend = _rows_by_backend_arm(intervention_summary_rows)
     backend_summaries = {}
     for backend, arms in by_backend.items():
         candidate = arms.get("pregated_contextual_topk2_route_only", {})
@@ -698,6 +943,11 @@ def _evidence(
         )
         linear = arms.get("linear_topk2", {})
         contextual = arms.get("causal_contextual_topk2", {})
+        intervention_arms = intervention_by_backend.get(backend, {})
+        churn_aware_intervention = intervention_arms.get(
+            "churn_aware_per_token_one_swap_route_only", {}
+        )
+        linear_intervention = intervention_arms.get("linear_topk2", {})
         backend_summaries[backend] = {
             "candidate_mean_router_loss": candidate.get("mean_router_loss"),
             "linear_mean_router_loss": linear.get("mean_router_loss"),
@@ -769,11 +1019,28 @@ def _evidence(
             "churn_aware_per_token_candidate_accepted_one_swap_fraction": churn_aware_per_token_candidate.get(
                 "accepted_contextual_swap_fraction"
             ),
+            "churn_aware_same_student_forced_gain_vs_linear": churn_aware_intervention.get(
+                "mean_forced_gain_vs_linear"
+            ),
+            "churn_aware_same_student_forced_regret_delta_vs_linear": _delta(
+                churn_aware_intervention.get("mean_forced_regret_vs_oracle"),
+                linear_intervention.get("mean_forced_regret_vs_oracle"),
+            ),
+            "churn_aware_same_student_headroom_capture": churn_aware_intervention.get(
+                "mean_oracle_headroom_capture"
+            ),
+            "churn_aware_same_student_selective_improvement_fraction": churn_aware_intervention.get(
+                "selective_improvement_fraction"
+            ),
+            "churn_aware_same_student_off_oracle_harm_fraction": churn_aware_intervention.get(
+                "off_oracle_harm_fraction"
+            ),
         }
     active_evidence = active.get("evidence", {}) if isinstance(active.get("evidence"), dict) else {}
     return {
         "backend_summaries": backend_summaries,
         "fold_count": len(fold_policy_rows),
+        "same_student_intervention_summary_count": len(intervention_summary_rows),
         "all_values_frozen": bool(arm_rows) and all(row.get("value_status") == "frozen" for row in arm_rows),
         "training_executed": False,
         "active_topk1_control_claim_status": active.get("claim_status"),
@@ -822,9 +1089,9 @@ def _selected_next_step(status: str, failures: list[dict[str, Any]]) -> str:
         return "repair missing contextual top-k-2 support-quality pregate sources"
     if failures:
         return (
-            "keep GPU validation blocked; add same-student forced-support intervention "
-            "rows for the churn-aware per-token one-swap arm and recheck selectivity "
-            "against linear, token-position, shuffled, and random controls"
+            "keep GPU validation blocked; replace the oracle-label per-token one-swap "
+            "arm with a trained prefix-safe pair-quality scorer and shuffled/token-position "
+            "label controls"
         )
     return "run local artifact checks, then consider the configured GPU backend for validation"
 
@@ -915,6 +1182,8 @@ def _write_artifacts(
     arm_rows: list[dict[str, Any]],
     fold_policy_rows: list[dict[str, Any]],
     per_token_policy_rows: list[dict[str, Any]],
+    same_student_rows: list[dict[str, Any]],
+    intervention_summary_rows: list[dict[str, Any]],
     gate_rows: list[dict[str, Any]],
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -998,6 +1267,55 @@ def _write_artifacts(
             "selected_support_width",
         ],
         per_token_policy_rows,
+    )
+    _write_csv(
+        out_dir / "same_student_forced_support_rows.csv",
+        [
+            "backend",
+            "policy_arm",
+            "fold",
+            "sequence_index",
+            "position_index",
+            "target_token",
+            "forced_support",
+            "linear_support",
+            "oracle_support",
+            "contextual_support",
+            "accepted_one_swap",
+            "switch_penalty_applied",
+            "forced_support_loss",
+            "linear_support_loss",
+            "oracle_support_loss",
+            "forced_gain_vs_linear",
+            "oracle_headroom_vs_linear",
+            "oracle_headroom_capture",
+            "forced_regret_vs_oracle",
+            "linear_regret_vs_oracle",
+            "selective_improvement",
+            "off_oracle_harm",
+            "same_student_intervention_proxy",
+        ],
+        same_student_rows,
+    )
+    _write_csv(
+        out_dir / "same_student_intervention_summary.csv",
+        [
+            "backend",
+            "arm",
+            "role",
+            "row_count",
+            "mean_forced_support_loss",
+            "mean_linear_support_loss",
+            "mean_oracle_support_loss",
+            "mean_forced_gain_vs_linear",
+            "mean_oracle_headroom_capture",
+            "mean_forced_regret_vs_oracle",
+            "selective_improvement_fraction",
+            "off_oracle_harm_fraction",
+            "accepted_one_swap_fraction",
+            "same_student_intervention_proxy",
+        ],
+        intervention_summary_rows,
     )
     _write_csv(
         out_dir / "gate_criteria.csv",
