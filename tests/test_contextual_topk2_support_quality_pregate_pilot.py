@@ -95,10 +95,9 @@ class ContextualTopk2SupportQualityPregatePilotTest(unittest.TestCase):
             self.assertTrue((root / "report" / "fold_policy_rows.csv").is_file())
             self.assertTrue((root / "report" / "per_token_policy_rows.csv").is_file())
             with (root / "report" / "arm_metrics.csv").open(newline="", encoding="utf-8") as handle:
-                self.assertIn(
-                    "per_token_one_swap_route_only",
-                    {row["arm"] for row in csv.DictReader(handle)},
-                )
+                arms = {row["arm"] for row in csv.DictReader(handle)}
+            self.assertIn("per_token_one_swap_route_only", arms)
+            self.assertIn("churn_aware_per_token_one_swap_route_only", arms)
             self.assertIn(
                 "per_token_one_swap_does_not_increase_support_churn_vs_linear",
                 {
@@ -106,6 +105,10 @@ class ContextualTopk2SupportQualityPregatePilotTest(unittest.TestCase):
                     for row in summary["gate_criteria"]
                     if not row["passed"]
                 },
+            )
+            self.assertIn(
+                "churn_aware_per_token_one_swap_does_not_increase_support_churn_vs_linear",
+                {row["criterion"] for row in summary["gate_criteria"]},
             )
 
     def test_fails_closed_when_support_source_missing(self) -> None:

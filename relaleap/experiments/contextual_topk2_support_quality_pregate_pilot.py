@@ -50,6 +50,7 @@ def run_contextual_topk2_support_quality_pregate_pilot(
     out_dir: Path = DEFAULT_OUT_DIR,
     regret_margin: float = 0.002,
     churn_margin: float = 0.0,
+    support_switch_penalty: float = 0.004,
     ce_guardrail_tolerance: float = 0.02,
 ) -> dict[str, Any]:
     """Run a fail-closed route-only pregate over existing support-audit rows."""
@@ -92,6 +93,7 @@ def run_contextual_topk2_support_quality_pregate_pilot(
         per_token_policy_rows = _per_token_policy_rows(
             [local, runpod],
             regret_margin=regret_margin,
+            support_switch_penalty=support_switch_penalty,
         )
         arm_rows = _arm_rows([local, runpod], fold_policy_rows, per_token_policy_rows, active)
     gates = _gate_criteria(
@@ -131,8 +133,9 @@ def run_contextual_topk2_support_quality_pregate_pilot(
                 "The executable fold-level pregate is conservative enough to avoid "
                 "the contextual router's worse regret/churn rows, but collapses to "
                 "the linear support policy. The per-token one-swap label arm recovers "
-                "some local oracle-regret headroom, but raises support-churn proxy, "
-                "so it is not promotion or GPU evidence."
+                "some local oracle-regret headroom; the churn-aware variant tests "
+                "whether that headroom can be retained under a switching penalty. "
+                "This remains local route-only evidence, not promotion or GPU evidence."
             )
 
     evidence = _evidence(arm_rows, fold_policy_rows, active, strategy)
@@ -152,8 +155,13 @@ def run_contextual_topk2_support_quality_pregate_pilot(
         "route_policy": {
             "policy": "linear support unless contextual one-swap is predicted to beat linear by regret and churn margins",
             "per_token_policy": "linear support unless the linear-row one-swap label reduces oracle regret by the calibrated margin",
+            "churn_aware_per_token_policy": (
+                "linear support unless the one-swap label clears the regret margin plus "
+                "a support-switch penalty when it would change the previous selected support"
+            ),
             "regret_margin": regret_margin,
             "churn_margin": churn_margin,
+            "support_switch_penalty": support_switch_penalty,
             "ce_guardrail_tolerance": ce_guardrail_tolerance,
         },
         "source_rows": source_rows,
@@ -292,14 +300,14 @@ def _arm_rows(
                 "same_student_intervention_proxy": _same_student_proxy(active),
             }
         )
-    by_backend_token_policy: dict[str, list[dict[str, Any]]] = {}
+    by_backend_token_policy: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in per_token_policy_rows:
-        by_backend_token_policy.setdefault(row["backend"], []).append(row)
-    for backend, rows in by_backend_token_policy.items():
+        by_backend_token_policy.setdefault((row["backend"], row["policy_arm"]), []).append(row)
+    for (backend, policy_arm), rows in by_backend_token_policy.items():
         base_rows.append(
             {
                 "backend": backend,
-                "arm": "per_token_one_swap_route_only",
+                "arm": policy_arm,
                 "role": "candidate",
                 "feature_safety": "causal_prefix_safe_label_pilot",
                 "value_status": "frozen",
@@ -323,7 +331,7 @@ def _arm_rows(
 
 
 def _per_token_policy_rows(
-    packets: list[dict[str, Any]], *, regret_margin: float
+    packets: list[dict[str, Any]], *, regret_margin: float, support_switch_penalty: float
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for packet in packets:
@@ -339,48 +347,82 @@ def _per_token_policy_rows(
                 row.get("target_token", ""),
             )
             by_key.setdefault(key, {})[row.get("control", "")] = row
-        for key, controls in sorted(by_key.items(), key=lambda item: tuple(_sort_key(part) for part in item[0])):
-            linear = controls.get("linear_topk2")
-            contextual = controls.get("causal_contextual_topk2")
-            oracle = controls.get("full_context_oracle_topk2")
-            if not linear:
-                continue
-            actual_regret = _float(linear.get("oracle_support_regret"))
-            swap_regret = _float(linear.get("best_one_swap_regret"))
-            accepted = (
-                linear.get("best_one_swap_improves_actual") == "True"
-                and swap_regret <= actual_regret - regret_margin
-            )
-            selected_support = linear.get("best_one_swap_support") if accepted else linear.get("actual_support")
-            selected_loss = _float(
-                linear.get("best_one_swap_support_loss") if accepted else linear.get("actual_support_loss")
-            )
-            selected_regret = swap_regret if accepted else actual_regret
-            rows.append(
-                {
-                    "backend": packet["backend"],
-                    "fold": key[0],
-                    "sequence_index": key[1],
-                    "position_index": key[2],
-                    "target_token": key[3],
-                    "selected_source": "linear_one_swap_label" if accepted else "linear_actual_hysteresis",
-                    "accepted_one_swap": accepted,
-                    "linear_actual_support": linear.get("actual_support", ""),
-                    "selected_support": selected_support or "",
-                    "oracle_support": linear.get("oracle_support", ""),
-                    "contextual_actual_support": contextual.get("actual_support", "") if contextual else "",
-                    "headroom_actual_support": oracle.get("actual_support", "") if oracle else "",
-                    "linear_actual_support_loss": _float(linear.get("actual_support_loss")),
-                    "selected_support_loss": selected_loss,
-                    "oracle_support_loss": _float(linear.get("oracle_support_loss")),
-                    "linear_oracle_support_regret": actual_regret,
-                    "selected_oracle_support_regret": selected_regret,
-                    "regret_reduction_vs_linear": actual_regret - selected_regret,
-                    "contextual_oracle_support_regret": _float(contextual.get("oracle_support_regret")) if contextual else "",
-                    "selected_matches_oracle": selected_support == linear.get("oracle_support"),
-                    "selected_support_width": len([part for part in (selected_support or "").split(",") if part != ""]),
-                }
-            )
+        sorted_items = sorted(
+            by_key.items(),
+            key=lambda item: tuple(_sort_key(part) for part in item[0]),
+        )
+        for policy_arm in (
+            "per_token_one_swap_route_only",
+            "churn_aware_per_token_one_swap_route_only",
+        ):
+            previous_by_fold: dict[str, str] = {}
+            for key, controls in sorted_items:
+                linear = controls.get("linear_topk2")
+                contextual = controls.get("causal_contextual_topk2")
+                oracle = controls.get("full_context_oracle_topk2")
+                if not linear:
+                    continue
+                actual_support = linear.get("actual_support", "")
+                swap_support = linear.get("best_one_swap_support", "")
+                previous_support = previous_by_fold.get(key[0])
+                actual_regret = _float(linear.get("oracle_support_regret"))
+                swap_regret = _float(linear.get("best_one_swap_regret"))
+                regret_reduction = actual_regret - swap_regret
+                switch_penalty_applied = (
+                    policy_arm == "churn_aware_per_token_one_swap_route_only"
+                    and previous_support is not None
+                    and swap_support != previous_support
+                )
+                required_reduction = regret_margin + (
+                    support_switch_penalty if switch_penalty_applied else 0.0
+                )
+                accepted = (
+                    linear.get("best_one_swap_improves_actual") == "True"
+                    and regret_reduction >= required_reduction
+                )
+                selected_support = swap_support if accepted else actual_support
+                selected_loss = _float(
+                    linear.get("best_one_swap_support_loss")
+                    if accepted
+                    else linear.get("actual_support_loss")
+                )
+                selected_regret = swap_regret if accepted else actual_regret
+                rows.append(
+                    {
+                        "backend": packet["backend"],
+                        "policy_arm": policy_arm,
+                        "fold": key[0],
+                        "sequence_index": key[1],
+                        "position_index": key[2],
+                        "target_token": key[3],
+                        "selected_source": (
+                            "linear_one_swap_churn_aware"
+                            if accepted and policy_arm == "churn_aware_per_token_one_swap_route_only"
+                            else "linear_one_swap_label"
+                            if accepted
+                            else "linear_actual_hysteresis"
+                        ),
+                        "accepted_one_swap": accepted,
+                        "switch_penalty_applied": switch_penalty_applied,
+                        "required_regret_reduction": required_reduction,
+                        "previous_selected_support": previous_support or "",
+                        "linear_actual_support": actual_support,
+                        "selected_support": selected_support or "",
+                        "oracle_support": linear.get("oracle_support", ""),
+                        "contextual_actual_support": contextual.get("actual_support", "") if contextual else "",
+                        "headroom_actual_support": oracle.get("actual_support", "") if oracle else "",
+                        "linear_actual_support_loss": _float(linear.get("actual_support_loss")),
+                        "selected_support_loss": selected_loss,
+                        "oracle_support_loss": _float(linear.get("oracle_support_loss")),
+                        "linear_oracle_support_regret": actual_regret,
+                        "selected_oracle_support_regret": selected_regret,
+                        "regret_reduction_vs_linear": regret_reduction if accepted else 0.0,
+                        "contextual_oracle_support_regret": _float(contextual.get("oracle_support_regret")) if contextual else "",
+                        "selected_matches_oracle": selected_support == linear.get("oracle_support"),
+                        "selected_support_width": len([part for part in (selected_support or "").split(",") if part != ""]),
+                    }
+                )
+                previous_by_fold[key[0]] = selected_support or ""
     return rows
 
 
@@ -475,6 +517,9 @@ def _gate_criteria(
     for backend, arms in sorted(by_backend.items()):
         candidate = arms.get("pregated_contextual_topk2_route_only", {})
         per_token_candidate = arms.get("per_token_one_swap_route_only", {})
+        churn_aware_per_token_candidate = arms.get(
+            "churn_aware_per_token_one_swap_route_only", {}
+        )
         linear = arms.get("linear_topk2", {})
         contextual = arms.get("causal_contextual_topk2", {})
         shuffled = arms.get("shuffled_contextual_support_labels", {})
@@ -518,6 +563,17 @@ def _gate_criteria(
                     linear.get("mean_support_change_fraction"),
                 ),
                 "per_token_candidate_swap_fraction": per_token_candidate.get(
+                    "accepted_contextual_swap_fraction"
+                ),
+                "churn_aware_per_token_candidate_regret_delta_vs_linear": _delta(
+                    churn_aware_per_token_candidate.get("mean_oracle_support_regret"),
+                    linear.get("mean_oracle_support_regret"),
+                ),
+                "churn_aware_per_token_candidate_churn_delta_vs_linear": _delta(
+                    churn_aware_per_token_candidate.get("mean_support_change_fraction"),
+                    linear.get("mean_support_change_fraction"),
+                ),
+                "churn_aware_per_token_candidate_swap_fraction": churn_aware_per_token_candidate.get(
                     "accepted_contextual_swap_fraction"
                 ),
             }
@@ -597,6 +653,27 @@ def _gate_criteria(
             backend_rows,
         ),
         _criterion(
+            "churn_aware_per_token_one_swap_reduces_oracle_regret_vs_linear",
+            any(
+                row["churn_aware_per_token_candidate_regret_delta_vs_linear"] is not None
+                and row["churn_aware_per_token_candidate_regret_delta_vs_linear"] < 0
+                for row in backend_rows
+            ),
+            "churn-aware per-token one-swap labels should retain support-quality headroom on at least one source",
+            backend_rows,
+        ),
+        _criterion(
+            "churn_aware_per_token_one_swap_does_not_increase_support_churn_vs_linear",
+            all(
+                row["churn_aware_per_token_candidate_churn_delta_vs_linear"] is not None
+                and row["churn_aware_per_token_candidate_churn_delta_vs_linear"] <= 0
+                for row in backend_rows
+                if row["churn_aware_per_token_candidate_regret_delta_vs_linear"] is not None
+            ),
+            "churn-aware per-token one-swap gains must not raise the support-churn proxy",
+            backend_rows,
+        ),
+        _criterion(
             "gpu_validation_remains_blocked_until_all_support_quality_gates_pass",
             True,
             "this local pilot is not itself GPU evidence; GPU remains blocked unless all above gates pass in a future run",
@@ -616,6 +693,9 @@ def _evidence(
     for backend, arms in by_backend.items():
         candidate = arms.get("pregated_contextual_topk2_route_only", {})
         per_token_candidate = arms.get("per_token_one_swap_route_only", {})
+        churn_aware_per_token_candidate = arms.get(
+            "churn_aware_per_token_one_swap_route_only", {}
+        )
         linear = arms.get("linear_topk2", {})
         contextual = arms.get("causal_contextual_topk2", {})
         backend_summaries[backend] = {
@@ -671,6 +751,24 @@ def _evidence(
             "per_token_candidate_accepted_one_swap_fraction": per_token_candidate.get(
                 "accepted_contextual_swap_fraction"
             ),
+            "churn_aware_per_token_candidate_mean_router_loss": churn_aware_per_token_candidate.get("mean_router_loss"),
+            "churn_aware_per_token_candidate_mean_oracle_support_regret": churn_aware_per_token_candidate.get(
+                "mean_oracle_support_regret"
+            ),
+            "churn_aware_per_token_candidate_minus_linear_oracle_regret": _delta(
+                churn_aware_per_token_candidate.get("mean_oracle_support_regret"),
+                linear.get("mean_oracle_support_regret"),
+            ),
+            "churn_aware_per_token_candidate_support_churn_proxy": churn_aware_per_token_candidate.get(
+                "mean_support_change_fraction"
+            ),
+            "churn_aware_per_token_candidate_minus_linear_support_churn_proxy": _delta(
+                churn_aware_per_token_candidate.get("mean_support_change_fraction"),
+                linear.get("mean_support_change_fraction"),
+            ),
+            "churn_aware_per_token_candidate_accepted_one_swap_fraction": churn_aware_per_token_candidate.get(
+                "accepted_contextual_swap_fraction"
+            ),
         }
     active_evidence = active.get("evidence", {}) if isinstance(active.get("evidence"), dict) else {}
     return {
@@ -724,9 +822,9 @@ def _selected_next_step(status: str, failures: list[dict[str, Any]]) -> str:
         return "repair missing contextual top-k-2 support-quality pregate sources"
     if failures:
         return (
-            "keep GPU validation blocked; add a bounded churn-aware per-token "
-            "one-swap reranker that penalizes support switching and rechecks regret, "
-            "CE/null, and same-student proxy gates"
+            "keep GPU validation blocked; add same-student forced-support intervention "
+            "rows for the churn-aware per-token one-swap arm and recheck selectivity "
+            "against linear, token-position, shuffled, and random controls"
         )
     return "run local artifact checks, then consider the configured GPU backend for validation"
 
@@ -874,12 +972,16 @@ def _write_artifacts(
         out_dir / "per_token_policy_rows.csv",
         [
             "backend",
+            "policy_arm",
             "fold",
             "sequence_index",
             "position_index",
             "target_token",
             "selected_source",
             "accepted_one_swap",
+            "switch_penalty_applied",
+            "required_regret_reduction",
+            "previous_selected_support",
             "linear_actual_support",
             "selected_support",
             "oracle_support",
@@ -1032,6 +1134,7 @@ def main() -> None:
     parser.add_argument("--branch-selector", type=Path, default=DEFAULT_BRANCH_SELECTOR)
     parser.add_argument("--strategy-review", type=Path, default=DEFAULT_STRATEGY_REVIEW)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
+    parser.add_argument("--support-switch-penalty", type=float, default=0.004)
     args = parser.parse_args()
     summary = run_contextual_topk2_support_quality_pregate_pilot(
         local_support_audit_dir=args.local_support_audit_dir,
@@ -1040,6 +1143,7 @@ def main() -> None:
         branch_selector_path=args.branch_selector,
         strategy_review_path=args.strategy_review,
         out_dir=args.out,
+        support_switch_penalty=args.support_switch_penalty,
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
 
