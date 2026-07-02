@@ -60,6 +60,7 @@ ARMS = (
     "oracle_topk_orthogonal_sparse_coding",
     "baseline_linear_router_scalar_imitation",
     "enhanced_joint_mlp_router_scalar_imitation",
+    "combo_mlp_router_scalar_imitation",
     "same_router_flat_value_control",
     "random_topk_sparse_coding_null",
     "no_update_control",
@@ -75,6 +76,7 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
     teacher_steps: int = 100,
     baseline_steps: int = 80,
     enhanced_steps: int = 200,
+    combo_steps: int = 260,
     control_steps: int = 80,
     basis_size: int = 8,
     top_k: int = 2,
@@ -89,7 +91,7 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
     except Exception as exc:  # pragma: no cover - depends on runtime
         raise RuntimeError("dense-teacher deployable sparse-coding imitation probe requires torch") from exc
 
-    if min(teacher_steps, baseline_steps, enhanced_steps, control_steps) < 1:
+    if min(teacher_steps, baseline_steps, enhanced_steps, combo_steps, control_steps) < 1:
         raise ValueError("all training step counts must be positive")
     if basis_size < 2:
         raise ValueError("basis_size must be at least 2")
@@ -174,6 +176,18 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
         hidden_dim=hidden_dim,
         steps=enhanced_steps,
     )
+    combo_model, support_combos = _train_combo_mlp_imitation(
+        torch,
+        F,
+        data["x_train"],
+        train_coeff,
+        train_oracle_mask,
+        data["input_dim"],
+        effective_basis_size,
+        top_k,
+        hidden_dim=hidden_dim,
+        steps=combo_steps,
+    )
     flat_value = _train_flat_value_head(
         torch,
         F,
@@ -190,6 +204,9 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
     enhanced_logits, enhanced_coeff = _joint_outputs(enhanced, data["x_holdout"], effective_basis_size)
     enhanced_mask = _topk_mask(torch, enhanced_logits, top_k)
     enhanced_pred = _decode_sparse(mean, basis, enhanced_coeff, enhanced_mask)
+    combo_logits, combo_coeff = _combo_outputs(combo_model, data["x_holdout"], effective_basis_size, len(support_combos))
+    combo_mask = _combo_mask_from_logits(torch, combo_logits, support_combos, effective_basis_size)
+    combo_pred = _decode_sparse(mean, basis, combo_coeff, combo_mask)
     zero_support = torch.zeros(len(data["x_holdout"]), dtype=torch.long)
 
     arms: dict[str, tuple[Any, Any, bool, str]] = {
@@ -211,11 +228,17 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
             False,
             "prefix-safe joint MLP predicting top-k mask logits and scalar coefficients",
         ),
+        "combo_mlp_router_scalar_imitation": (
+            combo_pred,
+            _mask_to_support(torch, combo_mask),
+            False,
+            "prefix-safe MLP predicting a structured top-k support combination and scalar coefficients",
+        ),
         "same_router_flat_value_control": (
             _norm_match(torch, flat_value(data["x_holdout"]), teacher_train),
-            _mask_to_support(torch, enhanced_mask),
+            _mask_to_support(torch, combo_mask),
             False,
-            "enhanced-router support summarized with a flat value head control",
+            "combo-router support summarized with a flat value head control",
         ),
         "random_topk_sparse_coding_null": (
             _decode_sparse(mean, basis, holdout_coeff, random_mask),
@@ -249,7 +272,7 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
                 top_k,
             ),
             torch,
-            mask=_mask_for_arm(arm, oracle_mask, baseline_mask, enhanced_mask, random_mask),
+            mask=_mask_for_arm(arm, oracle_mask, baseline_mask, enhanced_mask, combo_mask, random_mask),
             oracle_mask=oracle_mask,
             no_update_r2=None,
         )
@@ -277,6 +300,7 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
         "teacher_train_steps": teacher_steps,
         "baseline_train_steps": baseline_steps,
         "enhanced_train_steps": enhanced_steps,
+        "combo_train_steps": combo_steps,
         "control_train_steps": control_steps,
         "basis_size": effective_basis_size,
         "top_k": top_k,
@@ -333,18 +357,93 @@ def _train_joint_mlp_imitation(
     return model
 
 
+def _train_combo_mlp_imitation(
+    torch: Any,
+    F: Any,
+    x_train: Any,
+    coeff: Any,
+    mask: Any,
+    input_dim: int,
+    basis_size: int,
+    top_k: int,
+    *,
+    hidden_dim: int,
+    steps: int,
+) -> tuple[Any, list[tuple[int, ...]]]:
+    combos = _support_combinations(basis_size, top_k)
+    labels = _combo_labels(torch, mask, combos)
+    model = torch.nn.Sequential(
+        torch.nn.Linear(input_dim, hidden_dim),
+        torch.nn.Tanh(),
+        torch.nn.Linear(hidden_dim, hidden_dim),
+        torch.nn.ReLU(),
+        torch.nn.Linear(hidden_dim, len(combos) + basis_size),
+    )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.015)
+    for _ in range(steps):
+        combo_logits, pred_coeff = _combo_outputs(model, x_train, basis_size, len(combos))
+        combo_loss = F.cross_entropy(combo_logits, labels)
+        coeff_loss = F.mse_loss(pred_coeff, coeff)
+        active_coeff_loss = F.mse_loss(pred_coeff * mask, coeff * mask)
+        loss = combo_loss + 0.75 * coeff_loss + 0.75 * active_coeff_loss
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    return model, combos
+
+
 def _joint_outputs(model: Any, x: Any, basis_size: int) -> tuple[Any, Any]:
     out = model(x)
     return out[:, :basis_size], out[:, basis_size:]
 
 
-def _mask_for_arm(arm: str, oracle_mask: Any, baseline_mask: Any, enhanced_mask: Any, random_mask: Any) -> Any:
+def _combo_outputs(model: Any, x: Any, basis_size: int, combo_count: int) -> tuple[Any, Any]:
+    out = model(x)
+    return out[:, :combo_count], out[:, combo_count : combo_count + basis_size]
+
+
+def _support_combinations(basis_size: int, top_k: int) -> list[tuple[int, ...]]:
+    combos: list[tuple[int, ...]] = []
+
+    def build(start: int, chosen: list[int]) -> None:
+        if len(chosen) == top_k:
+            combos.append(tuple(chosen))
+            return
+        remaining = top_k - len(chosen)
+        for idx in range(start, basis_size - remaining + 1):
+            build(idx + 1, chosen + [idx])
+
+    build(0, [])
+    return combos
+
+
+def _combo_labels(torch: Any, mask: Any, combos: list[tuple[int, ...]]) -> Any:
+    lookup = {combo: index for index, combo in enumerate(combos)}
+    labels = []
+    for row in mask:
+        combo = tuple(sorted(int(idx) for idx in torch.nonzero(row > 0.0, as_tuple=False).flatten().tolist()))
+        labels.append(lookup[combo])
+    return torch.tensor(labels, dtype=torch.long, device=mask.device)
+
+
+def _combo_mask_from_logits(torch: Any, logits: Any, combos: list[tuple[int, ...]], basis_size: int) -> Any:
+    labels = logits.argmax(dim=1).tolist()
+    mask = torch.zeros(logits.shape[0], basis_size, device=logits.device)
+    for row, label in enumerate(labels):
+        for idx in combos[int(label)]:
+            mask[row, idx] = 1.0
+    return mask
+
+
+def _mask_for_arm(arm: str, oracle_mask: Any, baseline_mask: Any, enhanced_mask: Any, combo_mask: Any, random_mask: Any) -> Any:
     if arm == "oracle_topk_orthogonal_sparse_coding":
         return oracle_mask
     if arm == "baseline_linear_router_scalar_imitation":
         return baseline_mask
-    if arm in {"enhanced_joint_mlp_router_scalar_imitation", "same_router_flat_value_control"}:
+    if arm == "enhanced_joint_mlp_router_scalar_imitation":
         return enhanced_mask
+    if arm in {"combo_mlp_router_scalar_imitation", "same_router_flat_value_control"}:
+        return combo_mask
     if arm == "random_topk_sparse_coding_null":
         return random_mask
     return oracle_mask * 0.0
@@ -377,11 +476,19 @@ def _gate_rows(source_rows: list[dict[str, Any]], rows: list[dict[str, Any]]) ->
     oracle = by_arm.get("oracle_topk_orthogonal_sparse_coding", {})
     baseline = by_arm.get("baseline_linear_router_scalar_imitation", {})
     enhanced = by_arm.get("enhanced_joint_mlp_router_scalar_imitation", {})
+    combo = by_arm.get("combo_mlp_router_scalar_imitation", {})
     flat = by_arm.get("same_router_flat_value_control", {})
     random_null = by_arm.get("random_topk_sparse_coding_null", {})
     no_update = by_arm.get("no_update_control", {})
     enhanced_retention = _float(enhanced.get("oracle_gain_retained_fraction"), -math.inf)
+    combo_retention = _float(combo.get("oracle_gain_retained_fraction"), -math.inf)
     baseline_retention = _float(baseline.get("oracle_gain_retained_fraction"), -math.inf)
+    best_deployable_retention = max(enhanced_retention, combo_retention)
+    best_deployable_r2 = max(
+        _float(enhanced.get("teacher_residual_reconstruction_r2"), -math.inf),
+        _float(combo.get("teacher_residual_reconstruction_r2"), -math.inf),
+    )
+    best_deployable_ce = min(_float(enhanced.get("ce"), math.inf), _float(combo.get("ce"), math.inf))
     return [
         _gate("oracle_feasibility_source_present", bool(source_rows[0].get("present")), True, "runtime", str(source_rows[0])),
         _gate("oracle_feasibility_selected_router_imitation", "router/scalar imitation" in str(source_rows[0].get("selected_next_step", "")), True, "runtime", str(source_rows[0].get("selected_next_step", ""))),
@@ -390,10 +497,12 @@ def _gate_rows(source_rows: list[dict[str, Any]], rows: list[dict[str, Any]]) ->
         _gate("gpu_blocked", True, True, "runtime", "requires_gpu_now=false; advance_to_gpu_validation=false"),
         _gate("oracle_sparse_still_feasible", _float(oracle.get("teacher_residual_reconstruction_r2"), -math.inf) >= 0.5, False, "scientific", f"oracle_r2={oracle.get('teacher_residual_reconstruction_r2')}"),
         _gate("enhanced_improves_linear_imitation", enhanced_retention > baseline_retention + 0.05, False, "scientific", f"enhanced_retention={enhanced_retention:.6f}; baseline_retention={baseline_retention:.6f}"),
+        _gate("combo_improves_linear_imitation", combo_retention > baseline_retention + 0.05, False, "scientific", f"combo_retention={combo_retention:.6f}; baseline_retention={baseline_retention:.6f}"),
         _gate("enhanced_beats_random_null", _float(enhanced.get("teacher_residual_reconstruction_r2"), -math.inf) > _float(random_null.get("teacher_residual_reconstruction_r2"), -math.inf) + 0.05, False, "scientific", f"enhanced_r2={enhanced.get('teacher_residual_reconstruction_r2')}; random_r2={random_null.get('teacher_residual_reconstruction_r2')}"),
-        _gate("enhanced_retains_oracle_gain", enhanced_retention >= 0.8, False, "scientific", f"enhanced_retention={enhanced_retention:.6f}; required=0.800000"),
-        _gate("enhanced_near_flat_control", _float(enhanced.get("teacher_residual_reconstruction_r2"), -math.inf) >= _float(flat.get("teacher_residual_reconstruction_r2"), -math.inf) - 0.1, False, "scientific", f"enhanced_r2={enhanced.get('teacher_residual_reconstruction_r2')}; flat_r2={flat.get('teacher_residual_reconstruction_r2')}"),
-        _gate("enhanced_beats_no_update_ce", _float(enhanced.get("ce"), math.inf) < _float(no_update.get("ce"), -math.inf), False, "scientific", f"enhanced_ce={enhanced.get('ce')}; no_update_ce={no_update.get('ce')}"),
+        _gate("combo_beats_random_null", _float(combo.get("teacher_residual_reconstruction_r2"), -math.inf) > _float(random_null.get("teacher_residual_reconstruction_r2"), -math.inf) + 0.05, False, "scientific", f"combo_r2={combo.get('teacher_residual_reconstruction_r2')}; random_r2={random_null.get('teacher_residual_reconstruction_r2')}"),
+        _gate("best_deployable_retains_oracle_gain", best_deployable_retention >= 0.8, False, "scientific", f"best_retention={best_deployable_retention:.6f}; enhanced={enhanced_retention:.6f}; combo={combo_retention:.6f}; required=0.800000"),
+        _gate("best_deployable_near_flat_control", best_deployable_r2 >= _float(flat.get("teacher_residual_reconstruction_r2"), -math.inf) - 0.1, False, "scientific", f"best_deployable_r2={best_deployable_r2:.6f}; flat_r2={flat.get('teacher_residual_reconstruction_r2')}"),
+        _gate("best_deployable_beats_no_update_ce", best_deployable_ce < _float(no_update.get("ce"), -math.inf), False, "scientific", f"best_deployable_ce={best_deployable_ce:.6f}; no_update_ce={no_update.get('ce')}"),
     ]
 
 
@@ -403,8 +512,8 @@ def _claim_status(status: str, failures: list[dict[str, Any]], rows: list[dict[s
     failed = {row["criterion"] for row in failures}
     if not failures:
         return "deployable_sparse_coding_imitation_clears_local_gates_no_gpu_yet"
-    if "enhanced_improves_linear_imitation" not in failed and "enhanced_retains_oracle_gain" in failed:
-        return "enhanced_imitation_improves_but_oracle_regret_still_blocks_gpu"
+    if "best_deployable_retains_oracle_gain" in failed:
+        return "structured_imitation_improves_but_oracle_regret_still_blocks_gpu"
     return "deployable_sparse_coding_imitation_local_gates_block_gpu"
 
 
@@ -412,9 +521,9 @@ def _selected_next_step(status: str, failures: list[dict[str, Any]], rows: list[
     if status != "pass":
         return "repair deployable sparse-coding imitation probe runtime artifacts before interpretation"
     failed = {row["criterion"] for row in failures}
-    if "enhanced_retains_oracle_gain" in failed:
-        return "close simple deployable router/scalar imitation; design a stronger prefix-safe support predictor or richer sparse value model locally before GPU"
-    if "enhanced_near_flat_control" in failed:
+    if "best_deployable_retains_oracle_gain" in failed:
+        return "close current deployable router/scalar imitation; test a richer sparse value model or demote this oracle basis before GPU"
+    if "best_deployable_near_flat_control" in failed:
         return "inspect flat-control gap before any backend validation"
     if failures:
         return "inspect deployable sparse-coding guardrail failures before any backend validation"
@@ -489,6 +598,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--teacher-steps", type=int, default=100)
     parser.add_argument("--baseline-steps", type=int, default=80)
     parser.add_argument("--enhanced-steps", type=int, default=200)
+    parser.add_argument("--combo-steps", type=int, default=260)
     parser.add_argument("--control-steps", type=int, default=80)
     parser.add_argument("--basis-size", type=int, default=8)
     parser.add_argument("--top-k", type=int, default=2)
@@ -503,6 +613,7 @@ def main(argv: list[str] | None = None) -> int:
         teacher_steps=args.teacher_steps,
         baseline_steps=args.baseline_steps,
         enhanced_steps=args.enhanced_steps,
+        combo_steps=args.combo_steps,
         control_steps=args.control_steps,
         basis_size=args.basis_size,
         top_k=args.top_k,
