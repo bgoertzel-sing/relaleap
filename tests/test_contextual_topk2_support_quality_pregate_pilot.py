@@ -94,12 +94,29 @@ class ContextualTopk2SupportQualityPregatePilotTest(unittest.TestCase):
             self.assertTrue((root / "report" / "arm_metrics.csv").is_file())
             self.assertTrue((root / "report" / "fold_policy_rows.csv").is_file())
             self.assertTrue((root / "report" / "per_token_policy_rows.csv").is_file())
+            self.assertTrue((root / "report" / "trained_pair_quality_policy_rows.csv").is_file())
             self.assertTrue((root / "report" / "same_student_forced_support_rows.csv").is_file())
             self.assertTrue((root / "report" / "same_student_intervention_summary.csv").is_file())
             with (root / "report" / "arm_metrics.csv").open(newline="", encoding="utf-8") as handle:
                 arms = {row["arm"] for row in csv.DictReader(handle)}
             self.assertIn("per_token_one_swap_route_only", arms)
             self.assertIn("churn_aware_per_token_one_swap_route_only", arms)
+            self.assertIn("trained_pair_quality_one_swap_route_only", arms)
+            self.assertIn("trained_pair_quality_token_position_control", arms)
+            self.assertIn("trained_pair_quality_shuffled_label_control", arms)
+            with (root / "report" / "trained_pair_quality_policy_rows.csv").open(
+                newline="", encoding="utf-8"
+            ) as handle:
+                trained_rows = list(csv.DictReader(handle))
+            self.assertTrue(trained_rows)
+            self.assertEqual(
+                {
+                    row["candidate_source"]
+                    for row in trained_rows
+                    if row["policy_arm"] == "trained_pair_quality_one_swap_route_only"
+                },
+                {"recorded_best_one_swap_candidate_from_audit_labels"},
+            )
             with (root / "report" / "same_student_intervention_summary.csv").open(
                 newline="", encoding="utf-8"
             ) as handle:
@@ -133,6 +150,12 @@ class ContextualTopk2SupportQualityPregatePilotTest(unittest.TestCase):
                 "churn_aware_same_student_forced_support_improves_linear_regret",
                 {row["criterion"] for row in summary["gate_criteria"]},
             )
+            self.assertIn(
+                "trained_pair_quality_policy_rows_present",
+                {row["criterion"] for row in summary["gate_criteria"]},
+            )
+            self.assertTrue(summary["training_executed"])
+            self.assertTrue(summary["evidence"]["training_executed"])
 
     def test_fails_closed_when_support_source_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

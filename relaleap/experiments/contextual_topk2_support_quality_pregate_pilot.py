@@ -35,6 +35,7 @@ REQUIRED_ARTIFACTS = (
     "arm_metrics.csv",
     "fold_policy_rows.csv",
     "per_token_policy_rows.csv",
+    "trained_pair_quality_policy_rows.csv",
     "same_student_forced_support_rows.csv",
     "same_student_intervention_summary.csv",
     "gate_criteria.csv",
@@ -99,6 +100,12 @@ def run_contextual_topk2_support_quality_pregate_pilot(
             regret_margin=regret_margin,
             support_switch_penalty=support_switch_penalty,
         )
+        trained_policy_rows = _trained_pair_quality_policy_rows(
+            [local, runpod],
+            regret_margin=regret_margin,
+            support_switch_penalty=support_switch_penalty,
+        )
+        per_token_policy_rows.extend(trained_policy_rows)
         same_student_rows = _same_student_forced_support_rows(per_token_policy_rows)
         intervention_summary_rows = _same_student_intervention_summary_rows(
             [local, runpod],
@@ -146,7 +153,10 @@ def run_contextual_topk2_support_quality_pregate_pilot(
                 "some local oracle-regret headroom; the churn-aware variant tests "
                 "whether that headroom can be retained under a switching penalty and "
                 "now emits same-student forced-support proxy/selectivity rows. "
-                "This remains local route-only evidence, not promotion or GPU evidence."
+                "The new trained accept/reject scorer replaces pure oracle-label "
+                "acceptance with leave-one-fold prefix-safe scoring, but it still uses "
+                "the audit's recorded best-one-swap candidate. This remains local "
+                "route-only evidence, not promotion or GPU evidence."
             )
 
     evidence = _evidence(arm_rows, fold_policy_rows, intervention_summary_rows, active, strategy)
@@ -162,13 +172,21 @@ def run_contextual_topk2_support_quality_pregate_pilot(
         "backend_policy": "local route-only artifact/test work; Colab/RunPod remain blocked unless gates pass",
         "value_freeze_status": "frozen_existing_topk2_values_route_only_support_policy",
         "feature_safety": "uses causal_contextual_topk2 and linear_topk2 audit rows only; full_context rows are headroom controls",
-        "training_executed": False,
+        "training_executed": bool(
+            any(row.get("policy_family") == "trained_pair_quality" for row in per_token_policy_rows)
+        ),
         "route_policy": {
             "policy": "linear support unless contextual one-swap is predicted to beat linear by regret and churn margins",
             "per_token_policy": "linear support unless the linear-row one-swap label reduces oracle regret by the calibrated margin",
             "churn_aware_per_token_policy": (
                 "linear support unless the one-swap label clears the regret margin plus "
                 "a support-switch penalty when it would change the previous selected support"
+            ),
+            "trained_pair_quality_policy": (
+                "leave-one-fold linear accept/reject scorer over prefix-safe position and "
+                "linear-support metadata; selected support still uses the audit's recorded "
+                "best-one-swap candidate, so this is a local diagnostic rather than a "
+                "deployable support generator"
             ),
             "regret_margin": regret_margin,
             "churn_margin": churn_margin,
@@ -446,6 +464,252 @@ def _per_token_policy_rows(
     return rows
 
 
+def _trained_pair_quality_policy_rows(
+    packets: list[dict[str, Any]], *, regret_margin: float, support_switch_penalty: float
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for packet in packets:
+        examples = _linear_training_examples(packet.get("per_token_support_labels", []), regret_margin)
+        if len({example["fold"] for example in examples}) < 2:
+            continue
+        labels = [example["label"] for example in examples]
+        shuffled_labels = labels[1:] + labels[:1]
+        token_position_labels = [example["label"] for example in examples]
+        for arm, mode, override_labels in (
+            ("trained_pair_quality_one_swap_route_only", "full_prefix_safe", labels),
+            ("trained_pair_quality_token_position_control", "token_position_only", token_position_labels),
+            ("trained_pair_quality_shuffled_label_control", "full_prefix_safe", shuffled_labels),
+        ):
+            models_by_fold: dict[str, dict[str, Any]] = {}
+            for fold in sorted({example["fold"] for example in examples}):
+                train_examples = [item for item in examples if item["fold"] != fold]
+                train_labels = [
+                    override_labels[j]
+                    for j, item in enumerate(examples)
+                    if item["fold"] != fold
+                ]
+                models_by_fold[fold] = _fit_linear_accept_scorer(
+                    train_examples, train_labels, mode
+                )
+            previous_by_fold: dict[str, str] = {}
+            for index, example in enumerate(examples):
+                model = models_by_fold[example["fold"]]
+                score = _linear_score(model, _features_for_example(example, mode))
+                predicted_accept = score >= 0.5
+                previous_support = previous_by_fold.get(example["fold"])
+                switch_penalty_applied = (
+                    previous_support is not None
+                    and example["best_one_swap_support"] != previous_support
+                )
+                regret_reduction = example["actual_regret"] - example["best_one_swap_regret"]
+                required_reduction = regret_margin + (
+                    support_switch_penalty if switch_penalty_applied else 0.0
+                )
+                accepted = (
+                    predicted_accept
+                    and example["best_one_swap_improves_actual"]
+                    and regret_reduction >= required_reduction
+                )
+                selected_support = (
+                    example["best_one_swap_support"] if accepted else example["actual_support"]
+                )
+                selected_loss = (
+                    example["best_one_swap_support_loss"]
+                    if accepted
+                    else example["actual_support_loss"]
+                )
+                selected_regret = (
+                    example["best_one_swap_regret"] if accepted else example["actual_regret"]
+                )
+                rows.append(
+                    {
+                        "backend": packet["backend"],
+                        "policy_family": "trained_pair_quality",
+                        "policy_arm": arm,
+                        "fold": example["fold"],
+                        "sequence_index": example["sequence_index"],
+                        "position_index": example["position_index"],
+                        "target_token": example["target_token"],
+                        "selected_source": (
+                            "trained_accept_recorded_one_swap_candidate"
+                            if accepted
+                            else "trained_reject_linear_actual"
+                        ),
+                        "accepted_one_swap": accepted,
+                        "switch_penalty_applied": switch_penalty_applied,
+                        "required_regret_reduction": required_reduction,
+                        "previous_selected_support": previous_support or "",
+                        "linear_actual_support": example["actual_support"],
+                        "selected_support": selected_support,
+                        "oracle_support": example["oracle_support"],
+                        "contextual_actual_support": example["contextual_actual_support"],
+                        "headroom_actual_support": example["headroom_actual_support"],
+                        "linear_actual_support_loss": example["actual_support_loss"],
+                        "selected_support_loss": selected_loss,
+                        "oracle_support_loss": example["oracle_support_loss"],
+                        "linear_oracle_support_regret": example["actual_regret"],
+                        "selected_oracle_support_regret": selected_regret,
+                        "regret_reduction_vs_linear": regret_reduction if accepted else 0.0,
+                        "contextual_oracle_support_regret": example["contextual_oracle_support_regret"],
+                        "selected_matches_oracle": selected_support == example["oracle_support"],
+                        "selected_support_width": len(
+                            [part for part in (selected_support or "").split(",") if part != ""]
+                        ),
+                        "trained_accept_score": score,
+                        "trained_label": labels[index],
+                        "training_fold_count": model["training_fold_count"],
+                        "training_example_count": model["training_example_count"],
+                        "feature_mode": mode,
+                        "candidate_source": "recorded_best_one_swap_candidate_from_audit_labels",
+                    }
+                )
+                previous_by_fold[example["fold"]] = selected_support or ""
+    return rows
+
+
+def _linear_training_examples(labels: list[dict[str, str]], regret_margin: float) -> list[dict[str, Any]]:
+    by_key: dict[tuple[str, str, str, str], dict[str, dict[str, str]]] = {}
+    for row in labels:
+        key = (
+            row.get("fold", ""),
+            row.get("sequence_index", ""),
+            row.get("position_index", ""),
+            row.get("target_token", ""),
+        )
+        by_key.setdefault(key, {})[row.get("control", "")] = row
+    examples: list[dict[str, Any]] = []
+    for key, controls in sorted(by_key.items(), key=lambda item: tuple(_sort_key(part) for part in item[0])):
+        linear = controls.get("linear_topk2")
+        if not linear:
+            continue
+        actual_regret = _float(linear.get("oracle_support_regret"))
+        best_regret = _float(linear.get("best_one_swap_regret"))
+        regret_reduction = actual_regret - best_regret
+        examples.append(
+            {
+                "fold": key[0],
+                "sequence_index": key[1],
+                "position_index": key[2],
+                "target_token": key[3],
+                "actual_support": linear.get("actual_support", ""),
+                "best_one_swap_support": linear.get("best_one_swap_support", ""),
+                "oracle_support": linear.get("oracle_support", ""),
+                "contextual_actual_support": controls.get("causal_contextual_topk2", {}).get("actual_support", ""),
+                "headroom_actual_support": controls.get("full_context_oracle_topk2", {}).get("actual_support", ""),
+                "actual_support_loss": _float(linear.get("actual_support_loss")),
+                "best_one_swap_support_loss": _float(linear.get("best_one_swap_support_loss")),
+                "oracle_support_loss": _float(linear.get("oracle_support_loss")),
+                "actual_regret": actual_regret,
+                "best_one_swap_regret": best_regret,
+                "best_one_swap_improves_actual": linear.get("best_one_swap_improves_actual") == "True",
+                "contextual_oracle_support_regret": _float(
+                    controls.get("causal_contextual_topk2", {}).get("oracle_support_regret")
+                ),
+                "flat_position": linear.get("flat_position", ""),
+                "label": bool(
+                    linear.get("best_one_swap_improves_actual") == "True"
+                    and regret_reduction >= regret_margin
+                ),
+            }
+        )
+    return examples
+
+
+def _fit_linear_accept_scorer(
+    examples: list[dict[str, Any]], labels: list[bool], feature_mode: str
+) -> dict[str, Any]:
+    vectors = [_features_for_example(example, feature_mode) for example in examples]
+    if not vectors:
+        return {
+            "weights": [0.0],
+            "means": [],
+            "scales": [],
+            "positive_rate": 0.0,
+            "training_fold_count": 0,
+            "training_example_count": 0,
+        }
+    dim = len(vectors[0])
+    means = [_mean(vector[i] for vector in vectors) for i in range(dim)]
+    scales = [
+        max(_mean(abs(vector[i] - means[i]) for vector in vectors), 1.0)
+        for i in range(dim)
+    ]
+    weights = [0.0 for _ in range(dim + 1)]
+    positive_rate = _mean(1.0 if label else 0.0 for label in labels)
+    if positive_rate in {0.0, 1.0}:
+        return {
+            "weights": [positive_rate],
+            "means": means,
+            "scales": scales,
+            "positive_rate": positive_rate,
+            "training_fold_count": len({example["fold"] for example in examples}),
+            "training_example_count": len(examples),
+        }
+    lr = 0.15
+    l2 = 0.01
+    for _ in range(160):
+        grads = [0.0 for _ in weights]
+        for vector, label in zip(vectors, labels):
+            x = [1.0] + [(vector[i] - means[i]) / scales[i] for i in range(dim)]
+            pred = _sigmoid(sum(weight * value for weight, value in zip(weights, x)))
+            err = pred - (1.0 if label else 0.0)
+            for i, value in enumerate(x):
+                grads[i] += err * value
+        for i in range(len(weights)):
+            regularizer = 0.0 if i == 0 else l2 * weights[i]
+            weights[i] -= lr * ((grads[i] / len(vectors)) + regularizer)
+    return {
+        "weights": weights,
+        "means": means,
+        "scales": scales,
+        "positive_rate": positive_rate,
+        "training_fold_count": len({example["fold"] for example in examples}),
+        "training_example_count": len(examples),
+    }
+
+
+def _features_for_example(example: dict[str, Any], feature_mode: str) -> list[float]:
+    support_values = _support_values(example.get("actual_support", ""))
+    position = _float(example.get("position_index"))
+    sequence = _float(example.get("sequence_index"))
+    flat = _float(example.get("flat_position"))
+    width = float(len(support_values))
+    min_col = min(support_values) if support_values else 0.0
+    max_col = max(support_values) if support_values else 0.0
+    span = max_col - min_col
+    if feature_mode == "token_position_only":
+        return [position, sequence, flat]
+    return [position, sequence, flat, width, min_col, max_col, span, sum(support_values)]
+
+
+def _linear_score(model: dict[str, Any], vector: list[float]) -> float:
+    weights = model["weights"]
+    means = model["means"]
+    scales = model["scales"]
+    if len(weights) == 1:
+        return float(model["positive_rate"])
+    x = [1.0] + [(vector[i] - means[i]) / scales[i] for i in range(len(vector))]
+    return _sigmoid(sum(weight * value for weight, value in zip(weights, x)))
+
+
+def _sigmoid(value: float) -> float:
+    if value < -40:
+        return 0.0
+    if value > 40:
+        return 1.0
+    return 1.0 / (1.0 + pow(2.718281828459045, -value))
+
+
+def _support_values(value: str) -> list[float]:
+    values: list[float] = []
+    for part in str(value).split(","):
+        try:
+            values.append(float(part))
+        except ValueError:
+            continue
+    return values
+
+
 def _same_student_forced_support_rows(per_token_policy_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in per_token_policy_rows:
@@ -679,6 +943,9 @@ def _gate_criteria(
         churn_aware_per_token_candidate = arms.get(
             "churn_aware_per_token_one_swap_route_only", {}
         )
+        trained_candidate = arms.get("trained_pair_quality_one_swap_route_only", {})
+        trained_token_position = arms.get("trained_pair_quality_token_position_control", {})
+        trained_shuffled = arms.get("trained_pair_quality_shuffled_label_control", {})
         linear = arms.get("linear_topk2", {})
         contextual = arms.get("causal_contextual_topk2", {})
         shuffled = arms.get("shuffled_contextual_support_labels", {})
@@ -687,6 +954,15 @@ def _gate_criteria(
         intervention_arms = intervention_by_backend.get(backend, {})
         churn_aware_intervention = intervention_arms.get(
             "churn_aware_per_token_one_swap_route_only", {}
+        )
+        trained_intervention = intervention_arms.get(
+            "trained_pair_quality_one_swap_route_only", {}
+        )
+        trained_token_position_intervention = intervention_arms.get(
+            "trained_pair_quality_token_position_control", {}
+        )
+        trained_shuffled_intervention = intervention_arms.get(
+            "trained_pair_quality_shuffled_label_control", {}
         )
         linear_intervention = intervention_arms.get("linear_topk2", {})
         token_position_intervention = intervention_arms.get("token_position_only_linear_proxy", {})
@@ -770,6 +1046,42 @@ def _gate_criteria(
                 "churn_aware_forced_loss_minus_random": _delta(
                     churn_aware_intervention.get("mean_forced_support_loss"),
                     random_intervention.get("mean_forced_support_loss"),
+                ),
+                "trained_pair_quality_present": bool(trained_candidate),
+                "trained_pair_quality_regret_delta_vs_linear": _delta(
+                    trained_candidate.get("mean_oracle_support_regret"),
+                    linear.get("mean_oracle_support_regret"),
+                ),
+                "trained_pair_quality_churn_delta_vs_linear": _delta(
+                    trained_candidate.get("mean_support_change_fraction"),
+                    linear.get("mean_support_change_fraction"),
+                ),
+                "trained_pair_quality_loss_delta_vs_linear": _delta(
+                    trained_candidate.get("mean_router_loss"),
+                    linear.get("mean_router_loss"),
+                ),
+                "trained_pair_quality_swap_fraction": trained_candidate.get(
+                    "accepted_contextual_swap_fraction"
+                ),
+                "trained_pair_quality_loss_minus_token_position_control": _delta(
+                    trained_candidate.get("mean_router_loss"),
+                    trained_token_position.get("mean_router_loss"),
+                ),
+                "trained_pair_quality_loss_minus_shuffled_label_control": _delta(
+                    trained_candidate.get("mean_router_loss"),
+                    trained_shuffled.get("mean_router_loss"),
+                ),
+                "trained_pair_quality_forced_regret_delta_vs_linear": _delta(
+                    trained_intervention.get("mean_forced_regret_vs_oracle"),
+                    linear_intervention.get("mean_forced_regret_vs_oracle"),
+                ),
+                "trained_pair_quality_forced_loss_minus_token_position_control": _delta(
+                    trained_intervention.get("mean_forced_support_loss"),
+                    trained_token_position_intervention.get("mean_forced_support_loss"),
+                ),
+                "trained_pair_quality_forced_loss_minus_shuffled_label_control": _delta(
+                    trained_intervention.get("mean_forced_support_loss"),
+                    trained_shuffled_intervention.get("mean_forced_support_loss"),
                 ),
             }
         )
@@ -917,6 +1229,57 @@ def _gate_criteria(
             backend_rows,
         ),
         _criterion(
+            "trained_pair_quality_policy_rows_present",
+            any(row["trained_pair_quality_present"] for row in backend_rows),
+            "a leave-one-fold trained prefix-safe pair-quality scorer should run where per-token labels exist",
+            backend_rows,
+        ),
+        _criterion(
+            "trained_pair_quality_reduces_oracle_regret_vs_linear",
+            any(
+                row["trained_pair_quality_regret_delta_vs_linear"] is not None
+                and row["trained_pair_quality_regret_delta_vs_linear"] < -1.0e-6
+                and row["trained_pair_quality_swap_fraction"] not in (None, "")
+                and row["trained_pair_quality_swap_fraction"] > 0.0
+                for row in backend_rows
+            ),
+            "trained pair-quality scorer should accept nonzero swaps and reduce oracle-support regret versus linear on at least one labeled source",
+            backend_rows,
+        ),
+        _criterion(
+            "trained_pair_quality_does_not_increase_support_churn_vs_linear",
+            all(
+                row["trained_pair_quality_churn_delta_vs_linear"] is not None
+                and row["trained_pair_quality_churn_delta_vs_linear"] <= 0
+                for row in backend_rows
+                if row["trained_pair_quality_present"]
+            ),
+            "trained pair-quality support gains must not raise the support-churn proxy on labeled sources",
+            backend_rows,
+        ),
+        _criterion(
+            "trained_pair_quality_beats_label_controls",
+            any(
+                row["trained_pair_quality_loss_minus_token_position_control"] is not None
+                and row["trained_pair_quality_loss_minus_token_position_control"] <= ce_guardrail_tolerance
+                and row["trained_pair_quality_loss_minus_shuffled_label_control"] is not None
+                and row["trained_pair_quality_loss_minus_shuffled_label_control"] < 0
+                for row in backend_rows
+            ),
+            "trained pair-quality scorer should beat shuffled-label control and avoid losing materially to token-position-only control",
+            backend_rows,
+        ),
+        _criterion(
+            "trained_pair_quality_same_student_forced_support_improves_linear_regret",
+            any(
+                row["trained_pair_quality_forced_regret_delta_vs_linear"] is not None
+                and row["trained_pair_quality_forced_regret_delta_vs_linear"] < 0
+                for row in backend_rows
+            ),
+            "trained pair-quality forced supports should reduce same-student oracle-regret proxy versus linear on at least one source",
+            backend_rows,
+        ),
+        _criterion(
             "gpu_validation_remains_blocked_until_all_support_quality_gates_pass",
             True,
             "this local pilot is not itself GPU evidence; GPU remains blocked unless all above gates pass in a future run",
@@ -941,11 +1304,17 @@ def _evidence(
         churn_aware_per_token_candidate = arms.get(
             "churn_aware_per_token_one_swap_route_only", {}
         )
+        trained_candidate = arms.get("trained_pair_quality_one_swap_route_only", {})
+        trained_token_position = arms.get("trained_pair_quality_token_position_control", {})
+        trained_shuffled = arms.get("trained_pair_quality_shuffled_label_control", {})
         linear = arms.get("linear_topk2", {})
         contextual = arms.get("causal_contextual_topk2", {})
         intervention_arms = intervention_by_backend.get(backend, {})
         churn_aware_intervention = intervention_arms.get(
             "churn_aware_per_token_one_swap_route_only", {}
+        )
+        trained_intervention = intervention_arms.get(
+            "trained_pair_quality_one_swap_route_only", {}
         )
         linear_intervention = intervention_arms.get("linear_topk2", {})
         backend_summaries[backend] = {
@@ -1035,6 +1404,41 @@ def _evidence(
             "churn_aware_same_student_off_oracle_harm_fraction": churn_aware_intervention.get(
                 "off_oracle_harm_fraction"
             ),
+            "trained_pair_quality_candidate_mean_router_loss": trained_candidate.get(
+                "mean_router_loss"
+            ),
+            "trained_pair_quality_candidate_mean_oracle_support_regret": trained_candidate.get(
+                "mean_oracle_support_regret"
+            ),
+            "trained_pair_quality_candidate_minus_linear_oracle_regret": _delta(
+                trained_candidate.get("mean_oracle_support_regret"),
+                linear.get("mean_oracle_support_regret"),
+            ),
+            "trained_pair_quality_candidate_support_churn_proxy": trained_candidate.get(
+                "mean_support_change_fraction"
+            ),
+            "trained_pair_quality_candidate_minus_linear_support_churn_proxy": _delta(
+                trained_candidate.get("mean_support_change_fraction"),
+                linear.get("mean_support_change_fraction"),
+            ),
+            "trained_pair_quality_candidate_accepted_one_swap_fraction": trained_candidate.get(
+                "accepted_contextual_swap_fraction"
+            ),
+            "trained_pair_quality_candidate_loss_minus_token_position_control": _delta(
+                trained_candidate.get("mean_router_loss"),
+                trained_token_position.get("mean_router_loss"),
+            ),
+            "trained_pair_quality_candidate_loss_minus_shuffled_label_control": _delta(
+                trained_candidate.get("mean_router_loss"),
+                trained_shuffled.get("mean_router_loss"),
+            ),
+            "trained_pair_quality_same_student_forced_gain_vs_linear": trained_intervention.get(
+                "mean_forced_gain_vs_linear"
+            ),
+            "trained_pair_quality_same_student_forced_regret_delta_vs_linear": _delta(
+                trained_intervention.get("mean_forced_regret_vs_oracle"),
+                linear_intervention.get("mean_forced_regret_vs_oracle"),
+            ),
         }
     active_evidence = active.get("evidence", {}) if isinstance(active.get("evidence"), dict) else {}
     return {
@@ -1042,7 +1446,10 @@ def _evidence(
         "fold_count": len(fold_policy_rows),
         "same_student_intervention_summary_count": len(intervention_summary_rows),
         "all_values_frozen": bool(arm_rows) and all(row.get("value_status") == "frozen" for row in arm_rows),
-        "training_executed": False,
+        "training_executed": any(
+            bool(arms.get("trained_pair_quality_one_swap_route_only"))
+            for arms in by_backend.values()
+        ),
         "active_topk1_control_claim_status": active.get("claim_status"),
         "active_topk1_local_retention_bracket_supported": bool(
             active_evidence.get("local_retention_churn_bracket_supported")
@@ -1089,9 +1496,8 @@ def _selected_next_step(status: str, failures: list[dict[str, Any]]) -> str:
         return "repair missing contextual top-k-2 support-quality pregate sources"
     if failures:
         return (
-            "keep GPU validation blocked; replace the oracle-label per-token one-swap "
-            "arm with a trained prefix-safe pair-quality scorer and shuffled/token-position "
-            "label controls"
+            "keep GPU validation blocked; extend the trained scorer to generate one-swap "
+            "candidates without oracle best-swap labels or refresh RunPod per-token labels"
         )
     return "run local artifact checks, then consider the configured GPU backend for validation"
 
@@ -1267,6 +1673,47 @@ def _write_artifacts(
             "selected_support_width",
         ],
         per_token_policy_rows,
+    )
+    _write_csv(
+        out_dir / "trained_pair_quality_policy_rows.csv",
+        [
+            "backend",
+            "policy_arm",
+            "fold",
+            "sequence_index",
+            "position_index",
+            "target_token",
+            "selected_source",
+            "accepted_one_swap",
+            "switch_penalty_applied",
+            "required_regret_reduction",
+            "previous_selected_support",
+            "linear_actual_support",
+            "selected_support",
+            "oracle_support",
+            "contextual_actual_support",
+            "headroom_actual_support",
+            "linear_actual_support_loss",
+            "selected_support_loss",
+            "oracle_support_loss",
+            "linear_oracle_support_regret",
+            "selected_oracle_support_regret",
+            "regret_reduction_vs_linear",
+            "contextual_oracle_support_regret",
+            "selected_matches_oracle",
+            "selected_support_width",
+            "trained_accept_score",
+            "trained_label",
+            "training_fold_count",
+            "training_example_count",
+            "feature_mode",
+            "candidate_source",
+        ],
+        [
+            row
+            for row in per_token_policy_rows
+            if row.get("policy_family") == "trained_pair_quality"
+        ],
     )
     _write_csv(
         out_dir / "same_student_forced_support_rows.csv",
