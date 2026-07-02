@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import csv
 import tempfile
 import unittest
 from pathlib import Path
@@ -92,6 +93,20 @@ class ContextualTopk2SupportQualityPregatePilotTest(unittest.TestCase):
             self.assertTrue((root / "report" / "summary.json").is_file())
             self.assertTrue((root / "report" / "arm_metrics.csv").is_file())
             self.assertTrue((root / "report" / "fold_policy_rows.csv").is_file())
+            self.assertTrue((root / "report" / "per_token_policy_rows.csv").is_file())
+            with (root / "report" / "arm_metrics.csv").open(newline="", encoding="utf-8") as handle:
+                self.assertIn(
+                    "per_token_one_swap_route_only",
+                    {row["arm"] for row in csv.DictReader(handle)},
+                )
+            self.assertIn(
+                "per_token_one_swap_does_not_increase_support_churn_vs_linear",
+                {
+                    row["criterion"]
+                    for row in summary["gate_criteria"]
+                    if not row["passed"]
+                },
+            )
 
     def test_fails_closed_when_support_source_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -172,6 +187,80 @@ def _write_support_audit(path: Path, *, linear_regret: float, linear_churn: floa
         )
     (path / "fold_metrics.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (path / "aggregate_metrics.csv").write_text("control,mean_router_loss\n", encoding="utf-8")
+    token_fieldnames = [
+        "actual_support",
+        "actual_support_loss",
+        "best_one_swap_gain_vs_actual",
+        "best_one_swap_improves_actual",
+        "best_one_swap_regret",
+        "best_one_swap_support",
+        "best_one_swap_support_loss",
+        "control",
+        "flat_position",
+        "fold",
+        "one_swap_label_is_oracle",
+        "oracle_support",
+        "oracle_support_exact_match",
+        "oracle_support_loss",
+        "oracle_support_regret",
+        "position_index",
+        "router_support_loss",
+        "sequence_index",
+        "target_token",
+    ]
+    token_rows = []
+    for fold in range(2):
+        token_rows.extend(
+            [
+                _token_row(fold, 0, "linear_topk2", "0,1", "1,2", "1,2", 3.60, 3.50, 3.49, 0.11, True, 0.01),
+                _token_row(fold, 1, "linear_topk2", "0,2", "2,3", "2,3", 3.62, 3.54, 3.52, 0.10, True, 0.02),
+                _token_row(fold, 0, "causal_contextual_topk2", "3,4", "3,4", "1,2", 2.90, 2.90, 2.80, 0.10, False, 0.10),
+                _token_row(fold, 1, "causal_contextual_topk2", "3,5", "3,5", "2,3", 2.95, 2.95, 2.82, 0.13, False, 0.13),
+                _token_row(fold, 0, "full_context_oracle_topk2", "1,2", "1,2", "1,2", 2.80, 2.80, 2.80, 0.0, False, 0.0),
+                _token_row(fold, 1, "full_context_oracle_topk2", "2,3", "2,3", "2,3", 2.82, 2.82, 2.82, 0.0, False, 0.0),
+            ]
+        )
+    with (path / "per_token_support_labels.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=token_fieldnames)
+        writer.writeheader()
+        writer.writerows(token_rows)
+
+
+def _token_row(
+    fold: int,
+    position: int,
+    control: str,
+    actual_support: str,
+    best_one_swap_support: str,
+    oracle_support: str,
+    actual_loss: float,
+    best_one_swap_loss: float,
+    oracle_loss: float,
+    oracle_regret: float,
+    improves: bool,
+    best_one_swap_regret: float,
+) -> dict[str, object]:
+    return {
+        "actual_support": actual_support,
+        "actual_support_loss": actual_loss,
+        "best_one_swap_gain_vs_actual": actual_loss - best_one_swap_loss,
+        "best_one_swap_improves_actual": str(improves),
+        "best_one_swap_regret": best_one_swap_regret,
+        "best_one_swap_support": best_one_swap_support,
+        "best_one_swap_support_loss": best_one_swap_loss,
+        "control": control,
+        "flat_position": position,
+        "fold": fold,
+        "one_swap_label_is_oracle": str(best_one_swap_support == oracle_support),
+        "oracle_support": oracle_support,
+        "oracle_support_exact_match": str(actual_support == oracle_support),
+        "oracle_support_loss": oracle_loss,
+        "oracle_support_regret": oracle_regret,
+        "position_index": position,
+        "router_support_loss": actual_loss,
+        "sequence_index": fold,
+        "target_token": 10 + position,
+    }
 
 
 def _write_json(path: Path, value: dict[str, object]) -> None:

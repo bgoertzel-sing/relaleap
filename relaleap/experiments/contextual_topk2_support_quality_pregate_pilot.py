@@ -34,6 +34,7 @@ REQUIRED_ARTIFACTS = (
     "source_rows.csv",
     "arm_metrics.csv",
     "fold_policy_rows.csv",
+    "per_token_policy_rows.csv",
     "gate_criteria.csv",
     "notes.md",
 )
@@ -80,6 +81,7 @@ def run_contextual_topk2_support_quality_pregate_pilot(
     ]
     source_failures = _source_failures(source_rows, branch_selector)
     fold_policy_rows = []
+    per_token_policy_rows = []
     arm_rows = []
     if not source_failures:
         fold_policy_rows = _fold_policy_rows(
@@ -87,7 +89,11 @@ def run_contextual_topk2_support_quality_pregate_pilot(
             regret_margin=regret_margin,
             churn_margin=churn_margin,
         )
-        arm_rows = _arm_rows([local, runpod], fold_policy_rows, active)
+        per_token_policy_rows = _per_token_policy_rows(
+            [local, runpod],
+            regret_margin=regret_margin,
+        )
+        arm_rows = _arm_rows([local, runpod], fold_policy_rows, per_token_policy_rows, active)
     gates = _gate_criteria(
         source_failures,
         arm_rows,
@@ -122,12 +128,11 @@ def run_contextual_topk2_support_quality_pregate_pilot(
             claim_status = "route_only_contextual_topk2_support_quality_gate_failed_no_gpu"
             selected_next_action = "defer_contextual_router_gpu_validation_and_keep_linear_topk2_control"
             rationale = (
-                "The executable one-swap/hysteresis pregate is conservative enough "
-                "to avoid the contextual router's worse regret/churn rows, but in "
-                "the current source artifacts it mostly collapses to the linear "
-                "support policy. That preserves guardrails without producing the "
-                "required support-quality improvement, so it is not promotion or "
-                "GPU evidence."
+                "The executable fold-level pregate is conservative enough to avoid "
+                "the contextual router's worse regret/churn rows, but collapses to "
+                "the linear support policy. The per-token one-swap label arm recovers "
+                "some local oracle-regret headroom, but raises support-churn proxy, "
+                "so it is not promotion or GPU evidence."
             )
 
     evidence = _evidence(arm_rows, fold_policy_rows, active, strategy)
@@ -146,6 +151,7 @@ def run_contextual_topk2_support_quality_pregate_pilot(
         "training_executed": False,
         "route_policy": {
             "policy": "linear support unless contextual one-swap is predicted to beat linear by regret and churn margins",
+            "per_token_policy": "linear support unless the linear-row one-swap label reduces oracle regret by the calibrated margin",
             "regret_margin": regret_margin,
             "churn_margin": churn_margin,
             "ce_guardrail_tolerance": ce_guardrail_tolerance,
@@ -163,7 +169,7 @@ def run_contextual_topk2_support_quality_pregate_pilot(
         "git_commit": _git_commit(),
         "artifacts": {name.replace(".", "_"): str(out_dir / name) for name in REQUIRED_ARTIFACTS},
     }
-    _write_artifacts(out_dir, summary, arm_rows, fold_policy_rows, gates)
+    _write_artifacts(out_dir, summary, arm_rows, fold_policy_rows, per_token_policy_rows, gates)
     return summary
 
 
@@ -174,6 +180,7 @@ def _load_support_packet(backend: str, audit_dir: Path) -> dict[str, Any]:
         "summary": _read_json(audit_dir / "summary.json"),
         "fold_metrics": _read_csv(audit_dir / "fold_metrics.csv"),
         "aggregate_metrics": _read_csv(audit_dir / "aggregate_metrics.csv"),
+        "per_token_support_labels": _read_csv(audit_dir / "per_token_support_labels.csv"),
     }
 
 
@@ -236,6 +243,7 @@ def _fold_policy_rows(
 def _arm_rows(
     packets: list[dict[str, Any]],
     fold_policy_rows: list[dict[str, Any]],
+    per_token_policy_rows: list[dict[str, Any]],
     active: dict[str, Any],
 ) -> list[dict[str, Any]]:
     base_rows: list[dict[str, Any]] = []
@@ -284,7 +292,96 @@ def _arm_rows(
                 "same_student_intervention_proxy": _same_student_proxy(active),
             }
         )
+    by_backend_token_policy: dict[str, list[dict[str, Any]]] = {}
+    for row in per_token_policy_rows:
+        by_backend_token_policy.setdefault(row["backend"], []).append(row)
+    for backend, rows in by_backend_token_policy.items():
+        base_rows.append(
+            {
+                "backend": backend,
+                "arm": "per_token_one_swap_route_only",
+                "role": "candidate",
+                "feature_safety": "causal_prefix_safe_label_pilot",
+                "value_status": "frozen",
+                "mean_router_loss": _mean(row["selected_support_loss"] for row in rows),
+                "mean_oracle_loss": _mean(row["oracle_support_loss"] for row in rows),
+                "mean_oracle_support_regret": _mean(row["selected_oracle_support_regret"] for row in rows),
+                "p90_oracle_support_regret": _percentile(
+                    [row["selected_oracle_support_regret"] for row in rows], 0.9
+                ),
+                "mean_functional_churn_logit_l1": _support_churn_proxy(rows, "selected_support"),
+                "mean_support_change_fraction": _support_churn_proxy(rows, "selected_support"),
+                "mean_used_columns": _mean(row["selected_support_width"] for row in rows),
+                "mean_unique_support_sets": len({row["selected_support"] for row in rows}),
+                "accepted_contextual_swap_fraction": _mean(
+                    1.0 if row["accepted_one_swap"] else 0.0 for row in rows
+                ),
+                "same_student_intervention_proxy": _same_student_proxy(active),
+            }
+        )
     return base_rows
+
+
+def _per_token_policy_rows(
+    packets: list[dict[str, Any]], *, regret_margin: float
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for packet in packets:
+        labels = packet.get("per_token_support_labels", [])
+        if not labels:
+            continue
+        by_key: dict[tuple[str, str, str, str], dict[str, dict[str, str]]] = {}
+        for row in labels:
+            key = (
+                row.get("fold", ""),
+                row.get("sequence_index", ""),
+                row.get("position_index", ""),
+                row.get("target_token", ""),
+            )
+            by_key.setdefault(key, {})[row.get("control", "")] = row
+        for key, controls in sorted(by_key.items(), key=lambda item: tuple(_sort_key(part) for part in item[0])):
+            linear = controls.get("linear_topk2")
+            contextual = controls.get("causal_contextual_topk2")
+            oracle = controls.get("full_context_oracle_topk2")
+            if not linear:
+                continue
+            actual_regret = _float(linear.get("oracle_support_regret"))
+            swap_regret = _float(linear.get("best_one_swap_regret"))
+            accepted = (
+                linear.get("best_one_swap_improves_actual") == "True"
+                and swap_regret <= actual_regret - regret_margin
+            )
+            selected_support = linear.get("best_one_swap_support") if accepted else linear.get("actual_support")
+            selected_loss = _float(
+                linear.get("best_one_swap_support_loss") if accepted else linear.get("actual_support_loss")
+            )
+            selected_regret = swap_regret if accepted else actual_regret
+            rows.append(
+                {
+                    "backend": packet["backend"],
+                    "fold": key[0],
+                    "sequence_index": key[1],
+                    "position_index": key[2],
+                    "target_token": key[3],
+                    "selected_source": "linear_one_swap_label" if accepted else "linear_actual_hysteresis",
+                    "accepted_one_swap": accepted,
+                    "linear_actual_support": linear.get("actual_support", ""),
+                    "selected_support": selected_support or "",
+                    "oracle_support": linear.get("oracle_support", ""),
+                    "contextual_actual_support": contextual.get("actual_support", "") if contextual else "",
+                    "headroom_actual_support": oracle.get("actual_support", "") if oracle else "",
+                    "linear_actual_support_loss": _float(linear.get("actual_support_loss")),
+                    "selected_support_loss": selected_loss,
+                    "oracle_support_loss": _float(linear.get("oracle_support_loss")),
+                    "linear_oracle_support_regret": actual_regret,
+                    "selected_oracle_support_regret": selected_regret,
+                    "regret_reduction_vs_linear": actual_regret - selected_regret,
+                    "contextual_oracle_support_regret": _float(contextual.get("oracle_support_regret")) if contextual else "",
+                    "selected_matches_oracle": selected_support == linear.get("oracle_support"),
+                    "selected_support_width": len([part for part in (selected_support or "").split(",") if part != ""]),
+                }
+            )
+    return rows
 
 
 def _summarize_control(backend: str, control: str, rows: list[dict[str, str]]) -> dict[str, Any]:
@@ -377,6 +474,7 @@ def _gate_criteria(
     backend_rows = []
     for backend, arms in sorted(by_backend.items()):
         candidate = arms.get("pregated_contextual_topk2_route_only", {})
+        per_token_candidate = arms.get("per_token_one_swap_route_only", {})
         linear = arms.get("linear_topk2", {})
         contextual = arms.get("causal_contextual_topk2", {})
         shuffled = arms.get("shuffled_contextual_support_labels", {})
@@ -409,6 +507,17 @@ def _gate_criteria(
                     candidate.get("mean_router_loss"), token_position.get("mean_router_loss")
                 ),
                 "accepted_contextual_swap_fraction": candidate.get(
+                    "accepted_contextual_swap_fraction"
+                ),
+                "per_token_candidate_regret_delta_vs_linear": _delta(
+                    per_token_candidate.get("mean_oracle_support_regret"),
+                    linear.get("mean_oracle_support_regret"),
+                ),
+                "per_token_candidate_churn_delta_vs_linear": _delta(
+                    per_token_candidate.get("mean_support_change_fraction"),
+                    linear.get("mean_support_change_fraction"),
+                ),
+                "per_token_candidate_swap_fraction": per_token_candidate.get(
                     "accepted_contextual_swap_fraction"
                 ),
             }
@@ -467,6 +576,27 @@ def _gate_criteria(
             backend_rows,
         ),
         _criterion(
+            "per_token_one_swap_reduces_oracle_regret_vs_linear",
+            any(
+                row["per_token_candidate_regret_delta_vs_linear"] is not None
+                and row["per_token_candidate_regret_delta_vs_linear"] < 0
+                for row in backend_rows
+            ),
+            "per-token one-swap labels should recover support-quality headroom on at least one source",
+            backend_rows,
+        ),
+        _criterion(
+            "per_token_one_swap_does_not_increase_support_churn_vs_linear",
+            all(
+                row["per_token_candidate_churn_delta_vs_linear"] is not None
+                and row["per_token_candidate_churn_delta_vs_linear"] <= 0
+                for row in backend_rows
+                if row["per_token_candidate_regret_delta_vs_linear"] is not None
+            ),
+            "per-token one-swap support-quality gains must not come from higher support churn",
+            backend_rows,
+        ),
+        _criterion(
             "gpu_validation_remains_blocked_until_all_support_quality_gates_pass",
             True,
             "this local pilot is not itself GPU evidence; GPU remains blocked unless all above gates pass in a future run",
@@ -485,6 +615,7 @@ def _evidence(
     backend_summaries = {}
     for backend, arms in by_backend.items():
         candidate = arms.get("pregated_contextual_topk2_route_only", {})
+        per_token_candidate = arms.get("per_token_one_swap_route_only", {})
         linear = arms.get("linear_topk2", {})
         contextual = arms.get("causal_contextual_topk2", {})
         backend_summaries[backend] = {
@@ -520,6 +651,24 @@ def _evidence(
                 linear.get("mean_functional_churn_logit_l1"),
             ),
             "accepted_contextual_swap_fraction": candidate.get(
+                "accepted_contextual_swap_fraction"
+            ),
+            "per_token_candidate_mean_router_loss": per_token_candidate.get("mean_router_loss"),
+            "per_token_candidate_mean_oracle_support_regret": per_token_candidate.get(
+                "mean_oracle_support_regret"
+            ),
+            "per_token_candidate_minus_linear_oracle_regret": _delta(
+                per_token_candidate.get("mean_oracle_support_regret"),
+                linear.get("mean_oracle_support_regret"),
+            ),
+            "per_token_candidate_support_churn_proxy": per_token_candidate.get(
+                "mean_support_change_fraction"
+            ),
+            "per_token_candidate_minus_linear_support_churn_proxy": _delta(
+                per_token_candidate.get("mean_support_change_fraction"),
+                linear.get("mean_support_change_fraction"),
+            ),
+            "per_token_candidate_accepted_one_swap_fraction": per_token_candidate.get(
                 "accepted_contextual_swap_fraction"
             ),
         }
@@ -575,9 +724,9 @@ def _selected_next_step(status: str, failures: list[dict[str, Any]]) -> str:
         return "repair missing contextual top-k-2 support-quality pregate sources"
     if failures:
         return (
-            "keep GPU validation blocked; either add per-token one-swap support labels "
-            "for a stronger local route-only reranker or pivot away from contextual "
-            "top-k-2 redesigns if the support-quality gate keeps failing"
+            "keep GPU validation blocked; add a bounded churn-aware per-token "
+            "one-swap reranker that penalizes support switching and rechecks regret, "
+            "CE/null, and same-student proxy gates"
         )
     return "run local artifact checks, then consider the configured GPU backend for validation"
 
@@ -667,6 +816,7 @@ def _write_artifacts(
     summary: dict[str, Any],
     arm_rows: list[dict[str, Any]],
     fold_policy_rows: list[dict[str, Any]],
+    per_token_policy_rows: list[dict[str, Any]],
     gate_rows: list[dict[str, Any]],
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -719,6 +869,33 @@ def _write_artifacts(
             "pregated_unique_support_sets",
         ],
         fold_policy_rows,
+    )
+    _write_csv(
+        out_dir / "per_token_policy_rows.csv",
+        [
+            "backend",
+            "fold",
+            "sequence_index",
+            "position_index",
+            "target_token",
+            "selected_source",
+            "accepted_one_swap",
+            "linear_actual_support",
+            "selected_support",
+            "oracle_support",
+            "contextual_actual_support",
+            "headroom_actual_support",
+            "linear_actual_support_loss",
+            "selected_support_loss",
+            "oracle_support_loss",
+            "linear_oracle_support_regret",
+            "selected_oracle_support_regret",
+            "regret_reduction_vs_linear",
+            "contextual_oracle_support_regret",
+            "selected_matches_oracle",
+            "selected_support_width",
+        ],
+        per_token_policy_rows,
     )
     _write_csv(
         out_dir / "gate_criteria.csv",
@@ -812,6 +989,32 @@ def _percentile(values: list[float], q: float) -> float:
         return 0.0
     index = min(len(vals) - 1, max(0, int(round((len(vals) - 1) * q))))
     return vals[index]
+
+
+def _support_churn_proxy(rows: list[dict[str, Any]], support_key: str) -> float:
+    changed: list[bool] = []
+    by_fold: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_fold.setdefault(str(row.get("fold", "")), []).append(row)
+    for fold_rows in by_fold.values():
+        previous = None
+        for row in sorted(
+            fold_rows,
+            key=lambda item: (
+                _sort_key(str(item.get("sequence_index", ""))),
+                _sort_key(str(item.get("position_index", ""))),
+                _sort_key(str(item.get("target_token", ""))),
+            ),
+        ):
+            current = row.get(support_key, "")
+            if previous is not None:
+                changed.append(current != previous)
+            previous = current
+    return _mean(1.0 if value else 0.0 for value in changed)
+
+
+def _sort_key(value: str) -> int | str:
+    return int(value) if value.isdigit() else value
 
 
 def _git_commit() -> str:
