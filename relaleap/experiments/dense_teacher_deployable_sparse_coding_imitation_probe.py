@@ -63,6 +63,7 @@ ARMS = (
     "baseline_linear_router_scalar_imitation",
     "enhanced_joint_mlp_router_scalar_imitation",
     "combo_mlp_router_scalar_imitation",
+    "support_conditioned_combo_sparse_value_head",
     "same_router_flat_value_control",
     "random_topk_sparse_coding_null",
     "no_update_control",
@@ -79,6 +80,7 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
     baseline_steps: int = 80,
     enhanced_steps: int = 200,
     combo_steps: int = 260,
+    support_conditioned_steps: int = 300,
     control_steps: int = 80,
     basis_size: int = 8,
     top_k: int = 2,
@@ -93,7 +95,7 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
     except Exception as exc:  # pragma: no cover - depends on runtime
         raise RuntimeError("dense-teacher deployable sparse-coding imitation probe requires torch") from exc
 
-    if min(teacher_steps, baseline_steps, enhanced_steps, combo_steps, control_steps) < 1:
+    if min(teacher_steps, baseline_steps, enhanced_steps, combo_steps, support_conditioned_steps, control_steps) < 1:
         raise ValueError("all training step counts must be positive")
     if basis_size < 2:
         raise ValueError("basis_size must be at least 2")
@@ -190,6 +192,18 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
         hidden_dim=hidden_dim,
         steps=combo_steps,
     )
+    support_conditioned_model = _train_support_conditioned_combo_value_head(
+        torch,
+        F,
+        data["x_train"],
+        train_coeff,
+        train_oracle_mask,
+        data["input_dim"],
+        effective_basis_size,
+        support_combos,
+        hidden_dim=hidden_dim,
+        steps=support_conditioned_steps,
+    )
     flat_value = _train_flat_value_head(
         torch,
         F,
@@ -209,6 +223,20 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
     combo_logits, combo_coeff = _combo_outputs(combo_model, data["x_holdout"], effective_basis_size, len(support_combos))
     combo_mask = _combo_mask_from_logits(torch, combo_logits, support_combos, effective_basis_size)
     combo_pred = _decode_sparse(mean, basis, combo_coeff, combo_mask)
+    support_conditioned_logits, support_conditioned_coeff = _support_conditioned_outputs(
+        torch,
+        support_conditioned_model,
+        data["x_holdout"],
+        effective_basis_size,
+        len(support_combos),
+    )
+    support_conditioned_mask = _combo_mask_from_logits(
+        torch,
+        support_conditioned_logits,
+        support_combos,
+        effective_basis_size,
+    )
+    support_conditioned_pred = _decode_sparse(mean, basis, support_conditioned_coeff, support_conditioned_mask)
     oracle_support_learned_coeff_pred = _decode_sparse(mean, basis, combo_coeff, oracle_mask)
     learned_support_oracle_coeff_pred = _decode_sparse(mean, basis, holdout_coeff, combo_mask)
     zero_support = torch.zeros(len(data["x_holdout"]), dtype=torch.long)
@@ -250,6 +278,12 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
             False,
             "prefix-safe MLP predicting a structured top-k support combination and scalar coefficients",
         ),
+        "support_conditioned_combo_sparse_value_head": (
+            support_conditioned_pred,
+            _mask_to_support(torch, support_conditioned_mask),
+            False,
+            "prefix-safe combo support classifier with coefficients conditioned on the selected support combo",
+        ),
         "same_router_flat_value_control": (
             _norm_match(torch, flat_value(data["x_holdout"]), teacher_train),
             _mask_to_support(torch, combo_mask),
@@ -288,9 +322,16 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
                 top_k,
             ),
             torch,
-            mask=_mask_for_arm(arm, oracle_mask, baseline_mask, enhanced_mask, combo_mask, random_mask),
+            mask=_mask_for_arm(arm, oracle_mask, baseline_mask, enhanced_mask, combo_mask, support_conditioned_mask, random_mask),
             oracle_mask=oracle_mask,
-            coeff=_coeff_for_arm(arm, holdout_coeff, baseline_coeff(data["x_holdout"]), enhanced_coeff, combo_coeff),
+            coeff=_coeff_for_arm(
+                arm,
+                holdout_coeff,
+                baseline_coeff(data["x_holdout"]),
+                enhanced_coeff,
+                combo_coeff,
+                support_conditioned_coeff,
+            ),
             oracle_coeff=holdout_coeff,
             no_update_r2=None,
         )
@@ -319,6 +360,7 @@ def run_dense_teacher_deployable_sparse_coding_imitation_probe(
         "baseline_train_steps": baseline_steps,
         "enhanced_train_steps": enhanced_steps,
         "combo_train_steps": combo_steps,
+        "support_conditioned_train_steps": support_conditioned_steps,
         "control_train_steps": control_steps,
         "basis_size": effective_basis_size,
         "top_k": top_k,
@@ -410,6 +452,47 @@ def _train_combo_mlp_imitation(
     return model, combos
 
 
+def _train_support_conditioned_combo_value_head(
+    torch: Any,
+    F: Any,
+    x_train: Any,
+    coeff: Any,
+    mask: Any,
+    input_dim: int,
+    basis_size: int,
+    combos: list[tuple[int, ...]],
+    *,
+    hidden_dim: int,
+    steps: int,
+) -> Any:
+    labels = _combo_labels(torch, mask, combos)
+    model = torch.nn.Sequential(
+        torch.nn.Linear(input_dim, hidden_dim),
+        torch.nn.ReLU(),
+        torch.nn.Linear(hidden_dim, hidden_dim),
+        torch.nn.Tanh(),
+        torch.nn.Linear(hidden_dim, len(combos) + len(combos) * basis_size),
+    )
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.012)
+    for _ in range(steps):
+        combo_logits, selected_coeff = _support_conditioned_outputs(
+            torch,
+            model,
+            x_train,
+            basis_size,
+            len(combos),
+            labels=labels,
+        )
+        combo_loss = F.cross_entropy(combo_logits, labels)
+        coeff_loss = F.mse_loss(selected_coeff, coeff)
+        active_coeff_loss = F.mse_loss(selected_coeff * mask, coeff * mask)
+        loss = combo_loss + 0.65 * coeff_loss + 1.0 * active_coeff_loss
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    return model
+
+
 def _joint_outputs(model: Any, x: Any, basis_size: int) -> tuple[Any, Any]:
     out = model(x)
     return out[:, :basis_size], out[:, basis_size:]
@@ -418,6 +501,24 @@ def _joint_outputs(model: Any, x: Any, basis_size: int) -> tuple[Any, Any]:
 def _combo_outputs(model: Any, x: Any, basis_size: int, combo_count: int) -> tuple[Any, Any]:
     out = model(x)
     return out[:, :combo_count], out[:, combo_count : combo_count + basis_size]
+
+
+def _support_conditioned_outputs(
+    torch: Any,
+    model: Any,
+    x: Any,
+    basis_size: int,
+    combo_count: int,
+    *,
+    labels: Any | None = None,
+) -> tuple[Any, Any]:
+    out = model(x)
+    combo_logits = out[:, :combo_count]
+    coeff_table = out[:, combo_count:].reshape(x.shape[0], combo_count, basis_size)
+    chosen = labels if labels is not None else combo_logits.argmax(dim=1)
+    row_index = torch.arange(x.shape[0], device=x.device)
+    selected_coeff = coeff_table[row_index, chosen]
+    return combo_logits, selected_coeff
 
 
 def _support_combinations(basis_size: int, top_k: int) -> list[tuple[int, ...]]:
@@ -453,7 +554,15 @@ def _combo_mask_from_logits(torch: Any, logits: Any, combos: list[tuple[int, ...
     return mask
 
 
-def _mask_for_arm(arm: str, oracle_mask: Any, baseline_mask: Any, enhanced_mask: Any, combo_mask: Any, random_mask: Any) -> Any:
+def _mask_for_arm(
+    arm: str,
+    oracle_mask: Any,
+    baseline_mask: Any,
+    enhanced_mask: Any,
+    combo_mask: Any,
+    support_conditioned_mask: Any,
+    random_mask: Any,
+) -> Any:
     if arm in {"oracle_topk_orthogonal_sparse_coding", "oracle_support_learned_combo_coeff_sparse_coding"}:
         return oracle_mask
     if arm == "learned_combo_support_oracle_coeff_sparse_coding":
@@ -464,12 +573,21 @@ def _mask_for_arm(arm: str, oracle_mask: Any, baseline_mask: Any, enhanced_mask:
         return enhanced_mask
     if arm in {"combo_mlp_router_scalar_imitation", "same_router_flat_value_control"}:
         return combo_mask
+    if arm == "support_conditioned_combo_sparse_value_head":
+        return support_conditioned_mask
     if arm == "random_topk_sparse_coding_null":
         return random_mask
     return oracle_mask * 0.0
 
 
-def _coeff_for_arm(arm: str, oracle_coeff: Any, baseline_coeff: Any, enhanced_coeff: Any, combo_coeff: Any) -> Any:
+def _coeff_for_arm(
+    arm: str,
+    oracle_coeff: Any,
+    baseline_coeff: Any,
+    enhanced_coeff: Any,
+    combo_coeff: Any,
+    support_conditioned_coeff: Any,
+) -> Any:
     if arm in {"oracle_topk_orthogonal_sparse_coding", "learned_combo_support_oracle_coeff_sparse_coding", "random_topk_sparse_coding_null"}:
         return oracle_coeff
     if arm == "baseline_linear_router_scalar_imitation":
@@ -478,6 +596,8 @@ def _coeff_for_arm(arm: str, oracle_coeff: Any, baseline_coeff: Any, enhanced_co
         return enhanced_coeff
     if arm in {"combo_mlp_router_scalar_imitation", "oracle_support_learned_combo_coeff_sparse_coding", "same_router_flat_value_control"}:
         return combo_coeff
+    if arm == "support_conditioned_combo_sparse_value_head":
+        return support_conditioned_coeff
     return oracle_coeff * 0.0
 
 
@@ -527,20 +647,27 @@ def _gate_rows(source_rows: list[dict[str, Any]], rows: list[dict[str, Any]]) ->
     baseline = by_arm.get("baseline_linear_router_scalar_imitation", {})
     enhanced = by_arm.get("enhanced_joint_mlp_router_scalar_imitation", {})
     combo = by_arm.get("combo_mlp_router_scalar_imitation", {})
+    support_conditioned = by_arm.get("support_conditioned_combo_sparse_value_head", {})
     flat = by_arm.get("same_router_flat_value_control", {})
     random_null = by_arm.get("random_topk_sparse_coding_null", {})
     no_update = by_arm.get("no_update_control", {})
     enhanced_retention = _float(enhanced.get("oracle_gain_retained_fraction"), -math.inf)
     combo_retention = _float(combo.get("oracle_gain_retained_fraction"), -math.inf)
+    support_conditioned_retention = _float(support_conditioned.get("oracle_gain_retained_fraction"), -math.inf)
     baseline_retention = _float(baseline.get("oracle_gain_retained_fraction"), -math.inf)
     oracle_support_learned_coeff_retention = _float(oracle_support_learned_coeff.get("oracle_gain_retained_fraction"), -math.inf)
     learned_support_oracle_coeff_retention = _float(learned_support_oracle_coeff.get("oracle_gain_retained_fraction"), -math.inf)
-    best_deployable_retention = max(enhanced_retention, combo_retention)
+    best_deployable_retention = max(enhanced_retention, combo_retention, support_conditioned_retention)
     best_deployable_r2 = max(
         _float(enhanced.get("teacher_residual_reconstruction_r2"), -math.inf),
         _float(combo.get("teacher_residual_reconstruction_r2"), -math.inf),
+        _float(support_conditioned.get("teacher_residual_reconstruction_r2"), -math.inf),
     )
-    best_deployable_ce = min(_float(enhanced.get("ce"), math.inf), _float(combo.get("ce"), math.inf))
+    best_deployable_ce = min(
+        _float(enhanced.get("ce"), math.inf),
+        _float(combo.get("ce"), math.inf),
+        _float(support_conditioned.get("ce"), math.inf),
+    )
     return [
         _gate("oracle_feasibility_source_present", bool(source_rows[0].get("present")), True, "runtime", str(source_rows[0])),
         _gate("oracle_feasibility_selected_router_imitation", "router/scalar imitation" in str(source_rows[0].get("selected_next_step", "")), True, "runtime", str(source_rows[0].get("selected_next_step", ""))),
@@ -550,10 +677,13 @@ def _gate_rows(source_rows: list[dict[str, Any]], rows: list[dict[str, Any]]) ->
         _gate("oracle_sparse_still_feasible", _float(oracle.get("teacher_residual_reconstruction_r2"), -math.inf) >= 0.5, False, "scientific", f"oracle_r2={oracle.get('teacher_residual_reconstruction_r2')}"),
         _gate("enhanced_improves_linear_imitation", enhanced_retention > baseline_retention + 0.05, False, "scientific", f"enhanced_retention={enhanced_retention:.6f}; baseline_retention={baseline_retention:.6f}"),
         _gate("combo_improves_linear_imitation", combo_retention > baseline_retention + 0.05, False, "scientific", f"combo_retention={combo_retention:.6f}; baseline_retention={baseline_retention:.6f}"),
+        _gate("support_conditioned_improves_combo_imitation", support_conditioned_retention > combo_retention + 0.02, False, "scientific", f"support_conditioned_retention={support_conditioned_retention:.6f}; combo_retention={combo_retention:.6f}"),
         _gate("enhanced_beats_random_null", _float(enhanced.get("teacher_residual_reconstruction_r2"), -math.inf) > _float(random_null.get("teacher_residual_reconstruction_r2"), -math.inf) + 0.05, False, "scientific", f"enhanced_r2={enhanced.get('teacher_residual_reconstruction_r2')}; random_r2={random_null.get('teacher_residual_reconstruction_r2')}"),
         _gate("combo_beats_random_null", _float(combo.get("teacher_residual_reconstruction_r2"), -math.inf) > _float(random_null.get("teacher_residual_reconstruction_r2"), -math.inf) + 0.05, False, "scientific", f"combo_r2={combo.get('teacher_residual_reconstruction_r2')}; random_r2={random_null.get('teacher_residual_reconstruction_r2')}"),
-        _gate("best_deployable_retains_oracle_gain", best_deployable_retention >= 0.8, False, "scientific", f"best_retention={best_deployable_retention:.6f}; enhanced={enhanced_retention:.6f}; combo={combo_retention:.6f}; required=0.800000"),
+        _gate("support_conditioned_beats_random_null", _float(support_conditioned.get("teacher_residual_reconstruction_r2"), -math.inf) > _float(random_null.get("teacher_residual_reconstruction_r2"), -math.inf) + 0.05, False, "scientific", f"support_conditioned_r2={support_conditioned.get('teacher_residual_reconstruction_r2')}; random_r2={random_null.get('teacher_residual_reconstruction_r2')}"),
+        _gate("best_deployable_retains_oracle_gain", best_deployable_retention >= 0.8, False, "scientific", f"best_retention={best_deployable_retention:.6f}; enhanced={enhanced_retention:.6f}; combo={combo_retention:.6f}; support_conditioned={support_conditioned_retention:.6f}; required=0.800000"),
         _gate("best_deployable_near_flat_control", best_deployable_r2 >= _float(flat.get("teacher_residual_reconstruction_r2"), -math.inf) - 0.1, False, "scientific", f"best_deployable_r2={best_deployable_r2:.6f}; flat_r2={flat.get('teacher_residual_reconstruction_r2')}"),
+        _gate("best_deployable_beats_flat_r2", best_deployable_r2 > _float(flat.get("teacher_residual_reconstruction_r2"), -math.inf), False, "scientific", f"best_deployable_r2={best_deployable_r2:.6f}; flat_r2={flat.get('teacher_residual_reconstruction_r2')}"),
         _gate("best_deployable_beats_no_update_ce", best_deployable_ce < _float(no_update.get("ce"), -math.inf), False, "scientific", f"best_deployable_ce={best_deployable_ce:.6f}; no_update_ce={no_update.get('ce')}"),
         _gate("oracle_support_learned_coeff_retains_oracle_gain", oracle_support_learned_coeff_retention >= 0.8, False, "scientific", f"retention={oracle_support_learned_coeff_retention:.6f}; coefficient_mse={oracle_support_learned_coeff.get('coefficient_mse_vs_oracle')}; required=0.800000"),
         _gate("learned_support_oracle_coeff_retains_oracle_gain", learned_support_oracle_coeff_retention >= 0.8, False, "scientific", f"retention={learned_support_oracle_coeff_retention:.6f}; selected_overlap={learned_support_oracle_coeff.get('oracle_selected_component_overlap')}; required=0.800000"),
@@ -570,6 +700,8 @@ def _claim_status(status: str, failures: list[dict[str, Any]], rows: list[dict[s
         return "coefficient_value_bottleneck_blocks_gpu"
     if "learned_support_oracle_coeff_retains_oracle_gain" in failed:
         return "support_routing_bottleneck_blocks_gpu"
+    if "support_conditioned_improves_combo_imitation" in failed and "best_deployable_beats_flat_r2" in failed:
+        return "support_conditioned_combo_value_head_fails_flat_control_blocks_gpu"
     if not failures:
         return "deployable_sparse_coding_imitation_clears_local_gates_no_gpu_yet"
     if "best_deployable_retains_oracle_gain" in failed:
@@ -587,6 +719,8 @@ def _selected_next_step(status: str, failures: list[dict[str, Any]], rows: list[
         return "improve sparse coefficient/value model under oracle support before GPU"
     if "learned_support_oracle_coeff_retains_oracle_gain" in failed:
         return "improve deployable support routing for the oracle sparse-coding basis before GPU"
+    if "support_conditioned_improves_combo_imitation" in failed and "best_deployable_beats_flat_r2" in failed:
+        return "close naive support-conditioned combo coefficient head and run a local flat-vs-sparse value bottleneck adjudicator before GPU"
     if "best_deployable_retains_oracle_gain" in failed:
         return "train a support-conditioned sparse coefficient/value head for the combo support before GPU"
     if "best_deployable_near_flat_control" in failed:
@@ -665,6 +799,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--baseline-steps", type=int, default=80)
     parser.add_argument("--enhanced-steps", type=int, default=200)
     parser.add_argument("--combo-steps", type=int, default=260)
+    parser.add_argument("--support-conditioned-steps", type=int, default=300)
     parser.add_argument("--control-steps", type=int, default=80)
     parser.add_argument("--basis-size", type=int, default=8)
     parser.add_argument("--top-k", type=int, default=2)
@@ -680,6 +815,7 @@ def main(argv: list[str] | None = None) -> int:
         baseline_steps=args.baseline_steps,
         enhanced_steps=args.enhanced_steps,
         combo_steps=args.combo_steps,
+        support_conditioned_steps=args.support_conditioned_steps,
         control_steps=args.control_steps,
         basis_size=args.basis_size,
         top_k=args.top_k,

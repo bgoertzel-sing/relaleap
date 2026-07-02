@@ -59,6 +59,7 @@ class DenseTeacherDeployableSparseCodingImitationProbeTests(unittest.TestCase):
                 baseline_steps=6,
                 enhanced_steps=8,
                 combo_steps=8,
+                support_conditioned_steps=8,
                 control_steps=6,
                 basis_size=4,
                 top_k=2,
@@ -84,6 +85,7 @@ class DenseTeacherDeployableSparseCodingImitationProbeTests(unittest.TestCase):
             self.assertIn("learned_combo_support_oracle_coeff_sparse_coding", by_arm)
             self.assertFalse(by_arm["enhanced_joint_mlp_router_scalar_imitation"]["uses_oracle_support_at_eval"])
             self.assertFalse(by_arm["combo_mlp_router_scalar_imitation"]["uses_oracle_support_at_eval"])
+            self.assertFalse(by_arm["support_conditioned_combo_sparse_value_head"]["uses_oracle_support_at_eval"])
             for row in summary["imitation_rows"]:
                 self.assertIn("teacher_residual_reconstruction_r2", row)
                 self.assertIn("oracle_gain_retained_fraction", row)
@@ -102,8 +104,11 @@ class DenseTeacherDeployableSparseCodingImitationProbeTests(unittest.TestCase):
             self.assertTrue(gates["required_arms_present"]["passed"])
             self.assertTrue(gates["gpu_blocked"]["passed"])
             self.assertIn("combo_improves_linear_imitation", gates)
+            self.assertIn("support_conditioned_improves_combo_imitation", gates)
+            self.assertIn("support_conditioned_beats_random_null", gates)
             self.assertIn("best_deployable_retains_oracle_gain", gates)
             self.assertIn("best_deployable_near_flat_control", gates)
+            self.assertIn("best_deployable_beats_flat_r2", gates)
             self.assertIn("oracle_support_learned_coeff_retains_oracle_gain", gates)
             self.assertIn("learned_support_oracle_coeff_retains_oracle_gain", gates)
 
